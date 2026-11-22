@@ -19,7 +19,8 @@ export const EXPENSE_VARIANCE_CONTRIBUTORS = 3;
 // The months the picker offers, the last one that has ended first.
 export const EXPENSE_VARIANCE_PICKER_MONTHS = 12;
 
-export const zExpenseVarianceMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'YYYY-MM month');
+// A month of this century only (the database date range and the arithmetic stay far inside it).
+export const zExpenseVarianceMonth = z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/, 'YYYY-MM month');
 export type ExpenseVarianceMonth = z.infer<typeof zExpenseVarianceMonth>;
 
 // The books an entity keeps on the last day of the month (TT133 when it has no books row).
@@ -42,7 +43,6 @@ export const zExpenseVarianceContributor = z.object({
   kind: z.enum(['supplier', 'voucher']),
   partyId: zId.nullable(),
   name: z.string().nullable(),
-  partyKind: z.string().nullable(),
   entryId: zId.nullable(),
   entryDate: zLocalDate.nullable(),
   description: z.string().nullable(),
@@ -87,7 +87,9 @@ export const zFinanceExpenseVariance = z.object({
   regime: zExpenseVarianceRegime,
   chartVersion: z.string(),
   thresholds: z.object({ amount: zMoney, percent: z.string() }),
-  // The month before and the months of the average, as they were read; a comparison whose months are not all in the same chart is not made (`missing`).
+  // The first day the entity's books hold an entry (null when none): a basis month that ends before it is not 0 but not there, so a comparison that needs it is not made (`missing`).
+  booksStart: zLocalDate.nullable(),
+  // The month before and the months of the average, as they were read; a comparison whose months are not all in the same chart, or not all after the books begin, is not made (`missing`).
   previousMonth: zExpenseVarianceMonth,
   averageMonths: z.array(zExpenseVarianceMonth).length(EXPENSE_VARIANCE_AVERAGE_MONTHS),
   missing: z.object({ previous: z.boolean(), average: z.boolean() }),

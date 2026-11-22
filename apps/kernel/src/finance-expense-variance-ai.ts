@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The finance coworker's possible reasons on the expense variance card, on the API side (#4392). finance.expense_variance runs in the member's own transaction and gives the flagged lines with their suppliers
 // or vouchers; the model call then runs here, outside any transaction, through the AI budget meter (the request's AI scope names the org and the member). The facts are built from that read in code, never from
-// the caller, and carry no figure at all: a fixed kind of expense, the direction, the supplier's name when it may be told, the kind of voucher and single or several (packages/agent expense-variance.ts). A note
+// the caller, and carry no figure at all: a fixed kind of expense, the direction, the kind of voucher and single, several or none (packages/agent expense-variance.ts), and no name of anyone. A note
 // is dropped when it states a number, a date or a name it was not given, claims certainty or is not marked as a possibility.
 //
 // The notes are read, never written: nothing here stores a text or changes the books, and it is not a command. When there is no model, the AI budget is spent, the member's calls are too frequent, the call
@@ -48,8 +48,6 @@ export function expenseVarianceFacts(variance: FinanceExpenseVariance, language:
         isNew: l.isNew,
         contributors: l.contributors.map((c) => ({
           kind: c.kind,
-          name: c.name,
-          partyKind: c.partyKind,
           sourceKind: c.sourceKind,
           vouchers: c.vouchers === 0 ? ('none' as const) : c.vouchers === 1 ? ('single' as const) : ('several' as const),
         })),

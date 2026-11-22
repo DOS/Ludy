@@ -11,7 +11,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { cn } from '@ludy/ui/lib/utils';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { changeKind, defaultMonth, monthText, pickerMonths, sizeOf } from '../lib/expense-variance.ts';
+import { changeKind, defaultMonth, monthText, pickerMonths, sizeOf, startsAfterBasis } from '../lib/expense-variance.ts';
 import { ErrorText } from '../components/ui.tsx';
 
 const ARROW = { up: '▲', down: '▼', flat: '■' } as const;
@@ -130,8 +130,9 @@ export function VarianceTable({ data, notes }: { data: FinanceExpenseVariance; n
   return (
     <>
       <p className="mb-2 text-xs text-subtle-foreground">{t('books', { regime: t(`regimes.${data.regime}`) })}</p>
-      {data.missing.previous && <p className="mb-2 text-xs text-warning">{t('missing.previous')}</p>}
-      {data.missing.average && <p className="mb-2 text-xs text-warning">{t('missing.average')}</p>}
+      {(data.missing.previous || data.missing.average) && startsAfterBasis(data) && <p className="mb-2 text-xs text-warning">{t('missing.start', { date: f.date(data.booksStart) })}</p>}
+      {data.missing.previous && !startsAfterBasis(data) && <p className="mb-2 text-xs text-warning">{t('missing.previous')}</p>}
+      {data.missing.average && !startsAfterBasis(data) && <p className="mb-2 text-xs text-warning">{t('missing.average')}</p>}
       {data.empty ? (
         <p className="text-sm text-muted-foreground">{t('empty')}</p>
       ) : data.lines.length === 0 ? (

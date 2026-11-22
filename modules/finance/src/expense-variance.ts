@@ -156,7 +156,15 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
   const months = [...basis.average, input.month];
   const books = await booksRows(ctx, entity);
   const amounts = await monthlyAmounts(ctx, entity, months);
-  const result = buildExpenseVariance(input.month, amounts, books);
+  // The first day the entity's books hold an entry: a basis month before it is not there, it is not 0.
+  const first = await ctx.trx
+    .selectFrom('crove_finance.journal_entry')
+    .select((eb) => eb.fn.min<string | null>('entry_date').as('first'))
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', entity)
+    .executeTakeFirst();
+  const booksStart = first?.first ? String(first.first).slice(0, 10) : null;
+  const result = buildExpenseVariance(input.month, amounts, books, booksStart);
   const window = { from: monthBounds(basis.average[0] ?? basis.previous).from, to: monthBounds(input.month).to };
   const any = await ctx.trx
     .selectFrom('crove_finance.journal_entry')
@@ -170,9 +178,9 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
 
   const contributorsFound = await contributorRows(ctx, entity, input.month, result.lines, result.regime);
   const partyIds = [...new Set(contributorsFound.flatMap((r) => (r.party_id ? [r.party_id] : [])))];
-  const parties = new Map<string, { name: string; kind: string }>();
+  const parties = new Map<string, string>();
   if (partyIds.length > 0) {
-    for (const p of await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'kind']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) parties.set(p.id, { name: p.name, kind: p.kind });
+    for (const p of await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) parties.set(p.id, p.name);
   }
   const names = await accountNames(ctx, result.regime, result.chartVersion, result.lines.map((l) => l.code));
 
@@ -187,8 +195,7 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
         return {
           kind: r.party_id ? 'supplier' : 'voucher',
           partyId: r.party_id,
-          name: party?.name ?? null,
-          partyKind: party?.kind ?? null,
+          name: party ?? null,
           entryId: r.entry_id,
           entryDate: r.party_id ? null : r.entry_date,
           description: r.party_id ? null : r.description,
@@ -211,6 +218,7 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
     regime: result.regime,
     chartVersion: result.chartVersion,
     thresholds: { amount: EXPENSE_VARIANCE_MIN_AMOUNT, percent: EXPENSE_VARIANCE_MIN_PERCENT },
+    booksStart,
     previousMonth: basis.previous,
     averageMonths: basis.average,
     missing: result.missing,

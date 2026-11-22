@@ -6,7 +6,7 @@ import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExpenseVarianceLine, FinanceExpenseVariance } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
-import { changeKind, defaultMonth, monthText, pickerMonths, sizeOf } from '../src/lib/expense-variance.ts';
+import { changeKind, defaultMonth, monthText, pickerMonths, sizeOf, startsAfterBasis } from '../src/lib/expense-variance.ts';
 
 vi.mock('../src/lib/api.ts', () => ({ orpc: {}, client: {}, queryClient: {}, apiFetch: () => undefined, getCurrentOrg: () => null, errorMessage: String }));
 
@@ -24,8 +24,8 @@ const staff: ExpenseVarianceLine = {
   isNew: false,
   vouchers: 2,
   contributors: [
-    { kind: 'supplier', partyId: 'p-1', name: 'Công ty B', partyKind: 'organization', entryId: null, entryDate: null, description: null, sourceKind: 'invoice', vouchers: 1, amount: '20000000', basis: '0', change: '20000000' },
-    { kind: 'voucher', partyId: null, name: null, partyKind: null, entryId: 'e-1', entryDate: '2026-07-15', description: 'Chi phí mới', sourceKind: 'other', vouchers: 1, amount: '9000000', basis: '0', change: '9000000' },
+    { kind: 'supplier', partyId: 'p-1', name: 'Công ty B', entryId: null, entryDate: null, description: null, sourceKind: 'invoice', vouchers: 1, amount: '20000000', basis: '0', change: '20000000' },
+    { kind: 'voucher', partyId: null, name: null, entryId: 'e-1', entryDate: '2026-07-15', description: 'Chi phí mới', sourceKind: 'other', vouchers: 1, amount: '9000000', basis: '0', change: '9000000' },
   ],
 };
 const fresh: ExpenseVarianceLine = { ...staff, code: '6417', name: null, amount: '9000000', previous: compare('0', '9000000', null, true), average: compare('0', '9000000', null, true), isNew: true, contributors: [] };
@@ -37,6 +37,7 @@ const DATA: FinanceExpenseVariance = {
   chartVersion: '2026.1',
   thresholds: { amount: '5000000', percent: '30' },
   previousMonth: '2026-06',
+  booksStart: null,
   averageMonths: ['2026-04', '2026-05', '2026-06'],
   missing: { previous: false, average: true },
   empty: false,
@@ -65,6 +66,16 @@ describe('the months of the picker', () => {
     expect(pickerMonths('2026-01-01').slice(0, 2)).toEqual(['2025-12', '2025-11']);
     expect(defaultMonth('2026-03-31')).toBe('2026-02');
     expect(monthText('2026-07')).toBe('07/2026');
+  });
+});
+
+describe('where the books begin', () => {
+  it('tells a basis month that is not there from a comparison in another chart', () => {
+    const months = ['2026-04', '2026-05', '2026-06'] as const;
+    expect(startsAfterBasis({ booksStart: null, averageMonths: [...months] })).toBe(false);
+    expect(startsAfterBasis({ booksStart: '2026-04-01', averageMonths: [...months] })).toBe(false);
+    expect(startsAfterBasis({ booksStart: '2026-04-02', averageMonths: [...months] })).toBe(true);
+    expect(startsAfterBasis({ booksStart: '2026-06-10', averageMonths: [...months] })).toBe(true);
   });
 });
 
@@ -138,6 +149,13 @@ describe('the table of flagged lines', () => {
     expect(render('en', { ...DATA, lines: [] })).toContain('No expense line moved past the threshold');
     expect(render('en', { ...DATA, missing: { previous: true, average: true } })).toContain('Not compared with the month before');
     expect(render('vi', { ...DATA, moreFlagged: 2 })).toContain('2 dòng khác');
+    expect(render('vi', { ...DATA, moreFlagged: 2 })).not.toContain('Sổ sách');
+    expect(render('en', { ...DATA, moreFlagged: 2 })).not.toContain('ledger');
+    // The books begin after the months compared with: one message about it, not the one about another chart of accounts.
+    const young = render('en', { ...DATA, booksStart: '2026-05-10', missing: { previous: false, average: true } });
+    expect(young).toContain('hold entries only from');
+    expect(young).not.toContain('another chart of accounts');
+    expect(render('vi', { ...DATA, booksStart: '2026-05-10', missing: { previous: false, average: true } })).toContain('chỉ có bút toán từ ngày');
     expect(render('en', { ...DATA, regime: 'tt99' })).toContain('Circular 99');
   });
 });

@@ -447,10 +447,11 @@ export const vi = {
       missing: {
         previous: 'Chưa so sánh được với tháng trước: tháng đó thuộc hệ thống tài khoản khác.',
         average: 'Chưa so sánh được với mức trung bình: có tháng nằm ở hệ thống tài khoản khác.',
+        start: 'Sổ của pháp nhân chỉ có bút toán từ ngày {date}. Tháng nào trước ngày đó không được tính là 0, mà là chưa có, nên phép so sánh cần tháng đó chưa được làm.',
       },
       empty: 'Chưa có bút toán nào trong 4 tháng này, nên chưa có gì để so sánh.',
       none: 'Không có dòng chi phí nào lệch quá ngưỡng trong tháng này.',
-      more: '{count, plural, other {# dòng khác}} cũng lệch quá ngưỡng nhưng chưa hiện ở đây. Xem đủ ở Sổ sách.',
+      more: '{count, plural, other {# dòng khác}} cũng lệch quá ngưỡng nhưng chưa hiện ở đây.',
       threshold: 'Một dòng được đánh dấu khi lệch từ {amount} và từ {percent}% so với tháng trước hoặc so với mức trung bình. Đây là ngưỡng mặc định.',
       loading: 'Đang tải…',
       retry: 'Thử lại',

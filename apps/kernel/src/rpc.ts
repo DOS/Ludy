@@ -493,9 +493,9 @@ export function createRpcHandler(
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
+  const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
   const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
-  const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());

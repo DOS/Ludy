@@ -6,7 +6,8 @@
 // - Line level, the key a line is compared under (an org's sub-account extends its parent's code, so it rolls up by prefix): TT133 keeps 4 digits for 64xx (its chart has 6421, selling expenses, and 6422,
 //   administration, under 642) and 3 for every other account; TT99 keeps 3 everywhere (641 and 642 are one line each, whatever their level-2 accounts 6411 to 6418 and 6421 to 6428).
 // - Flagged: the change against the month before, or against the average, is at least the amount AND the percent threshold (exact decimals, never the rounded percent). A basis of 0 has no percent: the
-//   line is flagged on the amount alone and is `new` when it rose. A comparison whose months are not all in the chart of the month is not made at all (no translation between charts).
+//   line is flagged on the amount alone and is `new` when it rose. A comparison whose months are not all in the chart of the month, or not all after the entity's books begin (a month that ends before the
+//   first entry is not 0, it is not there), is not made at all (no translation between charts).
 import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import {
   EXPENSE_VARIANCE_AVERAGE_MONTHS,
@@ -131,14 +132,16 @@ export function averageOf(amounts: readonly DecimalValue[]): DecimalValue {
 
 /**
  * The flagged lines of `month` from the amounts of the month and of the months before it, and the entity's books rows.
- * `months` holds the month itself and every basis month the caller read (a missing month counts as having no rows).
+ * `months` holds the month itself and every basis month the caller read (a missing month counts as having no rows). `booksStart` is the first day the entity has an entry, null when it has none.
  */
-export function buildExpenseVariance(month: string, months: readonly MonthAmounts[], books: readonly BooksRow[]): VarianceResult {
+export function buildExpenseVariance(month: string, months: readonly MonthAmounts[], books: readonly BooksRow[], booksStart: string | null = null): VarianceResult {
   const basis = basisMonths(month);
   const here = booksOnDate(books, monthBounds(month).to);
   const hereKey = chartKey(here);
   const sameChart = (m: string) => chartKey(booksOnDate(books, monthBounds(m).to)) === hereKey;
-  const missing = { previous: !sameChart(basis.previous), average: !basis.average.every(sameChart) };
+  // A basis month that ends before the first entry of the entity is not a month of 0: it is not there, so a comparison that needs it is not made.
+  const usable = (m: string) => sameChart(m) && (booksStart === null || monthBounds(m).to >= booksStart);
+  const missing = { previous: !usable(basis.previous), average: !basis.average.every(usable) };
 
   // Net amount per line and month.
   const perMonth = new Map<string, Map<string, DecimalValue>>();

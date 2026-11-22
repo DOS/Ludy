@@ -449,10 +449,11 @@ export const en = {
       missing: {
         previous: 'Not compared with the month before: that month is in another chart of accounts.',
         average: 'Not compared with the average: one of its months is in another chart of accounts.',
+        start: 'The entity\'s books hold entries only from {date}. A month before that is not counted as 0, it is not there, so a comparison that needs it is not made.',
       },
       empty: 'There are no entries in these 4 months, so there is nothing to compare.',
       none: 'No expense line moved past the threshold this month.',
-      more: '{count, plural, other {# more lines}} also moved past the threshold but are not shown here. See all of them in the ledger.',
+      more: '{count, plural, other {# more lines}} also moved past the threshold but are not shown here.',
       threshold: 'A line is marked when it moved by {amount} or more and by {percent}% or more, against the month before or against the average. These are the default thresholds.',
       loading: 'Loading…',
       retry: 'Try again',

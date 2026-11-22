@@ -32,12 +32,23 @@ alone and shown as new). They are constants for every org and the card states th
 and is not built.
 
 **What the coworker does.** One sentence per flagged line (at most 8) with a possible reason, marked as a possibility.
-It is told, per line, a fixed kind of expense, the direction, which comparison flagged it, the supplier's name (only an
-organization's, with no digit, in plain letters, clipped), what kind of voucher it is and whether there is a single
-voucher, several or none this month. It is told no amount, percent, date, count or account number, and the note may state none: any
-digit, number in words, date, name it was not given, certainty word, claim that something was done, promise, advice or
-direction that contradicts the line refuses the note, and a note must open with a hedge word ("Possibly", "Có thể"). The table shows every figure. With AI off, the budget spent or
+It is told, per line, a fixed kind of expense, the direction, which comparison flagged it, and for each of the top
+contributors whether it is a supplier or a voucher with no supplier, what kind of voucher it is and whether there is a
+single voucher, several or none this month. It is told no name (a supplier of a small business is often a person, so its
+name is personal data, and the table already shows it; the issue's "drawn from the supplier" is superseded by the PO's
+decision of 2026-11-22), and no amount, percent, date, count or account number; the note may state none. A note must
+open with a hedge word ("Possibly", "Có thể"); any digit, number or size in words, date, capitalised word after the
+first (no name is given, so none can be right), hidden character, certainty word, claim that something was done, promise,
+advice or direction that contradicts the line refuses it. The table shows every figure. With AI off, the budget spent or
 every note refused, the table is the same, without sentences and without a notice.
+
+**Months before the books begin.** A basis month that ends before the entity's first entry is not a month of 0, it is
+not there: the comparison that needs it (the month before, or the average of three) is not made, and the card says
+where the books begin.
+
+**Known limit (P3).** A voucher that was later reversed can still show as a top contributor of a line, because the
+contributors are summed per supplier or voucher from the entries as posted. The line's own figure is correct (a reversal
+nets out). Not built.
 
 **Where.** `finance.expense_variance` and `financeExpenseVariance.explain` (contract in
 `packages/kernel-contract/src/finance-expense-variance.ts`), the rules in `modules/finance/src/domain/expense-variance.ts`,

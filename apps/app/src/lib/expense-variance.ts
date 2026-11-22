@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure parts of the expense variance card on the Kế toán Tổng quan (#4392): the months the picker offers and how a change reads. The server decides every figure and every flag; nothing here recomputes one.
-import { EXPENSE_VARIANCE_PICKER_MONTHS, type ExpenseVarianceCompare } from '@ludy/kernel-contract';
+import { EXPENSE_VARIANCE_PICKER_MONTHS, type ExpenseVarianceCompare, type FinanceExpenseVariance } from '@ludy/kernel-contract';
 import { toUnits } from './decimal.ts';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -32,3 +32,9 @@ export const sizeOf = (value: string): string => value.replace(/^-/, '');
 
 /** A month as people write it: 'MM/YYYY'. */
 export const monthText = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
+
+/** Whether the entity's books begin after the first day of the months the card compares with (a basis month that is not there, as against one in another chart). */
+export function startsAfterBasis(data: Pick<FinanceExpenseVariance, 'booksStart' | 'averageMonths'>): boolean {
+  const first = data.averageMonths[0];
+  return data.booksStart !== null && first !== undefined && data.booksStart > `${first}-01`;
+}

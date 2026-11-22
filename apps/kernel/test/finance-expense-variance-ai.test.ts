@@ -14,7 +14,6 @@ const contributor = (over: Partial<ExpenseVarianceContributor> = {}): ExpenseVar
   kind: 'supplier',
   partyId: 'party-1',
   name: 'Công ty Sao Mai',
-  partyKind: 'organization',
   entryId: null,
   entryDate: null,
   description: null,
@@ -44,11 +43,12 @@ const VARIANCE: FinanceExpenseVariance = {
   regime: 'tt133',
   chartVersion: '2026.1',
   thresholds: { amount: '5000000', percent: '30' },
+  booksStart: '2026-01-05',
   previousMonth: '2026-06',
   averageMonths: ['2026-04', '2026-05', '2026-06'],
   missing: { previous: false, average: false },
   empty: false,
-  lines: [line('642'), line('632', { direction: 'down', against: 'average', contributors: [contributor({ kind: 'voucher', partyId: null, name: null, partyKind: null, entryId: 'e-1', entryDate: '2026-06-28', description: 'Giá vốn', vouchers: 0, sourceKind: 'manual' })] })],
+  lines: [line('642'), line('632', { direction: 'down', against: 'average', contributors: [contributor({ kind: 'voucher', partyId: null, name: null, entryId: 'e-1', entryDate: '2026-06-28', description: 'Giá vốn', vouchers: 0, sourceKind: 'manual' })] })],
   moreFlagged: 0,
 };
 
@@ -72,20 +72,23 @@ const SAID: ExpenseVarianceNotesResult = { kind: 'notes', notes: [{ row: 1, text
 afterEach(() => vi.restoreAllMocks());
 
 describe('expenseVarianceFacts', () => {
-  it('carries the kind, direction, basis and contributors of each line and no figure', () => {
+  it('carries the kind, direction, basis and contributors of each line and no figure and no name', () => {
     const { facts, codes } = expenseVarianceFacts(VARIANCE, 'vi');
     expect(codes).toEqual(['642', '632']);
     expect(facts).toEqual({
       language: 'vi',
       lines: [
-        { group: '642', direction: 'up', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', name: 'Công ty Sao Mai', partyKind: 'organization', sourceKind: 'invoice', vouchers: 'single' }] },
-        { group: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'voucher', name: null, partyKind: null, sourceKind: 'manual', vouchers: 'none' }] },
+        { group: '642', direction: 'up', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'single' }] },
+        { group: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'voucher', sourceKind: 'manual', vouchers: 'none' }] },
       ],
     });
     // No amount, percent, date, voucher count or entry id travels in the facts.
     const text = JSON.stringify(facts);
     for (const figure of ['30000000', '10000000', '200.0', '2026', '28']) expect(text).not.toContain(figure);
     expect(text).not.toContain('e-1');
+    // No name of a supplier or a description of a voucher travels either.
+    expect(text).not.toContain('Sao Mai');
+    expect(text).not.toContain('Giá vốn');
   });
 
   it('tells several vouchers only for a supplier with more than one, and gives at most the lines the coworker is given', () => {

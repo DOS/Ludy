@@ -222,6 +222,27 @@ describe('buildExpenseVariance', () => {
     expect(result.lines[0]?.previous.flagged).toBe(true);
   });
 
+  it('does not count a month before the first entry as 0: the comparison that needs it is not made', () => {
+    // Books begin on 2026-09-10: 2026-08 ends before it, so the average (08, 09, 10) is missing, while the month before (10) is there.
+    const rows = [month('2026-08', []), month('2026-09', [['632', '1000000']]), month('2026-10', [['632', '1000000']]), month('2026-11', [['632', '40000000']])];
+    const young = buildExpenseVariance('2026-11', rows, [], '2026-09-10');
+    expect(young.missing).toEqual({ previous: false, average: true });
+    expect(young.lines).toHaveLength(1);
+    expect(young.lines[0]?.average).toEqual({ basis: null, change: null, percent: null, flagged: false });
+    expect(young.lines[0]?.previous.flagged).toBe(true);
+    // The same months with the books beginning earlier: both comparisons are made, and the average flags too.
+    const old = buildExpenseVariance('2026-11', rows, [], '2026-08-01');
+    expect(old.missing).toEqual({ previous: false, average: false });
+    expect(old.lines[0]?.average.flagged).toBe(true);
+    // Books that begin in the month itself: nothing to compare with.
+    const first = buildExpenseVariance('2026-11', rows, [], '2026-11-03');
+    expect(first.missing).toEqual({ previous: true, average: true });
+    expect(first.lines).toEqual([]);
+    // A basis month that ENDS on the first entry's day is there; no entry at all changes nothing here.
+    expect(buildExpenseVariance('2026-11', rows, [], '2026-10-31').missing).toEqual({ previous: false, average: true });
+    expect(buildExpenseVariance('2026-11', rows, [], null).missing).toEqual({ previous: false, average: false });
+  });
+
   it('orders by the larger change, then by code, and limits the lines', () => {
     const codes = ['621', '622', '623', '627', '631', '632', '635', '641', '642', '811', '821', '611'];
     const rows = [month('2026-08', []), month('2026-09', []), month('2026-10', []), month('2026-11', codes.map((c, i): [string, string] => [c, String(6000000 + i * 1000000)]))];

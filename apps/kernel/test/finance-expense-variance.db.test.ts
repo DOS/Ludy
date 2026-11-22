@@ -199,7 +199,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
 
   it('flags the lines that moved on a TT133 entity, largest change first, and leaves out revenue and the closing entry', async () => {
     const v = await variance({});
-    expect(v).toMatchObject({ month: MONTH, legalEntityId: main, regime: 'tt133', chartVersion: '2026.1', previousMonth: '2026-06', averageMonths: ['2026-04', '2026-05', '2026-06'], missing: { previous: false, average: false }, empty: false, moreFlagged: 0 });
+    expect(v).toMatchObject({ month: MONTH, legalEntityId: main, regime: 'tt133', chartVersion: '2026.1', booksStart: '2026-04-10', previousMonth: '2026-06', averageMonths: ['2026-04', '2026-05', '2026-06'], missing: { previous: false, average: false }, empty: false, moreFlagged: 0 });
     expect(v.thresholds).toEqual({ amount: '5000000', percent: '30' });
     // 632 fell by 30,000,000, 6422 rose by 20,000,000, 635 is new at 9,000,000; 6421 is steady and no revenue line is there.
     expect(v.lines.map((l) => l.code)).toEqual(['632', '6422', '635']);
@@ -220,7 +220,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     const staff = v.lines.find((l) => l.code === '6422');
     // Supplier A paid the same as before (no change); supplier B is the whole rise.
     expect(staff?.contributors).toHaveLength(1);
-    expect(staff?.contributors[0]).toMatchObject({ kind: 'supplier', partyId: supplierB, name: 'Công ty B', partyKind: 'organization', amount: '20000000', basis: '0', change: '20000000', vouchers: 1, entryId: null, description: null });
+    expect(staff?.contributors[0]).toMatchObject({ kind: 'supplier', partyId: supplierB, name: 'Công ty B', amount: '20000000', basis: '0', change: '20000000', vouchers: 1, entryId: null, description: null });
     // 635 has no supplier: the voucher itself, with the member's own description and its kind from the closed list.
     const fresh = v.lines.find((l) => l.code === '635');
     expect(fresh?.contributors).toHaveLength(1);
@@ -245,9 +245,20 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     expect(m.lines.map((l) => l.code)).toEqual(['632', '6422', '635']);
   });
 
+  it('does not count a month before the first entry as 0, and compares with what is there', async () => {
+    // The main entity's first entry is 2026-04-10. For May the month before (April) is there, but the average reaches into February and March, which are not.
+    const may = await variance({ month: '2026-05' });
+    expect(may).toMatchObject({ booksStart: '2026-04-10', missing: { previous: false, average: true }, lines: [] });
+    // For April the month before (March) is not there either.
+    const april = await variance({ month: '2026-04' });
+    expect(april).toMatchObject({ missing: { previous: true, average: true }, lines: [] });
+    // A month a long time before the books: nothing at all to compare, and no entry in the window.
+    expect(await variance({ month: '2026-01' })).toMatchObject({ empty: true, lines: [] });
+  });
+
   it('reads an entity with no entry in the four months as empty, with no flagged line', async () => {
     const v = await variance({ legalEntityId: empty });
-    expect(v).toMatchObject({ legalEntityId: empty, empty: true, lines: [], moreFlagged: 0 });
+    expect(v).toMatchObject({ legalEntityId: empty, empty: true, booksStart: null, lines: [], moreFlagged: 0 });
   });
 
   it('refuses a month that has not ended', async () => {
