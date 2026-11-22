@@ -242,7 +242,7 @@ describe('a note that is refused', () => {
 
   it('refuses links, markup, emoji, another script, an empty text and more than one sentence', () => {
     refused('Possibly an invoice explains it, see example.com.');
-    refused('Possibly an invoice explains it, write to a@b.vn.');
+    refused('Possibly an invoice explains it, write to a@example.com.');
     refused('Possibly an **invoice** explains it.');
     refused('Possibly an invoice explains it 🙂.');
     refused('Possibly an invoice exрlains it.');
