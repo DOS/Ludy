@@ -280,6 +280,7 @@ export const EXPORT_TABLES = {
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },
   'projects.project': { from: 'crove_projects.project', omit: [] },
+  'projects.project_column': { from: 'crove_projects.project_column', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
   'projects.task_dependency': { from: 'crove_projects.task_dependency', omit: [] },

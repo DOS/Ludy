@@ -17,6 +17,7 @@ import {
   zProjectWeeklyStatusShareNoteInput,
   type ProjectStatus,
   type ProjectWeeklyStatusBottleneck,
+  type ProjectWeeklyStatusColumn,
   type ProjectWeeklyStatusCounts,
   type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
@@ -24,6 +25,7 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { z } from 'zod';
+import { loadProjectColumns, resolveTaskColumnId } from './columns.ts';
 import { READERS, loadProject, userOf } from './projects.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -59,6 +61,7 @@ export interface ProjectWeeklyStatusSource {
     timeZone: string;
   };
   counts: ProjectWeeklyStatusCounts;
+  columns?: ProjectWeeklyStatusColumn[];
   tasks: ProjectWeeklyStatusTasks;
   bottlenecks?: ProjectWeeklyStatusBottleneck[];
   hiddenByEntityCount: number;
@@ -260,6 +263,31 @@ export const projectWeeklyStatusSource = defineQuery({
     // crove_kernel.audit_event occurred within the 7-day window (using audit_event_time_idx), so editing
     // title/due/assignee on a task finished last month via kernel.task.update does not pull it into this week.
     const counts = await queryWeeklyCounts(ctx.trx, ctx.orgId, project.id, fromStartIso, nextStartIso, nextEndExclusiveIso);
+    const rawColumns = await loadProjectColumns(ctx.trx, ctx.orgId, project.id, false);
+    let columns: ProjectWeeklyStatusColumn[] | undefined;
+    if (rawColumns.length > 0) {
+      const { rows: columnTaskRows } = await sql<{ status: TaskStatus; column_id: string | null }>`
+        SELECT t.status, pt.column_id
+          FROM crove_projects.project_task pt
+          INNER JOIN crove_kernel.task t
+            ON t.org_id = pt.org_id AND t.id = pt.task_id
+         WHERE pt.org_id = ${ctx.orgId}::uuid
+           AND pt.project_id = ${project.id}::uuid
+           AND t.status <> 'cancelled'`.execute(ctx.trx);
+      const columnCounts = new Map<string, number>();
+      for (const r of columnTaskRows) {
+        const colId = resolveTaskColumnId(rawColumns, r.column_id, r.status);
+        if (colId) columnCounts.set(colId, (columnCounts.get(colId) ?? 0) + 1);
+      }
+      columns = rawColumns.map((col) => ({
+        id: col.id,
+        name: col.name,
+        taskStatus: col.taskStatus,
+        color: col.color,
+        wipLimit: col.wipLimit,
+        taskCount: columnCounts.get(col.id) ?? 0,
+      }));
+    }
 
     const [doneRes, overdueRes, waitingRes, dueNextWeekRes] = await Promise.all([
       counts.doneThisWeek > 0
@@ -415,6 +443,7 @@ export const projectWeeklyStatusSource = defineQuery({
       project: { id: project.id, name: project.name, status: project.status },
       window: { from, to, nextFrom, nextTo, timeZone: VIETNAM_TIME_ZONE },
       counts,
+      ...(columns ? { columns } : {}),
       tasks,
       bottlenecks,
       hiddenByEntityCount,

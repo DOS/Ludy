@@ -10,10 +10,14 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.dependsOn).toEqual(['kernel']);
     expect(Object.keys(projectsManifest.tables.crove_projects).sort()).toEqual([
       'project',
+      'project_column',
       'project_member',
       'project_task',
       'task_dependency',
     ]);
+    expect(projectsManifest.tables.crove_projects.project_column.name).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project_column.task_status).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_task.column_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project.name).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.template_tasks).toBe('pii');
@@ -31,8 +35,13 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 25 commands and 14 queries with consistent module prefix', () => {
+  it('exports all 31 commands and 14 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
+      'projects.column.create',
+      'projects.column.delete',
+      'projects.column.init_defaults',
+      'projects.column.reorder',
+      'projects.column.update',
       'projects.dependency.add',
       'projects.dependency.remove',
       'projects.member.add',
@@ -46,6 +55,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.recurring.advance',
       'projects.task.add',
       'projects.task.create',
+      'projects.task.move_column',
       'projects.task.recurrence.clear',
       'projects.task.recurrence.set',
       'projects.task.remove',
@@ -85,6 +95,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       }
       if (
         command.name === 'projects.task.create' ||
+        command.name === 'projects.task.move_column' ||
+        command.name === 'projects.column.delete' ||
         command.name === 'projects.project.create_from_template' ||
         command.name === 'projects.recurring.advance' ||
         command.name.startsWith('projects.tasks_from_note.') ||

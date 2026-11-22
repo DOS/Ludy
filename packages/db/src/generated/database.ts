@@ -244,6 +244,7 @@ export interface CroveNotesSchema {
 
 export interface CroveProjectsSchema {
   'crove_projects.project': ProjectsProjectTable;
+  'crove_projects.project_column': ProjectsProjectColumnTable;
   'crove_projects.project_member': ProjectsProjectMemberTable;
   'crove_projects.project_task': ProjectsProjectTaskTable;
   'crove_projects.task_dependency': ProjectsTaskDependencyTable;
@@ -3771,6 +3772,20 @@ export interface NotesTodoTable {
   section_id: string | null;
 }
 
+/** crove_projects.project_column */
+export interface ProjectsProjectColumnTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  name: string;
+  task_status: string;
+  color: Generated<string>;
+  wip_limit: number | null;
+  sort_key: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_projects.project_member */
 export interface ProjectsProjectMemberTable {
   org_id: string;
@@ -3809,6 +3824,7 @@ export interface ProjectsProjectTaskTable {
   recurrence_last_due: string | null;
   recurrence_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   recurrence_source_task_id: string | null;
+  column_id: string | null;
 }
 
 /** crove_projects.task_dependency */

@@ -4618,6 +4618,12 @@ export function createRpcHandler(
       listDependencies: os.projects.listDependencies.handler(projectsQuery('projects.dependency.list')),
       addDependency: os.projects.addDependency.handler(projectsCommand('projects.dependency.add')),
       removeDependency: os.projects.removeDependency.handler(projectsCommand('projects.dependency.remove')),
+      initDefaultColumns: os.projects.initDefaultColumns.handler(projectsCommand('projects.column.init_defaults')),
+      createColumn: os.projects.createColumn.handler(projectsCommand('projects.column.create')),
+      updateColumn: os.projects.updateColumn.handler(projectsCommand('projects.column.update')),
+      reorderColumn: os.projects.reorderColumn.handler(projectsCommand('projects.column.reorder')),
+      deleteColumn: os.projects.deleteColumn.handler(projectsCommand('projects.column.delete')),
+      moveTaskColumn: os.projects.moveTaskColumn.handler(projectsCommand('projects.task.move_column')),
     },
     sign: {
       envelope: {

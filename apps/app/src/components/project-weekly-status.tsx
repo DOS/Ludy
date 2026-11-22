@@ -24,7 +24,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { taskDueDay } from '../lib/agents.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { projectWeeklyStatusQueryKey } from '../lib/projects.ts';
+import { COLUMN_COLOR_DOT_CLASS, projectWeeklyStatusQueryKey } from '../lib/projects.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { installedModules } from '../lib/org-modules.ts';
@@ -338,6 +338,34 @@ export function ProjectWeeklyStatus({
               </div>
             ))}
           </dl>
+
+          {data.columns && data.columns.length > 0 && (
+            <div className="space-y-1.5" data-testid="project-weekly-status-columns">
+              <h4 className="text-xs font-medium text-muted-foreground">{t('columnsTitle')}</h4>
+              <div className="flex flex-wrap gap-2">
+                {data.columns.map((col) => {
+                  const overWip = col.wipLimit !== null && col.taskCount > col.wipLimit;
+                  return (
+                    <Badge
+                      key={col.id}
+                      variant={overWip ? 'warning' : 'outline'}
+                      className="gap-1.5 py-1 text-xs tabular-nums"
+                    >
+                      <span className={`size-2 rounded-full ${COLUMN_COLOR_DOT_CLASS[col.color]}`} aria-hidden="true" />
+                      <span>{col.name}</span>
+                      <span>
+                        {col.wipLimit === null
+                          ? f.number(col.taskCount)
+                          : overWip
+                            ? t('columnsOverWip', { count: String(col.taskCount), limit: String(col.wipLimit) })
+                            : `${col.taskCount}/${col.wipLimit}`}
+                      </span>
+                    </Badge>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {data.ai === 'used' && data.sentences.length > 0 ? (
             <div className="rounded-lg border border-border bg-muted/25 p-3" data-testid="project-weekly-status-summary">
