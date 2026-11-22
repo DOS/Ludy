@@ -714,32 +714,36 @@ export async function sweepSocialPublishing(
   for (let i = 0; i < distinct.length; i += 20) {
     await Promise.all(distinct.slice(i, i + 20).map(async (org) => void on.set(org, await orgOn(org))));
   }
-  const failedLate = new Set<string>();
-  const onOrgs = distinct.filter((org) => on.get(org) === true);
-  for (let i = 0; i < onOrgs.length; i += 20) {
-    await Promise.all(
-      onOrgs.slice(i, i + 20).map(async (org) => {
-        for (const id of await failLate(org).catch((error: unknown) => {
+  // Per org, up to 20 at a time: the org's late variants are failed together first (#3462), then the jobs of the rest go out, so a big backlog of one org delays no other org's posts.
+  const byOrg = new Map<string, typeof candidates>();
+  for (const r of candidates) if (on.get(r.org_id) === true) byOrg.set(r.org_id, [...(byOrg.get(r.org_id) ?? []), r]);
+  const orgs = [...byOrg.keys()];
+  let queued = 0;
+  let next = 0;
+  // Inline, not a named helper: the egress invariant names a send by its enclosing function.
+  await Promise.all(Array.from({ length: Math.min(20, orgs.length) }, async () => {
+    for (let org = orgs[next++]; org !== undefined; org = orgs[next++]) {
+      const failedLate = new Set(
+        await failLate(org).catch((error: unknown) => {
           console.warn(`[social-publish] late posts of org ${org.slice(0, 8)} not failed together (${error instanceof Error ? error.name : typeof error})`);
           return [] as readonly string[];
-        })) {
-          failedLate.add(id);
-        }
-      }),
-    );
-  }
-  const due = candidates.filter((r) => on.get(r.org_id) === true && !failedLate.has(r.variant_id));
-  await Promise.all(
-    due.map((r) =>
-      boss.send(socialPublishQueue(r.provider), { orgId: r.org_id, variantId: r.variant_id, provider: r.provider } satisfies SocialPublishJob, {
-        singletonKey: jobKey(r.org_id, socialPublishQueue(r.provider), r.variant_id),
-        retryLimit: SOCIAL_PUBLISH_RETRY_LIMIT,
-        retryDelay: 30,
-        retryBackoff: true,
-      }),
-    ),
-  );
-  return due.length;
+        }),
+      );
+      const due = (byOrg.get(org) ?? []).filter((r) => !failedLate.has(r.variant_id));
+      await Promise.all(
+        due.map((r) =>
+          boss.send(socialPublishQueue(r.provider), { orgId: r.org_id, variantId: r.variant_id, provider: r.provider } satisfies SocialPublishJob, {
+            singletonKey: jobKey(r.org_id, socialPublishQueue(r.provider), r.variant_id),
+            retryLimit: SOCIAL_PUBLISH_RETRY_LIMIT,
+            retryDelay: 30,
+            retryBackoff: true,
+          }),
+        ),
+      );
+      queued += due.length;
+    }
+  }));
+  return queued;
 }
 
 /**
@@ -2282,7 +2286,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         deps.workerDb,
         publishing,
         (orgId) => deps.runtime.appOn(orgId, 'social'),
-        async (orgId) => (await deps.runtime.execute<{ variantIds: string[] }>('social.publish.fail_late', {}, { actor: { type: 'system', component: 'social.publish' }, orgId })).variantIds,
+        async (orgId) => {
+          const as = { actor: { type: 'system', component: 'social.publish' }, orgId } as const;
+          // A cheap read first: an org with nothing late runs no command and writes no audit row.
+          if (!(await deps.runtime.query<boolean>('social.publish.has_late', {}, as))) return [];
+          return (await deps.runtime.execute<{ variantIds: string[] }>('social.publish.fail_late', {}, as)).variantIds;
+        },
       );
     } catch (error) {
       console.error('[social-publish] sweep', error);

@@ -108,6 +108,12 @@ describe('notification mail for the late posts a long switch-off failed (#3462)'
     expect(mail?.html).toContain('12 bài đăng');
   });
 
+  it('names a count of a thousand or more, up to what the notice accepts', async () => {
+    const mail = await render({ kind: 'failed', org: 'Cửa hàng A', late: '1', count: '12345', path: '/o/cua-hang-a/social?tab=attention' });
+    expect(mail?.text).toContain('12345 bài đăng không thành công vì đã quá giờ hẹn');
+    expect(await render({ kind: 'failed', org: 'A', late: '1', count: '1234567', path: '/o/cua-hang-a/social?tab=attention' })).toBeNull();
+  });
+
   it('refuses the link for any other kind, and a count it did not write', async () => {
     expect(await render({ kind: 'review_requested', org: 'A', path: '/o/cua-hang-a/social?tab=attention' })).toBeNull();
     for (const count of [undefined, '', '1', '0', '12a', '<b>', 5]) {

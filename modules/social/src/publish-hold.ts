@@ -95,18 +95,23 @@ export const publishingHold = defineCommand({
 // Fails, with HELD_TOO_LONG, the scheduled variants of the org due more than HELD_TOO_LONG_MS before now, except one
 // waiting in a paused queue (its queue holds it, not this hold). Posts are locked one by one in id order, as every
 // command locks a post before its variants. Returns the variants it failed, with their posts.
-async function failStale(ctx: CommandContext): Promise<Array<{ postId: string; variantId: string }>> {
-  const cutoff = new Date(ctx.now.getTime() - HELD_TOO_LONG_MS);
-  const stale = (postId: string | null) => sql<{ id: string; post_id: string }>`
+const staleSql = (orgId: string, now: Date, postId: string | null) => {
+  const cutoff = new Date(now.getTime() - HELD_TOO_LONG_MS);
+  return sql<{ id: string; post_id: string }>`
     SELECT v.id, v.post_id FROM crove_social.post_variant v
-    WHERE v.org_id = ${ctx.orgId}::uuid AND v.status = 'scheduled' AND (${postId}::uuid IS NULL OR v.post_id = ${postId}::uuid)
+    WHERE v.org_id = ${orgId}::uuid AND v.status = 'scheduled' AND (${postId}::uuid IS NULL OR v.post_id = ${postId}::uuid)
       AND coalesce(v.error_retry_at, v.scheduled_at, v.queue_slot_at) < ${cutoff}
       AND NOT (v.error_retry_at IS NULL AND v.scheduled_at IS NULL AND EXISTS (
         SELECT 1 FROM crove_social.queue q
         WHERE q.org_id = v.org_id AND q.channel_connection_id = v.channel_connection_id AND q.paused))
     ORDER BY v.post_id, v.id`;
+};
+
+// `maxPosts` bounds one run (the sweep's); the release takes them all.
+async function failStale(ctx: CommandContext, maxPosts = Infinity): Promise<Array<{ postId: string; variantId: string }>> {
+  const stale = (postId: string | null) => staleSql(ctx.orgId, ctx.now, postId);
   const { rows } = await stale(null).execute(ctx.trx);
-  const posts = [...new Set(rows.map((r) => r.post_id))];
+  const posts = [...new Set(rows.map((r) => r.post_id))].slice(0, maxPosts);
   const failed: Array<{ postId: string; variantId: string }> = [];
   for (const postId of posts) {
     await lockPost(ctx.trx, ctx.orgId, postId);
@@ -184,17 +189,18 @@ export const publishFailLate = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
     // The hold's lock shared, as the publish steps take it: a hold in progress commits first, and a sweep every few seconds never blocks a publish step.
     if (await publishingHeld(ctx)) return { failed: 0, variantIds: [] };
-    const failed = await failStale(ctx);
-    const [only] = failed;
-    if (!only) return { failed: 0, variantIds: [] };
-    ctx.audit({ failed: failed.length });
-    if (failed.length === 1) {
-      await ctx.emit('social.variant.failed', { post_id: only.postId, variant_id: only.variantId });
+    // At most LATE_FAIL_POSTS_MAX posts a run, so one transaction stays short; the next sweep goes on with the rest (and a huge backlog tells once per run).
+    const failed = await failStale(ctx, LATE_FAIL_POSTS_MAX);
+    const posts = [...new Set(failed.map((f) => f.postId))];
+    if (posts.length === 0) return { failed: 0, variantIds: [] };
+    ctx.audit({ failed: failed.length, posts: posts.length });
+    if (posts.length === 1) {
+      // One post (on one channel or several): the ordinary notice of each failed channel, as before, opening the post.
+      for (const f of failed) await ctx.emit('social.variant.failed', { post_id: f.postId, variant_id: f.variantId });
     } else {
-      const posts = [...new Set(failed.map((f) => f.postId))];
-      const authors = await ctx.trx.selectFrom('crove_social.post').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('id', 'in', posts.slice(0, 1000)).execute();
+      const authors = await ctx.trx.selectFrom('crove_social.post').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('id', 'in', posts).execute();
       await ctx.emit('social.publishing.late_failed', {
-        count: failed.length,
+        count: posts.length,
         authors: authors.map((a) => a.author_user_id).filter((u): u is string => u !== null).slice(0, LATE_FAILED_AUTHORS_MAX),
       });
     }
@@ -202,8 +208,22 @@ export const publishFailLate = defineCommand({
   },
 });
 
+// Whether the org has a variant over an hour late (outside a hold): the sweep asks this read first, so an org with nothing late costs one query and writes no audit row.
+export const publishHasLate = defineQuery({
+  name: 'social.publish.has_late',
+  input: z.strictObject({}),
+  access: 'system',
+  handler: async (ctx): Promise<boolean> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    const { rows } = await sql<{ late: boolean }>`SELECT EXISTS (${staleSql(ctx.orgId, new Date(), null)}) AS late`.execute(ctx.trx);
+    return rows[0]?.late === true;
+  },
+});
+
+// The most posts one fail_late run fails, and the authors one combined notice names.
+export const LATE_FAIL_POSTS_MAX = 1000;
 // The authors one combined notice names, at most: the notice's people are these and the org's owners and admins.
 export const LATE_FAILED_AUTHORS_MAX = 100;
 
 export const publishHoldCommands = [publishingHold, publishingRelease, publishFailLate];
-export const publishHoldQueries = [publishingHoldGet];
+export const publishHoldQueries = [publishingHoldGet, publishHasLate];

@@ -34,6 +34,8 @@ const LEAD: Record<string, string> = {
 const DUE = /^\d{2}:\d{2} \d{2}\/\d{2}\/\d{4}$/;
 // A bulk assignment's count of posts (#1359).
 const COUNT = /^[1-9]\d{0,2}$/;
+// The count of late posts a combined failed notice names (#3462): up to the 100000 the dispatch accepts.
+const LATE_COUNT = /^[1-9]\d{0,5}$/;
 // A ratio as the notification wrote it (#1132), shown the Vietnamese way (2,5); at least `min`, else none.
 const RATIO = /^\d{1,4}(\.\d)?$/;
 const ratioVi = (value: unknown, min = 0): string | null => (typeof value === 'string' && RATIO.test(value) && Number(value) >= min ? value.replace('.', ',') : null);
@@ -49,9 +51,9 @@ export async function renderNotificationMail(input: MailTemplateInput): Promise<
   // The posts that need a person are a combined failed notice's link only (#3462).
   const attention = path.endsWith('/social?tab=attention');
   if (attention && kind !== 'failed') return null;
-  const lateMany = kind === 'failed' && typeof count === 'string' && COUNT.test(count) && Number(count) >= 2;
+  const lateMany = kind === 'failed' && typeof count === 'string' && LATE_COUNT.test(count) && Number(count) >= 2;
   if (attention && !lateMany) return null;
-  const many = (kind === 'assigned' || lateMany) && typeof count === 'string' && COUNT.test(count);
+  const many = kind === 'assigned' && typeof count === 'string' && COUNT.test(count);
   const key =
     kind === 'decided'
       ? `decided_${typeof decision === 'string' ? decision : ''}`
@@ -66,7 +68,7 @@ export async function renderNotificationMail(input: MailTemplateInput): Promise<
             : kind;
   const lead = LEAD[key];
   if (!lead) return null;
-  const leadText = lead.replaceAll('{brand}', input.brand).replaceAll('{count}', many ? (count as string) : '');
+  const leadText = lead.replaceAll('{brand}', input.brand).replaceAll('{count}', many || lateMany ? (count as string) : '');
   const url = `${input.publicUrl.replace(/\/+$/, '')}${path}`;
   const open = attention ? 'Xem các bài cần xử lý' : path.endsWith('/channels') ? 'Mở trang kênh' : path.includes('/social/new?') ? 'Viết bài cho kênh này' : mine ? 'Xem các bài được giao cho bạn' : 'Mở bài viết';
   // When the assigned post is due (#1359).
