@@ -1718,3 +1718,195 @@ export const zSignCaRequestInitiateInput = z.strictObject({
 export const zSignCaRequestListResult = z.strictObject({
   items: z.array(zSignCaSigningRequestRecord),
 });
+
+// eSign Slice 4e (#3821): post-signature structured agreement terms, renewal notice windows, and milestone obligations.
+export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+export const zSignObligationStatus = z.enum(SIGN_OBLIGATION_STATUSES);
+
+export const SIGN_OBLIGATION_ITEM_STATUSES = ['pending', 'completed'] as const;
+export const zSignObligationItemStatus = z.enum(SIGN_OBLIGATION_ITEM_STATUSES);
+
+export const SIGN_OBLIGATION_CITATION_FIELDS = [
+  'counterpartyName',
+  'effectiveDate',
+  'expiryDate',
+  'renewalNoticeDays',
+  'autoRenew',
+  'contractValue',
+] as const;
+export const zSignObligationCitationField = z.enum(SIGN_OBLIGATION_CITATION_FIELDS);
+
+export const SIGN_OBLIGATION_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'not_ready',
+  'not_completed',
+  'no_text',
+  'empty',
+  'failed',
+] as const;
+export const zSignObligationAiOutcome = z.enum(SIGN_OBLIGATION_AI_OUTCOMES);
+export type SignObligationAiOutcome = z.infer<typeof zSignObligationAiOutcome>;
+
+export const zSignObligationDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'ISO calendar date YYYY-MM-DD');
+export const zSignContractDecimal = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Non-negative decimal string (up to 4 decimal places)');
+export const zSignCurrencyCode = z.string().regex(/^[A-Z]{3}$/, 'ISO 4217 3-letter currency code');
+
+export const zSignObligationCitation = z.strictObject({
+  field: zSignObligationCitationField,
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string().min(1).max(1000),
+});
+export type SignObligationCitationContract = z.infer<typeof zSignObligationCitation>;
+
+export const zSignObligationItem = z.strictObject({
+  id: z.string().min(1).max(80),
+  title: z.string().min(1).max(300),
+  dueDate: zSignObligationDate.nullable(),
+  status: zSignObligationItemStatus,
+  completedAt: z.string().nullable(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  quoteExcerpt: z.string().max(1000).nullable(),
+  proposedByAi: z.boolean(),
+});
+export type SignObligationItemContract = z.infer<typeof zSignObligationItem>;
+
+export const zSignProposedObligationItem = z.strictObject({
+  id: z.string().min(1).max(80),
+  title: z.string().min(1).max(300),
+  dueDate: zSignObligationDate.nullable(),
+  status: zSignObligationItemStatus,
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string().min(1).max(1000),
+  proposedByAi: z.literal(true),
+});
+
+export const zSignObligationProposal = z.strictObject({
+  counterpartyName: z.string().nullable(),
+  effectiveDate: zSignObligationDate.nullable(),
+  expiryDate: zSignObligationDate.nullable(),
+  renewalNoticeDays: z.number().int().min(0).max(365).nullable(),
+  autoRenew: z.boolean(),
+  contractValue: zSignContractDecimal.nullable(),
+  currency: zSignCurrencyCode,
+  citations: z.array(zSignObligationCitation),
+  obligations: z.array(zSignProposedObligationItem),
+  proposedByAi: z.literal(true),
+});
+export type SignObligationProposalContract = z.infer<typeof zSignObligationProposal>;
+
+export const zSignEnvelopeObligationRecord = z.strictObject({
+  id: zId,
+  orgId: zId,
+  envelopeId: zId,
+  status: zSignObligationStatus,
+  counterpartyName: z.string().nullable(),
+  effectiveDate: zSignObligationDate.nullable(),
+  expiryDate: zSignObligationDate.nullable(),
+  renewalNoticeDays: z.number().int().min(0).max(365).nullable(),
+  autoRenew: z.boolean(),
+  contractValue: zSignContractDecimal.nullable(),
+  currency: zSignCurrencyCode,
+  obligations: z.array(zSignObligationItem),
+  proposal: zSignObligationProposal.nullable(),
+  promptVersion: z.string().nullable(),
+  confirmedBy: zId.nullable(),
+  confirmedAt: z.string().nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopeObligationRecordContract = z.infer<typeof zSignEnvelopeObligationRecord>;
+
+export const zSignObligationGetResult = z.strictObject({
+  obligation: zSignEnvelopeObligationRecord.nullable(),
+  canEdit: z.boolean(),
+});
+
+export const zSignObligationRenewalsListInput = z.strictObject({
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export const zSignObligationRenewalListItem = z.strictObject({
+  envelope: zSignEnvelopeSummary,
+  obligation: zSignEnvelopeObligationRecord,
+  renewalNoticeDate: zSignObligationDate.nullable(),
+  daysUntilNotice: z.number().int().nullable(),
+  daysUntilExpiry: z.number().int().nullable(),
+  pendingObligationCount: z.number().int().min(0),
+  overdueObligationCount: z.number().int().min(0),
+  nextObligationDueDate: zSignObligationDate.nullable(),
+});
+export type SignObligationRenewalListItem = z.infer<typeof zSignObligationRenewalListItem>;
+
+export const zSignObligationRenewalsListResult = z.strictObject({
+  items: z.array(zSignObligationRenewalListItem),
+});
+
+export const zSignObligationExtractInput = z.strictObject({
+  envelopeId: zId,
+  pages: z
+    .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
+    .max(SIGN_MAX_PAGES)
+    .optional(),
+});
+
+export const zSignObligationExtractResult = z.strictObject({
+  ai: zSignObligationAiOutcome,
+  status: z.enum([
+    'proposed',
+    'confirmed',
+    'off',
+    'budget',
+    'busy',
+    'not_ready',
+    'not_completed',
+    'no_text',
+    'empty',
+    'failed',
+  ]),
+  obligation: zSignEnvelopeObligationRecord.nullable(),
+});
+
+export const zSignObligationItemInput = z.strictObject({
+  id: z.string().trim().min(1).max(80).optional(),
+  title: z.string().trim().min(1).max(300),
+  dueDate: zSignObligationDate.nullable().optional(),
+  status: zSignObligationItemStatus.default('pending'),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable().optional(),
+  quoteExcerpt: z.string().trim().max(1000).nullable().optional(),
+  proposedByAi: z.boolean().optional(),
+});
+
+export const zSignObligationUpsertInput = z.strictObject({
+  envelopeId: zId,
+  counterpartyName: z.string().trim().min(1).max(300).nullable().optional(),
+  effectiveDate: zSignObligationDate.nullable().optional(),
+  expiryDate: zSignObligationDate.nullable().optional(),
+  renewalNoticeDays: z.number().int().min(0).max(365).nullable().optional(),
+  autoRenew: z.boolean().default(false),
+  contractValue: z.string().trim().max(64).nullable().optional(),
+  currency: zSignCurrencyCode.default('VND'),
+  obligations: z.array(zSignObligationItemInput).max(50).default([]),
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignObligationDismissInput = z.strictObject({
+  envelopeId: zId,
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignObligationDismissResult = z.strictObject({
+  envelopeId: zId,
+  dismissed: z.boolean(),
+  obligation: zSignEnvelopeObligationRecord.nullable(),
+});
+
+export const zSignObligationCompleteItemInput = z.strictObject({
+  envelopeId: zId,
+  itemId: z.string().trim().min(1).max(80),
+  completed: z.boolean().default(true),
+  idempotencyKey: zId.optional(),
+});

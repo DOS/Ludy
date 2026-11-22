@@ -7,7 +7,7 @@ import type { Dictionary } from '../content/vi';
 import { SITE_URL } from '../content/site';
 
 // Applies a theme the visitor picked earlier before the first paint; without one the page is light.
-const THEME_SCRIPT = `try{var t=localStorage.getItem('crove-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`;
+const THEME_SCRIPT = `try{var t=localStorage.getItem('ludy-theme');if(t===null){var l=localStorage.getItem('crove-theme');if(l==='light'||l==='dark'){t=l;try{localStorage.setItem('ludy-theme',l);localStorage.removeItem('crove-theme')}catch(e){}}}if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`;
 
 const ICONS: Metadata['icons'] = {
   icon: [

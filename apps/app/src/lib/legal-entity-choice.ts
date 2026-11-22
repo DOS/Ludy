@@ -2,6 +2,7 @@
 // browser, made in the app shell's switcher and read by every finance screen. The server decides what the caller may
 // see (le_scope); the choice only picks among the entities it answered, and falls back when the kept one is gone.
 import { useSyncExternalStore } from 'react';
+import { readMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 export interface VisibleEntity {
   id: string;
@@ -48,11 +49,12 @@ export function exportQuery(params: Record<string, string>, legalEntityId: strin
 // page's life only.
 const memory = new Map<string, string>();
 const listeners = new Set<() => void>();
-const storageKey = (slug: string) => `crove.legalEntity.${slug}`;
+const storageKey = (slug: string) => `ludy.legalEntity.${slug}`;
+const legacyStorageKey = (slug: string) => `crove.legalEntity.${slug}`;
 
 export function keptEntity(slug: string): string | null {
   try {
-    const stored = window.localStorage.getItem(storageKey(slug));
+    const stored = readMigratedItem(window.localStorage, storageKey(slug), legacyStorageKey(slug));
     if (stored) return stored;
   } catch {
     // Storage refused: fall through to the page's own memory.
@@ -63,7 +65,7 @@ export function keptEntity(slug: string): string | null {
 export function keepEntity(slug: string, id: string): void {
   memory.set(slug, id);
   try {
-    window.localStorage.setItem(storageKey(slug), id);
+    writeMigratedItem(window.localStorage, storageKey(slug), legacyStorageKey(slug), id);
   } catch {
     // Kept in memory only.
   }

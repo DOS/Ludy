@@ -16,9 +16,9 @@ import { coworkerNames } from './coworker-names.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-// The reads the lines agreed to expose (issue #2383, #2596, #3813): Accounting finance.today, Notes and CRM crm.today and
-// kernel.conversation.today, Projects projects.today, Marketing social.today and ads.today, eSign sign.today; and the kernel's own cross-app rules (signals.ts, Vy plan C4).
-export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered'];
+// The reads the lines agreed to expose (issue #2383, #2596, #3813, #3821): Accounting finance.today, Notes and CRM crm.today and
+// kernel.conversation.today, Projects projects.today, Marketing social.today and ads.today, eSign sign.today and sign.obligations.today; and the kernel's own cross-app rules (signals.ts, Vy plan C4).
+export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'sign.obligations.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered'];
 
 // coworkers: how the answer's coworker names are read (the org's agents by default); a unit test of the merge passes a stub.
 export function todayQuery(options: { reads?: readonly string[]; coworkers?: (ctx: QueryContext) => Promise<TodayCoworkers> } = {}) {

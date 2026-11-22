@@ -144,12 +144,16 @@ describe('a share waiting for sign-in', () => {
     const now = 1_800_000_000_000;
     rememberShare({ link: 'https://a.example/', text: 'x', org: null }, now + 1);
     expect(pendingShare(now)).toBeNull();
-    storage.setItem('crove-pending-share', '{not json');
+    storage.setItem('ludy-pending-share', '{not json');
     expect(pendingShare(now)).toBeNull();
-    storage.setItem('crove-pending-share', JSON.stringify({ link: 'javascript:x', text: 'y', org: '../x', savedAt: now }));
+    storage.setItem('ludy-pending-share', JSON.stringify({ link: 'javascript:x', text: 'y', org: '../x', savedAt: now }));
     expect(pendingShare(now)).toEqual({ link: null, text: 'y', org: null });
     forgetShare();
     expect(storage.items.size).toBe(0);
+    storage.setItem('crove-pending-share', JSON.stringify({ link: 'https://a.example/', text: 'legacy', org: 'acme', savedAt: now }));
+    expect(pendingShare(now)).toEqual({ link: 'https://a.example/', text: 'legacy', org: 'acme' });
+    expect(storage.items.has('ludy-pending-share')).toBe(true);
+    expect(storage.items.has('crove-pending-share')).toBe(false);
   });
 });
 

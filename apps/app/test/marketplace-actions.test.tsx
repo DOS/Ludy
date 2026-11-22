@@ -44,13 +44,14 @@ const lineA = '00000000-0000-4000-8000-0000000000b1';
 const lineB = '00000000-0000-4000-8000-0000000000b2';
 const documentId = '00000000-0000-4000-8000-0000000000c1';
 
-const EMPTY: MarketplaceWorklist = { postingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [], accruals: [], accrualReversals: [] };
+const EMPTY: MarketplaceWorklist = { postingConfirmed: true, salesPostingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [], accruals: [], accrualReversals: [] };
 const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => ({
   postingConfirmed: true,
+  salesPostingConfirmed: true,
   halfReversed: [],
   accruals: [],
   accrualReversals: [],
-  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', months: ['2026-10'], net: '335000', waitingLines: 0, proposalId: null }],
+  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', months: ['2026-10'], net: '335000', waitingLines: 0, waitingVatMonths: [], proposalId: null }],
   payouts: [
     {
       settlementId,
@@ -100,11 +101,23 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
   });
 
   it('while the account map is not confirmed shows the gate line and the three actions disabled', () => {
-    const html = render(FULL({ postingConfirmed: false }));
+    const html = render(FULL({ postingConfirmed: false, salesPostingConfirmed: false }));
     expect(html).toContain('data-testid="marketplace-gate"');
     expect(html).toContain('Waiting for the accountant to confirm the marketplace account map (#2520)');
     for (const id of ['marketplace-post', 'marketplace-record', 'marketplace-clear']) expect(disabled(html, id)).toBe(true);
     expect(cache.calls).toEqual([]);
+  });
+
+  it('with only the sales path confirmed (the shipped maps) the settlement post is enabled while the payout and clearing actions stay locked (#4303 S3b)', () => {
+    const html = render(FULL({ postingConfirmed: false, salesPostingConfirmed: true }));
+    expect(disabled(html, 'marketplace-post')).toBe(false);
+    for (const id of ['marketplace-record', 'marketplace-clear']) expect(disabled(html, id)).toBe(true);
+    // The payout and clearing rows are still locked, so the line says why.
+    expect(html).toContain('data-testid="marketplace-gate"');
+    // Only settlements in view: nothing is locked, so no gate line.
+    const settlementsOnly = render({ ...EMPTY, postingConfirmed: false, settlements: FULL().settlements });
+    expect(disabled(settlementsOnly, 'marketplace-post')).toBe(false);
+    expect(settlementsOnly).not.toContain('data-testid="marketplace-gate"');
   });
 
   it('once the map is confirmed shows no gate line and the three actions enabled', () => {
@@ -177,6 +190,33 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(html).toContain('Waiting for the delivery day');
   });
 
+  it('shows a settlement whose sales lack a VAT rate for their delivery day as waiting, with a link to the setting and no button', () => {
+    const base = FULL();
+    const one = base.settlements[0]!;
+    const waiting = { ...base, settlements: [{ ...one, months: ['2026-09', '2026-10'], waitingVatMonths: ['2026-10'] }] };
+    const html = render(waiting);
+    expect(html).toContain('data-testid="marketplace-post-waiting-vat"');
+    expect(html).toContain('Waiting for the VAT rate of 2026-10.');
+    // Without a role read yet (a member, or the read pending) the link is not offered: the person is told whom to ask.
+    expect(html).not.toContain('/settings/accounting');
+    expect(html).toContain('marketplace-vat-ask');
+    expect(html).toContain('Ask an owner or admin to enter it.');
+    expect(html).toContain('2026-09, 2026-10');
+    expect(html).not.toContain('data-testid="marketplace-post"');
+    expect(render(waiting, 'vi')).toContain('Chờ thuế suất GTGT của 2026-10.');
+    // An owner or admin gets the link, as a 44 px target.
+    cache.current.setQueryData(['org', 'get'], { role: 'admin' });
+    const owner = render(waiting);
+    expect(owner).toContain('/settings/accounting');
+    expect(owner).toContain('min-h-11');
+    expect(owner).not.toContain('marketplace-vat-ask');
+    cache.current.setQueryData(['org', 'get'], { role: 'member' });
+    expect(render(waiting)).toContain('marketplace-vat-ask');
+    cache.current.removeQueries({ queryKey: ['org', 'get'] });
+    // The same settlement with every day covered has its button again.
+    expect(render({ ...base, settlements: [{ ...one, months: ['2026-09', '2026-10'] }] })).toContain('data-testid="marketplace-post"');
+  });
+
   it('lists a half-reversed settlement with how many months still stand, in both languages, with no button', () => {
     const half = [{ settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', standingMonths: 2, reversedMonths: 1 }];
     const en = render({ ...EMPTY, halfReversed: half }, 'en');
@@ -246,7 +286,7 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
   });
 
   it('reads in Vietnamese', () => {
-    const html = render(FULL({ postingConfirmed: false }), 'vi');
+    const html = render(FULL({ postingConfirmed: false, salesPostingConfirmed: false }), 'vi');
     expect(html).toContain('Chờ kế toán xác nhận bảng tài khoản sàn (#2520)');
     expect(html).toContain('Ghi sổ');
     expect(html).toContain('Ghi nhận tiền về');

@@ -162,7 +162,7 @@ describe('DESIGN.md token block', () => {
   });
 
   it('has the motion values of the stylesheets', () => {
-    expect(siteCss).toContain(`animation: crove-travel-up ${text('motion.site-travel-up')};`);
+    expect(siteCss).toContain(`animation: ludy-travel-up ${text('motion.site-travel-up')};`);
     expect(appCss).toContain(`animation-duration: ${text('motion.app-reduced-animation-duration')} !important;`);
     expect(siteCss).toContain(`animation-duration: ${text('motion.site-reduced-animation-duration')} !important;`);
   });
