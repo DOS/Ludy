@@ -646,13 +646,38 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     );
     expect(soleAudit.rows[0]?.detail).toMatchObject({ selfApproved: true });
 
-    // (d) Direct reason tampering on non-erased rows fails (42501); employee erase wipes reason + decision_note (pending and terminal) and masks selfLeaveRequests.
+    // (d) Direct reason tampering on non-erased rows fails (42501); employee erase wipes reason + decision_note,
+    // cancels non-terminal requests, blocks post-erasure transitions, and masks both selfLeaveRequests and leaveRequestList.
+    const empActive = (await hire(o.owner, o.orgId, 'Trần Thị Bình', deptOps)).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empActive, userId: o.staffB });
+    const activeReason = 'Đơn nhân viên còn làm';
+    const activeNote = 'QL giữ nguyên ghi chú';
+    const subActive = await o.exec<HrSelfLeaveSubmitResult>(o.staffB, 'hr.self.leave.request_submit', {
+      startOn: '2026-04-22',
+      endOn: '2026-04-22',
+      kind: 'annual_leave',
+      days: '1.0',
+      reason: activeReason,
+    });
+    await o.exec(o.manager, 'hr.leave_request.approve_l1', { requestId: subActive.requestId, note: activeNote });
+
     const subPendingForErase = await o.exec<HrSelfLeaveSubmitResult>(o.staffA, 'hr.self.leave.request_submit', {
       startOn: '2026-04-20',
       endOn: '2026-04-20',
       kind: 'annual_leave',
       days: '1.0',
-      reason: 'Lý do riêng chờ duyệt',
+      reason: 'Lý do riêng chờ duyệt L1',
+    });
+    const subPendingFinalForErase = await o.exec<HrSelfLeaveSubmitResult>(o.staffA, 'hr.self.leave.request_submit', {
+      startOn: '2026-04-21',
+      endOn: '2026-04-21',
+      kind: 'annual_leave',
+      days: '1.0',
+      reason: 'Lý do riêng chờ duyệt chốt',
+    });
+    await o.exec(o.manager, 'hr.leave_request.approve_l1', {
+      requestId: subPendingFinalForErase.requestId,
+      note: 'QL đồng ý bước 1 trước xóa',
     });
     await expect(
       adminPool.query(`UPDATE crove_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subPendingForErase.requestId]),
@@ -684,12 +709,42 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     );
     expect(erased.cleared).toContain('leave request notes');
 
-    const dbNotes = await adminPool.query<{ id: string; reason: string | null; decision_note: string | null }>(
+    const dbNotes = await adminPool.query<{ id: string; status: string; reason: string | null; decision_note: string | null }>(
+      `SELECT id, status, reason, decision_note FROM crove_hr.leave_request WHERE employee_id = $1`,
+      [empStaff],
+    );
+    expect(dbNotes.rows).toHaveLength(4);
+    for (const row of dbNotes.rows) {
+      expect(row.reason).toBeNull();
+      expect(row.decision_note).toBeNull();
+    }
+    expect(dbNotes.rows.find((r) => r.id === subPendingForErase.requestId)?.status).toBe('cancelled');
+    expect(dbNotes.rows.find((r) => r.id === subPendingFinalForErase.requestId)?.status).toBe('cancelled');
+    expect(dbNotes.rows.find((r) => r.id === subApproved.requestId)?.status).toBe('approved');
+    expect(dbNotes.rows.find((r) => r.id === subCancel.requestId)?.status).toBe('cancelled');
+
+    // Post-erasure transitions by L1 manager or owner/admin are rejected with HR_EMPLOYEE_ERASED and never write decision_note.
+    await expect(
+      o.exec(o.manager, 'hr.leave_request.approve_l1', { requestId: subPendingForErase.requestId, note: 'Stale L1 approve' }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+    await expect(
+      o.exec(o.manager, 'hr.leave_request.reject', { requestId: subPendingForErase.requestId, note: 'Stale L1 reject' }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+    await expect(
+      o.exec(o.owner, 'hr.leave_request.approve_l1', { requestId: subPendingForErase.requestId, note: 'Stale owner L1' }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+    await expect(
+      o.exec(o.owner, 'hr.leave_request.reject', { requestId: subPendingFinalForErase.requestId, note: 'Stale owner reject' }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+    await expect(
+      o.exec(o.owner, 'hr.leave_request.approve_final', { requestId: subPendingFinalForErase.requestId, note: 'Stale owner final' }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+
+    const dbNotesAfterGuards = await adminPool.query<{ id: string; reason: string | null; decision_note: string | null }>(
       `SELECT id, reason, decision_note FROM crove_hr.leave_request WHERE employee_id = $1`,
       [empStaff],
     );
-    expect(dbNotes.rows).toHaveLength(3);
-    for (const row of dbNotes.rows) {
+    for (const row of dbNotesAfterGuards.rows) {
       expect(row.reason).toBeNull();
       expect(row.decision_note).toBeNull();
     }
@@ -698,11 +753,34 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       scope: 'team',
     });
     const erasedTeamRows = teamAfterErase.filter((r) => r.employeeId === empStaff);
-    expect(erasedTeamRows).toHaveLength(3);
+    expect(erasedTeamRows).toHaveLength(4);
     for (const row of erasedTeamRows) {
       expect(row.employeeName).toBe('');
       expect(row.reason).toBeNull();
       expect(row.decisionNote).toBeNull();
     }
+
+    const adminQueueAfterErase = await o.query<HrLeaveRequestView[]>(o.owner, 'hr.leave_request.list', {});
+    const erasedAdminRows = adminQueueAfterErase.filter((r) => r.employeeId === empStaff);
+    expect(erasedAdminRows).toHaveLength(4);
+    for (const row of erasedAdminRows) {
+      expect(row.employeeName).toBe('');
+      expect(row.reason).toBeNull();
+      expect(row.decisionNote).toBeNull();
+    }
+    const erasedAdminByEmp = await o.query<HrLeaveRequestView[]>(o.owner, 'hr.leave_request.list', {
+      employeeId: empStaff,
+    });
+    expect(erasedAdminByEmp).toHaveLength(4);
+    for (const row of erasedAdminByEmp) {
+      expect(row.employeeName).toBe('');
+      expect(row.reason).toBeNull();
+      expect(row.decisionNote).toBeNull();
+    }
+    expect(adminQueueAfterErase.find((r) => r.id === subActive.requestId)).toMatchObject({
+      employeeName: 'Trần Thị Bình',
+      reason: activeReason,
+      decisionNote: activeNote,
+    });
   });
 });

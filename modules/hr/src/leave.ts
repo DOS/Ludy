@@ -37,7 +37,7 @@ const userOf = (actor: QueryContext['actor']): string => {
 };
 
 const employeeNotFound = () => new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên này');
-const erasedError = () => new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa');
+export const erasedError = () => new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa');
 const entryNotFound = () => new DomainError('HR_LEAVE_ENTRY_NOT_FOUND', 404, 'Không tìm thấy dòng nghỉ phép này');
 
 export async function loadEmployeeForLeave(trx: QueryContext['trx'], orgId: string, employeeId: string, lock: boolean) {

@@ -83,11 +83,19 @@ function statusVariant(status: HrLeaveRequestStatus): 'default' | 'secondary' | 
   return 'secondary';
 }
 
-function SelfPayslipDetail({ lineId, onClose }: { lineId: string; onClose: () => void }) {
+export function SelfPayslipDetail({
+  lineId,
+  onClose,
+  initialExplained = false,
+}: {
+  lineId: string;
+  onClose: () => void;
+  initialExplained?: boolean;
+}) {
   const t = useTranslations('hrMy');
   const tp = useTranslations('hrPayroll');
   const f = useFormat();
-  const [explained, setExplained] = useState(false);
+  const [explained, setExplained] = useState(initialExplained);
 
   const q = useQuery({
     ...orpc.hr.self.payslips.get.queryOptions({ input: { lineId } }),
@@ -112,7 +120,14 @@ function SelfPayslipDetail({ lineId, onClose }: { lineId: string; onClose: () =>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3 print:hidden">
         <h3 className="text-base font-medium">{t('payslips.open')}</h3>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" className={PHONE_TARGET} onClick={() => setExplained((v) => !v)} data-testid="hr-my-payslip-explain">
+          <Button
+            type="button"
+            variant="outline"
+            className={PHONE_TARGET}
+            aria-expanded={explained}
+            onClick={() => setExplained((v) => !v)}
+            data-testid="hr-my-payslip-explain"
+          >
             {t('payslips.explainBtn')}
           </Button>
           <Button type="button" className={PHONE_TARGET} onClick={() => window.print()} data-testid="hr-my-payslip-print">
@@ -129,6 +144,16 @@ function SelfPayslipDetail({ lineId, onClose }: { lineId: string; onClose: () =>
       <p className="mt-1 text-sm">{t('payslips.forEmployee', { name: p.employeeName })}</p>
 
       <table className="mt-4 w-full text-sm">
+        <thead>
+          <tr className="border-b text-xs text-muted-foreground">
+            <th scope="col" className="py-1.5 pr-6 text-left font-medium">
+              {t('payslips.itemCol')}
+            </th>
+            <th scope="col" className="py-1.5 text-right font-medium">
+              {t('payslips.amountCol')}
+            </th>
+          </tr>
+        </thead>
         <tbody>
           {line(tp('bd.baseWage'), b.pay.baseWage, 'base')}
           {b.pay.allowances.map((a, i) => line(a.label, a.paid, `a${i}`))}
@@ -586,7 +611,7 @@ export function HrSelfServicePage() {
               ))}
             </DataTable>
           )}
-          {openLineId && <SelfPayslipDetail lineId={openLineId} onClose={() => setOpenLineId(null)} />}
+          {openLineId && <SelfPayslipDetail key={openLineId} lineId={openLineId} onClose={() => setOpenLineId(null)} />}
         </Card>
       )}
     </>

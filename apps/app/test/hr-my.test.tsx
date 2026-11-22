@@ -38,7 +38,7 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { HrSelfServicePage, buildDeterministicPayslipExplanation, isValidSelfLeaveDays } = await import(
+const { HrSelfServicePage, SelfPayslipDetail, buildDeterministicPayslipExplanation, isValidSelfLeaveDays } = await import(
   '../src/routes/hr-my.tsx'
 );
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
@@ -255,5 +255,21 @@ describe('HR self-service portal UI (#4300)', () => {
     expect(explanation).toContain('2026-10');
     expect(explanation).toContain('20.000.000');
     expect(explanation).toContain('17.500.000');
+
+    cache.current.setQueryData(['hr', 'self', 'payslips', 'get', { lineId: LINE_ID }], payslip);
+    const detailVi = wrap(<SelfPayslipDetail lineId={LINE_ID} onClose={() => {}} />, 'vi');
+    expect(detailVi).toContain('data-testid="hr-my-payslip-detail"');
+    expect(detailVi).toMatch(/<button[^>]*aria-expanded="false"[^>]*data-testid="hr-my-payslip-explain"/);
+    expect(detailVi).toContain('<thead>');
+    expect(detailVi).toContain(`<th scope="col" class="py-1.5 pr-6 text-left font-medium">${viMessages.hrMy.payslips.itemCol}</th>`);
+    expect(detailVi).toContain(`<th scope="col" class="py-1.5 text-right font-medium">${viMessages.hrMy.payslips.amountCol}</th>`);
+    expect(detailVi).not.toContain('data-testid="hr-my-payslip-explanation"');
+
+    const detailEn = wrap(<SelfPayslipDetail lineId={LINE_ID} onClose={() => {}} initialExplained />, 'en');
+    expect(detailEn).toMatch(/<button[^>]*aria-expanded="true"[^>]*data-testid="hr-my-payslip-explain"/);
+    expect(detailEn).toContain('<thead>');
+    expect(detailEn).toContain(`<th scope="col" class="py-1.5 pr-6 text-left font-medium">${enMessages.hrMy.payslips.itemCol}</th>`);
+    expect(detailEn).toContain(`<th scope="col" class="py-1.5 text-right font-medium">${enMessages.hrMy.payslips.amountCol}</th>`);
+    expect(detailEn).toContain('data-testid="hr-my-payslip-explanation"');
   });
 });

@@ -2043,6 +2043,8 @@ export const vi = {
       month: 'Kỳ lương',
       gross: 'Tổng thu nhập',
       net: 'Thực nhận',
+      itemCol: 'Khoản mục',
+      amountCol: 'Số tiền',
       open: 'Xem phiếu lương',
       close: 'Đóng',
       print: 'In / Lưu PDF',
