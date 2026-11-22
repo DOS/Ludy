@@ -529,12 +529,37 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
           ORDER BY t.relname`,
       );
       expect(projTables.map((r) => r.table_name)).toEqual(
-        expect.arrayContaining(['project', 'project_column', 'project_cycle', 'project_member', 'project_task', 'task_dependency']),
+        expect.arrayContaining([
+          'project',
+          'project_column',
+          'project_cycle',
+          'project_member',
+          'project_task',
+          'roadmap_board',
+          'task_dependency',
+        ]),
       );
       for (const row of projTables) {
         expect(row.relrowsecurity, `${row.table_name} RLS enabled`).toBe(true);
         expect(row.has_policy, `${row.table_name} RESTRICTIVE project_visibility policy`).toBe(true);
       }
+
+      const { rows: roadmapTriggers } = await c.query<{ tg: string }>(
+        `SELECT c.relname || '.' || tg.tgname AS tg
+           FROM pg_catalog.pg_trigger tg
+           JOIN pg_catalog.pg_class c ON c.oid = tg.tgrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'crove_projects'
+            AND NOT tg.tgisinternal
+            AND tg.tgenabled = 'O'
+            AND ((c.relname = 'roadmap_board' AND tg.tgname = 'roadmap_board_guard_tr')
+              OR (c.relname = 'project' AND tg.tgname = 'project_roadmap_privacy_guard_tr'))
+          ORDER BY 1`,
+      );
+      expect(roadmapTriggers.map((r) => r.tg)).toEqual([
+        'project.project_roadmap_privacy_guard_tr',
+        'roadmap_board.roadmap_board_guard_tr',
+      ]);
 
       const { rows: extPolicies } = await c.query<{ table_name: string; polname: string }>(
         `SELECT c.relname AS table_name, p.polname
@@ -764,6 +789,16 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       );
       expect(insCycle).toMatchObject({ ok: false, code: '42501' });
       expect(await attemptSql(actor, `DELETE FROM crove_projects.project_cycle WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
+
+      // Cannot link a private project to roadmap_board directly via SQL either (blocked by trigger/RLS).
+      const insBoard = await attemptSql(
+        actor,
+        `INSERT INTO crove_projects.roadmap_board (org_id, slug, title, project_id, created_by) VALUES ($1, $2, $3, $4, $5)`,
+        [orgId, `hijack-board-${targetUid.slice(0, 6)}`, 'Hijack board', privateProjectId, targetUid],
+      );
+      expect(insBoard.ok).toBe(false);
+      expect(['42501', '23514']).toContain((insBoard as { ok: false; code?: string }).code);
+      expect(await attemptSql(actor, `DELETE FROM crove_projects.roadmap_board WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
 
       // Cannot update private task or insert comment on private task.
       expect(await attemptSql(actor, `UPDATE crove_kernel.task SET title = 'Tamper' WHERE org_id = $1 AND id = $2`, [orgId, privateTaskId])).toEqual({ ok: true, rowCount: 0 });
@@ -1076,6 +1111,31 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
       ),
     ).rejects.toMatchObject({ code: 'SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN', status: 422 });
+
+    // Standalone (projectId = null) and org-project roadmap boards work under RESTRICTIVE project_visibility, while
+    // linking a private project fails cleanly.
+    const { board: standaloneBoard } = await appRt.execute<{ board: { id: string } }>(
+      'projects.roadmap.board.create',
+      { title: 'Lộ trình độc lập', slug: 'priv-test-standalone', projectId: null },
+      { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+    );
+    const { board: orgRoadmapBoard } = await appRt.execute<{ board: { id: string } }>(
+      'projects.roadmap.board.create',
+      { title: 'Lộ trình dự án công khai', slug: 'priv-test-org', projectId: orgProjectId },
+      { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      appRt.execute(
+        'projects.roadmap.board.create',
+        { title: 'Lộ trình dự án mật', slug: 'priv-test-private', projectId: privateProjectId },
+        { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'ROADMAP_PRIVATE_PROJECT_FORBIDDEN', status: 422 });
+    const visibleBoardIds = await inContext(
+      userActor('nonMemberMember', () => orgId, () => users.nonMemberMember),
+      async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_projects.roadmap_board ORDER BY created_at')).rows.map((r) => r.id),
+    );
+    expect(visibleBoardIds).toEqual(expect.arrayContaining([standaloneBoard.id, orgRoadmapBoard.id]));
   });
 
   it('allows system context cleanup/deletion on private projects and tasks', async () => {

@@ -205,6 +205,20 @@ export const projectUpdate = defineCommand({
             'Dự án đã có biên bản nghiệm thu eSign chia sẻ nên không thể chuyển sang riêng tư',
           );
         }
+        const linkedBoard = await ctx.trx
+          .selectFrom('crove_projects.roadmap_board')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('project_id', '=', row.id)
+          .limit(1)
+          .executeTakeFirst();
+        if (linkedBoard) {
+          throw new DomainError(
+            'ROADMAP_PRIVATE_PROJECT_FORBIDDEN',
+            422,
+            'Không thể gắn dự án riêng tư vào bảng lộ trình công khai',
+          );
+        }
         await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [userId, row.owner_user_id], ctx.now);
       }
       await ctx.trx

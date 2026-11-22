@@ -589,6 +589,25 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     );
     expect(bystanderPanelOff).toEqual({ pinned: [], latest: [], todos: [] });
 
+    // Switching an org project linked to a public roadmap board to private fails cleanly with 422.
+    const { projectId: roadmapLinkedProjId } = await exec<{ projectId: string }>(
+      o.owner.userId,
+      o.orgId,
+      'projects.project.create',
+      { name: 'Dự án gắn lộ trình công khai', visibility: 'org' },
+    );
+    await exec(o.owner.userId, o.orgId, 'projects.roadmap.board.create', {
+      title: 'Bảng lộ trình công khai',
+      slug: 'priv-flow-roadmap',
+      projectId: roadmapLinkedProjId,
+    });
+    await expect(
+      exec(o.owner.userId, o.orgId, 'projects.project.update', {
+        projectId: roadmapLinkedProjId,
+        visibility: 'private',
+      }),
+    ).rejects.toMatchObject({ code: 'ROADMAP_PRIVATE_PROJECT_FORBIDDEN', status: 422 });
+
     // Org export and purgeOrg cleanly complete on an org holding private projects and linked tasks.
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, o.orgId, { now: () => generatedAt });
