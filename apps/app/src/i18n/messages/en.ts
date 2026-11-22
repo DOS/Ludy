@@ -17295,6 +17295,7 @@ export const en = {
       },
       notification: {
         dispatch: 'Send social notifications',
+        dispatch_removal: 'Send the notice of a failed planned takedown while the app is off',
         list: 'List social notifications',
         mail: 'Mail a notification',
         mute: 'Turn social notifications on or off',
@@ -17360,6 +17361,8 @@ export const en = {
       },
       publish: {
         begin: 'Start publishing to a channel',
+        fail_late: 'Fail the late posts of an organization together',
+        has_late: 'Check whether an organization has late posts',
         record: 'Record a publish to a channel',
       },
       publishing: {

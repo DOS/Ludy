@@ -16,7 +16,7 @@ const LEAD: Record<string, string> = {
   decided_rejected: 'Bài của bạn bị từ chối.',
   failed: 'Một bài đăng không thành công.',
   // Many late posts failed together (#3462).
-  failed_late: '{count} bài đăng không thành công vì đã quá giờ hẹn mà chưa đăng được (ví dụ do ứng dụng bị tắt hoặc hệ thống ngừng chạy lâu). Hãy mở danh sách để đăng ngay, sửa hoặc huỷ từng bài.',
+  failed_late: '{count} bài đăng không thành công vì đã quá giờ hẹn mà chưa đăng được (ví dụ do ứng dụng bị tắt hoặc hệ thống ngừng chạy lâu). Hãy mở danh sách để đăng ngay, sửa hoặc hủy từng bài.',
   // A planned takedown (#861) that did not happen.
   failed_removal: '{brand} chưa tự gỡ được một bài đã hẹn giờ gỡ; bài vẫn còn trên kênh. Hãy gỡ lại từ trang bài viết hoặc gỡ trực tiếp trên nền tảng.',
   needs_attention: 'Một bài đăng cần bạn xử lý trước khi đăng tiếp.',
