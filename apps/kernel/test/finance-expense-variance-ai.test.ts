@@ -78,8 +78,8 @@ describe('expenseVarianceFacts', () => {
     expect(facts).toEqual({
       language: 'vi',
       lines: [
-        { group: '642', direction: 'up', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'single' }] },
-        { group: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'voucher', sourceKind: 'manual', vouchers: 'none' }] },
+        { expenseKind: '642', direction: 'up', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'single' }] },
+        { expenseKind: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'voucher', sourceKind: 'manual', vouchers: 'none' }] },
       ],
     });
     // No amount, percent, date, voucher count or entry id travels in the facts.
@@ -115,7 +115,7 @@ describe('expenseVarianceGroup', () => {
     const { facts } = expenseVarianceFacts({ ...VARIANCE, lines }, 'en');
     expect(facts.lines[0]?.contributors.map((c) => c.vouchers)).toEqual(['none', 'single', 'several']);
     const tt133 = expenseVarianceFacts({ ...VARIANCE, lines: [line('6421'), line('6422')] }, 'en');
-    expect(tt133.facts.lines.map((l) => l.group)).toEqual(['641', '642']);
+    expect(tt133.facts.lines.map((l) => l.expenseKind)).toEqual(['641', '642']);
   });
 });
 

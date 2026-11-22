@@ -42,7 +42,7 @@ export function expenseVarianceFacts(variance: FinanceExpenseVariance, language:
     facts: {
       language,
       lines: lines.map((l) => ({
-        group: expenseVarianceGroup(l.code, variance.regime),
+        expenseKind: expenseVarianceGroup(l.code, variance.regime),
         direction: l.direction,
         against: l.against,
         isNew: l.isNew,

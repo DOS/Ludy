@@ -14553,6 +14553,7 @@ export const en = {
       DOCUMENT_REPOST: 'An invoice is posted once and cannot be posted again. If it is wrong, reverse its entry and record the replacement or adjustment invoice as a new document.',
       LEGAL_ENTITY_REQUIRED: 'Choose a legal entity before viewing or posting to the books.',
       LEGAL_ENTITY_NOT_ALLOWED: "You don't have access to this legal entity's books.",
+      MONTH_NOT_ENDED: 'This month has not ended yet. Choose a month that has passed to compare costs.',
       SOURCE_LEGAL_ENTITY: 'This document was posted in another legal entity and cannot be posted again in a different one.',
       LEGAL_ENTITY_MISMATCH: 'This proposal would be recorded in a different legal entity from its own',
       LEGAL_ENTITY_MOVE_REFUSED: 'This proposal belongs to another legal entity and cannot be moved. Reject it and upload the document again in the entity whose books it goes to',
@@ -15570,6 +15571,7 @@ export const en = {
       },
     },
     finance: {
+      expense_variance: 'View the expense lines that moved in a month against last month and the 3-month average',
       today: 'Read what needs you in accounting today',
       signals: {
         overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',

@@ -30,7 +30,7 @@ export interface ExpenseVarianceNoteContributor {
 
 export interface ExpenseVarianceNoteLine {
   // The three-digit group that picks the expense kind's label ("641" selling, "642" administration); it is never sent as a number.
-  group: string;
+  expenseKind: string;
   direction: 'up' | 'down';
   against: 'previous' | 'average';
   isNew: boolean;
@@ -105,7 +105,7 @@ export function expenseVarianceFactsText(facts: ExpenseVarianceNoteFacts): strin
   const l = facts.language;
   return facts.lines
     .map((line, i) => {
-      const what = GROUP_LABEL[l][line.group] ?? GROUP_DEFAULT[l];
+      const what = GROUP_LABEL[l][line.expenseKind] ?? GROUP_DEFAULT[l];
       const lead = `Row ${i + 1}: ${what}; went ${DIRECTION_LABEL[l][line.direction]} ${AGAINST_LABEL[l][line.against]}${line.isNew ? '; a cost that was not there before' : ''}`;
       const behind = line.contributors.map((c) => `${c.kind === 'supplier' ? 'a supplier (name not given)' : 'a voucher with no supplier'}; ${KIND_LABEL[l][c.sourceKind]}; ${VOUCHERS_LABEL[c.vouchers]}`);
       return behind.length > 0 ? `${lead}. Behind it: ${behind.join(' | ')}` : `${lead}. Nothing more is known about it`;

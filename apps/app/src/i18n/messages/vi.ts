@@ -14553,6 +14553,7 @@ export const vi = {
       DOCUMENT_REPOST: 'Hóa đơn đã ghi sổ một lần thì không ghi sổ lại được. Nếu hóa đơn sai, hãy đảo bút toán của nó và ghi hóa đơn thay thế hoặc điều chỉnh như một chứng từ mới',
       LEGAL_ENTITY_REQUIRED: 'Hãy chọn pháp nhân trước khi xem hoặc ghi sổ',
       LEGAL_ENTITY_NOT_ALLOWED: 'Bạn không có quyền với sổ sách của pháp nhân này',
+      MONTH_NOT_ENDED: 'Tháng này chưa kết thúc. Hãy chọn một tháng đã qua để so sánh chi phí',
       SOURCE_LEGAL_ENTITY: 'Chứng từ này đã ghi sổ ở một pháp nhân khác; không ghi lại sang pháp nhân khác được',
       LEGAL_ENTITY_MISMATCH: 'Đề xuất ghi vào một pháp nhân khác pháp nhân của nó',
       LEGAL_ENTITY_MOVE_REFUSED: 'Đề xuất này thuộc một pháp nhân khác nên không chuyển được. Hãy từ chối đề xuất rồi tải chứng từ lên lại ở pháp nhân cần ghi sổ',
@@ -15570,6 +15571,7 @@ export const vi = {
       },
     },
     finance: {
+      expense_variance: 'Xem các dòng chi phí biến động của một tháng so với tháng trước và trung bình 3 tháng',
       today: 'Xem việc kế toán cần bạn hôm nay',
       signals: {
         overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',

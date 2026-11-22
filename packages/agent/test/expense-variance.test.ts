@@ -17,7 +17,7 @@ const facts = (language: 'vi' | 'en' = 'en'): ExpenseVarianceNoteFacts => ({
   language,
   lines: [
     {
-      group: '641',
+      expenseKind: '641',
       direction: 'up',
       against: 'previous',
       isNew: false,
@@ -26,8 +26,8 @@ const facts = (language: 'vi' | 'en' = 'en'): ExpenseVarianceNoteFacts => ({
         { kind: 'voucher', sourceKind: 'cash_bank', vouchers: 'several' },
       ],
     },
-    { group: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'several' }] },
-    { group: '627', direction: 'up', against: 'previous', isNew: true, contributors: [{ kind: 'supplier', sourceKind: 'manual', vouchers: 'single' }] },
+    { expenseKind: '632', direction: 'down', against: 'average', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'several' }] },
+    { expenseKind: '627', direction: 'up', against: 'previous', isNew: true, contributors: [{ kind: 'supplier', sourceKind: 'manual', vouchers: 'single' }] },
   ],
 });
 
@@ -57,7 +57,7 @@ describe('what the model is told', () => {
     expect(text).toContain('a single voucher');
     expect(text).toContain('several vouchers');
     expect(text).toContain('a cost that was not there before');
-    const none = expenseVarianceFactsText({ language: 'en', lines: [{ group: '632', direction: 'down', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'none' }] }] });
+    const none = expenseVarianceFactsText({ language: 'en', lines: [{ expenseKind: '632', direction: 'down', against: 'previous', isNew: false, contributors: [{ kind: 'supplier', sourceKind: 'invoice', vouchers: 'none' }] }] });
     expect(none).toContain('no voucher this month');
     expect(none).not.toContain('a single voucher');
   });
