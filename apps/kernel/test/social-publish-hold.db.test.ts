@@ -328,6 +328,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     expect(await hasLate(o)).toBe(true);
     // A live hold is left to its release.
     await exec(o, 'social.publishing.hold', { reason: 'Ngày quốc tang' }, o.admin);
+    expect(await hasLate(o)).toBe(false);
     expect(await failLate(o)).toEqual({ failed: 0, variantIds: [] });
     await exec(o, 'social.publishing.release', {}, o.admin);
     // The release failed them already: nothing is left for the sweep step. Make them late again to try it.

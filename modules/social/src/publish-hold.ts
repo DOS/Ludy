@@ -110,8 +110,10 @@ const staleSql = (orgId: string, now: Date, postId: string | null) => {
 // `maxPosts` bounds one run (the sweep's); the release takes them all.
 async function failStale(ctx: CommandContext, maxPosts = Infinity): Promise<Array<{ postId: string; variantId: string }>> {
   const stale = (postId: string | null) => staleSql(ctx.orgId, ctx.now, postId);
-  const { rows } = await stale(null).execute(ctx.trx);
-  const posts = [...new Set(rows.map((r) => r.post_id))].slice(0, maxPosts);
+  // The cap is in the query: at most maxPosts post ids are read, never every late row of a big backlog.
+  const limit = Number.isFinite(maxPosts) ? maxPosts : null;
+  const { rows } = await sql<{ post_id: string }>`SELECT s.post_id FROM (${stale(null)}) s GROUP BY s.post_id ORDER BY s.post_id LIMIT ${limit}::int`.execute(ctx.trx);
+  const posts = rows.map((r) => r.post_id);
   const failed: Array<{ postId: string; variantId: string }> = [];
   for (const postId of posts) {
     await lockPost(ctx.trx, ctx.orgId, postId);
@@ -215,6 +217,8 @@ export const publishHasLate = defineQuery({
   access: 'system',
   handler: async (ctx): Promise<boolean> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    // A live hold keeps its late variants for the release, which fails them with its own notice: nothing for the sweep to do (and fail_late would answer 0 and still write an audit row).
+    if (await liveHold(ctx.trx, ctx.orgId)) return false;
     const { rows } = await sql<{ late: boolean }>`SELECT EXISTS (${staleSql(ctx.orgId, new Date(), null)}) AS late`.execute(ctx.trx);
     return rows[0]?.late === true;
   },
