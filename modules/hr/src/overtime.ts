@@ -452,11 +452,12 @@ export const overtimeApproveL1 = defineCommand({
       .where('id', '=', existing.id)
       .execute();
 
+    const noted = input.note !== undefined;
     ctx.audit({
       requestId: existing.id,
       employeeId: existing.employee_id,
       authority,
-      ...(input.note !== undefined ? { decisionNote: auditValue(OVERTIME, 'decision_note', input.note) } : {}),
+      noted,
     });
 
     return { requestId: existing.id, status: 'pending_final', payrollRunUpdated: false };
@@ -550,6 +551,7 @@ export const overtimeApproveFinal = defineCommand({
       existing.employee_id,
     );
 
+    const noted = input.note !== undefined;
     ctx.audit({
       requestId: existing.id,
       employeeId: existing.employee_id,
@@ -559,7 +561,7 @@ export const overtimeApproveFinal = defineCommand({
       isNight: existing.is_night,
       selfApproved,
       payrollRunUpdated,
-      ...(input.note !== undefined ? { decisionNote: auditValue(OVERTIME, 'decision_note', input.note) } : {}),
+      noted,
     });
 
     return { requestId: existing.id, status: 'approved', payrollRunUpdated };
@@ -645,12 +647,13 @@ export const overtimeReject = defineCommand({
       .where('id', '=', existing.id)
       .execute();
 
+    const noted = input.note !== undefined;
     ctx.audit({
       requestId: existing.id,
       employeeId: existing.employee_id,
       authority,
       selfApproved,
-      ...(input.note !== undefined ? { decisionNote: auditValue(OVERTIME, 'decision_note', input.note) } : {}),
+      noted,
     });
 
     return { requestId: existing.id, status: 'rejected', payrollRunUpdated: false };

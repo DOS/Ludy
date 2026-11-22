@@ -77,6 +77,7 @@ describe('module manifests declare their permissions (#1630)', () => {
       'command hr.payroll.run.recalculate: hr.payroll.run',
       'command hr.payroll.run.sync_leave: hr.payroll.run',
       'command hr.payroll.run.sync_overtime: hr.payroll.run',
+      'command hr.probation.decide: hr.payroll.run',
       'command kernel.proposal.approve: finance.proposal.approve',
       'command kernel.proposal.approve_many: finance.proposal.approve',
       'the approval policy (LEDGER_APPROVE_PERMISSION): finance.proposal.approve',

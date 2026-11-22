@@ -47,6 +47,7 @@ import { loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type 
 import { loadActiveCycleView, loadCycle } from './cycles.ts';
 import { parseStoredRecurrence } from './recurring.ts';
 import {
+  MANAGERS,
   READERS,
   WRITERS,
   assertCanManage,
@@ -1173,11 +1174,11 @@ export const projectTaskProjects = defineQuery({
 });
 
 // Reads completed project tasks assigned to positions held by a member within a date window.
-// Caller RLS on crove_projects.project and crove_kernel.task filters private projects and legal entities.
+// Manager-only query (called cross-module by hr.probation.* via ctx.query); caller RLS still filters projects and legal entities.
 export const projectMemberCompletedTasks = defineQuery({
   name: 'projects.member_completed_tasks',
   input: zProjectMemberCompletedTasksAsk,
-  access: READERS,
+  access: MANAGERS,
   handler: async (ctx, input): Promise<ProjectMemberCompletedTasksResult> => {
     userOf(ctx.actor);
     const { rows: countRows } = await sql<{ total_count: number }>`

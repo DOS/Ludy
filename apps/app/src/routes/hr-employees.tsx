@@ -2188,7 +2188,13 @@ export function Detail({
             <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
               {t('severance.toggle')}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setProbationOpen((v) => !v)} data-testid="hr-probation-toggle">
+            <Button
+              variant="outline"
+              size="sm"
+              className="max-md:min-h-11"
+              onClick={() => setProbationOpen((v) => !v)}
+              data-testid="hr-probation-toggle"
+            >
               {t('probation.toggle')}
             </Button>
           </div>

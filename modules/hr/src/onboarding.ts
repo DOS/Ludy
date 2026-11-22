@@ -501,15 +501,16 @@ export const onboardingApprove = defineCommand({
       .where('id', '=', existing.id)
       .execute();
 
+    const noted = input.note !== undefined;
     ctx.audit({
       submissionId: existing.id,
       employeeId: existing.employee_id,
       updatedFields,
       selfApproved,
+      noted,
       ...(updatedFields.includes('address') ? { address: auditValue(EMPLOYEE, 'address', existing.address) } : {}),
       ...(updatedFields.includes('birthDate') ? { birthDate: auditValue(EMPLOYEE, 'birth_date', existing.birth_date) } : {}),
       ...(updatedFields.includes('bankCode') ? { bankCode: auditValue(EMPLOYEE, 'bank_code', existing.bank_code) } : {}),
-      ...(input.note !== undefined ? { decisionNote: auditValue(ONBOARDING, 'decision_note', input.note) } : {}),
     });
 
     return {
@@ -569,11 +570,12 @@ export const onboardingReject = defineCommand({
       .where('id', '=', existing.id)
       .execute();
 
+    const noted = input.note !== undefined;
     ctx.audit({
       submissionId: existing.id,
       employeeId: existing.employee_id,
       selfApproved,
-      ...(input.note !== undefined ? { decisionNote: auditValue(ONBOARDING, 'decision_note', input.note) } : {}),
+      noted,
     });
 
     return {

@@ -14,6 +14,7 @@ import type { AiMeter } from '@ludy/agent';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { vietnamToday } from '@ludy/kernel-contract';
 import type {
   HrEmployee,
   HrOnboardingApproveResult,
@@ -225,7 +226,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       bankCode: 'VCB',
       accountNumber: '123456789012',
       taxCode: '8123456789',
-      insuranceNumber: '7912345678',
+      insuranceNumber: '7912345679',
       note: 'Xác nhận thông tin nhận lương',
     });
     expect(first.status).toBe('pending');
@@ -522,6 +523,27 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       ruleStatus: 'commentary',
       ruleId: 'overtime_multiples.weekly_rest_day',
     });
+
+    // Archived department managers cannot approve_l1 or reject pending_l1 OT requests, and new submissions skip pending_l1.
+    const otArchivedCheck = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-11-20',
+      hours: '1',
+      dayType: 'weekday',
+    });
+    expect(otArchivedCheck.status).toBe('pending_l1');
+    await o.exec(o.owner, 'hr.department.archive', { departmentId: deptTech }, asMfa(o.owner));
+    await expect(
+      o.exec(o.manager, 'hr.overtime.approve_l1', { requestId: otArchivedCheck.requestId }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    await expect(
+      o.exec(o.manager, 'hr.overtime.reject', { requestId: otArchivedCheck.requestId }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    const otAfterArchive = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-11-21',
+      hours: '1',
+      dayType: 'weekday',
+    });
+    expect(otAfterArchive.status).toBe('pending_final');
   });
 
   it('pulls visible completed Projects tasks cleanly, honors private RLS and MODULE_OFF, uses Ly draft, and erases PII on PDPL erase', async () => {
@@ -586,16 +608,22 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       status: 'done',
     });
 
-    const today = new Date().toISOString().slice(0, 10);
-    // Caller-RLS isolation: a regular member who is not in the private project sees only the 2 org project tasks.
-    const memberTasks = await o.query<{ totalCount: number; tasks: Array<{ taskId: string; title: string }> }>(
-      o.staffB,
+    const today = vietnamToday();
+    const o2 = await setupOrg();
+    // Manager-only access and cross-tenant isolation: regular members and viewers cannot enumerate coworker completed tasks,
+    // and another organization's owner sees 0 tasks for staffA.
+    await expect(
+      o.query(o.staffB, 'projects.member_completed_tasks', { userId: o.staffA, from: '2026-09-01', to: today, limit: 50 }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    await expect(
+      o.query(o.viewer, 'projects.member_completed_tasks', { userId: o.staffA, from: '2026-09-01', to: today, limit: 50 }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    const otherOrgTasks = await o2.query<{ totalCount: number; tasks: Array<{ taskId: string; title: string }> }>(
+      o2.owner,
       'projects.member_completed_tasks',
       { userId: o.staffA, from: '2026-09-01', to: today, limit: 50 },
     );
-    expect(memberTasks.totalCount).toBe(2);
-    expect(memberTasks.tasks.map((t) => t.taskId).sort()).toEqual([t1, t2].sort());
-    expect(memberTasks.tasks.some((t) => t.title.includes('riêng tư'))).toBe(false);
+    expect(otherOrgTasks).toEqual({ totalCount: 0, tasks: [] });
 
     // Owner sees all owner-visible tasks (org + private per ADR-0056) inside hr.probation.preview.
     const preview = await o.query<HrProbationPreviewResult>(o.owner, 'hr.probation.preview', {
@@ -696,6 +724,22 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       reviewNote: secretNote,
       aiDraftNote: aiOnOut.draftNote,
     });
+
+    // Recorded probation reviews are immutable against direct non-erasure updates.
+    await expect(
+      (async () => {
+        const c = await appPool.connect();
+        try {
+          await c.query('BEGIN');
+          await enterUser(c, o.owner, o.orgId);
+          await c.query(`UPDATE crove_hr.probation_review SET decision = 'extend' WHERE id = $1`, [decided.reviewId]);
+          await c.query('COMMIT');
+        } finally {
+          await c.query('ROLLBACK').catch(() => {});
+          c.release();
+        }
+      })(),
+    ).rejects.toThrow(/immutable/i);
 
     // PDPL erasure cancels pending OT requests and wipes PII/notes/snapshots across all 3 Stage 5B tables.
     const obSub = await o.exec<HrSelfOnboardingSubmitResult>(o.staffA, 'hr.self.onboarding.submit', {

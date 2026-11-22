@@ -672,28 +672,23 @@ BEGIN
       RETURN NEW;
     END IF;
 
-    IF EXISTS (
-      SELECT 1 FROM crove_hr.payroll_employee e
-       WHERE e.org_id = OLD.org_id AND e.id = OLD.employee_id AND e.erased_at IS NOT NULL
-    ) THEN
-      -- Allow no-op updated_at updates only.
-      IF NEW.reviewer_user_id IS NOT DISTINCT FROM OLD.reviewer_user_id
-         AND NEW.probation_end_on IS NOT DISTINCT FROM OLD.probation_end_on
-         AND NEW.period_start = OLD.period_start
-         AND NEW.period_end = OLD.period_end
-         AND NEW.completed_tasks_count = OLD.completed_tasks_count
-         AND NEW.completed_tasks_snapshot = OLD.completed_tasks_snapshot
-         AND NEW.projects_available = OLD.projects_available
-         AND NEW.attendance_snapshot = OLD.attendance_snapshot
-         AND NEW.decision = OLD.decision
-         AND NEW.extended_until IS NOT DISTINCT FROM OLD.extended_until
-         AND NEW.review_note IS NOT DISTINCT FROM OLD.review_note
-         AND NEW.ai_draft_note IS NOT DISTINCT FROM OLD.ai_draft_note
-         AND NEW.decided_at IS NOT DISTINCT FROM OLD.decided_at THEN
-        RETURN NEW;
-      END IF;
-      RAISE EXCEPTION 'probation review for erased employee is immutable' USING ERRCODE = '42501';
+    -- Allow no-op updated_at updates only; all recorded probation review fields are immutable.
+    IF NEW.reviewer_user_id IS NOT DISTINCT FROM OLD.reviewer_user_id
+       AND NEW.probation_end_on IS NOT DISTINCT FROM OLD.probation_end_on
+       AND NEW.period_start = OLD.period_start
+       AND NEW.period_end = OLD.period_end
+       AND NEW.completed_tasks_count = OLD.completed_tasks_count
+       AND NEW.completed_tasks_snapshot = OLD.completed_tasks_snapshot
+       AND NEW.projects_available = OLD.projects_available
+       AND NEW.attendance_snapshot = OLD.attendance_snapshot
+       AND NEW.decision = OLD.decision
+       AND NEW.extended_until IS NOT DISTINCT FROM OLD.extended_until
+       AND NEW.review_note IS NOT DISTINCT FROM OLD.review_note
+       AND NEW.ai_draft_note IS NOT DISTINCT FROM OLD.ai_draft_note
+       AND NEW.decided_at IS NOT DISTINCT FROM OLD.decided_at THEN
+      RETURN NEW;
     END IF;
+    RAISE EXCEPTION 'probation review % is immutable once recorded', OLD.id USING ERRCODE = '42501';
   END IF;
 
   IF (

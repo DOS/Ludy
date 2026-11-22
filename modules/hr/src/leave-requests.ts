@@ -744,11 +744,11 @@ export async function assertL1Authority(
   }
   const dept = await trx
     .selectFrom('crove_hr.department')
-    .select('manager_user_id')
+    .select(['manager_user_id', 'archived_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', req.department_id)
     .executeTakeFirst();
-  if (!dept || dept.manager_user_id !== callerUserId) {
+  if (!dept || dept.archived_at !== null || dept.manager_user_id !== callerUserId) {
     throw new DomainError('FORBIDDEN', 403, 'Chỉ quản lý phòng ban được phân công hoặc quản trị viên mới duyệt được đơn này');
   }
   return role;

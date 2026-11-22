@@ -305,10 +305,10 @@ export function HrSelfOnboardingCard() {
               <thead>
                 <tr className="border-b text-subtle-foreground">
                   <th scope="col" className="py-2 pr-3 font-medium">
-                    {t('historyTitle')}
+                    {t('submittedAtColumn')}
                   </th>
                   <th scope="col" className="py-2 pr-3 font-medium">
-                    {t('statuses.pending')}
+                    {t('statusColumn')}
                   </th>
                   <th scope="col" className="py-2 text-right font-medium" />
                 </tr>
@@ -538,7 +538,7 @@ export function HrSelfOvertimeCard({ linked = true }: { linked?: boolean } = {})
                       {t('hours')}
                     </th>
                     <th scope="col" className="py-2 pr-3 font-medium">
-                      {t('statuses.pending_l1')}
+                      {t('statusColumn')}
                     </th>
                     <th scope="col" className="py-2 text-right font-medium" />
                   </tr>

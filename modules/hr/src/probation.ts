@@ -305,6 +305,7 @@ export const probationDecide = defineCommand({
   risk: 'R2',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   target: (input) => ({ type: 'hr.payroll_employee', id: input.employeeId }),
   writes: [
     tableWrite(hrManifest.tables, 'crove_hr', 'probation_review', [
