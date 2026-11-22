@@ -14,6 +14,7 @@ import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type Rec
 import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
 import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
+import { createPopupConcurrency } from './popup-guards.ts';
 
 const root = document.getElementById('root') as HTMLElement;
 const area = chrome.storage.local;
@@ -57,27 +58,66 @@ let captureDraft: {
 } = { kind: 'note', title: '', body: '', tags: '', details: '', dueOn: '', sourceUrl: null };
 let notesStatus = '';
 let notesBusy = false;
+const concurrency = createPopupConcurrency();
+
+function clearTicker(): void {
+  clearInterval(ticker);
+  ticker = undefined;
+}
 
 async function copyNotice(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(noticeToCopy(noticeLang).text);
-    copyNote = T.noticeCopied;
-  } catch {
-    copyNote = T.noticeCopyFailed;
+  let needsRender = false;
+  await concurrency.runNoticeCopy(
+    () => navigator.clipboard.writeText(noticeToCopy(noticeLang).text),
+    (copied) => {
+      copyNote = copied ? T.noticeCopied : T.noticeCopyFailed;
+      const existing = document.getElementById('copy-note');
+      if (existing) {
+        existing.textContent = copyNote;
+        return;
+      }
+      const row = document.getElementById('copy-notice')?.parentElement;
+      if (row) {
+        row.after(h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote));
+        return;
+      }
+      needsRender = true;
+    },
+  );
+  if (needsRender) await render();
+}
+
+function toggleNoticeLanguage(): void {
+  concurrency.invalidateNoticeOp();
+  noticeLang = otherNoticeLanguage(noticeLang);
+  copyNote = '';
+  const textEl = document.getElementById('notice-text');
+  const langBtn = document.getElementById('notice-lang');
+  if (textEl && langBtn) {
+    textEl.lang = noticeLang;
+    textEl.textContent = RECORDING_NOTICE.text[noticeLang];
+    langBtn.textContent = otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi;
+    document.getElementById('copy-note')?.remove();
+    return;
   }
-  await render();
+  void render();
 }
 
 async function render(): Promise<void> {
-  clearInterval(ticker);
-  const state = await loadState(area);
-  const view = h('div');
-  view.append(h('h1', {}, T.title));
-  const account = activeAccount(state);
-  if (!account) view.append(...signInView(state));
-  else view.append(...(await signedInView(state)));
-  if (notice) view.append(h('p', { class: 'error', role: 'alert' }, notice));
-  root.replaceChildren(view);
+  await concurrency.runRender(clearTicker, async (pass) => {
+    const state = await loadState(area);
+    if (!pass.isCurrent()) return null;
+    const view = h('div');
+    view.append(h('h1', {}, T.title));
+    const account = activeAccount(state);
+    if (!account) view.append(...signInView(state));
+    else view.append(...(await signedInView(state, pass.onMount)));
+    if (!pass.isCurrent()) return null;
+    return () => {
+      if (notice) view.append(h('p', { class: 'error', role: 'alert' }, notice));
+      root.replaceChildren(view);
+    };
+  });
 }
 
 function addressForm(state: State): Node[] {
@@ -157,7 +197,7 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
   await render();
 }
 
-async function signedInView(state: State): Promise<Node[]> {
+async function signedInView(state: State, onMount: Array<() => void>): Promise<Node[]> {
   const account = activeAccount(state);
   if (!account) return [];
   const out: Node[] = [];
@@ -203,7 +243,7 @@ async function signedInView(state: State): Promise<Node[]> {
     );
   }
   for (const feature of features) {
-    if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token)));
+    if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token, onMount)));
     else if (feature.id === 'notes') out.push(...(await notesView(state, account.token)));
   }
   out.push(...(await pendingView(state, account.orgId, account.token)));
@@ -462,7 +502,7 @@ async function saveQuickCapture(state: State, token: string): Promise<void> {
   }
 }
 
-async function meetingsView(state: State, me: Me, token: string): Promise<Node[]> {
+async function meetingsView(state: State, me: Me, token: string, onMount: Array<() => void>): Promise<Node[]> {
   const feature = FEATURES.find((f) => f.id === 'meetings')!;
   const out: Node[] = [h('h2', {}, T.meetings)];
   const granted = await chrome.permissions.contains({ permissions: [...feature.permissions] });
@@ -479,9 +519,16 @@ async function meetingsView(state: State, me: Me, token: string): Promise<Node[]
   if (lost && !recording) out.push(...lostView(lost));
   if (recording) {
     const clock = h('span', { class: 'rec' });
-    const tick = () => void (clock.textContent = `REC ${formatClock(Date.now() - recording.startedAt)}`);
-    tick();
-    ticker = setInterval(tick, 1000);
+    const updateClock = () => void (clock.textContent = `REC ${formatClock(Date.now() - recording.startedAt)}`);
+    updateClock();
+    onMount.push(() => {
+      clearTicker();
+      const id = setInterval(() => {
+        if (!clock.isConnected) clearInterval(id);
+        else updateClock();
+      }, 1000);
+      ticker = id;
+    });
     out.push(
       h('p', {}, clock, ` · ${recording.title}`),
       ...(recording.micMissing ? [h('p', { class: 'error' }, T.micMissing)] : []),
@@ -514,7 +561,7 @@ async function meetingsView(state: State, me: Me, token: string): Promise<Node[]
       h('p', { class: 'notice', id: 'notice-text', lang: noticeLang }, RECORDING_NOTICE.text[noticeLang]),
       h('div', { class: 'row' },
         h('button', { id: 'copy-notice', onclick: () => void copyNotice() }, T.noticeCopy),
-        h('button', { id: 'notice-lang', onclick: () => void ((noticeLang = otherNoticeLanguage(noticeLang)), (copyNote = ''), render()) }, otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi)),
+        h('button', { id: 'notice-lang', onclick: () => toggleNoticeLanguage() }, otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi)),
       copyNote ? h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote) : null,
       h('p', { class: 'note' }, T.noticeDraft),
       h('label', { class: 'block', for: 'method' }, T.consentMethod),

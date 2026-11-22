@@ -28,6 +28,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 // Sensitive read that records an audit row: avoid refetching on window focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
+const EMPTY_CANDIDATES: readonly RedactionCandidate[] = [];
 
 const SURFACE_ORDER: readonly RedactionSurface[] = [
   'meeting.title',
@@ -427,7 +428,7 @@ export function RedactionReviewContent({
 }) {
   const t = useTranslations('meetings.redaction');
   const common = useTranslations('common');
-  const candidates = data?.candidates ?? [];
+  const candidates = data?.candidates ?? EMPTY_CANDIDATES;
   const { grouped, preparedKeys } = useMemo(() => {
     const segmentsById = new Map((sources.segments ?? []).map((s) => [s.id, s]));
     const itemsById = new Map((sources.items ?? []).map((i) => [i.id, i]));
@@ -572,7 +573,7 @@ export function RedactionReviewContent({
         <div className="space-y-2" data-testid="redaction-error">
           <ErrorText>{errorMessage(activeError)}</ErrorText>
           {showReload && (
-            <Button type="button" size="sm" variant="outline" onClick={onReload} data-testid="redaction-reload">
+            <Button type="button" size="sm" variant="outline" loading={rescanPending} disabled={isSubmitting} onClick={onReload} data-testid="redaction-reload">
               {t('reloadPrompt')}
             </Button>
           )}
@@ -625,7 +626,7 @@ export function DraftRedactionDialog({
   }));
   const confirmedCloseRef = useRef(false);
 
-  const candidates = candidatesQuery.data?.candidates ?? [];
+  const candidates = candidatesQuery.data?.candidates ?? EMPTY_CANDIDATES;
   const candidateFingerprint = useMemo(
     () => candidates.map(candidateSelectionToken).join('|'),
     [candidates],

@@ -413,5 +413,28 @@ describe('meeting redaction SSR components (#4001 Slice 3)', () => {
     expect(htmlEn).not.toContain('data-testid="redaction-reload"');
     // Confirm button disabled when 0 selected.
     expect(htmlEn).toMatch(/<button[^>]*disabled=""[^>]*data-testid="redaction-confirm"/);
+
+    const htmlReloadPending = render(
+      <RedactionReviewContent
+        data={undefined}
+        isLoading
+        queryError={{ code: 'REDACTION_STALE', message: 'stale' }}
+        sources={sources}
+        selectedKeys={new Set()}
+        onToggleKey={() => undefined}
+        onSelectAll={() => undefined}
+        onClearAll={() => undefined}
+        onRescan={() => undefined}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+        onReload={() => undefined}
+        isSubmitting={false}
+        submitError={null}
+        rescanPending
+      />,
+      'vi',
+    );
+    expect(htmlReloadPending).toMatch(/<button[^>]*disabled=""[^>]*data-loading=""[^>]*aria-busy="true"[^>]*data-testid="redaction-reload"/);
+    expect(htmlReloadPending).toContain(escapeHtml(viMessages.meetings.redaction.reloadPrompt));
   });
 });
