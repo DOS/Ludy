@@ -36,7 +36,7 @@ function fakeDb(role: string): { db: Db; statements: string[] } {
   const connection: DatabaseConnection = {
     async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
       statements.push(query.sql);
-      const rows = /crove_kernel\.enter_(?:user_)?context\(/.test(query.sql)
+      const rows = /(?:crove|ludy)_kernel\.enter_(?:user_)?context\(/.test(query.sql)
         ? [{ role }]
         : /pg_attribute/.test(query.sql)
           ? [{ present: true }]

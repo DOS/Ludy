@@ -58,7 +58,10 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
       const { rows } = await c.query<DdlRow>(
         'SELECT session_role, set_role, command_tag, object_type, object_identity FROM crove_kernel.ddl_event ORDER BY id',
       );
-      return rows;
+      return rows.map((r) => ({
+        ...r,
+        object_identity: r.object_identity && dbIds ? dbIds.toCanonicalCatalogText(r.object_identity) : r.object_identity,
+      }));
     });
 
   async function sweep() {

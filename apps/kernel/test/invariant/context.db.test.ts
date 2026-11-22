@@ -46,6 +46,8 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
   const enter = (c: pg.Client, userId: string, orgId: string) =>
     c.query<{ role: string }>('SELECT crove_kernel.enter_user_context($1::uuid, $2::text) AS role', [orgId, contextToken(userId, orgId)]);
 
+  const lockNamespace = () => dbIds?.lockNamespace ?? NAMESPACE;
+
   async function context(c: pg.Client) {
     const { rows } = await c.query<{ org: string | null; user: string | null; rawOrg: string | null; rawUser: string | null }>(
       `SELECT crove_kernel.ctx_org_id() AS org, crove_kernel.ctx_user_id() AS user,
@@ -60,7 +62,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
       `SELECT l.mode FROM pg_locks l
        WHERE l.locktype = 'advisory' AND l.classid = $1::oid AND l.objid = pg_backend_pid()::oid AND l.objsubid = 2
          AND l.pid = pg_backend_pid() AND l.granted`,
-      [NAMESPACE],
+      [lockNamespace()],
     );
     return rows.length;
   }
@@ -178,7 +180,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
     await inTx(app, 'BEGIN', async () => {
       await enter(app, users.owner, orgA);
       // Neither call releases a transaction-level lock (both report it as not held at session level).
-      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [NAMESPACE]);
+      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [lockNamespace()]);
       await app.query('SELECT pg_advisory_unlock_all()');
       for (const name of ['crove.org_id', 'crove.user_id', 'crove.ctx', 'crove.ctx_seal']) {
         await app.query(`SELECT set_config($1, '', true)`, [name]);
@@ -216,13 +218,13 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
 
   it('fails closed when the key is already held at session level, by this session or another one', async () => {
     const app = await connect(appUrl);
-    await app.query('SELECT pg_advisory_lock($1::int, pg_backend_pid())', [NAMESPACE]);
+    await app.query('SELECT pg_advisory_lock($1::int, pg_backend_pid())', [lockNamespace()]);
     try {
       await inTx(app, 'BEGIN', async () => {
         await expect(enter(app, users.owner, orgA)).rejects.toMatchObject(REENTRY);
       });
     } finally {
-      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [NAMESPACE]);
+      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [lockNamespace()]);
     }
     await inTx(app, 'BEGIN', async () => {
       await expect(enter(app, users.owner, orgA)).resolves.toMatchObject({ rows: [{ role: 'owner' }] });
@@ -231,7 +233,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
     // Another backend holding this backend's key makes the guard refuse at once instead of waiting for it.
     const squatter = await connect(appUrl);
     const { rows } = await app.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-    await squatter.query('SELECT pg_advisory_lock($1::int, $2::int)', [NAMESPACE, rows[0]?.pid]);
+    await squatter.query('SELECT pg_advisory_lock($1::int, $2::int)', [lockNamespace(), rows[0]?.pid]);
     try {
       await inTx(app, 'BEGIN', async () => {
         await app.query(`SET LOCAL statement_timeout = '5s'`);

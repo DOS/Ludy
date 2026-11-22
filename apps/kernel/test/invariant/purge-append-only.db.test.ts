@@ -116,7 +116,11 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
         const context = session.context;
         if (context && 'system' in context) await c.query('SELECT crove_kernel.enter_system_context($1)', [context.system]);
         else if (context) await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [context.user.orgId, contextToken(context.user.owner, context.user.orgId)]);
-        const { rows } = await c.query<{ n: string }>('SELECT crove_kernel.t2011_probe($1, $2, $3) AS n', [mark, statement, target]);
+        const { rows } = await c.query<{ n: string }>('SELECT crove_kernel.t2011_probe($1, $2, $3) AS n', [
+          mark,
+          dbIds ? dbIds.rewriteSql(statement) : statement,
+          target,
+        ]);
         return `${rows[0]?.n} row(s)`;
       } catch (e) {
         return (e as Error).message;
@@ -236,8 +240,8 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
   // function runs as given (EXECUTE p_sql), a DELETE built by string concatenation, and a cascade from a parent table
   // (today only crove_kernel.tenant, whose rows tenant_no_delete keeps).
   it('has no function but org_purge delete from task comments or post approvals', async () => {
-    const STATIC = String.raw`delete\s+from\s+(only\s+)?"?(crove_kernel"?\s*\.\s*"?task_comment|crove_social"?\s*\.\s*"?post_approval)\M`;
-    const DYNAMIC = String.raw`delete\s+from\s+(only\s+)?("?(crove_kernel|crove_social)"?\s*\.\s*)?%`;
+    const STATIC = String.raw`delete\s+from\s+(only\s+)?"?((?:crove|ludy)_kernel"?\s*\.\s*"?task_comment|(?:crove|ludy)_social"?\s*\.\s*"?post_approval)\M`;
+    const DYNAMIC = String.raw`delete\s+from\s+(only\s+)?("?(?:crove|ludy)_(?:kernel|social)"?\s*\.\s*)?%`;
     const deleters = async (c: pg.Client, pattern: string) =>
       (
         await c.query<{ fn: string }>(
@@ -247,7 +251,9 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
            ORDER BY 1`,
           [pattern],
         )
-      ).rows.map((r) => r.fn);
+      ).rows
+        .map((r) => r.fn)
+        .sort();
     await withClient(adminUrl, async (c) => {
       expect(await deleters(c, STATIC)).toEqual(['crove_kernel.org_purge(integer)']);
       expect(await deleters(c, DYNAMIC)).toEqual(['crove_kernel.org_purge(integer)']);

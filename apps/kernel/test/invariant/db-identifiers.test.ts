@@ -268,4 +268,39 @@ describe('apps/kernel invariant db-identifiers helper (#3969)', () => {
       'SET LOCAL ROLE crove_app; SELECT crove_kernel.ctx_org_id();',
     );
   });
+
+  it('transitions auth_reader_select policy with ludy_kernel even when pg_roles lacks it', () => {
+    const realisticIntermediate = buildDbIdentifiers(
+      ALL_SCHEMAS.map((s) => (KERNEL_ONLY.has(s) ? `ludy_${s}` : `crove_${s}`)),
+      ALL_ROLES.filter((r) => r !== 'auth_reader_select').map((r) => `ludy_${r}`),
+    );
+    expect(realisticIntermediate.role('auth_reader_select')).toBe('ludy_auth_reader_select');
+    expect(realisticIntermediate.roleName('crove_auth_reader_select')).toBe('ludy_auth_reader_select');
+    expect(realisticIntermediate.rewriteSql('DROP POLICY crove_auth_reader_select ON auth.users')).toBe(
+      'DROP POLICY ludy_auth_reader_select ON auth.users',
+    );
+    expect(realisticIntermediate.toCanonicalCatalogText('policy ludy_auth_reader_select')).toBe('policy crove_auth_reader_select');
+    expect(rewriteCatalogParam('crove_auth_reader_select', realisticIntermediate)).toBe('ludy_auth_reader_select');
+  });
+
+  it('rewrites outbound post-cutover SQL back to crove_* against pre-cutover or intermediate databases without colliding', () => {
+    expect(
+      MAIN_IDS.rewriteSql(
+        'SELECT ludy_kernel.ctx_org_id(), ludy_meta.migration_lock, ludy_jobs.job, current_setting(\'ludy.ctx\'), \'ludy_stream\', ludy_ddl_watch, ludy_try_run_1, DROP POLICY ludy_auth_reader_select ON auth.sessions; SET ROLE ludy_app; -- ludy_migrate_test crove:s1:abc crove-extract crove_test_123',
+      ),
+    ).toBe(
+      'SELECT crove_kernel.ctx_org_id(), crove_meta.migration_lock, crove_jobs.job, current_setting(\'crove.ctx\'), \'crove_stream\', crove_ddl_watch, crove_try_run_1, DROP POLICY crove_auth_reader_select ON auth.sessions; SET ROLE crove_app; -- ludy_migrate_test crove:s1:abc crove-extract crove_test_123',
+    );
+    expect(rewriteCatalogParam(['ludy_kernel', 'ludy_app', 'ludy.ctx', 'ludy_kernel.party', 'ludy_migrate_test', 'crove:s1:secret'], MAIN_IDS)).toEqual([
+      'crove_kernel',
+      'crove_app',
+      'crove.ctx',
+      'crove_kernel.party',
+      'ludy_migrate_test',
+      'crove:s1:secret',
+    ]);
+    expect(INTERMEDIATE_IDS.rewriteSql('SELECT crove_kernel.party, ludy_finance.account, crove_finance.entry FROM crove_kernel.x')).toBe(
+      'SELECT ludy_kernel.party, crove_finance.account, crove_finance.entry FROM ludy_kernel.x',
+    );
+  });
 });
