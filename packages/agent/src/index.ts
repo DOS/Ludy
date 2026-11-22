@@ -14,6 +14,7 @@ export * from './eval.ts';
 export * from './inbox.ts';
 export * from './reminder.ts';
 export * from './followup.ts';
+export * from './month-close.ts';
 export * from './cash-forecast.ts';
 export * from './overview.ts';
 export * from './expense-variance.ts';

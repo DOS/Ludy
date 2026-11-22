@@ -15,7 +15,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -89,6 +89,7 @@ import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainMonthClose, monthCloseAi } from './finance-month-close-ai.ts';
 import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
@@ -493,6 +494,8 @@ export function createRpcHandler(
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's note on the month-close checklist: the same reader and model, a budget of its own; told which items are open and no count or date.
+  const financeMonthCloseAi = monthCloseAi(conversationReader?.monthCloseNote ? { monthCloseNote: conversationReader.monthCloseNote.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): the same reader and model, a budget of its own; told the computed figures and dates only.
   const financeCashForecastAi = cashForecastAi(conversationReader?.cashForecastSentence ? { cashForecastSentence: conversationReader.cashForecastSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
@@ -3339,6 +3342,19 @@ export function createRpcHandler(
           const { lang, ...ask } = input;
           const overview = await runtime.query<FinanceOverview>('finance.overview', ask, { actor, orgId });
           return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
+        }),
+      ),
+    },
+    financeMonthClose: {
+      get: os.financeMonthClose.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<MonthClose>('finance.month_close', input, { actor, orgId }))),
+      // The note is asked of the model outside any transaction, from which items the checklist found open in the member's own one (their legal entities only).
+      explain: os.financeMonthClose.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          // With no model there is nothing to ask, so the checklist is not counted a second time for a note that cannot come.
+          if (!financeMonthCloseAi.reader) return { ai: 'off' as const, text: null, order: [] };
+          const checklist = await runtime.query<MonthClose>('finance.month_close', ask, { actor, orgId });
+          return explainMonthClose(financeMonthCloseAi, orgId, actor.userId, checklist, lang ?? 'vi');
         }),
       ),
     },

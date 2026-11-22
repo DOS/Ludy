@@ -52,6 +52,8 @@ function seeded() {
     ledgerAccount: orpc.ledger.account.queryKey({ input: { period: '2026-09', accountCode: '331' } }),
     overview: orpc.financeOverview.get.queryKey({ input: { range: 'last_30_days' } }),
     overviewExplain: orpc.financeOverview.explain.queryKey({ input: { range: 'last_30_days' } }),
+    monthClose: orpc.financeMonthClose.get.queryKey({ input: { month: '2026-10' } }),
+    monthCloseExplain: orpc.financeMonthClose.explain.queryKey({ input: { month: '2026-10' } }),
     me: orpc.me.get.queryKey(),
     org: orpc.org.get.queryKey(),
     socialList: orpc.social.posts.list.queryKey({ input: {} }),
@@ -91,7 +93,8 @@ describe('invalidateHint', () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'proposal', id: P1 });
     // batch: the intake list's files, whose chips follow their proposal (#2009).
-    expect(stale()).toEqual(['batch', 'detail1', 'files', 'inboxDone', 'inboxPending']);
+    // monthClose: the month-close checklist counts the proposals that still wait.
+    expect(stale()).toEqual(['batch', 'detail1', 'files', 'inboxDone', 'inboxPending', 'monthClose', 'monthCloseExplain']);
   });
 
   it('file and extraction: the lists and the proposal that shows the file', async () => {
@@ -106,7 +109,7 @@ describe('invalidateHint', () => {
   it('journal_entry: the journal, that entry, the documents, the ledger reports, the overview, the customers and the proposal that posted it', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'journal_entry', id: ENTRY });
-    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'journal', 'ledger', 'ledgerAccount', 'overview', 'overviewExplain']);
+    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'journal', 'ledger', 'ledgerAccount', 'monthClose', 'monthCloseExplain', 'overview', 'overviewExplain']);
   });
 
   it('document: the documents, the vendors, the customers, the sales number gaps and the proposal that recorded it', async () => {

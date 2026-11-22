@@ -216,6 +216,7 @@ import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
+import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
@@ -3066,6 +3067,14 @@ export const contract = {
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
+  },
+  // The month-close checklist on the Kế toán screen, every role and read only: get answers, for one legal entity and month, the items still open (pending proposals, portal
+  // invoices not matched to a voucher, unbooked bank lines, marketplace settlements and payouts, the stock close, the VAT mark, the period lock), each counted by a read of the
+  // books; explain is the finance coworker's short note ordering the open items, asked of the model outside any transaction from which items are open (no count, no date) and
+  // refused when it states a number, a date, a link, a promise or a done step (ai says why there is none).
+  financeMonthClose: {
+    get: oc.input(zFinanceMonthCloseInput).output(zMonthClose),
+    explain: oc.input(zFinanceMonthCloseExplainAsk).output(zMonthCloseNote),
   },
   // The expense variance card of the Tổng quan (#4392), every role, read only: get answers the flagged expense lines of one ended month against the month before and the average of the three
   // before it, with the suppliers or vouchers behind each; explain is the finance coworker's possible reason per flagged line, asked of the model outside any transaction, and a note that states a number,

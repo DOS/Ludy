@@ -34,8 +34,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
   switch (hint.type) {
     case 'proposal':
       // files.batch: the intake list's files whose proposal still waits (#2009), so their chips follow its decision.
-      // financeCashForecast: approving a supplier payment (a proposal) moves what the cash forecast counts as going out (#4391); a cancelled one is read again by the card's own 60-second read.
-      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id) || (path === 'financeCashForecast.get' || path === 'financeCashForecast.explain');
+      // financeCashForecast: approving a supplier payment (a proposal) moves what the cash forecast counts as going out; financeMonthClose counts the proposals that still wait. A cancelled one is read again by the cards' own 60-second reads.
+      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id) || (path === 'financeCashForecast.get' || path === 'financeCashForecast.explain') || path === 'financeMonthClose.get' || path === 'financeMonthClose.explain';
     case 'file':
     case 'extraction':
       // extraction carries the id of the file whose reading changed. files.batch: a re-read of a file the intake list
@@ -56,9 +56,11 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
         path === 'financeOverview.get' ||
         path === 'financeOverview.explain' ||
-        // The cash forecast (#4391) reads the same entries (cash, receivables, payables) and the coworker's note on it.
+        // The cash forecast reads the same entries (cash, receivables, payables) and the coworker's note on it; the month-close checklist counts bank lines settled by vouchers, settlements and payouts recorded, and the period lock, all of which are entries.
         path === 'financeCashForecast.get' ||
-        path === 'financeCashForecast.explain'
+        path === 'financeCashForecast.explain' ||
+        path === 'financeMonthClose.get' ||
+        path === 'financeMonthClose.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;

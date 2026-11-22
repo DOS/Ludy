@@ -43,6 +43,8 @@ export const AI_FEATURES = {
   'meetings.followup_words': 'meetings',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
+  // The finance coworker's note on the month-close checklist: it puts the open items in the order to do them and says why, told which items are open and no count or date; refused when it states a number, a date, a link, a promise or a done step, or when its order is not exactly the open items.
+  'finance.month_close_explain': 'finance',
   // The finance coworker's possible reason per flagged expense line on the expense variance card (#4392): code found which costs moved and who is behind them; the model is told no figure at all (a fixed kind of expense, the direction, a supplier name when it may be told, the kind of voucher, single or several) and a note is dropped when it states any number, date or name it was not given, claims certainty or is not marked as a possibility. A read; a person decides.
   'finance.expense_variance_note': 'finance',
   // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): written from the figures and dates code computed, in words only (it states no figure and no date, the card carries them), and refused
