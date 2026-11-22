@@ -17,7 +17,6 @@ import { browserTimeZone } from '../lib/my-work.ts';
 import { duplicateTaskSearch, findDuplicateTask, type DuplicateTaskHit } from '../lib/task-duplicate.ts';
 import { taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
-import { taskTitleText } from '../lib/task-title.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
