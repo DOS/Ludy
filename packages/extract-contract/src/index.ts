@@ -520,7 +520,17 @@ const MAX_OCSP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsOcspBytes / 3) *
 const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, 'lowercase 64-char sha256 hex');
 const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
 
-export const PDF_DETECTED_TAG_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const PDF_DETECTED_TAG_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'stamp',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
 export type PdfDetectedTagFieldType = (typeof PDF_DETECTED_TAG_FIELD_TYPES)[number];
 
 function hasLoneSurrogate(value: string): boolean {
@@ -537,6 +547,12 @@ function hasLoneSurrogate(value: string): boolean {
   return false;
 }
 
+const zPdfDetectedTagOption = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((s) => !hasLoneSurrogate(s), 'option must be well-formed Unicode without lone surrogates');
+
 export const zPdfDetectedTag = z
   .strictObject({
     pageNumber: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
@@ -550,6 +566,7 @@ export const zPdfDetectedTag = z
       .max(EXTRACT_LIMITS.maxPdfDetectedTagLabelChars)
       .refine((s) => !hasLoneSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
       .nullable(),
+    options: z.array(zPdfDetectedTagOption).min(1).max(50).optional(),
     xNorm: z.number().finite().min(0).lt(1),
     yNorm: z.number().finite().min(0).lt(1),
     wNorm: z.number().finite().gt(0).lte(1),
@@ -558,6 +575,13 @@ export const zPdfDetectedTag = z
   .superRefine((tag, ctx) => {
     if (tag.roleKey !== `r${tag.roleOrder}`) {
       ctx.addIssue({ code: 'custom', path: ['roleKey'], message: 'roleKey must match roleOrder' });
+    }
+    if (tag.fieldType === 'dropdown' || tag.fieldType === 'radio') {
+      if (!tag.options || tag.options.length === 0) {
+        ctx.addIssue({ code: 'custom', path: ['options'], message: 'dropdown and radio tags require options' });
+      }
+    } else if (tag.options !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['options'], message: 'options are only valid on dropdown and radio tags' });
     }
     if (tag.xNorm + tag.wNorm > 1.000001) {
       ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
@@ -615,7 +639,7 @@ export const zPdfInspectResult = z
   });
 export type PdfInspectResult = z.infer<typeof zPdfInspectResult>;
 
-export const PDF_SEAL_FIELD_TYPES = ['signature', 'initial', 'date', 'text', 'checkbox'] as const;
+export const PDF_SEAL_FIELD_TYPES = ['signature', 'initial', 'stamp', 'date', 'text', 'checkbox', 'dropdown', 'radio'] as const;
 export type PdfSealFieldType = (typeof PDF_SEAL_FIELD_TYPES)[number];
 
 const zNormalizedBox = {
@@ -629,6 +653,11 @@ const zNormalizedBox = {
 const zPdfSealFieldVariant = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('signature'),
+    ...zNormalizedBox,
+    imagePngBase64: z.base64().min(1).max(MAX_SIGNATURE_PNG_BASE64_CHARS),
+  }),
+  z.strictObject({
+    type: z.literal('stamp'),
     ...zNormalizedBox,
     imagePngBase64: z.base64().min(1).max(MAX_SIGNATURE_PNG_BASE64_CHARS),
   }),
@@ -656,6 +685,19 @@ const zPdfSealFieldVariant = z.discriminatedUnion('type', [
     ...zNormalizedBox,
     checked: z.boolean(),
   }),
+  z.strictObject({
+    type: z.literal('dropdown'),
+    ...zNormalizedBox,
+    text: z.string().max(EXTRACT_LIMITS.maxStringChars),
+    fontSizePt: z.number().finite().min(6).max(36).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('radio'),
+    ...zNormalizedBox,
+    text: z.string().max(EXTRACT_LIMITS.maxStringChars).optional(),
+    checked: z.boolean().optional(),
+    fontSizePt: z.number().finite().min(6).max(36).optional(),
+  }),
 ]);
 
 export const zPdfSealField = zPdfSealFieldVariant.superRefine((field, ctx) => {
@@ -668,11 +710,21 @@ export const zPdfSealField = zPdfSealFieldVariant.superRefine((field, ctx) => {
   if (field.type === 'initial' && field.imagePngBase64 === undefined && field.text === undefined) {
     ctx.addIssue({ code: 'custom', path: ['imagePngBase64'], message: 'initial field requires imagePngBase64 or text' });
   }
+  if (field.type === 'radio' && field.text === undefined && field.checked === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['text'], message: 'radio field requires text or checked' });
+  }
 });
 export type PdfSealField = z.infer<typeof zPdfSealField>;
 
 export const PDF_SEAL_OTP_STATUSES = ['not_required', 'verified', 'unverified'] as const;
 export type PdfSealOtpStatus = (typeof PDF_SEAL_OTP_STATUSES)[number];
+
+export const zPdfSealCertificateAttachment = z.strictObject({
+  label: z.string().min(1).max(120),
+  filename: z.string().min(1).max(255),
+  sha256: zSha256Hex,
+});
+export type PdfSealCertificateAttachment = z.infer<typeof zPdfSealCertificateAttachment>;
 
 export const zPdfSealCertificateSigner = z.strictObject({
   name: z.string().min(1).max(200),
@@ -690,6 +742,7 @@ export const zPdfSealCertificateSigner = z.strictObject({
   delegatedFromMaskedEmail: z.string().min(1).max(200).nullable().optional(),
   delegationCount: z.number().int().min(0).max(2).optional(),
   recipientCorrected: z.boolean().optional(),
+  attachments: z.array(zPdfSealCertificateAttachment).max(50).optional(),
 });
 export type PdfSealCertificateSigner = z.infer<typeof zPdfSealCertificateSigner>;
 

@@ -534,6 +534,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.work_permit_expires_on': { kind: 'other', handling: 'erase', reason: "A foreign employee's work permit expiry date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
   'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
@@ -596,6 +597,23 @@ export const PERSONAL_DATA_COLUMNS = {
     machinery: true,
     reason: 'The sealed credentials of an org CA provider connection (sealed with CredentialBroker, bound to org, provider, and connection id); never readable by the tenant, wiped on disable, and deleted with the org',
   },
+  'crove_sign.envelope_obligation.counterparty_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason: 'Counterparty name on post-signature contract obligation record preserved alongside executed agreement terms; purged on org deletion',
+  },
+  'crove_sign.member_signature.signature_typed_text': {
+    kind: 'other',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: "A member's own saved typed signature text, readable and deletable by that member alone and removed when the member leaves the org",
+  },
+  'crove_sign.member_signature.signature_png_base64': {
+    kind: 'other',
+    handling: 'erase',
+    privateRows: 'always',
+    reason: "A member's own saved signature or initials PNG image, readable and deletable by that member alone and removed when the member leaves the org",
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -626,6 +644,10 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
   'crove_hr.payroll_employee.bank_account_sealed': {
     handling: 'shred',
     reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.work_permit_number_sealed': {
+    handling: 'shred',
+    reason: "A foreign employee's work permit number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
   'crove_finance.supplier_bank_account.account_holder_sealed': {
     handling: 'shred',

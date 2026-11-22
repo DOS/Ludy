@@ -104,6 +104,7 @@ import { LAZADA_HOSTS, lazadaCaller, lazadaMarketplace } from './marketplace-laz
 import { lazadaFinance } from './marketplace-lazada-finance.ts';
 import { withLazadaIncome } from './marketplace-income-leg.ts';
 import { withLazadaAuthorize } from './marketplace-lazada-authorize.ts';
+import { isMarketplacePushAdapter } from './marketplace-push.ts';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -197,8 +198,11 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
-  signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
+  // Vy's eSign field placement, risky clause review, and post-signature obligation extraction (#3351, #3821); null runs manual signing without AI.
+  signAi?:
+    | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
+        Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations'>>)
+    | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief' | 'signAcceptanceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
@@ -884,6 +888,9 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // The adapters whose notices are signed with each customer's own secret (Tingee, #4203): the hook route exists only for these.
           // Only with a credential broker, as the worker's drain and nightly sweep of the stored notices need one (#4203): without it the route is not registered and no raw notice can be stored.
           bankFeedHooks: resolved.broker.id !== 'none' ? Object.fromEntries(Object.entries(bankFeedHostedOf(config)).filter(([, p]) => p.verifyHook && p.hookTimestampFresh)) : {},
+          // The marketplaces whose signed push the API stores for the worker (#4346, S2 of #4315): only the adapters this deployment runs (MARKETPLACE_PROVIDERS), and only with a credential broker, as the worker's relay needs one
+          // to open the connection's secret: without it the route is not registered and no raw push can be stored.
+          ...(resolved.broker.id !== 'none' ? { marketplacePush: { adapters: Object.keys(marketplaceProvidersOf(config)).filter(isMarketplacePushAdapter) } } : {}),
           channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', bankFeedHosted: bankFeedHostedOf(config), einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its

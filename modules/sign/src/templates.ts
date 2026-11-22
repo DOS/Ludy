@@ -24,6 +24,10 @@ import { tableWrite } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import {
+  assertCanAccessMeetingMinutesEnvelopeRow,
+  assertCanCreateMeetingMinutesEnvelope,
+} from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
@@ -40,11 +44,13 @@ import {
   formatSignMicroNorm,
   normalizeNormalizedFieldBoxes,
   parseDetectedTags,
+  parseFieldOptions,
   parsePageDimensions,
   parseSharedSummary,
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
+  serializeFieldOptionsForType,
   toSignMicroNorm,
   userIdOf,
   zSignInspectDetectedTags,
@@ -60,6 +66,7 @@ const TEMPLATE_DIRECT_LINK_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'token_sha256',
   'enabled',
   'require_email_otp',
+  'listed_on_public_hub',
   'max_uses',
   'uses_count',
   'expires_at',
@@ -78,6 +85,7 @@ interface DirectLinkMutationSqlResult {
   id: string | null;
   enabled: boolean;
   requireEmailOtp: boolean;
+  listedOnPublicHub?: boolean;
   maxUses: number | null;
   usesCount: number;
   expiresAt: string | null;
@@ -94,6 +102,7 @@ function parseDirectLinkJson(raw: unknown): DirectLinkDetail | null {
     id: obj.id,
     enabled: obj.enabled,
     requireEmailOtp: Boolean(obj.requireEmailOtp),
+    listedOnPublicHub: Boolean(obj.listedOnPublicHub),
     maxUses: typeof obj.maxUses === 'number' ? obj.maxUses : null,
     usesCount: typeof obj.usesCount === 'number' ? obj.usesCount : 0,
     expiresAt: typeof obj.expiresAt === 'string' ? obj.expiresAt : null,
@@ -108,6 +117,7 @@ function toDirectLinkSummary(detail: DirectLinkDetail | null): DirectLinkSummary
   return {
     enabled: detail.enabled,
     requireEmailOtp: detail.requireEmailOtp,
+    listedOnPublicHub: Boolean(detail.listedOnPublicHub),
     maxUses: detail.maxUses ?? null,
     usesCount: detail.usesCount ?? 0,
     expiresAt: detail.expiresAt ?? null,
@@ -347,6 +357,7 @@ export const templateGet = defineQuery({
         'label',
         'required',
         'font_size_pt',
+        'options_json',
       ])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', tpl.id)
@@ -407,6 +418,7 @@ export const templateGet = defineQuery({
         label: f.label,
         required: f.required,
         fontSizePt: f.font_size_pt,
+        options: parseFieldOptions(f.options_json),
       })),
       directLink,
     };
@@ -500,6 +512,7 @@ export const templateCreate = defineCommand({
       'label',
       'required',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -529,6 +542,7 @@ export const templateCreate = defineCommand({
         .select([
           'id',
           'source_kind',
+          'source_id',
           'created_by',
           'routing_mode',
           'allow_delegation',
@@ -549,11 +563,12 @@ export const templateCreate = defineCommand({
         .executeTakeFirst();
       if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Source envelope not found');
       assertCanAccessEnvelopeRow(ctx, env, 'Source envelope not found');
-      if (env.source_kind === 'hr_contract') {
+      await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Source envelope not found');
+      if (env.source_kind === 'hr_contract' || env.source_kind === 'meeting_minutes') {
         throw new DomainError(
           'SIGN_FORBIDDEN',
           403,
-          'Confidential HR contract envelopes cannot be converted into organization-wide templates',
+          'Confidential HR contract or meeting minutes envelopes cannot be converted into organization-wide templates',
         );
       }
       if (env.inspect_status === 'failed') {
@@ -589,19 +604,19 @@ export const templateCreate = defineCommand({
       };
     } else {
       const file = await requireSignSourceFile(ctx, input.sourceFileId!);
-      const existingHrEnv = await ctx.trx
+      const existingConfidentialEnv = await ctx.trx
         .selectFrom('crove_sign.envelope')
         .select('id')
         .where('org_id', '=', ctx.orgId)
-        .where('source_kind', '=', 'hr_contract')
+        .where('source_kind', 'in', ['hr_contract', 'meeting_minutes'])
         .where('source_file_id', '=', file.id)
         .limit(1)
         .executeTakeFirst();
-      if (existingHrEnv) {
+      if (existingConfidentialEnv) {
         throw new DomainError(
           'SIGN_FORBIDDEN',
           403,
-          'Confidential HR contract documents cannot be converted into organization-wide templates',
+          'Confidential HR contract or meeting minutes documents cannot be converted into organization-wide templates',
         );
       }
       const reused = await findPassedInspectForFile(ctx, file);
@@ -729,7 +744,19 @@ export const templateCreate = defineCommand({
 
         const envFields = await ctx.trx
           .selectFrom('crove_sign.field')
-          .select(['signer_id', 'field_type', 'page_number', 'x_norm', 'y_norm', 'w_norm', 'h_norm', 'label', 'required', 'font_size_pt'])
+          .select([
+            'signer_id',
+            'field_type',
+            'page_number',
+            'x_norm',
+            'y_norm',
+            'w_norm',
+            'h_norm',
+            'label',
+            'required',
+            'font_size_pt',
+            'options_json',
+          ])
           .where('org_id', '=', ctx.orgId)
           .where('envelope_id', '=', sourceMeta.sourceEnvelopeId)
           .orderBy('page_number', 'asc')
@@ -740,6 +767,7 @@ export const templateCreate = defineCommand({
         const clonedFields = envFields.flatMap((f) => {
           const roleId = signerToTemplateRoleId.get(f.signer_id);
           if (!roleId) return [];
+          const clonedOptions = parseFieldOptions(f.options_json);
           return [
             {
               org_id: ctx.orgId,
@@ -754,6 +782,7 @@ export const templateCreate = defineCommand({
               label: f.label,
               required: f.required,
               font_size_pt: f.font_size_pt,
+              options_json: clonedOptions ? JSON.stringify(clonedOptions) : null,
               created_at: ctx.now,
               updated_at: ctx.now,
             },
@@ -1161,6 +1190,7 @@ export const templateFieldsSet = defineCommand({
       'label',
       'required',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -1233,6 +1263,7 @@ export const templateFieldsSet = defineCommand({
             label: f.label ?? null,
             required: f.required,
             font_size_pt: f.fontSizePt ?? null,
+            options_json: serializeFieldOptionsForType(f.fieldType, f.options),
             created_at: ctx.now,
             updated_at: ctx.now,
           })),
@@ -1311,19 +1342,24 @@ export const templateDirectLinkSet = defineCommand({
     if (!input.enabled) {
       await lockTemplate(ctx, input.templateId);
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set(
+        SELECT crove_sign.template_direct_link_set_v3(
           ${input.templateId}::uuid,
           false,
           ${input.requireEmailOtp ?? false},
-          NULL::text
+          NULL::text,
+          NULL::integer,
+          NULL::timestamptz,
+          false,
+          false
         ) AS res
       `.execute(ctx.trx);
       const res = rows[0]?.res;
-      ctx.audit({ templateId: input.templateId, enabled: false, revokedCount: res?.revokedCount ?? 0 });
+      ctx.audit({ templateId: input.templateId, enabled: false, listedOnPublicHub: false, revokedCount: res?.revokedCount ?? 0 });
       return {
         templateId: input.templateId,
         enabled: false,
         requireEmailOtp: false,
+        listedOnPublicHub: false,
         maxUses: null,
         usesCount: 0,
         expiresAt: null,
@@ -1348,6 +1384,7 @@ export const templateDirectLinkSet = defineCommand({
 
     if (existingState?.enabled) {
       const nextOtp = input.requireEmailOtp ?? existingState.requireEmailOtp;
+      const nextHub = input.listedOnPublicHub ?? Boolean(existingState.listedOnPublicHub);
       const updateLimits = input.maxUses !== undefined || input.expiresAt !== undefined;
       const nextMaxUses = input.maxUses !== undefined ? input.maxUses : (existingState.maxUses ?? null);
       const nextExpiresAt =
@@ -1364,22 +1401,30 @@ export const templateDirectLinkSet = defineCommand({
         );
       }
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set_v2(
+        SELECT crove_sign.template_direct_link_set_v3(
           ${input.templateId}::uuid,
           true,
           ${nextOtp},
           NULL::text,
           ${nextMaxUses}::integer,
           ${nextExpiresAt}::timestamptz,
-          ${updateLimits}::boolean
+          ${updateLimits}::boolean,
+          ${nextHub}::boolean
         ) AS res
       `.execute(ctx.trx);
       const res = rows[0]?.res;
-      ctx.audit({ templateId: input.templateId, enabled: true, requireEmailOtp: nextOtp, minted: false });
+      ctx.audit({
+        templateId: input.templateId,
+        enabled: true,
+        requireEmailOtp: nextOtp,
+        listedOnPublicHub: nextHub,
+        minted: false,
+      });
       return {
         templateId: input.templateId,
         enabled: true,
         requireEmailOtp: nextOtp,
+        listedOnPublicHub: res?.listedOnPublicHub ?? nextHub,
         maxUses: res?.maxUses ?? nextMaxUses,
         usesCount: res?.usesCount ?? existingState.usesCount ?? 0,
         expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
@@ -1392,25 +1437,34 @@ export const templateDirectLinkSet = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const nextOtp = input.requireEmailOtp ?? false;
+    const nextHub = input.listedOnPublicHub ?? false;
     const nextMaxUses = input.maxUses ?? null;
     const nextExpiresAt = parsedExpiresAt ?? null;
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_set_v2(
+      SELECT crove_sign.template_direct_link_set_v3(
         ${input.templateId}::uuid,
         true,
         ${nextOtp},
         ${tokenHash},
         ${nextMaxUses}::integer,
         ${nextExpiresAt}::timestamptz,
-        true
+        true,
+        ${nextHub}::boolean
       ) AS res
     `.execute(ctx.trx);
     const res = rows[0]?.res;
-    ctx.audit({ templateId: input.templateId, enabled: true, requireEmailOtp: nextOtp, minted: true });
+    ctx.audit({
+      templateId: input.templateId,
+      enabled: true,
+      requireEmailOtp: nextOtp,
+      listedOnPublicHub: nextHub,
+      minted: true,
+    });
     return {
       templateId: input.templateId,
       enabled: true,
       requireEmailOtp: nextOtp,
+      listedOnPublicHub: res?.listedOnPublicHub ?? nextHub,
       maxUses: res?.maxUses ?? nextMaxUses,
       usesCount: res?.usesCount ?? 0,
       expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
@@ -1456,21 +1510,28 @@ export const templateDirectLinkRotate = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_rotate_v2(
+      SELECT crove_sign.template_direct_link_rotate_v3(
         ${input.templateId}::uuid,
         ${tokenHash},
         ${input.requireEmailOtp ?? null}::boolean,
         ${nextMaxUses}::integer,
         ${nextExpiresAt}::timestamptz,
-        ${updateLimits}::boolean
+        ${updateLimits}::boolean,
+        ${input.listedOnPublicHub ?? null}::boolean
       ) AS res
     `.execute(ctx.trx);
     const res = rows[0]?.res;
-    ctx.audit({ templateId: input.templateId, rotated: true, revokedCount: res?.revokedCount ?? 0 });
+    ctx.audit({
+      templateId: input.templateId,
+      rotated: true,
+      listedOnPublicHub: Boolean(res?.listedOnPublicHub),
+      revokedCount: res?.revokedCount ?? 0,
+    });
     return {
       templateId: input.templateId,
       enabled: true,
       requireEmailOtp: Boolean(res?.requireEmailOtp),
+      listedOnPublicHub: Boolean(res?.listedOnPublicHub),
       maxUses: res?.maxUses ?? nextMaxUses,
       usesCount: res?.usesCount ?? 0,
       expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
@@ -1548,6 +1609,7 @@ export const templateInstantiate = defineCommand({
       'required',
       'proposed_by_ai',
       'font_size_pt',
+      'options_json',
       'created_at',
       'updated_at',
     ]),
@@ -1567,6 +1629,7 @@ export const templateInstantiate = defineCommand({
       throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Linked envelopes require sourceId');
     }
     assertCanCreateEnvelopeForSource(ctx, sourceKind);
+    await assertCanCreateMeetingMinutesEnvelope(ctx, sourceKind, sourceId);
 
     const tpl = await ctx.trx
       .selectFrom('crove_sign.template')
@@ -1655,6 +1718,7 @@ export const templateInstantiate = defineCommand({
         'label',
         'required',
         'font_size_pt',
+        'options_json',
       ])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', tpl.id)
@@ -1764,6 +1828,7 @@ export const templateInstantiate = defineCommand({
     const fieldInsertValues = fields.flatMap((f) => {
       const signer = signerByTemplateRoleId.get(f.template_role_id);
       if (!signer) return [];
+      const instOptions = parseFieldOptions(f.options_json);
       return [
         {
           org_id: ctx.orgId,
@@ -1779,6 +1844,7 @@ export const templateInstantiate = defineCommand({
           required: f.required,
           proposed_by_ai: false,
           font_size_pt: f.font_size_pt,
+          options_json: instOptions ? JSON.stringify(instOptions) : null,
           created_at: ctx.now,
           updated_at: ctx.now,
         },

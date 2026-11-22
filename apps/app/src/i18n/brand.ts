@@ -50,10 +50,14 @@ export function withBrand(text: string, brand = current): string {
   return fillCoworkers(text.replaceAll('{brandSlug}', brandSlug(brand)).replaceAll('{brand}', brand));
 }
 
-// A downloaded file's name with the product name as its prefix: `crove-ke-hoach-2026-10.csv` under BRAND_NAME "Tên Mới"
-// is saved as `ten-moi-ke-hoach-2026-10.csv`. Names the kernel or a module chose keep their `crove-` there (#1045).
+// A downloaded file's name with the product name as its prefix: `ludy-ke-hoach-2026-10.csv` under BRAND_NAME "Tên Mới"
+// is saved as `ten-moi-ke-hoach-2026-10.csv`. Compatibility fallback also rewrites legacy `crove-` names (#3966).
 export function brandFileName(name: string, brand = current): string {
-  return name.startsWith('crove-') ? `${brandSlug(brand)}-${name.slice('crove-'.length)}` : name;
+  const slug = brandSlug(brand);
+  for (const prefix of ['ludy-', 'crove-']) {
+    if (name.startsWith(prefix)) return `${slug}-${name.slice(prefix.length)}`;
+  }
+  return name;
 }
 
 // The name as literal text inside an ICU message: an apostrophe is doubled, the only character of the allowed set

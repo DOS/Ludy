@@ -21,7 +21,7 @@ import {
 } from '../src/index.ts';
 
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
-const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
+const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', sickness_bhxh_reduction: '0', maternity_bhxh_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
 const figures = (over: Partial<PayrollFigures>): PayrollFigures => ({ ...zero(), ...over });
 const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false, annualLeaveExceeded: false };
 const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false, severanceCheckSuggested: false };
@@ -428,5 +428,51 @@ describe('PayrollCoworker', () => {
     });
     expect(await coworker.flag(sheet)).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(await coworker.explain({ language: 'vi', figures: figures({ net: '8950000', gross: '10000000' }), dependentsCounted: 0 })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('surfaces Stage 4B anomalies and BHXH/non-resident payslip explanation components without leaking raw names', () => {
+    const stage4bLine = tainted('s4b', {
+      figures: figures({
+        base_wage: '8000000',
+        sickness_bhxh_reduction: '1000000',
+        maternity_bhxh_reduction: '2000000',
+        gross: '8000000',
+        pit: '1600000',
+        net: '6400000',
+      }),
+      previous: null,
+      checks: {
+        ...quiet,
+        workPermitExpiring: true,
+        bhxhSuspendedRegime: true,
+        nonResidentFlatPit: true,
+      },
+    });
+    const stage4bSheet = pseudo([stage4bLine], { language: 'vi', blockingRules: 0 }).sheet;
+    const anomalies = findAnomalies(stage4bSheet);
+    expect(anomalies.map((a) => a.kind)).toEqual(['work_permit_expiring', 'bhxh_suspended_regime', 'non_resident_flat_pit']);
+    expect(anomalies.map((a) => a.facts).join(' ')).toContain('20%');
+
+    const extracted = payrollFiguresOf(
+      { gross: '8000000', employeeInsurance: '0', pit: '1600000', net: '6400000' },
+      {
+        pay: { baseWage: '8000000', allowances: [], otherRegularPay: '0', overtime: [], nightWork: null, bonus: '0', unpaidReduction: '0', sicknessBhxhReduction: '1000000', maternityBhxhReduction: '2000000' },
+        deductions: { total: '0' },
+      },
+    );
+    expect(extracted.sickness_bhxh_reduction).toBe('1000000');
+    expect(extracted.maternity_bhxh_reduction).toBe('2000000');
+
+    const factsVi = explainFactsText({
+      language: 'vi',
+      figures: extracted,
+      dependentsCounted: 0,
+      taxMode: 'non_resident_flat',
+      insuranceSuspended: 'maternity_leave',
+    });
+    expect(factsVi).toContain('Khoản trừ do nghỉ ốm đau hưởng BHXH');
+    expect(factsVi).toContain('Khoản trừ do nghỉ thai sản hưởng BHXH');
+    expect(factsVi).toContain('20%');
+    expect(factsVi).toContain('tổng số ngày nghỉ thai sản hưởng BHXH và nghỉ không lương từ 14 ngày làm việc trở lên');
   });
 });

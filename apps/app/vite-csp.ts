@@ -59,7 +59,7 @@ export function metaCsp(origins: CspOrigins): string {
     `media-src 'self' blob: ${origins.apiOrigin}`,
     `connect-src ${connect.join(' ')}`,
     ...(origins.turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
-    origins.turnstile ? 'trusted-types crove-sw crove-turnstile' : 'trusted-types crove-sw',
+    origins.turnstile ? 'trusted-types ludy-sw ludy-turnstile' : 'trusted-types ludy-sw',
   ].join('; ');
 }
 
@@ -83,7 +83,7 @@ export function cspOriginsFromEnv(env: Record<string, string | undefined>): CspO
 export function cspMeta(env: Record<string, string | undefined>): Plugin {
   const origins = cspOriginsFromEnv(env);
   return {
-    name: 'crove-csp-meta',
+    name: 'ludy-csp-meta',
     apply: 'build',
     transformIndexHtml() {
       if (!origins) return undefined;

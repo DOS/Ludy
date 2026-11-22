@@ -138,6 +138,8 @@ export const AI_FEATURES = {
   'sign.version_diff': 'sign',
   // Vy (the general manager) proposing customized Vietnamese SME contract clauses for human editing before PDF generation (#3822): one call over structured contract variables and plain-language instructions, neutralized against tag injection.
   'sign.contract_draft': 'sign',
+  // Vy (the general manager) extracting post-signature renewal dates, contract value, auto-renewal notice window and milestone obligations from a completed eSign PDF (#3821): one call over bounded page text per ask, every term pinned to a verbatim quote and tainted until human confirmation.
+  'sign.obligation_extract': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

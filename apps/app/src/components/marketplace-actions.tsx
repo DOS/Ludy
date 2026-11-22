@@ -65,6 +65,12 @@ const period = (from: string, to: string) => (from === to ? from : `${from} - ${
 function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: boolean }) {
   const t = useTranslations('marketplaceActions');
   const f = useFormat();
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  // Its sales have a delivery day but no VAT rate row for it (#4303 S3b): nothing to ask for until the rate is entered in Settings.
+  const waitingVat = s.months.length > 0 && s.waitingVatMonths.length > 0;
+  // The rate is entered in Settings by an owner or admin: they get the link, everyone else is told whom to ask.
+  const org = useQuery(orpc.org.get.queryOptions());
+  const canSetRate = org.data?.role === 'owner' || org.data?.role === 'admin';
   return (
     <TableRow data-testid="marketplace-action-settlement">
       <TableCell className="px-4 py-3">{s.platformName}</TableCell>
@@ -74,6 +80,17 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
       <TableCell className="px-4 py-3 text-right">
         {s.months.length === 0 ? (
           <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting">{t('waitingDelivery')}</span>
+        ) : waitingVat ? (
+          <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting-vat">
+            {t('waitingVatRate', { months: s.waitingVatMonths.join(', ') })}{' '}
+            {canSetRate ? (
+              <Link to="/o/$slug/settings/accounting" params={{ slug }} className="inline-flex min-h-11 items-center font-medium text-foreground underline">
+                {t('setVatRate')}
+              </Link>
+            ) : (
+              <span data-testid="marketplace-vat-ask">{t('askVatRate')}</span>
+            )}
+          </span>
         ) : (
           <AskButton
             label={t('post')}
@@ -310,10 +327,13 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
   if (!data) return null;
   if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0 && data.accruals.length === 0 && data.accrualReversals.length === 0) return null;
   const open = data.postingConfirmed;
+  // A settlement entry needs the sales path only (#4303 S3b): its rows follow that, the payout, fee and invoice rows follow `open`.
+  const salesOpen = data.salesPostingConfirmed;
+  const othersShown = data.payouts.length + data.invoices.length + data.halfReversed.length + data.accruals.length + data.accrualReversals.length > 0;
   return (
     <section className="mb-6 space-y-5" data-testid="marketplace-actions">
       <h2 className="text-base font-semibold">{t('title')}</h2>
-      {!open && (
+      {((!salesOpen && data.settlements.length > 0) || (!open && othersShown)) && (
         <Alert data-testid="marketplace-gate">
           <AlertDescription>{t('gate')}</AlertDescription>
         </Alert>
@@ -324,7 +344,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
           <p className="mb-2 text-sm text-subtle-foreground">{t('settlementsHint')}</p>
           <DataTable head={[t('platform'), t('period'), t('month'), t('net'), '']} numeric={[3]}>
             {data.settlements.map((s) => (
-              <SettlementRow key={s.id} s={s} open={open} />
+              <SettlementRow key={s.id} s={s} open={salesOpen} />
             ))}
           </DataTable>
         </div>

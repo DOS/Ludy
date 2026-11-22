@@ -2,7 +2,7 @@
 // Envelope detail, pure-JS PDF field placer, Vy AI proposal overlays, send confirmation, and audit evidence (#3325).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -13,7 +13,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
@@ -40,16 +42,20 @@ import {
   checkSendReadiness,
   clampFieldBox,
   createPlacedFieldBox,
+  isChoiceFieldType,
+  normalizeChoiceOptions,
   nudgeFieldBox,
   planDetectedTagsForSigners,
+  planInitialAllPrecedingPages,
   resizeFieldBox,
   type DraftFieldPlacement,
+  type InitialAllPosition,
   type NormalizedBox,
   type SignDeliveryMode,
   type SignFieldType,
   type SignRoutingMode,
 } from '../lib/sign-fields.ts';
-import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { extractPdfPagesText } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -67,6 +73,7 @@ function toDraftPlacements(fields: readonly SignFieldRecord[]): DraftFieldPlacem
     required: f.required,
     proposedByAi: f.proposedByAi,
     fontSizePt: f.fontSizePt,
+    options: f.options ? [...f.options] : null,
   }));
 }
 
@@ -121,6 +128,7 @@ export function SignEnvelopeDetailPage() {
   const [detectedPages, setDetectedPages] = useState<number | null>(null);
   const [activeSignerId, setActiveSignerId] = useState<string | null>(null);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [initialAllPosition, setInitialAllPosition] = useState<InitialAllPosition>('bottom-right');
   const [draftFields, setDraftFields] = useState<DraftFieldPlacement[]>([]);
   const [fieldsDirty, setFieldsDirty] = useState(false);
   const [dirtyMetaFields, setDirtyMetaFields] = useState<
@@ -150,6 +158,30 @@ export function SignEnvelopeDetailPage() {
   const [correctDeliveryMode, setCorrectDeliveryMode] = useState<SignDeliveryMode>('link');
   const [correctRequireOtp, setCorrectRequireOtp] = useState(false);
   const [correctFormError, setCorrectFormError] = useState<string | null>(null);
+  const [inPersonSignerId, setInPersonSignerId] = useState<string | null>(null);
+  const [inPersonSession, setInPersonSession] = useState<{
+    signerId: string;
+    signerName: string;
+    url: string;
+    expiresAt: string;
+  } | null>(null);
+  const inPersonDialogGenRef = useRef(0);
+  const inPersonSignerIdRef = useRef<string | null>(null);
+
+  const selectInPersonDialogSigner = useCallback((nextSignerId: string | null) => {
+    inPersonDialogGenRef.current += 1;
+    inPersonSignerIdRef.current = nextSignerId;
+    setInPersonSignerId(nextSignerId);
+    setInPersonSession(null);
+  }, []);
+
+  useEffect(() => {
+    selectInPersonDialogSigner(null);
+    return () => {
+      inPersonDialogGenRef.current += 1;
+      inPersonSignerIdRef.current = null;
+    };
+  }, [id, selectInPersonDialogSigner]);
 
   const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
   const meQuery = useQuery(
@@ -157,6 +189,16 @@ export function SignEnvelopeDetailPage() {
       ? orpc.me.get.queryOptions()
       : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
   );
+
+  const hasOrgQuery = Boolean((orpc as { org?: { get?: { queryOptions?: () => unknown } } }).org?.get?.queryOptions);
+  const orgQuery = useQuery(
+    hasOrgQuery
+      ? orpc.org.get.queryOptions()
+      : { queryKey: ['org', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const canWriteSign = orgQuery.data
+    ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin' || orgQuery.data.role === 'member'
+    : true;
 
   const detailQuery = useQuery({
     queryKey: ['sign', 'envelope', id],
@@ -261,7 +303,6 @@ export function SignEnvelopeDetailPage() {
     enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
   });
 
-  const orgQuery = useQuery(orpc.org.get.queryOptions());
   const isCompletedAndSealed = envelope?.status === 'completed' && envelope?.sealStatus === 'sealed';
 
   const caSettingsQuery = useQuery({
@@ -333,6 +374,7 @@ export function SignEnvelopeDetailPage() {
           required: fItem.required,
           proposedByAi: fItem.proposedByAi,
           ...(fItem.fontSizePt ? { fontSizePt: fItem.fontSizePt } : {}),
+          ...(isChoiceFieldType(fItem.fieldType) ? { options: normalizeChoiceOptions(fItem.options) } : {}),
         })),
       );
       return { result, revision };
@@ -576,6 +618,33 @@ export function SignEnvelopeDetailPage() {
       requireEmailOtp: nextOtp,
     });
   };
+
+  const startInPersonMutation = useMutation({
+    mutationFn: async ({ signerId, dialogGen }: { signerId: string; dialogGen: number }) => {
+      const res = await signApi.startInPersonSigning(id, signerId);
+      const signerName = signers.find((s) => s.id === signerId)?.name ?? '';
+      return {
+        dialogGen,
+        signerId,
+        signerName,
+        url: buildInPersonSigningUrl(res.token),
+        expiresAt: res.expiresAt,
+      };
+    },
+    onSuccess: async ({ dialogGen, ...session }) => {
+      if (inPersonDialogGenRef.current === dialogGen && inPersonSignerIdRef.current === session.signerId) {
+        setInPersonSession(session);
+        toast(t('inPersonDialog.startedToast'));
+      }
+      await invalidateAll();
+    },
+    onError: (err, vars) => {
+      if (inPersonDialogGenRef.current !== vars.dialogGen || inPersonSignerIdRef.current !== vars.signerId) {
+        return;
+      }
+      toast(errorMessage(err), 'error');
+    },
+  });
   const effectiveAi = useMemo(
     () => normalizeAiAnalysis(aiAnalysisOverride ?? aiQuery.data ?? null),
     [aiAnalysisOverride, aiQuery.data],
@@ -616,6 +685,11 @@ export function SignEnvelopeDetailPage() {
   const resolveProposalSignerId = (proposedSignerId: string): string =>
     assignableSigners.some((s) => s.id === proposedSignerId) ? proposedSignerId : '';
 
+  const defaultChoiceOptions = () => [
+    t('fields.defaultOptionN', { index: '1' }),
+    t('fields.defaultOptionN', { index: '2' }),
+  ];
+
   const handleAddField = (fieldType: SignFieldType, coords?: { pageNumber: number; xCenterNorm: number; yCenterNorm: number }) => {
     if (!isDraft || !activeSignerId) return;
     const targetPage = coords?.pageNumber ?? pageNumber;
@@ -634,12 +708,44 @@ export function SignEnvelopeDetailPage() {
         fieldType,
         pageNumber: targetPage,
         ...box,
-        label: null,
+        label: fieldType === 'attachment' ? t('fields.attachmentPresets.idCard') : null,
         required: true,
         proposedByAi: false,
+        options: isChoiceFieldType(fieldType) ? defaultChoiceOptions() : null,
       },
     ]);
     setSelectedFieldId(localId);
+  };
+
+  const handleInitialAllPrecedingPages = () => {
+    if (!isDraft || !activeSignerId || effectivePageCount < 2) return;
+    const plan = planInitialAllPrecedingPages({
+      signerId: activeSignerId,
+      pageCount: effectivePageCount,
+      existingFields: draftFields,
+      position: initialAllPosition,
+    });
+    if (plan.added.length === 0) {
+      toast(t('fields.initialAllAlreadyPlacedToast'));
+      return;
+    }
+    const placed: DraftFieldPlacement[] = plan.added.map((item) => ({
+      localId: `draft-${globalThis.crypto.randomUUID()}`,
+      signerId: item.signerId,
+      fieldType: 'initials',
+      pageNumber: item.pageNumber,
+      xNorm: item.xNorm,
+      yNorm: item.yNorm,
+      wNorm: item.wNorm,
+      hNorm: item.hNorm,
+      label: item.label,
+      required: item.required,
+      proposedByAi: false,
+    }));
+    updateDraftFields((prev) => [...prev, ...placed]);
+    setSelectedFieldId(placed[0]!.localId);
+    setPageNumber(placed[0]!.pageNumber);
+    toast(t('fields.initialAllAddedToast', { count: String(placed.length) }));
   };
 
   const handleUpdateFieldBox = (localId: string, nextBox: NormalizedBox) => {
@@ -659,6 +765,7 @@ export function SignEnvelopeDetailPage() {
     if (!signerId) return;
     const box = clampFieldBox(adjustedBox ?? proposal);
     const localId = `prop-${globalThis.crypto.randomUUID()}`;
+    const cleanedOpts = isChoiceFieldType(proposal.fieldType) ? normalizeChoiceOptions(proposal.options) : [];
     updateDraftFields((prev) => [
       ...prev,
       {
@@ -670,6 +777,9 @@ export function SignEnvelopeDetailPage() {
         label: proposal.label,
         required: proposal.required,
         proposedByAi: true,
+        options: isChoiceFieldType(proposal.fieldType)
+          ? (cleanedOpts.length > 0 ? cleanedOpts : defaultChoiceOptions())
+          : null,
       },
     ]);
     setDismissedProposalIds((prev) => [...prev, proposal.proposalId]);
@@ -684,6 +794,7 @@ export function SignEnvelopeDetailPage() {
       const signerId = resolveProposalSignerId(proposal.signerId);
       if (!signerId) continue;
       const box = clampFieldBox(proposal);
+      const cleanedOpts = isChoiceFieldType(proposal.fieldType) ? normalizeChoiceOptions(proposal.options) : [];
       nextFields.push({
         localId: `prop-${globalThis.crypto.randomUUID()}`,
         signerId,
@@ -693,6 +804,9 @@ export function SignEnvelopeDetailPage() {
         label: proposal.label,
         required: proposal.required,
         proposedByAi: true,
+        options: isChoiceFieldType(proposal.fieldType)
+          ? (cleanedOpts.length > 0 ? cleanedOpts : defaultChoiceOptions())
+          : null,
       });
       appliedIds.push(proposal.proposalId);
     }
@@ -715,6 +829,9 @@ export function SignEnvelopeDetailPage() {
       label: item.label,
       required: item.required,
       proposedByAi: false,
+      options: isChoiceFieldType(item.fieldType)
+        ? (item.options && item.options.length > 0 ? item.options : defaultChoiceOptions())
+        : null,
     }));
     updateDraftFields((prev) => [...prev, ...placed]);
     setSelectedFieldId(placed[0]!.localId);
@@ -961,9 +1078,16 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            onCopyZaloLink={handleCopyZaloLink}
-            onRemindSigner={handleRemindSigner}
+            onCopyZaloLink={canWriteSign ? handleCopyZaloLink : undefined}
+            onRemindSigner={canWriteSign ? handleRemindSigner : undefined}
             {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
+            onStartInPerson={
+              canWriteSign
+                ? (signerId) => {
+                    selectInPersonDialogSigner(signerId);
+                  }
+                : undefined
+            }
           />
 
           {isDraft ? (
@@ -1158,6 +1282,33 @@ export function SignEnvelopeDetailPage() {
                     </Button>
                   ))}
                 </div>
+                {effectivePageCount >= 2 ? (
+                  <div
+                    className="flex flex-wrap items-center gap-2 border-t border-border pt-2"
+                    data-testid="palette-initial-all-row"
+                  >
+                    <NativeSelect
+                      aria-label={t('fields.initialAllPositionLabel')}
+                      className="min-h-11 w-auto text-xs"
+                      value={initialAllPosition}
+                      onChange={(e) => setInitialAllPosition(e.target.value as InitialAllPosition)}
+                      data-testid="palette-initial-all-position"
+                    >
+                      <NativeSelectOption value="bottom-right">{t('fields.initialAllBottomRight')}</NativeSelectOption>
+                      <NativeSelectOption value="bottom-left">{t('fields.initialAllBottomLeft')}</NativeSelectOption>
+                    </NativeSelect>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="min-h-11"
+                      disabled={!activeSignerId}
+                      onClick={handleInitialAllPrecedingPages}
+                      data-testid="palette-initial-all-pages"
+                    >
+                      {t('fields.initialAllPages')}
+                    </Button>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -1189,6 +1340,19 @@ export function SignEnvelopeDetailPage() {
         </div>
 
         <div className="space-y-4">
+          {envelope.status === 'completed' ? (
+            <EnvelopeObligationsCard
+              envelopeId={envelope.id}
+              sourceFileId={envelope.sourceFileId}
+              pdfBytes={
+                envelope.sealedFileId && envelope.sealedFileId !== envelope.sourceFileId
+                  ? null
+                  : (pdfQuery.data ?? null)
+              }
+              onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+            />
+          ) : null}
+
           <VyClausePanel
             aiAnalysis={effectiveAi}
             pendingProposals={pendingProposals}
@@ -1275,6 +1439,24 @@ export function SignEnvelopeDetailPage() {
                   />
                   <span>{t('fields.requiredToggle')}</span>
                 </label>
+
+                <FieldOptionsAndAttachmentEditor
+                  field={selectedField}
+                  onChangeOptions={(nextOptions) => {
+                    updateDraftFields((prev) =>
+                      prev.map((item) =>
+                        item.localId === selectedField.localId ? { ...item, options: nextOptions } : item,
+                      ),
+                    );
+                  }}
+                  onChangeLabel={(nextLabel) => {
+                    updateDraftFields((prev) =>
+                      prev.map((item) =>
+                        item.localId === selectedField.localId ? { ...item, label: nextLabel } : item,
+                      ),
+                    );
+                  }}
+                />
 
                 <p className="text-muted-foreground">{t('fields.nudgeHint')}</p>
                 <div className="grid grid-cols-2 gap-1.5">
@@ -1517,6 +1699,55 @@ export function SignEnvelopeDetailPage() {
                   </div>
                 ) : null}
 
+                {detailQuery.data?.fields.some((fItem) => Boolean(fItem.attachmentFileId)) ? (
+                  <div className="space-y-1.5 border-t pt-2" data-testid="sign-uploaded-attachments-list">
+                    <p className="font-medium text-foreground">{t('evidence.attachmentsHeading')}</p>
+                    <ul className="space-y-1.5">
+                      {detailQuery.data.fields
+                        .filter((fItem) => Boolean(fItem.attachmentFileId))
+                        .map((attField) => {
+                          const signerName = signers.find((s) => s.id === attField.signerId)?.name ?? '';
+                          const fname = attField.attachmentFilename ?? 'attachment.pdf';
+                          return (
+                            <li key={attField.id} className="space-y-1 rounded border bg-card px-2 py-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate font-medium text-foreground">
+                                  {attField.label || t('fields.types.attachment')}
+                                  {signerName ? ` (${signerName})` : ''}
+                                </span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 shrink-0 px-2 text-xs max-md:min-h-11"
+                                  onClick={() => void handleDownload(attField.attachmentFileId!, fname)}
+                                  data-testid={`sign-download-attachment-${attField.id}`}
+                                >
+                                  {t('evidence.downloadAttachment')}
+                                </Button>
+                              </div>
+                              <div className="truncate text-[11px] text-muted-foreground">{fname}</div>
+                              {attField.attachmentSha256 ? (
+                                <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[11px]">
+                                  <span className="truncate">{attField.attachmentSha256}</span>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 shrink-0 px-1.5 text-[11px] max-md:min-h-11"
+                                    onClick={() => void copyDigest(attField.attachmentSha256!)}
+                                  >
+                                    {t('evidence.copyDigest')}
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                    </ul>
+                  </div>
+                ) : null}
+
                 {eventsQuery.data?.events.length ? (
                   <div className="space-y-1.5 border-t pt-2">
                     <p className="font-medium text-foreground">{t('evidence.eventsHeading')}</p>
@@ -1524,7 +1755,14 @@ export function SignEnvelopeDetailPage() {
                       {eventsQuery.data.events.map((ev) => (
                         <li key={ev.id} className="rounded border bg-card px-2 py-1.5">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                              {ev.hostUserId ? (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {t('evidence.inPersonHostBadge')}
+                                </Badge>
+                              ) : null}
+                            </div>
                             <span className="text-[11px] text-muted-foreground">#{ev.seq}</span>
                           </div>
                           <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
@@ -1670,6 +1908,103 @@ export function SignEnvelopeDetailPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={inPersonSignerId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            selectInPersonDialogSigner(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg" closeLabel={common('close')} data-testid="in-person-handoff-dialog">
+          <DialogHeader>
+            <DialogTitle>{t('inPersonDialog.title')}</DialogTitle>
+            <DialogDescription>
+              {t('inPersonDialog.description', {
+                signer:
+                  inPersonSession?.signerName ||
+                  signers.find((s) => s.id === inPersonSignerId)?.name ||
+                  '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <Alert>
+            <AlertDescription>{t('inPersonDialog.securityNotice')}</AlertDescription>
+          </Alert>
+
+          {inPersonSession ? (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="in-person-ceremony-url">{t('inPersonDialog.urlLabel')}</Label>
+                <Input
+                  id="in-person-ceremony-url"
+                  readOnly
+                  value={inPersonSession.url}
+                  className="font-mono text-xs"
+                  data-testid="in-person-ceremony-url-input"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('inPersonDialog.expiresAtHint', { time: f.dateTime(inPersonSession.expiresAt) })}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  className="min-h-11 flex-1"
+                  onClick={() => {
+                    window.open(inPersonSession.url, '_blank', 'noopener,noreferrer');
+                  }}
+                  data-testid="in-person-open-tab-btn"
+                >
+                  {t('inPersonDialog.openIsolatedTabButton')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 flex-1"
+                  onClick={async () => {
+                    if (await copyTextToClipboard(inPersonSession.url)) {
+                      toast(t('inPersonDialog.copiedIncognitoToast'));
+                    }
+                  }}
+                  data-testid="in-person-copy-incognito-btn"
+                >
+                  {t('inPersonDialog.copyIncognitoButton')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => selectInPersonDialogSigner(null)}
+              >
+                {common('cancel')}
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                loading={startInPersonMutation.isPending}
+                onClick={() => {
+                  if (inPersonSignerId) {
+                    startInPersonMutation.mutate({
+                      signerId: inPersonSignerId,
+                      dialogGen: inPersonDialogGenRef.current,
+                    });
+                  }
+                }}
+                data-testid="in-person-mint-btn"
+              >
+                {t('inPersonDialog.mintButton')}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </div>

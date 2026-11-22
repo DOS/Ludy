@@ -17,9 +17,9 @@ export const zIngestFile = z.object({
   // social: an image or video for a Social post (#372, #409), stored like any file but never sent to extraction.
   // import: a spreadsheet for a module's import (#465), also never sent to extraction.
   // meeting_audio, meeting_video: encrypted meeting media (issue #2576, ADR-0047), never sent to extraction.
-  // sign_document, sign_sealed, sign_certificate: eSign PDFs and canonical certificate JSON (#3323), never sent to Finance extraction.
+  // sign_document, sign_sealed, sign_certificate, sign_attachment: eSign PDFs, canonical certificate JSON, and verified signer supporting attachments (#3323, #3818), never sent to Finance extraction.
   // agreement: the signed agreement of an e-invoice correction (#2504), an evidence file, never sent to extraction.
-  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement']),
+  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement']),
   // A video's duration, read by the server from the file (#409).
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   // An image's size as shown, read by the server from its header (#636); both or neither.
@@ -37,7 +37,7 @@ export type IngestFile = z.infer<typeof zIngestFile>;
 
 // Sources whose files are accounting documents, read by the extraction job.
 const isDocumentSource = (source: string) => source === 'upload' || source === 'email';
-const SIGN_FILE_SOURCES: readonly IngestFile['source'][] = ['sign_document', 'sign_sealed', 'sign_certificate'];
+const SIGN_FILE_SOURCES: readonly IngestFile['source'][] = ['sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment'];
 // Sources whose files are kept apart from every other use of the same bytes: eSign artifacts, and the signed agreement of an invoice correction (#2504), which is an evidence file and
 // must never be an Inbox document (nor a document an agreement).
 const ISOLATED_FILE_SOURCES: readonly IngestFile['source'][] = [...SIGN_FILE_SOURCES, 'agreement'];
@@ -54,9 +54,9 @@ export function isArchiveType(contentType: string): boolean {
 // from command input.
 export async function ingestFileRow(ctx: CommandContext, input: IngestFile, createdBy: string | null): Promise<{ fileId: string; duplicate: boolean }> {
   if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) throw new DomainError('INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ không hợp lệ');
-  // Generated eSign evidence (sealed PDFs and canonical certificates) can only be recorded by system actors.
-  if ((input.source === 'sign_sealed' || input.source === 'sign_certificate') && ctx.actor.type !== 'system') {
-    throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận được tài liệu đã niêm phong hoặc chứng nhận ký');
+  // Generated eSign evidence and public ceremony attachments can only be recorded by system actors.
+  if ((input.source === 'sign_sealed' || input.source === 'sign_certificate' || input.source === 'sign_attachment') && ctx.actor.type !== 'system') {
+    throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận được tài liệu đã niêm phong, chứng nhận ký hoặc tệp đính kèm người ký');
   }
   // The link to a mail is the receive path's alone: a member could otherwise name any mail of the org as the source of
   // their upload, and the Inbox would show that mail's sender next to it.

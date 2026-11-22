@@ -7,6 +7,10 @@ import { zId } from './schemas.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
+export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
+export const SIGN_PUBLIC_HUB_ORG_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+export const SIGN_IN_PERSON_MAX_TTL_MINUTES = 120;
+export const SIGN_IN_PERSON_DEFAULT_TTL_MINUTES = 30;
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const SIGN_TEMPLATE_ROLE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const SIGN_OTP_CODE_PATTERN = /^\d{6}$/;
@@ -18,6 +22,12 @@ export const SIGN_SIGNATURE_PNG_MAX_WIDTH = 2000;
 export const SIGN_SIGNATURE_PNG_MAX_HEIGHT = 1000;
 export const SIGN_SIGNATURE_PNG_BASE64_MAX = 360_000;
 export const SIGN_FIELD_TEXT_MAX = 2000;
+export const SIGN_FIELD_OPTIONS_MAX = 50;
+export const SIGN_FIELD_OPTION_CHARS_MAX = 200;
+export const SIGN_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
+export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
+export const zSignAttachmentContentType = z.enum(SIGN_ATTACHMENT_CONTENT_TYPES);
 export const SIGN_DECLINE_REASON_MAX = 1000;
 export const SIGN_DELEGATE_REASON_MAX = 500;
 export const SIGN_MAX_DELEGATIONS = 2;
@@ -76,9 +86,28 @@ export const zSignPublicVerifyInput = z.strictObject({
   fileSha256: z.string().trim().toLowerCase().regex(SIGN_SHA256_HEX_PATTERN, 'Invalid SHA-256 hex digest'),
 });
 
+export interface SignPublicFieldAttachment {
+  fileId: string;
+  filename: string;
+  contentType: SignAttachmentContentType;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string | null;
+}
+
+export interface SignPublicAttachmentUploadResult {
+  fieldId: string;
+  fileId: string;
+  filename: string;
+  contentType: SignAttachmentContentType;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
+}
+
 export interface SignPublicField {
   id: string;
-  fieldType: 'signature' | 'initials' | 'date' | 'text' | 'checkbox';
+  fieldType: (typeof SIGN_FIELD_TYPES)[number];
   pageNumber: number;
   xNorm: string;
   yNorm: string;
@@ -87,6 +116,8 @@ export interface SignPublicField {
   label: string | null;
   required: boolean;
   fontSizePt: number | null;
+  options?: string[] | null;
+  attachment?: SignPublicFieldAttachment | null;
 }
 
 export interface SignPageDimension {
@@ -116,6 +147,7 @@ export type SignPublicView =
       orgName: string;
       title: string;
       maskedEmail: string | null;
+      inPerson?: boolean;
     }
   | {
       state: 'ready';
@@ -133,6 +165,7 @@ export type SignPublicView =
       allowDelegation?: boolean;
       delegationCount?: number;
       delegatedFromName?: string | null;
+      inPerson?: boolean;
       fields: SignPublicField[];
       sharedSummary?: SignSharedSummary | null;
     };
@@ -156,6 +189,7 @@ export interface SignPublicSubmitResult {
   signerStatus: 'signed';
   envelopeStatus: 'sent' | 'in_progress' | 'completed';
   completed: boolean;
+  inPerson?: boolean;
   signedAt: string;
 }
 
@@ -280,7 +314,97 @@ export type SignDirectOtpRequestInput = z.infer<typeof zSignDirectOtpRequestInpu
 export type SignDirectOtpVerifyInput = z.infer<typeof zSignDirectOtpVerifyInput>;
 export type SignDirectStartInput = z.infer<typeof zSignDirectStartInput>;
 
+// Public self-service template hub contracts (/-/sign/p/$orgSlug, Slice 4d, #3820).
+export const zSignPublicHubOrgSlug = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(SIGN_PUBLIC_HUB_ORG_SLUG_PATTERN, 'Invalid organization slug');
+
+export const zSignPublicHubActionInput = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('view'),
+    templateId: zId,
+    otpSessionToken: zSignToken.optional(),
+  }),
+  z.strictObject({
+    action: z.literal('pdf'),
+    templateId: zId,
+    otpSessionToken: zSignToken.optional(),
+  }),
+  z.strictObject({
+    action: z.literal('otp_request'),
+    templateId: zId,
+    email: zDirectEmail,
+  }),
+  z.strictObject({
+    action: z.literal('otp_verify'),
+    templateId: zId,
+    email: zDirectEmail,
+    code: z.string().trim().regex(SIGN_OTP_CODE_PATTERN, 'OTP code must be 6 digits'),
+  }),
+  z.strictObject({
+    action: z.literal('start'),
+    templateId: zId,
+    name: z.string().trim().min(1).max(200),
+    email: zDirectEmail.nullable().optional(),
+    otpSessionToken: zSignToken.optional(),
+  }),
+]);
+
+export interface SignPublicHubItem {
+  templateId: string;
+  title: string;
+  description: string | null;
+  roleLabel: string;
+  signerRole: 'signer' | 'approver';
+  requireEmailOtp: boolean;
+  pageCount: number;
+}
+
+export interface SignPublicHubListResult {
+  orgSlug: string;
+  orgName: string;
+  items: SignPublicHubItem[];
+}
+
+export type SignPublicHubActionInput = z.infer<typeof zSignPublicHubActionInput>;
+
 // Authenticated eSign RPC contracts (Slice 1a/1c: docs/plan/esign.md, #3325).
+export const SIGN_EVENT_TYPES = [
+  'envelope_created',
+  'document_inspected',
+  'document_inspect_failed',
+  'envelope_updated',
+  'envelope_shared_summary_updated',
+  'signer_added',
+  'signer_removed',
+  'signers_reordered',
+  'fields_set',
+  'envelope_sent',
+  'link_created',
+  'in_person_session_started',
+  'signer_reminded',
+  'signer_pre_expiry_reminded',
+  'signer_corrected',
+  'signer_delegated',
+  'signer_viewed',
+  'signer_otp_verified',
+  'attachment_uploaded',
+  'signer_signed',
+  'in_person_signed',
+  'signer_declined',
+  'envelope_decline_acknowledged',
+  'envelope_completed',
+  'envelope_voided',
+  'envelope_expired',
+  'envelope_sealed',
+  'envelope_seal_failed',
+  'ca_requested',
+  'ca_completed',
+  'ca_failed',
+] as const;
+export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 export const SIGN_MAX_PAGES = 200;
 export const SIGN_MAX_SIGNERS = 50;
 export const SIGN_MAX_FIELDS = 500;
@@ -290,14 +414,35 @@ export const SIGN_NORM_SCALE = 1_000_000;
 
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
-export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract', 'project_acceptance'] as const;
+export const SIGN_SOURCE_KINDS = [
+  'standalone',
+  'crm_quote',
+  'crm_order',
+  'hr_contract',
+  'project_acceptance',
+  'meeting_minutes',
+] as const;
 export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
 export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
 export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
 export const SIGN_DELIVERY_MODES = ['link', 'email'] as const;
 export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'stamp',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
+export const SIGN_MEMBER_SIGNATURE_KINDS = ['signature', 'initials'] as const;
+export const SIGN_ORG_STAMP_KINDS = ['company', 'title', 'custom'] as const;
+export const SIGN_ORG_STAMP_STATUSES = ['active', 'archived'] as const;
+export const SIGN_MAX_ORG_STAMPS = 50;
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export const SIGN_AI_SEVERITIES = ['low', 'medium', 'high'] as const;
 export const SIGN_AI_OUTCOME_STATES = ['used', 'off', 'budget', 'busy', 'not_ready', 'not_draft', 'no_text', 'failed'] as const;
@@ -312,6 +457,9 @@ export const zSignDeliveryMode = z.enum(SIGN_DELIVERY_MODES);
 export const zSignSignerStatus = z.enum(SIGN_SIGNER_STATUSES);
 export const zSignSignatureKind = z.enum(SIGN_SIGNATURE_KINDS);
 export const zSignFieldType = z.enum(SIGN_FIELD_TYPES);
+export const zSignMemberSignatureKind = z.enum(SIGN_MEMBER_SIGNATURE_KINDS);
+export const zSignOrgStampKind = z.enum(SIGN_ORG_STAMP_KINDS);
+export const zSignOrgStampStatus = z.enum(SIGN_ORG_STAMP_STATUSES);
 export const zSignAiAnalysisStatus = z.enum(SIGN_AI_ANALYSIS_STATUSES);
 export const zSignAiSeverity = z.enum(SIGN_AI_SEVERITIES);
 export const zSignAiOutcomeState = z.enum(SIGN_AI_OUTCOME_STATES);
@@ -351,6 +499,44 @@ function hasLoneSignSurrogate(value: string): boolean {
   return false;
 }
 
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+export const zSignFieldOption = z
+  .string()
+  .trim()
+  .min(1)
+  .max(SIGN_FIELD_OPTION_CHARS_MAX)
+  .refine(
+    (s) => !hasLoneSignSurrogate(s) && !hasControlChars(s),
+    'option must be printable well-formed Unicode',
+  );
+
+export const zSignFieldOptions = z
+  .array(zSignFieldOption)
+  .min(1)
+  .max(SIGN_FIELD_OPTIONS_MAX)
+  .refine((items) => new Set(items).size === items.length, 'field options must be unique');
+
+function validateSignFieldTypeOptions(
+  item: { fieldType: (typeof SIGN_FIELD_TYPES)[number]; options?: readonly string[] | null | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  const isChoice = item.fieldType === 'dropdown' || item.fieldType === 'radio';
+  if (isChoice) {
+    if (!item.options || item.options.length === 0) {
+      ctx.addIssue({ code: 'custom', path: ['options'], message: 'dropdown and radio fields require at least one option' });
+    }
+  } else if (item.options !== undefined && item.options !== null) {
+    ctx.addIssue({ code: 'custom', path: ['options'], message: 'options are only valid on dropdown and radio fields' });
+  }
+}
+
 export const zSignDetectedTag = z
   .strictObject({
     pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
@@ -364,6 +550,7 @@ export const zSignDetectedTag = z
       .max(120)
       .refine((s) => !hasLoneSignSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
       .nullable(),
+    options: z.array(zSignFieldOption).min(1).max(SIGN_FIELD_OPTIONS_MAX).optional(),
     xNorm: z.number().finite().min(0).lt(1),
     yNorm: z.number().finite().min(0).lt(1),
     wNorm: z.number().finite().gt(0).lte(1),
@@ -373,6 +560,7 @@ export const zSignDetectedTag = z
     if (item.roleKey !== `r${item.roleOrder}`) {
       ctx.addIssue({ code: 'custom', path: ['roleKey'], message: 'roleKey must match roleOrder' });
     }
+    validateSignFieldTypeOptions(item, ctx);
     validateSignNormBounds(item, ctx);
   });
 export type SignDetectedTag = z.infer<typeof zSignDetectedTag>;
@@ -555,8 +743,14 @@ export const zSignEnvelopeDetail = z.strictObject({
       required: z.boolean(),
       proposedByAi: z.boolean(),
       fontSizePt: z.number().int().nullable(),
+      options: z.array(z.string()).nullable().optional(),
       valueText: z.string().nullable(),
       valueChecked: z.boolean().nullable(),
+      attachmentFileId: zId.nullable().optional(),
+      attachmentFilename: z.string().nullable().optional(),
+      attachmentContentType: zSignAttachmentContentType.nullable().optional(),
+      attachmentSizeBytes: z.number().int().nullable().optional(),
+      attachmentSha256: z.string().nullable().optional(),
       filledAt: z.string().nullable(),
       createdAt: z.string(),
       updatedAt: z.string(),
@@ -570,6 +764,7 @@ export const zSignEnvelopeEventsResult = z.strictObject({
     z.strictObject({
       id: zId,
       signerId: zId.nullable(),
+      hostUserId: zId.nullable().optional(),
       seq: z.number().int(),
       eventType: z.string(),
       actorType: z.string(),
@@ -762,6 +957,22 @@ export const zSignSignerCorrectRecipientResult = z.strictObject({
   link: zSignIssuedLink.nullable(),
 });
 
+// Short-lived (<= 2h) single-use in-person host signing session (#3820); never persisted in idempotency replay records.
+export const zSignSignerStartInPersonInput = z.strictObject({
+  envelopeId: zId,
+  signerId: zId,
+  expiresInMinutes: z.number().int().min(5).max(SIGN_IN_PERSON_MAX_TTL_MINUTES).optional(),
+});
+export const zSignSignerStartInPersonResult = z.strictObject({
+  envelopeId: zId,
+  signerId: zId,
+  hostUserId: zId,
+  tokenId: zId,
+  token: z.string(),
+  ceremonyPath: z.string(),
+  expiresAt: z.string(),
+});
+
 export const zSignFieldItemInput = z
   .strictObject({
     signerId: zId,
@@ -775,8 +986,10 @@ export const zSignFieldItemInput = z
     required: z.boolean().default(true),
     proposedByAi: z.boolean().default(false),
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+    options: zSignFieldOptions.nullable().optional(),
   })
   .superRefine((item, ctx) => {
+    validateSignFieldTypeOptions(item, ctx);
     validateSignNormBounds(item, ctx);
   });
 
@@ -852,6 +1065,7 @@ export const zSignTemplateStatus = z.enum(SIGN_TEMPLATE_STATUSES);
 export const zSignTemplateDirectLinkSummary = z.strictObject({
   enabled: z.boolean(),
   requireEmailOtp: z.boolean(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   usesCount: z.number().int().min(0).optional(),
   expiresAt: z.string().nullable().optional(),
@@ -862,6 +1076,7 @@ export const zSignTemplateDirectLinkDetail = z.strictObject({
   id: zId,
   enabled: z.boolean(),
   requireEmailOtp: z.boolean(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   usesCount: z.number().int().min(0).optional(),
   expiresAt: z.string().nullable().optional(),
@@ -893,6 +1108,7 @@ export const zSignTemplateFieldRecord = z.strictObject({
   label: z.string().nullable(),
   required: z.boolean(),
   fontSizePt: z.number().int().nullable(),
+  options: z.array(z.string()).nullable().optional(),
 });
 
 export const zSignTemplateSummary = z.strictObject({
@@ -1043,11 +1259,13 @@ export const zSignTemplateFieldItemInput = z
     label: z.string().trim().min(1).max(200).nullable().optional(),
     required: z.boolean().default(true),
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+    options: zSignFieldOptions.nullable().optional(),
   })
   .superRefine((item, ctx) => {
     if (!item.templateRoleId && !item.roleKey) {
       ctx.addIssue({ code: 'custom', path: ['templateRoleId'], message: 'Either templateRoleId or roleKey is required' });
     }
+    validateSignFieldTypeOptions(item, ctx);
     validateSignNormBounds(item, ctx);
   });
 
@@ -1108,6 +1326,7 @@ export const zSignTemplateDirectLinkSetInput = z.strictObject({
   templateId: zId,
   enabled: z.boolean(),
   requireEmailOtp: z.boolean().optional(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });
@@ -1115,6 +1334,7 @@ export const zSignTemplateDirectLinkSetInput = z.strictObject({
 export const zSignTemplateDirectLinkRotateInput = z.strictObject({
   templateId: zId,
   requireEmailOtp: z.boolean().optional(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });
@@ -1123,6 +1343,7 @@ export const zSignTemplateDirectLinkResult = z.strictObject({
   templateId: zId,
   enabled: z.boolean(),
   requireEmailOtp: z.boolean(),
+  listedOnPublicHub: z.boolean().optional(),
   maxUses: z.number().int().min(1).max(100_000).nullable().optional(),
   usesCount: z.number().int().min(0).optional(),
   expiresAt: z.string().nullable().optional(),
@@ -1514,3 +1735,318 @@ export const zSignCaRequestInitiateInput = z.strictObject({
 export const zSignCaRequestListResult = z.strictObject({
   items: z.array(zSignCaSigningRequestRecord),
 });
+
+// eSign Slice 4e (#3821): post-signature structured agreement terms, renewal notice windows, and milestone obligations.
+export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+export const zSignObligationStatus = z.enum(SIGN_OBLIGATION_STATUSES);
+
+export const SIGN_OBLIGATION_ITEM_STATUSES = ['pending', 'completed'] as const;
+export const zSignObligationItemStatus = z.enum(SIGN_OBLIGATION_ITEM_STATUSES);
+
+export const SIGN_OBLIGATION_CITATION_FIELDS = [
+  'counterpartyName',
+  'effectiveDate',
+  'expiryDate',
+  'renewalNoticeDays',
+  'autoRenew',
+  'contractValue',
+] as const;
+export const zSignObligationCitationField = z.enum(SIGN_OBLIGATION_CITATION_FIELDS);
+
+export const SIGN_OBLIGATION_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'not_ready',
+  'not_completed',
+  'no_text',
+  'empty',
+  'failed',
+] as const;
+export const zSignObligationAiOutcome = z.enum(SIGN_OBLIGATION_AI_OUTCOMES);
+export type SignObligationAiOutcome = z.infer<typeof zSignObligationAiOutcome>;
+
+export const zSignObligationDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'ISO calendar date YYYY-MM-DD');
+export const zSignContractDecimal = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Non-negative decimal string (up to 4 decimal places)');
+export const zSignCurrencyCode = z.string().regex(/^[A-Z]{3}$/, 'ISO 4217 3-letter currency code');
+
+export const zSignObligationCitation = z.strictObject({
+  field: zSignObligationCitationField,
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string().min(1).max(1000),
+});
+export type SignObligationCitationContract = z.infer<typeof zSignObligationCitation>;
+
+export const zSignObligationItem = z.strictObject({
+  id: z.string().min(1).max(80),
+  title: z.string().min(1).max(300),
+  dueDate: zSignObligationDate.nullable(),
+  status: zSignObligationItemStatus,
+  completedAt: z.string().nullable(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  quoteExcerpt: z.string().max(1000).nullable(),
+  proposedByAi: z.boolean(),
+});
+export type SignObligationItemContract = z.infer<typeof zSignObligationItem>;
+
+export const zSignProposedObligationItem = z.strictObject({
+  id: z.string().min(1).max(80),
+  title: z.string().min(1).max(300),
+  dueDate: zSignObligationDate.nullable(),
+  status: zSignObligationItemStatus,
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string().min(1).max(1000),
+  proposedByAi: z.literal(true),
+});
+
+export const zSignObligationProposal = z.strictObject({
+  counterpartyName: z.string().nullable(),
+  effectiveDate: zSignObligationDate.nullable(),
+  expiryDate: zSignObligationDate.nullable(),
+  renewalNoticeDays: z.number().int().min(0).max(365).nullable(),
+  autoRenew: z.boolean(),
+  contractValue: zSignContractDecimal.nullable(),
+  currency: zSignCurrencyCode,
+  citations: z.array(zSignObligationCitation),
+  obligations: z.array(zSignProposedObligationItem),
+  proposedByAi: z.literal(true),
+});
+export type SignObligationProposalContract = z.infer<typeof zSignObligationProposal>;
+
+export const zSignEnvelopeObligationRecord = z.strictObject({
+  id: zId,
+  orgId: zId,
+  envelopeId: zId,
+  status: zSignObligationStatus,
+  counterpartyName: z.string().nullable(),
+  effectiveDate: zSignObligationDate.nullable(),
+  expiryDate: zSignObligationDate.nullable(),
+  renewalNoticeDays: z.number().int().min(0).max(365).nullable(),
+  autoRenew: z.boolean(),
+  contractValue: zSignContractDecimal.nullable(),
+  currency: zSignCurrencyCode,
+  obligations: z.array(zSignObligationItem),
+  proposal: zSignObligationProposal.nullable(),
+  promptVersion: z.string().nullable(),
+  confirmedBy: zId.nullable(),
+  confirmedAt: z.string().nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopeObligationRecordContract = z.infer<typeof zSignEnvelopeObligationRecord>;
+
+export const zSignObligationGetResult = z.strictObject({
+  obligation: zSignEnvelopeObligationRecord.nullable(),
+  canEdit: z.boolean(),
+});
+
+export const zSignObligationRenewalsListInput = z.strictObject({
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export const zSignObligationRenewalListItem = z.strictObject({
+  envelope: zSignEnvelopeSummary,
+  obligation: zSignEnvelopeObligationRecord,
+  renewalNoticeDate: zSignObligationDate.nullable(),
+  daysUntilNotice: z.number().int().nullable(),
+  daysUntilExpiry: z.number().int().nullable(),
+  pendingObligationCount: z.number().int().min(0),
+  overdueObligationCount: z.number().int().min(0),
+  nextObligationDueDate: zSignObligationDate.nullable(),
+});
+export type SignObligationRenewalListItem = z.infer<typeof zSignObligationRenewalListItem>;
+
+export const zSignObligationRenewalsListResult = z.strictObject({
+  items: z.array(zSignObligationRenewalListItem),
+});
+
+export const zSignObligationExtractInput = z.strictObject({
+  envelopeId: zId,
+  pages: z
+    .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
+    .max(SIGN_MAX_PAGES)
+    .optional(),
+});
+
+export const zSignObligationExtractResult = z.strictObject({
+  ai: zSignObligationAiOutcome,
+  status: z.enum([
+    'proposed',
+    'confirmed',
+    'off',
+    'budget',
+    'busy',
+    'not_ready',
+    'not_completed',
+    'no_text',
+    'empty',
+    'failed',
+  ]),
+  obligation: zSignEnvelopeObligationRecord.nullable(),
+});
+
+export const zSignObligationItemInput = z.strictObject({
+  id: z.string().trim().min(1).max(80).optional(),
+  title: z.string().trim().min(1).max(300),
+  dueDate: zSignObligationDate.nullable().optional(),
+  status: zSignObligationItemStatus.default('pending'),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable().optional(),
+  quoteExcerpt: z.string().trim().max(1000).nullable().optional(),
+  proposedByAi: z.boolean().optional(),
+});
+
+export const zSignObligationUpsertInput = z.strictObject({
+  envelopeId: zId,
+  counterpartyName: z.string().trim().min(1).max(300).nullable().optional(),
+  effectiveDate: zSignObligationDate.nullable().optional(),
+  expiryDate: zSignObligationDate.nullable().optional(),
+  renewalNoticeDays: z.number().int().min(0).max(365).nullable().optional(),
+  autoRenew: z.boolean().default(false),
+  contractValue: z.string().trim().max(64).nullable().optional(),
+  currency: zSignCurrencyCode.default('VND'),
+  obligations: z.array(zSignObligationItemInput).max(50).default([]),
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignObligationDismissInput = z.strictObject({
+  envelopeId: zId,
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignObligationDismissResult = z.strictObject({
+  envelopeId: zId,
+  dismissed: z.boolean(),
+  obligation: zSignEnvelopeObligationRecord.nullable(),
+});
+
+export const zSignObligationCompleteItemInput = z.strictObject({
+  envelopeId: zId,
+  itemId: z.string().trim().min(1).max(80),
+  completed: z.boolean().default(true),
+  idempotencyKey: zId.optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Slice 4a (#3817): Saved member signatures/initials and org stamps
+// ---------------------------------------------------------------------------
+
+export type SignMemberSignatureKind = z.infer<typeof zSignMemberSignatureKind>;
+export type SignOrgStampKind = z.infer<typeof zSignOrgStampKind>;
+export type SignOrgStampStatus = z.infer<typeof zSignOrgStampStatus>;
+
+export const zSignMemberSignatureRecord = z.strictObject({
+  id: zId,
+  kind: zSignMemberSignatureKind,
+  signatureKind: zSignSignatureKind,
+  signatureTypedText: z.string().nullable(),
+  signaturePngBase64: z.string(),
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignMemberSignatureRecord = z.infer<typeof zSignMemberSignatureRecord>;
+
+export const zSignMemberSignatureListInput = z.strictObject({});
+export const zSignMemberSignatureListResult = z.strictObject({
+  items: z.array(zSignMemberSignatureRecord),
+});
+export type SignMemberSignatureListResult = z.infer<typeof zSignMemberSignatureListResult>;
+
+export const zSignMemberSignatureUpsertInput = z.strictObject({
+  kind: zSignMemberSignatureKind,
+  signatureKind: zSignSignatureKind,
+  signatureTypedText: z.string().trim().min(1).max(200).nullable().optional(),
+  signaturePngBase64: z.string().min(60).max(380_000),
+  idempotencyKey: zId.optional(),
+});
+export type SignMemberSignatureUpsertInput = z.infer<typeof zSignMemberSignatureUpsertInput>;
+
+export const zSignMemberSignatureUpsertResult = z.strictObject({
+  id: zId,
+  kind: zSignMemberSignatureKind,
+  signatureKind: zSignSignatureKind,
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  updatedAt: z.string(),
+});
+export type SignMemberSignatureUpsertResult = z.infer<typeof zSignMemberSignatureUpsertResult>;
+
+export const zSignMemberSignatureDeleteInput = z.strictObject({
+  kind: zSignMemberSignatureKind,
+  idempotencyKey: zId.optional(),
+});
+export type SignMemberSignatureDeleteInput = z.infer<typeof zSignMemberSignatureDeleteInput>;
+
+export const zSignMemberSignatureDeleteResult = z.strictObject({
+  deleted: z.boolean(),
+});
+export type SignMemberSignatureDeleteResult = z.infer<typeof zSignMemberSignatureDeleteResult>;
+
+export const zSignOrgStampRecord = z.strictObject({
+  id: zId,
+  name: z.string(),
+  stampKind: zSignOrgStampKind,
+  fileId: zId.nullable(),
+  stampPngBase64: z.string(),
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  status: zSignOrgStampStatus,
+  archivedAt: z.string().nullable(),
+  createdBy: zId,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignOrgStampRecord = z.infer<typeof zSignOrgStampRecord>;
+
+export const zSignOrgStampListInput = z.strictObject({
+  status: zSignOrgStampStatus.optional(),
+});
+export type SignOrgStampListInput = z.infer<typeof zSignOrgStampListInput>;
+
+export const zSignOrgStampListResult = z.strictObject({
+  items: z.array(zSignOrgStampRecord),
+  canManage: z.boolean(),
+});
+export type SignOrgStampListResult = z.infer<typeof zSignOrgStampListResult>;
+
+export const zSignOrgStampCreateInput = z.strictObject({
+  name: z.string().trim().min(1).max(120),
+  stampKind: zSignOrgStampKind.default('company'),
+  fileId: zId.nullable().optional(),
+  stampPngBase64: z.string().min(60).max(380_000),
+  idempotencyKey: zId.optional(),
+});
+export type SignOrgStampCreateInput = z.infer<typeof zSignOrgStampCreateInput>;
+
+export const zSignOrgStampCreateResult = z.strictObject({
+  id: zId,
+  name: z.string(),
+  stampKind: zSignOrgStampKind,
+  fileId: zId.nullable(),
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  status: zSignOrgStampStatus,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignOrgStampCreateResult = z.infer<typeof zSignOrgStampCreateResult>;
+
+export const zSignOrgStampArchiveInput = z.strictObject({
+  stampId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignOrgStampArchiveInput = z.infer<typeof zSignOrgStampArchiveInput>;
+
+export const zSignOrgStampArchiveResult = z.strictObject({
+  stampId: zId,
+  status: z.literal('archived'),
+  archivedAt: z.string(),
+});
+export type SignOrgStampArchiveResult = z.infer<typeof zSignOrgStampArchiveResult>;

@@ -28,9 +28,13 @@ import {
   canAccessEnvelopeRow,
   isHrPrivilegedRole,
 } from './hr-visibility.ts';
+import {
+  applyMeetingMinutesVisibilityFilter,
+  assertCanAccessMeetingMinutesEnvelopeRow,
+} from './meeting-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
-import { SIGN_WRITERS, parseDetectedTags, parseSharedSummary } from './shared.ts';
+import { SIGN_WRITERS, parseDetectedTags, parseFieldOptions, parseSharedSummary } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -89,6 +93,7 @@ export const envelopeList = defineQuery({
     if (input.status !== undefined) q = q.where('status', '=', input.status);
     if (input.sourceKind !== undefined) q = q.where('source_kind', '=', input.sourceKind);
     q = applyEnvelopeVisibilityFilter(q, ctx);
+    q = applyMeetingMinutesVisibilityFilter(q, ctx);
     const rows = await q.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(input.limit).execute();
     if (rows.length === 0) {
       return { items: [] };
@@ -259,6 +264,9 @@ export const envelopeBySource = defineQuery({
       if (!userId) return { items: [] };
       q = q.where('created_by', '=', userId);
     }
+    if (input.sourceKind === 'meeting_minutes') {
+      q = applyMeetingMinutesVisibilityFilter(q, ctx);
+    }
     const rawRows = await q.execute();
     const rows = rawRows.filter((r) =>
       canAccessEnvelopeRow(ctx, {
@@ -333,6 +341,7 @@ export const envelopeGet = defineQuery({
       .executeTakeFirst();
     if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
     assertCanAccessEnvelopeRow(ctx, env);
+    await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
     const signers = await ctx.trx
       .selectFrom('crove_sign.signer')
@@ -409,8 +418,14 @@ export const envelopeGet = defineQuery({
         'required',
         'proposed_by_ai',
         'font_size_pt',
+        'options_json',
         'value_text',
         'value_checked',
+        'attachment_file_id',
+        'attachment_filename',
+        'attachment_content_type',
+        'attachment_size_bytes',
+        'attachment_sha256',
         'filled_at',
         'created_at',
         'updated_at',
@@ -516,8 +531,14 @@ export const envelopeGet = defineQuery({
         required: f.required,
         proposedByAi: f.proposed_by_ai,
         fontSizePt: f.font_size_pt,
+        options: parseFieldOptions(f.options_json),
         valueText: f.value_text,
         valueChecked: f.value_checked,
+        attachmentFileId: f.attachment_file_id,
+        attachmentFilename: f.attachment_filename,
+        attachmentContentType: f.attachment_content_type,
+        attachmentSizeBytes: f.attachment_size_bytes,
+        attachmentSha256: f.attachment_sha256,
         filledAt: isoOrNull(f.filled_at),
         createdAt: new Date(f.created_at).toISOString(),
         updatedAt: new Date(f.updated_at).toISOString(),
@@ -534,12 +555,13 @@ export const envelopeEvents = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('crove_sign.envelope')
-      .select(['id', 'source_kind', 'created_by'])
+      .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
     assertCanAccessEnvelopeRow(ctx, env);
+    await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
     const rows = await ctx.trx
       .selectFrom('crove_sign.signing_event')
@@ -554,6 +576,7 @@ export const envelopeEvents = defineQuery({
       events: rows.map((e) => ({
         id: e.id,
         signerId: e.signer_id,
+        hostUserId: e.host_user_id ?? null,
         seq: e.seq,
         eventType: e.event_type,
         actorType: e.actor_type,
@@ -581,6 +604,7 @@ export const envelopeVerify = defineQuery({
         'id',
         'status',
         'source_kind',
+        'source_id',
         'created_by',
         'seal_status',
         'source_file_id',
@@ -602,6 +626,7 @@ export const envelopeVerify = defineQuery({
       .executeTakeFirst();
     if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
     assertCanAccessEnvelopeRow(ctx, env);
+    await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
     const events = await ctx.trx
       .selectFrom('crove_sign.signing_event')
@@ -616,12 +641,23 @@ export const envelopeVerify = defineQuery({
         ? { valid: false, count: 0, tipHash: null, brokenSeq: null, reason: 'No signing events recorded' }
         : verifyEventChain(events);
 
-    const fileIds = [env.source_file_id, env.sealed_file_id, env.certificate_file_id].filter(
-      (id): id is string => id !== null,
-    );
+    const attachmentFields = await ctx.trx
+      .selectFrom('crove_sign.field')
+      .select(['attachment_file_id', 'attachment_content_type', 'attachment_size_bytes', 'attachment_sha256'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .where('attachment_file_id', 'is not', null)
+      .execute();
+
+    const fileIds = [
+      env.source_file_id,
+      env.sealed_file_id,
+      env.certificate_file_id,
+      ...attachmentFields.map((f) => f.attachment_file_id),
+    ].filter((id): id is string => id !== null);
     const fileRows = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'source', 'storage_key', 'generation', 'sha256'])
+      .select(['id', 'source', 'content_type', 'size_bytes', 'storage_key', 'generation', 'sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', fileIds)
       .execute();
@@ -663,7 +699,19 @@ export const envelopeVerify = defineQuery({
             );
           })();
 
-    const pointersConsistent = sourceConsistent && sealedConsistent && certConsistent;
+    const attachmentsConsistent = attachmentFields.every((af) => {
+      if (!af.attachment_file_id) return true;
+      const f = byId.get(af.attachment_file_id);
+      return (
+        f !== undefined &&
+        f.source === 'sign_attachment' &&
+        f.content_type === af.attachment_content_type &&
+        Number(f.size_bytes) === af.attachment_size_bytes &&
+        f.sha256 === af.attachment_sha256
+      );
+    });
+
+    const pointersConsistent = sourceConsistent && sealedConsistent && certConsistent && attachmentsConsistent;
     return {
       envelopeId: env.id,
       status: env.status,
@@ -794,17 +842,22 @@ export const envelopeSealJobData = defineQuery({
       .selectFrom('crove_sign.field')
       .select([
         'id',
+        'signer_id',
         'field_type',
         'page_number',
         'x_norm',
         'y_norm',
         'w_norm',
         'h_norm',
+        'label',
         'required',
         'font_size_pt',
         'value_text',
         'value_checked',
         'signature_png_base64',
+        'attachment_file_id',
+        'attachment_filename',
+        'attachment_sha256',
         'filled_at',
       ])
       .where('org_id', '=', ctx.orgId)
@@ -843,6 +896,8 @@ export const envelopeSealJobData = defineQuery({
 
 import { signAcceptanceQueries } from './acceptance.ts';
 import { signCaQueries } from './ca.ts';
+import { signObligationQueries } from './obligations.ts';
+import { signProfileQueries } from './profiles.ts';
 import { signTemplateQueries } from './templates.ts';
 import { signToday } from './today-and-reminders.ts';
 
@@ -860,13 +915,11 @@ async function verifySignReadablePdfFile(ctx: QueryContext, fileId: string): Pro
   if (!file) {
     throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
   }
-  if (!isHrPrivilegedRole(ctx.role)) {
-    const { rows } = await sql<{ allowed: boolean }>`
-      SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed
-    `.execute(ctx.trx);
-    if (!rows[0]?.allowed) {
-      throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
-    }
+  const { rows } = await sql<{ allowed: boolean }>`
+    SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed
+  `.execute(ctx.trx);
+  if (!rows[0]?.allowed) {
+    throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
   }
   if (file.source !== 'sign_document') {
     throw new DomainError('SIGN_INVALID_SOURCE_FILE', 422, 'Compared file must have source sign_document');
@@ -941,4 +994,6 @@ export const signQueries = [
   ...signTemplateQueries,
   ...signAcceptanceQueries,
   ...signCaQueries,
+  ...signObligationQueries,
+  ...signProfileQueries,
 ];

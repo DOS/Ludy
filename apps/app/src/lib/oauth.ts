@@ -2,7 +2,10 @@
 // fixed address for every org, /channels/oauth/:provider/callback, so the screen that starts an attempt remembers
 // which org it was for under the attempt's state. The state is not a secret from this browser: the server keeps only
 // its hash and finishes the attempt only for the member who started it.
-const PREFIX = 'crove.oauth.';
+import { takeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+
+const PREFIX = 'ludy.oauth.';
+const LEGACY_PREFIX = 'crove.oauth.';
 const MAX_AGE_MS = 15 * 60 * 1000;
 
 interface Pending {
@@ -12,7 +15,7 @@ interface Pending {
 
 export function rememberOAuthAttempt(state: string, slug: string): void {
   try {
-    sessionStorage.setItem(PREFIX + state, JSON.stringify({ slug, at: Date.now() } satisfies Pending));
+    writeMigratedItem(sessionStorage, PREFIX + state, LEGACY_PREFIX + state, JSON.stringify({ slug, at: Date.now() } satisfies Pending));
   } catch {
     // Storage off (private mode): the callback screen then asks to start again.
   }
@@ -22,8 +25,7 @@ export function rememberOAuthAttempt(state: string, slug: string): void {
 // lifetime is ignored.
 export function takeOAuthAttempt(state: string): string | null {
   try {
-    const raw = sessionStorage.getItem(PREFIX + state);
-    sessionStorage.removeItem(PREFIX + state);
+    const raw = takeMigratedItem(sessionStorage, PREFIX + state, LEGACY_PREFIX + state);
     if (!raw) return null;
     const pending = JSON.parse(raw) as Partial<Pending>;
     if (typeof pending.slug !== 'string' || typeof pending.at !== 'number' || Date.now() - pending.at > MAX_AGE_MS) return null;
