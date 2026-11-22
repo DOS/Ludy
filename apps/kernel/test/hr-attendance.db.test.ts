@@ -417,22 +417,32 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     expect(overnightList.openLog?.workDate).toBe(yesterdayVn);
 
     await o1.exec(o1.owner, 'hr.payroll.employee.end', { employeeId: o1.empBId, endedOn: today });
+    const endedUpdate = await runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
+      c.query(
+        `UPDATE crove_hr.attendance_log
+         SET checked_out_at = now(), worked_minutes = 540, status = 'present'
+         WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`,
+        [o1.orgId, o1.empBId, yesterdayVn],
+      ),
+    );
+    expect(endedUpdate.rowCount).toBe(0);
     await expect(
       runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
         c.query(
-          `UPDATE crove_hr.attendance_log
-           SET checked_out_at = now(), worked_minutes = 540, status = 'present'
-           WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`,
-          [o1.orgId, o1.empBId, yesterdayVn],
+          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+           VALUES ($1, $2, $3, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, now(), 'web', 'missing_checkout')`,
+          [o1.orgId, empInfo.legal_entity_id, o1.empBId],
         ),
       ),
     ).rejects.toThrow();
-    // Ended employee still reads historical attendance list via RPC/RLS
+    // Ended employee still reads historical attendance list via RPC/RLS, with yesterday's row unchanged
     const endedList = await o1.query<HrSelfAttendanceListResult>(o1.memberB, 'hr.self.attendance.list', {
       month: yesterdayVn.slice(0, 7),
     });
     expect(endedList.openLog).toBeNull();
-    expect(endedList.logs.some((l) => l.workDate === yesterdayVn)).toBe(true);
+    const endedYesterday = endedList.logs.find((l) => l.workDate === yesterdayVn);
+    expect(endedYesterday?.status).toBe('missing_checkout');
+    expect(endedYesterday?.checkedOutAt).toBeNull();
   });
 
   it('detects anomalies, narrates safely via metered Ly fallback/alias, and rolls up decimal.js figures into draft payroll with CSV parity', async () => {
