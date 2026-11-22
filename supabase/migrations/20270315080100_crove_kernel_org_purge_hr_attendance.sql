@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes HR attendance logs and office QR config ahead of payroll_employee (#4447).
--- This replaces crove_kernel.org_purge with the previous version (20270315070100_crove_kernel_org_purge_projects_roadmap)
+-- This replaces crove_kernel.org_purge with the previous version (20270315080100_crove_kernel_org_purge_projects_time)
 -- plus crove_hr.attendance_log and crove_hr.attendance_qr_config in v_kernel_first; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
@@ -47,7 +47,7 @@ DECLARE
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note_version', 'crove_notes.note', 'crove_notes.notebook', 'crove_notes.note_template',
     'crove_projects.roadmap_vote', 'crove_projects.roadmap_subscriber', 'crove_projects.roadmap_otp', 'crove_projects.roadmap_item', 'crove_projects.roadmap_board',
-    'crove_projects.task_dependency', 'crove_projects.project_task', 'crove_projects.project_column', 'crove_projects.project_cycle', 'crove_projects.project_member', 'crove_projects.project',
+    'crove_projects.time_entry', 'crove_projects.task_dependency', 'crove_projects.project_task', 'crove_projects.project_column', 'crove_projects.project_cycle', 'crove_projects.project_member', 'crove_projects.project',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
     'crove_kernel.mail_event', 'crove_kernel.mail_suppression', 'crove_kernel.mail_message',
