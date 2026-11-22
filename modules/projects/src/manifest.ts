@@ -10,12 +10,28 @@ export const projectsManifest = defineModule({
   tables: {
     crove_projects: {
       project: columns(
-        ['org_id', 'id', 'owner_user_id', 'status', 'is_template', 'created_by', 'created_at', 'updated_at'],
+        [
+          'org_id',
+          'id',
+          'owner_user_id',
+          'status',
+          'is_template',
+          'cycles_enabled',
+          'cycle_duration_weeks',
+          'points_enabled',
+          'created_by',
+          'created_at',
+          'updated_at',
+        ],
         { name: 'pii', description: 'pii', template_tasks: 'pii' },
       ),
       project_column: columns(
         ['org_id', 'id', 'project_id', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'],
         { name: 'pii' },
+      ),
+      project_cycle: columns(
+        ['org_id', 'id', 'project_id', 'number', 'status', 'starts_on', 'ends_on', 'started_at', 'completed_at', 'created_by', 'created_at', 'updated_at'],
+        { name: 'pii', goal: 'pii' },
       ),
       project_member: columns(['org_id', 'id', 'project_id', 'user_id', 'created_at']),
       project_task: columns([
@@ -24,6 +40,8 @@ export const projectsManifest = defineModule({
         'project_id',
         'task_id',
         'column_id',
+        'cycle_id',
+        'story_points',
         'sort_key',
         'start_on',
         'recurrence',

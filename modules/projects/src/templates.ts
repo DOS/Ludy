@@ -441,7 +441,19 @@ export const projectTemplateArchive = defineCommand({
     const userId = userOf(ctx.actor);
     const row = await ctx.trx
       .selectFrom('crove_projects.project')
-      .select(['id', 'name', 'description', 'owner_user_id', 'status', 'created_by', 'created_at', 'updated_at'])
+      .select([
+        'id',
+        'name',
+        'description',
+        'owner_user_id',
+        'status',
+        'cycles_enabled',
+        'cycle_duration_weeks',
+        'points_enabled',
+        'created_by',
+        'created_at',
+        'updated_at',
+      ])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
       .where('is_template', '=', true)

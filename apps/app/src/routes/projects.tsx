@@ -2,7 +2,17 @@
 // Projects list and board/list screens (/o/$slug/projects and /o/$slug/projects/$id, issue #2591, ADR-0048).
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
-import type { FilterAst, ProjectBoard, ProjectColumn, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort, TaskChecklistStep } from '@ludy/kernel-contract';
+import type {
+  FilterAst,
+  ProjectBoard,
+  ProjectColumn,
+  ProjectCycleFilter,
+  ProjectStatus,
+  ProjectSummary,
+  ProjectTaskCard,
+  SavedViewSort,
+  TaskChecklistStep,
+} from '@ludy/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -21,6 +31,7 @@ import { ProjectBoardView, type BoardColumnStatus } from '../components/project-
 import { ProjectTimelineView } from '../components/project-timeline.tsx';
 import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-sign-handoff.tsx';
 import { ProjectColumnsDialog } from '../components/project-columns-dialog.tsx';
+import { ProjectCyclesPanel } from '../components/project-cycles.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
@@ -287,6 +298,8 @@ export function ProjectDetailPage() {
   const [moveError, setMoveError] = useState<unknown>(null);
   const [bar, setBar] = useState<TaskFilterState>(EMPTY_TASK_FILTER);
   const [sort, setSort] = useState<SavedViewSort | null>(null);
+  const [cycleFilter, setCycleFilter] = useState<ProjectCycleFilter>({ mode: 'all' });
+  const [selectedMetricsCycleId, setSelectedMetricsCycleId] = useState('');
   const filters: FilterAst = taskFilterToAst(bar);
   const searchTerm = useDebounced(bar.search.trim(), 300);
   const applied: FilterAst = taskFilterToAst({ ...bar, search: searchTerm });
@@ -301,6 +314,8 @@ export function ProjectDetailPage() {
   useEffect(() => {
     setMoveError(null);
     setEditingTask(null);
+    setCycleFilter({ mode: 'all' });
+    setSelectedMetricsCycleId('');
   }, [slug, id]);
 
   useEffect(() => {
@@ -318,6 +333,7 @@ export function ProjectDetailPage() {
     projectId: id,
     ...(positionId ? { positionId } : {}),
     ...(includeCancelled ? { includeCancelled: true } : {}),
+    ...(cycleFilter.mode !== 'all' ? { cycleFilter } : {}),
     ...(applied.all.length > 0 ? { filters: applied } : {}),
     ...(sort ? { sort } : {}),
   };
@@ -338,6 +354,26 @@ export function ProjectDetailPage() {
     enabled: view === 'timeline',
     refetchInterval: (query) =>
       view === 'timeline' && query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false,
+  });
+  const cyclesEnabled = boardQuery.data?.project.cyclesEnabled === true;
+  const pointsEnabled = boardQuery.data?.project.pointsEnabled === true;
+  useEffect(() => {
+    if (boardQuery.data && !cyclesEnabled && cycleFilter.mode !== 'all') {
+      setCycleFilter({ mode: 'all' });
+    }
+  }, [boardQuery.data, cyclesEnabled, cycleFilter.mode]);
+  const cyclesQuery = useQuery({
+    ...orpc.projects.listCycles.queryOptions({ input: { projectId: id } }),
+    enabled: cyclesEnabled,
+  });
+  const cycleMetricsQuery = useQuery({
+    ...orpc.projects.cycleMetrics.queryOptions({
+      input: {
+        projectId: id,
+        ...(selectedMetricsCycleId ? { cycleId: selectedMetricsCycleId } : {}),
+      },
+    }),
+    enabled: cyclesEnabled,
   });
   const me = useQuery(orpc.me.get.queryOptions());
 
@@ -384,6 +420,12 @@ export function ProjectDetailPage() {
   const [savingTimelineTaskId, setSavingTimelineTaskId] = useState<string | null>(null);
   const setTaskDates = useMutation(
     orpc.projects.setTaskDates.mutationOptions({
+      onSuccess: refreshProjectQueries,
+    }),
+  );
+
+  const setTaskPoints = useMutation(
+    orpc.projects.setTaskPoints.mutationOptions({
       onSuccess: refreshProjectQueries,
     }),
   );
@@ -495,6 +537,24 @@ export function ProjectDetailPage() {
         otherMemberCount={otherMemberCount}
       />
 
+      {cyclesEnabled && (
+        <ProjectCyclesPanel
+          key={project.id}
+          slug={slug}
+          projectId={project.id}
+          projectStatus={project.status}
+          canManage={project.canManage}
+          pointsEnabled={pointsEnabled}
+          cycles={cyclesQuery.data?.cycles ?? []}
+          backlogTaskCount={cyclesQuery.data?.backlogTaskCount ?? 0}
+          metrics={cycleMetricsQuery.data}
+          cycleFilter={cycleFilter}
+          selectedMetricsCycleId={selectedMetricsCycleId}
+          onSelectMetricsCycleId={setSelectedMetricsCycleId}
+          onCycleFilterChange={setCycleFilter}
+        />
+      )}
+
       {project.status === 'archived' && (
         <Alert className="border-border bg-muted/40">
           <ProjectIcon name="archive" className="text-muted-foreground" />
@@ -603,6 +663,7 @@ export function ProjectDetailPage() {
       {moveError !== null && <ErrorText>{errorMessage(moveError)}</ErrorText>}
       {createTask.error && <ErrorText>{errorMessage(createTask.error)}</ErrorText>}
       {removeTask.error && <ErrorText>{errorMessage(removeTask.error)}</ErrorText>}
+      {setTaskPoints.error && <ErrorText>{errorMessage(setTaskPoints.error)}</ErrorText>}
 
       {view === 'timeline' ? (
         timelineQuery.data ? (
@@ -651,6 +712,17 @@ export function ProjectDetailPage() {
           includeCancelled={effectiveIncludeCancelled}
           creatingTask={createTask.isPending}
           customSortActive={sort !== null}
+          cyclesEnabled={cyclesEnabled}
+          pointsEnabled={pointsEnabled}
+          cycleNamesById={new Map((cyclesQuery.data?.cycles ?? []).map((c) => [c.id, `#${c.number} ${c.name}`]))}
+          onSetTaskPoints={(taskId, storyPoints) => {
+            setTaskPoints.mutate({
+              projectId: project.id,
+              taskId,
+              storyPoints,
+              idempotencyKey: crypto.randomUUID(),
+            });
+          }}
           onMoveStatus={(taskId, nextStatus, placement) => {
             const capturedProjectId = project.id;
             enqueueBoardMutation(
@@ -702,6 +774,18 @@ export function ProjectDetailPage() {
             },
             done,
           ) => {
+            const selectedFilterCycle =
+              cycleFilter.mode === 'cycle'
+                ? (cyclesQuery.data?.cycles ?? []).find((c) => c.id === cycleFilter.cycleId)
+                : undefined;
+            const autoCycleId =
+              !cyclesEnabled
+                ? undefined
+                : cycleFilter.mode === 'cycle' && selectedFilterCycle?.status !== 'completed'
+                  ? cycleFilter.cycleId
+                  : cycleFilter.mode === 'active' && board.activeCycle
+                    ? board.activeCycle.id
+                    : undefined;
             createTask.mutate(
               {
                 projectId: project.id,
@@ -709,6 +793,7 @@ export function ProjectDetailPage() {
                 assigneePositionId: input.assigneePositionId,
                 ...(input.due ? { due: input.due } : {}),
                 ...(input.checklist?.length ? { checklist: input.checklist } : {}),
+                ...(autoCycleId ? { cycleId: autoCycleId } : {}),
                 status: input.status,
                 ...(input.columnId ? { columnId: input.columnId } : {}),
                 idempotencyKey: crypto.randomUUID(),
@@ -758,6 +843,9 @@ export function ProjectDetailPage() {
         task={editingTask ? (board.tasks.find((item) => item.id === editingTask.id) ?? editingTask) : null}
         projectTasks={positionId || applied.all.length > 0 ? undefined : board.tasks}
         seats={seats}
+        cyclesEnabled={cyclesEnabled}
+        pointsEnabled={pointsEnabled}
+        cycles={cyclesQuery.data?.cycles ?? []}
         open={editingTask !== null}
         onOpenChange={(next) => {
           if (!next) setEditingTask(null);

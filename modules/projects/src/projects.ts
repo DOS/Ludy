@@ -41,6 +41,7 @@ import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { isValidScheduleRange } from './domain/timeline.ts';
 import { projectsManifest } from './manifest.ts';
 import { loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type ProjectOrderRow } from './columns.ts';
+import { loadActiveCycleView, loadCycle } from './cycles.ts';
 import { parseStoredRecurrence } from './recurring.ts';
 import {
   READERS,
@@ -140,7 +141,16 @@ export const projectUpdate = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['name', 'description', 'updated_at'])],
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'project', [
+      'name',
+      'description',
+      'cycles_enabled',
+      'cycle_duration_weeks',
+      'points_enabled',
+      'updated_at',
+    ]),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string }> => {
     const userId = userOf(ctx.actor);
@@ -150,9 +160,15 @@ export const projectUpdate = defineCommand({
 
     const nextName = input.name ?? row.name;
     const nextDescription = input.description !== undefined ? descriptionOf(input.description) : row.description;
+    const nextCyclesEnabled = input.cyclesEnabled ?? row.cycles_enabled;
+    const nextCycleDurationWeeks = input.cycleDurationWeeks ?? row.cycle_duration_weeks;
+    const nextPointsEnabled = input.pointsEnabled ?? row.points_enabled;
     const changed = [
       ...(nextName !== row.name ? ['name'] : []),
       ...(nextDescription !== row.description ? ['description'] : []),
+      ...(nextCyclesEnabled !== row.cycles_enabled ? ['cyclesEnabled'] : []),
+      ...(nextCycleDurationWeeks !== row.cycle_duration_weeks ? ['cycleDurationWeeks'] : []),
+      ...(nextPointsEnabled !== row.points_enabled ? ['pointsEnabled'] : []),
     ];
 
     if (changed.length > 0) {
@@ -161,6 +177,9 @@ export const projectUpdate = defineCommand({
         .set({
           name: nextName,
           description: nextDescription,
+          cycles_enabled: nextCyclesEnabled,
+          cycle_duration_weeks: nextCycleDurationWeeks,
+          points_enabled: nextPointsEnabled,
           updated_at: ctx.now,
         })
         .where('org_id', '=', ctx.orgId)
@@ -173,6 +192,9 @@ export const projectUpdate = defineCommand({
       changed,
       ...(input.name !== undefined ? { name: auditValue(PROJECT, 'name', nextName) } : {}),
       ...(input.description !== undefined ? { description: auditValue(PROJECT, 'description', nextDescription) } : {}),
+      ...(input.cyclesEnabled !== undefined ? { cyclesEnabled: nextCyclesEnabled } : {}),
+      ...(input.cycleDurationWeeks !== undefined ? { cycleDurationWeeks: nextCycleDurationWeeks } : {}),
+      ...(input.pointsEnabled !== undefined ? { pointsEnabled: nextPointsEnabled } : {}),
     });
     if (changed.length > 0) {
       await ctx.emit('projects.project.updated', { projectId: row.id });
@@ -530,6 +552,13 @@ export const projectTaskCreate = defineCommand({
     // then lock crove_projects.project afterwards so concurrent task/project writes share the position -> project lock order.
     const preview = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
     assertNotArchived(preview);
+    const cycleId = input.cycleId ?? null;
+    if (cycleId !== null) {
+      const cycle = await loadCycle(ctx.trx, ctx.orgId, preview.id, cycleId, false);
+      if (cycle.status === 'completed') {
+        throw new DomainError('CYCLE_COMPLETED', 409, 'Chu kỳ đã hoàn thành nên không thể chỉnh sửa hoặc gán việc');
+      }
+    }
 
     let effectiveStatus = input.status ?? 'todo';
     if (input.columnId !== undefined) {
@@ -563,6 +592,12 @@ export const projectTaskCreate = defineCommand({
 
     const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertNotArchived(row);
+    if (cycleId !== null) {
+      const cycle = await loadCycle(ctx.trx, ctx.orgId, row.id, cycleId, false);
+      if (cycle.status === 'completed') {
+        throw new DomainError('CYCLE_COMPLETED', 409, 'Chu kỳ đã hoàn thành nên không thể chỉnh sửa hoặc gán việc');
+      }
+    }
 
     const columns = await loadProjectColumns(ctx.trx, ctx.orgId, row.id, false);
     let columnId: string | null = null;
@@ -587,6 +622,8 @@ export const projectTaskCreate = defineCommand({
         task_id: taskId,
         column_id: columnId,
         start_on: input.startOn ?? null,
+        cycle_id: cycleId,
+        story_points: input.storyPoints ?? null,
         added_by: userId,
         created_at: ctx.now,
       })
@@ -598,6 +635,8 @@ export const projectTaskCreate = defineCommand({
       assigneePositionId: input.assigneePositionId,
       status: effectiveStatus,
       ...(columnId !== null ? { columnId } : {}),
+      ...(cycleId !== null ? { cycleId } : {}),
+      ...(input.storyPoints !== undefined ? { storyPoints: input.storyPoints } : {}),
     });
     await ctx.emit('projects.task.created', { projectId: row.id, taskId });
     await ctx.activity('projects.project', row.id, 'projects.task.created', 'Tạo việc mới trong dự án');
@@ -618,7 +657,18 @@ export const projectList = defineQuery({
 
     let q = ctx.trx
       .selectFrom('crove_projects.project as p')
-      .select(['p.id', 'p.name', 'p.description', 'p.owner_user_id', 'p.status', 'p.created_at', 'p.updated_at'])
+      .select([
+        'p.id',
+        'p.name',
+        'p.description',
+        'p.owner_user_id',
+        'p.status',
+        'p.cycles_enabled',
+        'p.cycle_duration_weeks',
+        'p.points_enabled',
+        'p.created_at',
+        'p.updated_at',
+      ])
       .where('p.org_id', '=', ctx.orgId)
       .where('p.is_template', '=', false);
 
@@ -671,6 +721,9 @@ export const projectList = defineQuery({
         ownerUserId: r.owner_user_id,
         ownerName: ownerDisplayName(profiles, r.owner_user_id),
         status: r.status as ProjectStatus,
+        cyclesEnabled: r.cycles_enabled,
+        cycleDurationWeeks: r.cycle_duration_weeks,
+        pointsEnabled: r.points_enabled,
         memberCount: membersByProject.get(r.id) ?? 0,
         openTaskCount: counts?.open ?? 0,
         doneTaskCount: counts?.done ?? 0,
@@ -699,6 +752,9 @@ export const projectGet = defineQuery({
       ownerUserId: row.owner_user_id,
       ownerName: ownerDisplayName(profiles, row.owner_user_id),
       status: row.status,
+      cyclesEnabled: row.cycles_enabled,
+      cycleDurationWeeks: row.cycle_duration_weeks,
+      pointsEnabled: row.points_enabled,
       canManage: canManageProject(ctx.role, userId, row.owner_user_id),
       canWrite: canWriteProject(ctx.role, row.status),
       createdAt: new Date(row.created_at).toISOString(),
@@ -751,6 +807,9 @@ export const projectBoard = defineQuery({
       ownerUserId: row.owner_user_id,
       ownerName: ownerDisplayName(profiles, row.owner_user_id),
       status: row.status,
+      cyclesEnabled: row.cycles_enabled,
+      cycleDurationWeeks: row.cycle_duration_weeks,
+      pointsEnabled: row.points_enabled,
       canManage: canManageProject(ctx.role, userId, row.owner_user_id),
       canWrite: canWriteProject(ctx.role, row.status),
       createdAt: new Date(row.created_at).toISOString(),
@@ -774,9 +833,25 @@ export const projectBoard = defineQuery({
         : null;
 
     const columns = await loadProjectColumns(ctx.trx, ctx.orgId, row.id, false);
+    const activeCycle =
+      row.cycles_enabled || input.cycleFilter?.mode === 'active'
+        ? await loadActiveCycleView(ctx.trx, ctx.orgId, row.id)
+        : null;
 
     if (input.status !== undefined && input.status.length === 0) {
-      return { project, members, seats, isTeamOrg, viewerHasSeat, columns, tasks: [], totalVisible: 0, hiddenByEntityCount, truncated: false };
+      return {
+        project,
+        members,
+        seats,
+        isTeamOrg,
+        viewerHasSeat,
+        columns,
+        tasks: [],
+        activeCycle,
+        totalVisible: 0,
+        hiddenByEntityCount,
+        truncated: false,
+      };
     }
 
     let taskQuery = ctx.trx
@@ -795,6 +870,8 @@ export const projectBoard = defineQuery({
         't.tainted',
         't.created_at',
         'pt.created_at as added_at',
+        'pt.cycle_id',
+        'pt.story_points',
         'pt.recurrence',
         'pt.recurrence_count',
         'pt.recurrence_last_due',
@@ -811,6 +888,42 @@ export const projectBoard = defineQuery({
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('pt.org_id', '=', ctx.orgId)
       .where('pt.project_id', '=', row.id);
+
+    if (input.cycleFilter) {
+      switch (input.cycleFilter.mode) {
+        case 'backlog':
+          taskQuery = taskQuery.where('pt.cycle_id', 'is', null);
+          countQuery = countQuery.where('pt.cycle_id', 'is', null);
+          break;
+        case 'active':
+          if (activeCycle) {
+            taskQuery = taskQuery.where('pt.cycle_id', '=', activeCycle.id);
+            countQuery = countQuery.where('pt.cycle_id', '=', activeCycle.id);
+          } else {
+            taskQuery = taskQuery.where(sql<boolean>`false`);
+            countQuery = countQuery.where(sql<boolean>`false`);
+          }
+          break;
+        case 'upcoming': {
+          const upcomingClause = sql<boolean>`EXISTS (
+            SELECT 1 FROM crove_projects.project_cycle pc
+             WHERE pc.org_id = pt.org_id
+               AND pc.project_id = pt.project_id
+               AND pc.id = pt.cycle_id
+               AND pc.status = 'upcoming'
+          )`;
+          taskQuery = taskQuery.where(upcomingClause);
+          countQuery = countQuery.where(upcomingClause);
+          break;
+        }
+        case 'cycle':
+          taskQuery = taskQuery.where('pt.cycle_id', '=', input.cycleFilter.cycleId);
+          countQuery = countQuery.where('pt.cycle_id', '=', input.cycleFilter.cycleId);
+          break;
+        case 'all':
+          break;
+      }
+    }
 
     if (input.positionId === 'root') {
       taskQuery = taskQuery.where('t.assignee_position_id', 'is', null);
@@ -869,6 +982,8 @@ export const projectBoard = defineQuery({
         commentCount: commentCounts.get(t.id) ?? 0,
         createdAt: new Date(t.created_at).toISOString(),
         addedAt: new Date(t.added_at).toISOString(),
+        cycleId: t.cycle_id,
+        storyPoints: t.story_points,
         recurrence: parseStoredRecurrence(t.recurrence),
         recurrenceCount: t.recurrence_count,
         recurrenceLastDue: t.recurrence_last_due,
@@ -887,6 +1002,7 @@ export const projectBoard = defineQuery({
       viewerHasSeat,
       columns,
       tasks,
+      activeCycle,
       totalVisible,
       hiddenByEntityCount,
       truncated,

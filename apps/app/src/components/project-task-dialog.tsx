@@ -2,9 +2,14 @@
 // Modals for Projects screens: project creation, settings & team management, attaching existing tasks, and editing tasks (#2591).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
+  PROJECT_CYCLE_DURATION_WEEKS_MAX,
+  PROJECT_CYCLE_DURATION_WEEKS_MIN,
+  PROJECT_TASK_STORY_POINTS_MAX,
+  PROJECT_TASK_STORY_POINTS_MIN,
   serializeTaskChecklist,
   type ProjectBoard,
   type ProjectCandidateTask,
+  type ProjectCycle,
   type ProjectDetail,
   type ProjectSeat,
   type ProjectStatus,
@@ -18,6 +23,7 @@ import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
@@ -35,13 +41,20 @@ import { useFormat } from '../i18n/provider.tsx';
 import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
-import { PROJECT_STATUSES, PROJECT_WEEKLY_STATUS_QUERY_PREFIX, projectStatusVariant, taskStatusVariant } from '../lib/projects.ts';
+import {
+  PROJECT_CYCLE_SUMMARY_QUERY_PREFIX,
+  PROJECT_STATUSES,
+  PROJECT_WEEKLY_STATUS_QUERY_PREFIX,
+  projectStatusVariant,
+  taskStatusVariant,
+} from '../lib/projects.ts';
 import { taskTitleHidden, taskTitleText } from '../lib/task-title.ts';
 
 export const refreshProjectQueries = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
   void queryClient.invalidateQueries({ queryKey: PROJECT_WEEKLY_STATUS_QUERY_PREFIX });
+  void queryClient.invalidateQueries({ queryKey: PROJECT_CYCLE_SUMMARY_QUERY_PREFIX });
 };
 
 export function seatOptionLabel(
@@ -302,6 +315,9 @@ export function EditProjectTaskDialog({
   task,
   projectTasks,
   seats,
+  cyclesEnabled = false,
+  pointsEnabled = false,
+  cycles = [],
   open,
   onOpenChange,
 }: {
@@ -311,6 +327,9 @@ export function EditProjectTaskDialog({
   task: ProjectTaskCard | null;
   projectTasks?: readonly ProjectTaskCard[] | undefined;
   seats: readonly ProjectSeat[];
+  cyclesEnabled?: boolean;
+  pointsEnabled?: boolean;
+  cycles?: readonly ProjectCycle[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -323,13 +342,18 @@ export function EditProjectTaskDialog({
   const [description, setDescription] = useState('');
   const [assignee, setAssignee] = useState('');
   const [dueOn, setDueOn] = useState('');
+  const [cycleId, setCycleId] = useState('');
+  const [pointsText, setPointsText] = useState('');
   const [checklist, setChecklist] = useState<TaskChecklistStep[]>([]);
   const [titleError, setTitleError] = useState(false);
   const [stepError, setStepError] = useState(false);
+  const [pointsError, setPointsError] = useState(false);
   const [recurrenceOverride, setRecurrenceOverride] = useState<ProjectTaskRecurrenceView | null>(null);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
 
   const update = useMutation(orpc.tasks.update.mutationOptions());
+  const setTaskCycle = useMutation(orpc.projects.setTaskCycle.mutationOptions());
+  const setTaskPoints = useMutation(orpc.projects.setTaskPoints.mutationOptions());
 
   useEffect(() => {
     if (open && task) {
@@ -337,12 +361,17 @@ export function EditProjectTaskDialog({
       setDescription(task.description ?? '');
       setAssignee(task.assigneePositionId ?? '');
       setDueOn(taskDueDay(task.due, tz));
+      setCycleId(task.cycleId ?? '');
+      setPointsText(task.storyPoints === null || task.storyPoints === undefined ? '' : String(task.storyPoints));
       setChecklist((task.checklist ?? []).map((s) => ({ ...s })));
       setTitleError(false);
       setStepError(false);
+      setPointsError(false);
       setRecurrenceOverride(null);
       setIdemKey(crypto.randomUUID());
       update.reset();
+      setTaskCycle.reset();
+      setTaskPoints.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, task?.id]);
@@ -382,19 +411,53 @@ export function EditProjectTaskDialog({
       ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
       ...(checklistChanged ? { checklist: nextChecklist } : {}),
     };
-    if (Object.keys(patch).length === 0) {
+    const nextCycleId = cycleId || null;
+    const cycleChanged = cyclesEnabled && nextCycleId !== (task.cycleId ?? null);
+    const trimmedPts = pointsText.trim();
+    let nextPoints: number | null = null;
+    if (pointsEnabled && trimmedPts !== '') {
+      const parsedPts = Number(trimmedPts);
+      if (
+        !Number.isInteger(parsedPts) ||
+        parsedPts < PROJECT_TASK_STORY_POINTS_MIN ||
+        parsedPts > PROJECT_TASK_STORY_POINTS_MAX
+      ) {
+        setPointsError(true);
+        return;
+      }
+      nextPoints = parsedPts;
+    }
+    const pointsChanged = pointsEnabled && nextPoints !== (task.storyPoints ?? null);
+
+    if (Object.keys(patch).length === 0 && !cycleChanged && !pointsChanged) {
       onOpenChange(false);
       return;
     }
-    update.mutate(
-      { id: task.id, ...patch, idempotencyKey: idemKey },
-      {
-        onSuccess: () => {
-          refreshProjectQueries();
-          onOpenChange(false);
-        },
-      },
-    );
+
+    const runFollowups = async () => {
+      if (Object.keys(patch).length > 0) {
+        await update.mutateAsync({ id: task.id, ...patch, idempotencyKey: idemKey });
+      }
+      if (cycleChanged) {
+        await setTaskCycle.mutateAsync({
+          projectId,
+          taskId: task.id,
+          cycleId: nextCycleId,
+          idempotencyKey: crypto.randomUUID(),
+        });
+      }
+      if (pointsChanged) {
+        await setTaskPoints.mutateAsync({
+          projectId,
+          taskId: task.id,
+          storyPoints: nextPoints,
+          idempotencyKey: crypto.randomUUID(),
+        });
+      }
+      refreshProjectQueries();
+      onOpenChange(false);
+    };
+    void runFollowups().catch(() => undefined);
   };
 
   return (
@@ -479,6 +542,54 @@ export function EditProjectTaskDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+          {(cyclesEnabled || pointsEnabled) && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {cyclesEnabled && (
+                <div className="space-y-1.5">
+                  <Label htmlFor={`edit-cycle-${task.id}`}>{t('cycles.taskCycleLabel')}</Label>
+                  <NativeSelect
+                    id={`edit-cycle-${task.id}`}
+                    className="w-full max-md:[&>select]:h-11"
+                    disabled={task.checkedOut || !canWrite}
+                    value={cycleId}
+                    onChange={(e) => setCycleId(e.target.value)}
+                  >
+                    <NativeSelectOption value="">{t('cycles.backlogOption')}</NativeSelectOption>
+                    {cycles
+                      .filter((c) => c.status !== 'completed' || c.id === task.cycleId)
+                      .map((c) => (
+                        <NativeSelectOption key={c.id} value={c.id} disabled={c.status === 'completed'}>
+                          {t('cycles.cycleLabel', { number: c.number, name: c.name })}
+                        </NativeSelectOption>
+                      ))}
+                  </NativeSelect>
+                </div>
+              )}
+              {pointsEnabled && (
+                <div className="space-y-1.5">
+                  <Label htmlFor={`edit-points-${task.id}`}>{t('cycles.pointsInputLabel')}</Label>
+                  <Input
+                    id={`edit-points-${task.id}`}
+                    type="number"
+                    min={PROJECT_TASK_STORY_POINTS_MIN}
+                    max={PROJECT_TASK_STORY_POINTS_MAX}
+                    step={1}
+                    inputMode="numeric"
+                    aria-invalid={pointsError || undefined}
+                    className="max-md:h-11"
+                    disabled={task.checkedOut || !canWrite}
+                    placeholder={t('cycles.pointsPlaceholder')}
+                    value={pointsText}
+                    onChange={(e) => {
+                      setPointsText(e.target.value);
+                      if (pointsError) setPointsError(false);
+                    }}
+                  />
+                  {pointsError && <ErrorText>{t('cycles.pointsInvalid')}</ErrorText>}
+                </div>
+              )}
+            </div>
+          )}
           <TaskChecklistEditor
             idPrefix={`edit-project-task-${task.id}`}
             disabled={task.checkedOut}
@@ -490,7 +601,9 @@ export function EditProjectTaskDialog({
               if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
             }}
           />
-          {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
+          {(update.error ?? setTaskCycle.error ?? setTaskPoints.error) && (
+            <ErrorText>{errorMessage(update.error ?? setTaskCycle.error ?? setTaskPoints.error)}</ErrorText>
+          )}
           {(task.openBlockerCount ?? 0) > 0 && (
             <Alert data-testid="edit-task-open-blockers-warning">
               <AlertDescription>
@@ -500,7 +613,11 @@ export function EditProjectTaskDialog({
           )}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>
-            <Button type="submit" disabled={task.checkedOut} loading={update.isPending}>
+            <Button
+              type="submit"
+              disabled={task.checkedOut}
+              loading={update.isPending || setTaskCycle.isPending || setTaskPoints.isPending}
+            >
               {t('modals.saveTask')}
             </Button>
           </DialogFooter>
@@ -553,6 +670,9 @@ export function ProjectSettingsDialog({
 
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? '');
+  const [cyclesEnabled, setCyclesEnabled] = useState(project.cyclesEnabled ?? false);
+  const [cycleDurationWeeks, setCycleDurationWeeks] = useState(project.cycleDurationWeeks ?? 2);
+  const [pointsEnabled, setPointsEnabled] = useState(project.pointsEnabled ?? false);
   const [nameError, setNameError] = useState(false);
 
   const update = useMutation(orpc.projects.update.mutationOptions({ onSuccess: refreshProjectQueries }));
@@ -573,6 +693,9 @@ export function ProjectSettingsDialog({
     if (open) {
       setName(project.name);
       setDescription(project.description ?? '');
+      setCyclesEnabled(project.cyclesEnabled ?? false);
+      setCycleDurationWeeks(project.cycleDurationWeeks ?? 2);
+      setPointsEnabled(project.pointsEnabled ?? false);
       setNameError(false);
       update.reset();
       setStatus.reset();
@@ -603,6 +726,9 @@ export function ProjectSettingsDialog({
       projectId: project.id,
       name: trimmed,
       description: nextDesc,
+      cyclesEnabled,
+      cycleDurationWeeks,
+      pointsEnabled,
       idempotencyKey: crypto.randomUUID(),
     });
   };
@@ -646,6 +772,54 @@ export function ProjectSettingsDialog({
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
+            </div>
+            <div className="space-y-3 rounded-lg border border-border bg-muted/25 p-3">
+              <p className="text-xs font-semibold text-foreground">{t('cycles.settingsHeading')}</p>
+              <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
+                <Checkbox
+                  checked={cyclesEnabled}
+                  disabled={!editable}
+                  onCheckedChange={(checked) => setCyclesEnabled(checked === true)}
+                  data-testid="settings-cycles-enabled"
+                />
+                <span className="space-y-0.5">
+                  <span className="block font-medium">{t('cycles.enableCyclesLabel')}</span>
+                  <span className="block text-[11px] text-muted-foreground">{t('cycles.enableCyclesHint')}</span>
+                </span>
+              </label>
+              {cyclesEnabled && (
+                <div className="space-y-1.5 pl-6">
+                  <Label htmlFor={`settings-cycle-weeks-${project.id}`}>{t('cycles.durationWeeksLabel')}</Label>
+                  <NativeSelect
+                    id={`settings-cycle-weeks-${project.id}`}
+                    className="w-full max-md:[&>select]:h-11"
+                    disabled={!editable}
+                    value={String(cycleDurationWeeks)}
+                    onChange={(e) => setCycleDurationWeeks(Number(e.target.value))}
+                  >
+                    {Array.from(
+                      { length: PROJECT_CYCLE_DURATION_WEEKS_MAX - PROJECT_CYCLE_DURATION_WEEKS_MIN + 1 },
+                      (_, i) => PROJECT_CYCLE_DURATION_WEEKS_MIN + i,
+                    ).map((w) => (
+                      <NativeSelectOption key={w} value={String(w)}>
+                        {w === 1 ? t('cycles.weekSingleOption') : t('cycles.weeksOption', { weeks: w })}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+              )}
+              <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
+                <Checkbox
+                  checked={pointsEnabled}
+                  disabled={!editable}
+                  onCheckedChange={(checked) => setPointsEnabled(checked === true)}
+                  data-testid="settings-points-enabled"
+                />
+                <span className="space-y-0.5">
+                  <span className="block font-medium">{t('cycles.enablePointsLabel')}</span>
+                  <span className="block text-[11px] text-muted-foreground">{t('cycles.enablePointsHint')}</span>
+                </span>
+              </label>
             </div>
             {editable && (
               <div className="flex justify-end">

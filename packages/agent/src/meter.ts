@@ -131,6 +131,8 @@ export const AI_FEATURES = {
   'meetings.commitments': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
+  // Vy's cycle summary for one project sprint/cycle (#4361): transient 3 to 5 plain sentences from deterministic cycle metrics and task titles/comments only, never reading notes.
+  'projects.cycle_summary': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.

@@ -88,6 +88,12 @@ import {
   type ProjectWeeklyStatusResult,
 } from './project-weekly-status.ts';
 import {
+  checkProjectCycleSummary,
+  projectCycleSummaryInstructions,
+  projectCycleSummaryPrompt,
+  type ProjectCycleSummaryFacts,
+} from './project-cycle-summary.ts';
+import {
   createSignAcceptanceDraftGenerator,
   draftSignAcceptanceSummary,
   type SignAcceptanceDraftGenerator,
@@ -153,6 +159,7 @@ const zProjectWeeklyStatusOut = z.object({
   sentences: z.array(z.string()).describe('3 to 5 plain sentences summarizing the project week, citing only numbers and facts given'),
 });
 export type ProjectWeeklyStatusGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zProjectWeeklyStatusOut> | null; usage?: AiUsage }>;
+export type ProjectCycleSummaryGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zProjectWeeklyStatusOut> | null; usage?: AiUsage }>;
 export type CrmFollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
@@ -340,6 +347,7 @@ export class InboxReader {
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
   private readonly generateQuoteLines: QuoteLinesGenerator;
   private readonly generateProjectWeeklyStatus: ProjectWeeklyStatusGenerator;
+  private readonly generateProjectCycleSummary: ProjectCycleSummaryGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
   private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
@@ -347,7 +355,7 @@ export class InboxReader {
   private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
@@ -574,6 +582,14 @@ export class InboxReader {
       generators.projectWeeklyStatus ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('projects.weekly_status', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zProjectWeeklyStatusOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateProjectCycleSummary =
+      generators.projectCycleSummary ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.cycle_summary', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zProjectWeeklyStatusOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
@@ -897,5 +913,17 @@ export class InboxReader {
     });
     if (usage) onUsage?.(usage);
     return checkProjectWeeklyStatus(facts, output);
+  }
+
+  /** Vy's cycle summary for one project sprint/cycle (#4361): 3 to 5 plain sentences from deterministic cycle metrics
+   * and bounded task titles/comments only (never notes). Refused via summaryNumbersOutside on ungrounded numbers. */
+  async projectCycleSummary(facts: ProjectCycleSummaryFacts, onUsage?: (usage: AiUsage) => void): Promise<ProjectWeeklyStatusResult> {
+    if (facts.cycle.totalTasks === 0) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateProjectCycleSummary({
+      system: projectCycleSummaryInstructions(facts.language),
+      prompt: projectCycleSummaryPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkProjectCycleSummary(facts, output);
   }
 }

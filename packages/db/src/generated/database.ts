@@ -245,6 +245,7 @@ export interface CroveNotesSchema {
 export interface CroveProjectsSchema {
   'crove_projects.project': ProjectsProjectTable;
   'crove_projects.project_column': ProjectsProjectColumnTable;
+  'crove_projects.project_cycle': ProjectsProjectCycleTable;
   'crove_projects.project_member': ProjectsProjectMemberTable;
   'crove_projects.project_task': ProjectsProjectTaskTable;
   'crove_projects.task_dependency': ProjectsTaskDependencyTable;
@@ -3786,6 +3787,24 @@ export interface ProjectsProjectColumnTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_projects.project_cycle */
+export interface ProjectsProjectCycleTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  number: number;
+  name: string;
+  goal: string | null;
+  status: Generated<string>;
+  starts_on: string;
+  ends_on: string;
+  started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_projects.project_member */
 export interface ProjectsProjectMemberTable {
   org_id: string;
@@ -3808,6 +3827,9 @@ export interface ProjectsProjectTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   is_template: Generated<boolean>;
   template_tasks: ColumnType<unknown, string | undefined, string>;
+  cycles_enabled: Generated<boolean>;
+  cycle_duration_weeks: Generated<number>;
+  points_enabled: Generated<boolean>;
 }
 
 /** crove_projects.project_task */
@@ -3826,6 +3848,8 @@ export interface ProjectsProjectTaskTable {
   recurrence_source_task_id: string | null;
   column_id: string | null;
   start_on: string | null;
+  cycle_id: string | null;
+  story_points: number | null;
 }
 
 /** crove_projects.task_dependency */
