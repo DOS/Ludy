@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The follow-up mail of a meeting (L3, #2590, template meetings.followup): meetings.followup.send stored the cleaned words and the facts (the published summary, decisions
-// and action items as they were at the send) as the mail's merge data; the worker renders them here. Every text is escaped (a person typed the words and the summary), and
-// the mail holds no link and no token. The Reply-To is the org's conversation address (#2439) when the deployment receives mail and the org has one, so an answer reaches the
-// Inbox; with none the mail has no Reply-To.
-import { FOLLOWUP_MAIL_TEMPLATE, followupClean, zFollowupMail, type FollowupMail } from '@ludy/kernel-contract';
+// The follow-up mail of a meeting (L3, #2590, #4292, template meetings.followup): meetings.followup.send stored the cleaned words and facts (for structured layout) or
+// the cleaned personal note body (for personal_note) as the mail's merge data; the worker renders them here. Every text is escaped, and the mail holds no link and no token.
+// The Reply-To is the org's conversation address (#2439) when the deployment receives mail and the org has one, so an answer reaches the Inbox; with none the mail has no Reply-To.
+import { FOLLOWUP_MAIL_TEMPLATE, followupClean, zFollowupMail, type FollowupMail, type FollowupStructuredMail } from '@ludy/kernel-contract';
 import type { MailTemplate } from './mail-queue.ts';
 
 export { FOLLOWUP_MAIL_TEMPLATE };
@@ -37,7 +36,41 @@ const paragraphs = (value: string): string =>
     .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
     .join('\n');
 
-const itemLine = (item: FollowupMail['facts']['items'][number], lang: 'vi' | 'en'): string => {
+// Renders personal-note prose and `- ` / `• ` bullets as escaped HTML `<p>` and `<ul><li>` blocks with zero links or raw markup.
+function renderPersonalNoteHtml(body: string): string {
+  const htmlBlocks: string[] = [];
+  for (const block of body.split(/\n{2,}/)) {
+    const lines = block.split('\n').map((l) => l.trimEnd());
+    let prose: string[] = [];
+    let bullets: string[] = [];
+    const flushProse = () => {
+      if (prose.length === 0) return;
+      htmlBlocks.push(`<p>${prose.map((l) => escapeHtml(l)).join('<br>')}</p>`);
+      prose = [];
+    };
+    const flushBullets = () => {
+      if (bullets.length === 0) return;
+      htmlBlocks.push(`<ul>${bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
+      bullets = [];
+    };
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      if (/^[-•]\s+\S/u.test(trimmed)) {
+        flushProse();
+        bullets.push(trimmed.slice(1).trim());
+      } else {
+        flushBullets();
+        prose.push(trimmed);
+      }
+    }
+    flushProse();
+    flushBullets();
+  }
+  return htmlBlocks.join('\n');
+}
+
+const itemLine = (item: FollowupStructuredMail['facts']['items'][number], lang: 'vi' | 'en'): string => {
   const t = LABELS[lang];
   const parts = [followupClean(item.title, true)];
   if (item.who) parts.push(`${t.owner}: ${followupClean(item.who, true)}`);
@@ -46,9 +79,19 @@ const itemLine = (item: FollowupMail['facts']['items'][number], lang: 'vi' | 'en
 };
 
 export function renderFollowupMail(raw: unknown, context: { replyTo: string | null; brand?: string }): { text: string; html: string; replyTo?: string } {
-  const mail = zFollowupMail.parse(raw);
+  const mail: FollowupMail = zFollowupMail.parse(raw);
   const t = LABELS[mail.lang];
   const brand = context.brand ?? 'Ludy';
+  if (mail.style === 'personal_note') {
+    const body = followupClean(mail.body, false);
+    const text = [body, '', t.footer(brand)].join('\n');
+    const html = `<!doctype html>
+<html lang="${mail.lang}"><body style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2328">
+${renderPersonalNoteHtml(body)}
+<p style="font-size:13px;color:#57606a">${escapeHtml(t.footer(brand))}</p>
+</body></html>`;
+    return { text, html, ...(context.replyTo ? { replyTo: context.replyTo } : {}) };
+  }
   // The facts are the recorder's published text: cleaned here as the items are (no bidi or zero-width characters), then escaped.
   const facts = { summary: followupClean(mail.facts.summary, false), decisions: mail.facts.decisions.map((d) => followupClean(d, true)).filter((d) => d !== ''), items: mail.facts.items };
   const items = facts.items.map((i) => itemLine(i, mail.lang));
