@@ -85,7 +85,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const res = await fn(c);
       await c.query('COMMIT');
       return res;
@@ -112,7 +112,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const { orgId, slug } = await createOrg(rt, asUser(owner), `Chấm công ${tag}`);
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`,
         [orgId, admin, memberA, memberB, unlinked, viewer],
       ),
@@ -171,13 +171,13 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const workerUrl = new URL(url.toString());
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
 
@@ -769,10 +769,10 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await withAdmin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
       await c.query('COMMIT');
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, now() - interval '40 days', 'user', $2, 'kernel.org.offboard', $3, 'ok', $5, '{}'::jsonb),
                 ($1, now() - interval '31 days', 'system', NULL, 'kernel.org.export.record', $4, 'ok', $5, $6)`,
         [o.orgId, o.owner, randomUUID(), randomUUID(), '0'.repeat(64), JSON.stringify({ format: 'crove.org-export.v2', file_count: 2 })],

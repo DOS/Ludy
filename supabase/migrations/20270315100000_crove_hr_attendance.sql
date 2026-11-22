@@ -5,8 +5,8 @@
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_hr.attendance_log (
-  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
-  id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   legal_entity_id uuid NOT NULL,
   employee_id uuid NOT NULL,
   work_date date NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS crove_hr.attendance_log (
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id),
   CONSTRAINT attendance_log_employee_date_uq UNIQUE (org_id, employee_id, work_date),
-  CONSTRAINT attendance_log_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id),
+  CONSTRAINT attendance_log_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES ludy_kernel.legal_entity (org_id, id),
   CONSTRAINT attendance_log_employee_fk FOREIGN KEY (org_id, legal_entity_id, employee_id)
     REFERENCES crove_hr.payroll_employee (org_id, legal_entity_id, id),
   CONSTRAINT attendance_log_checkout_after_checkin_ck CHECK (
@@ -43,11 +43,11 @@ CREATE INDEX IF NOT EXISTS attendance_log_entity_date_idx
 CREATE INDEX IF NOT EXISTS attendance_log_entity_org_idx
   ON crove_hr.attendance_log (legal_entity_id, org_id);
 
-SELECT crove_kernel.apply_tenant_rls('crove_hr.attendance_log');
-REVOKE ALL ON crove_hr.attendance_log FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT SELECT, INSERT ON crove_hr.attendance_log TO crove_tenant;
+SELECT ludy_kernel.apply_tenant_rls('crove_hr.attendance_log');
+REVOKE ALL ON crove_hr.attendance_log FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT SELECT, INSERT ON crove_hr.attendance_log TO ludy_tenant;
 GRANT UPDATE (checked_in_at, checked_out_at, check_in_method, worked_minutes, status, note, updated_at)
-  ON crove_hr.attendance_log TO crove_tenant;
+  ON crove_hr.attendance_log TO ludy_tenant;
 
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.attendance_log;
 CREATE TRIGGER b_legal_entity
@@ -60,9 +60,9 @@ CREATE OR REPLACE FUNCTION crove_hr.is_active_self_employee(p_org_id uuid, p_emp
 RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-  v_actor text := crove_kernel.ctx_actor_type();
-  v_user uuid := crove_kernel.ctx_user_id();
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_actor text := ludy_kernel.ctx_actor_type();
+  v_user uuid := ludy_kernel.ctx_user_id();
 BEGIN
   IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_employee_id IS NULL THEN
     RETURN false;
@@ -71,7 +71,7 @@ BEGIN
     RETURN false;
   END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM crove_kernel.tenant_member m
+    SELECT 1 FROM ludy_kernel.tenant_member m
      WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin', 'member')
   ) THEN
     RETURN false;
@@ -85,8 +85,8 @@ BEGIN
        AND e.status = 'active'
   );
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.is_active_self_employee(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_hr.is_active_self_employee(uuid, uuid) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_hr.is_active_self_employee(uuid, uuid) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_hr.is_active_self_employee(uuid, uuid) TO ludy_tenant;
 
 -- Runs after b_legal_entity so NEW.legal_entity_id is filled; blocks self-service INSERTs from forging status/hours/QR proof.
 CREATE OR REPLACE FUNCTION crove_hr.attendance_log_insert_guard() RETURNS trigger
@@ -95,25 +95,25 @@ DECLARE
   v_admin boolean;
   v_qr_hash text;
 BEGIN
-  -- Admin fixture seeds outside RLS have no context; RLS already blocks every crove_tenant role when ctx_actor_type() IS NULL.
-  IF crove_kernel.ctx_actor_type() IS NULL THEN
+  -- Admin fixture seeds outside RLS have no context; RLS already blocks every ludy_tenant role when ctx_actor_type() IS NULL.
+  IF ludy_kernel.ctx_actor_type() IS NULL THEN
     RETURN NEW;
   END IF;
 
   -- Cross-org inserts must fail in RLS WITH CHECK (T8 matrix) rather than firing same-org business guards early.
-  IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+  IF NEW.org_id IS DISTINCT FROM ludy_kernel.ctx_org_id() THEN
     RETURN NEW;
   END IF;
 
-  IF crove_kernel.ctx_actor_type() <> 'user' THEN
+  IF ludy_kernel.ctx_actor_type() <> 'user' THEN
     RAISE EXCEPTION 'user actor required to insert attendance_log' USING ERRCODE = '42501';
   END IF;
 
   SELECT EXISTS (
     SELECT 1
-    FROM crove_kernel.tenant_member m
+    FROM ludy_kernel.tenant_member m
     WHERE m.org_id = NEW.org_id
-      AND m.user_id = crove_kernel.ctx_user_id()
+      AND m.user_id = ludy_kernel.ctx_user_id()
       AND m.role IN ('owner', 'admin')
   ) INTO v_admin;
 
@@ -155,7 +155,7 @@ BEGIN
 
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.attendance_log_insert_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_hr.attendance_log_insert_guard() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 
 DROP TRIGGER IF EXISTS z_attendance_log_insert_guard ON crove_hr.attendance_log;
 CREATE TRIGGER z_attendance_log_insert_guard
@@ -189,15 +189,15 @@ BEGIN
     RAISE EXCEPTION 'attendance of erased employee cannot be modified' USING ERRCODE = '23514';
   END IF;
 
-  IF crove_kernel.ctx_actor_type() <> 'user' THEN
+  IF ludy_kernel.ctx_actor_type() <> 'user' THEN
     RAISE EXCEPTION 'user actor required to update attendance_log' USING ERRCODE = '42501';
   END IF;
 
   SELECT EXISTS (
     SELECT 1
-    FROM crove_kernel.tenant_member m
+    FROM ludy_kernel.tenant_member m
     WHERE m.org_id = NEW.org_id
-      AND m.user_id = crove_kernel.ctx_user_id()
+      AND m.user_id = ludy_kernel.ctx_user_id()
       AND m.role IN ('owner', 'admin')
   ) INTO v_admin;
 
@@ -235,7 +235,7 @@ BEGIN
 
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.attendance_log_update_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_hr.attendance_log_update_guard() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 
 DROP TRIGGER IF EXISTS attendance_log_update_guard ON crove_hr.attendance_log;
 CREATE TRIGGER attendance_log_update_guard
@@ -247,32 +247,32 @@ DO $$
 BEGIN
   EXECUTE 'DROP POLICY IF EXISTS le_scope ON crove_hr.attendance_log';
   EXECUTE
-    'CREATE POLICY le_scope ON crove_hr.attendance_log AS RESTRICTIVE FOR ALL TO crove_tenant '
-    'USING (''*'' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])) '
-    'WITH CHECK (''*'' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))';
+    'CREATE POLICY le_scope ON crove_hr.attendance_log AS RESTRICTIVE FOR ALL TO ludy_tenant '
+    'USING (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])) '
+    'WITH CHECK (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))';
 
   EXECUTE 'DROP POLICY IF EXISTS hr_attendance_log_select ON crove_hr.attendance_log';
   EXECUTE
-    'CREATE POLICY hr_attendance_log_select ON crove_hr.attendance_log AS RESTRICTIVE FOR SELECT TO crove_tenant '
+    'CREATE POLICY hr_attendance_log_select ON crove_hr.attendance_log AS RESTRICTIVE FOR SELECT TO ludy_tenant '
     'USING ('
-    '  (SELECT crove_kernel.ctx_actor_type()) = ''user'' '
+    '  (SELECT ludy_kernel.ctx_actor_type()) = ''user'' '
     '  AND EXISTS ('
-    '    SELECT 1 FROM crove_kernel.tenant_member m '
+    '    SELECT 1 FROM ludy_kernel.tenant_member m '
     '    WHERE m.org_id = attendance_log.org_id '
-    '      AND m.user_id = (SELECT crove_kernel.ctx_user_id()) '
+    '      AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) '
     '      AND (m.role IN (''owner'', ''admin'') OR (m.role <> ''viewer'' AND crove_hr.is_self_employee(attendance_log.org_id, attendance_log.employee_id)))'
     '  )'
     ')';
 
   EXECUTE 'DROP POLICY IF EXISTS hr_attendance_log_insert ON crove_hr.attendance_log';
   EXECUTE
-    'CREATE POLICY hr_attendance_log_insert ON crove_hr.attendance_log AS RESTRICTIVE FOR INSERT TO crove_tenant '
+    'CREATE POLICY hr_attendance_log_insert ON crove_hr.attendance_log AS RESTRICTIVE FOR INSERT TO ludy_tenant '
     'WITH CHECK ('
-    '  (SELECT crove_kernel.ctx_actor_type()) = ''user'' '
+    '  (SELECT ludy_kernel.ctx_actor_type()) = ''user'' '
     '  AND EXISTS ('
-    '    SELECT 1 FROM crove_kernel.tenant_member m '
+    '    SELECT 1 FROM ludy_kernel.tenant_member m '
     '    WHERE m.org_id = attendance_log.org_id '
-    '      AND m.user_id = (SELECT crove_kernel.ctx_user_id()) '
+    '      AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) '
     '      AND ('
     '        m.role IN (''owner'', ''admin'') '
     '        OR ('
@@ -290,22 +290,22 @@ BEGIN
 
   EXECUTE 'DROP POLICY IF EXISTS hr_attendance_log_update ON crove_hr.attendance_log';
   EXECUTE
-    'CREATE POLICY hr_attendance_log_update ON crove_hr.attendance_log AS RESTRICTIVE FOR UPDATE TO crove_tenant '
+    'CREATE POLICY hr_attendance_log_update ON crove_hr.attendance_log AS RESTRICTIVE FOR UPDATE TO ludy_tenant '
     'USING ('
-    '  (SELECT crove_kernel.ctx_actor_type()) = ''user'' '
+    '  (SELECT ludy_kernel.ctx_actor_type()) = ''user'' '
     '  AND EXISTS ('
-    '    SELECT 1 FROM crove_kernel.tenant_member m '
+    '    SELECT 1 FROM ludy_kernel.tenant_member m '
     '    WHERE m.org_id = attendance_log.org_id '
-    '      AND m.user_id = (SELECT crove_kernel.ctx_user_id()) '
+    '      AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) '
     '      AND (m.role IN (''owner'', ''admin'') OR (m.role <> ''viewer'' AND crove_hr.is_active_self_employee(attendance_log.org_id, attendance_log.employee_id)))'
     '  )'
     ') '
     'WITH CHECK ('
-    '  (SELECT crove_kernel.ctx_actor_type()) = ''user'' '
+    '  (SELECT ludy_kernel.ctx_actor_type()) = ''user'' '
     '  AND EXISTS ('
-    '    SELECT 1 FROM crove_kernel.tenant_member m '
+    '    SELECT 1 FROM ludy_kernel.tenant_member m '
     '    WHERE m.org_id = attendance_log.org_id '
-    '      AND m.user_id = (SELECT crove_kernel.ctx_user_id()) '
+    '      AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) '
     '      AND ('
     '        m.role IN (''owner'', ''admin'') '
     '        OR ('
@@ -320,13 +320,13 @@ BEGIN
 
   EXECUTE 'DROP POLICY IF EXISTS hr_attendance_log_delete ON crove_hr.attendance_log';
   EXECUTE
-    'CREATE POLICY hr_attendance_log_delete ON crove_hr.attendance_log AS RESTRICTIVE FOR DELETE TO crove_tenant '
+    'CREATE POLICY hr_attendance_log_delete ON crove_hr.attendance_log AS RESTRICTIVE FOR DELETE TO ludy_tenant '
     'USING (false)';
 END $$;
 
 CREATE TABLE IF NOT EXISTS crove_hr.attendance_qr_config (
-  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
-  id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   legal_entity_id uuid NOT NULL,
   qr_secret_hash text NOT NULL CHECK (qr_secret_hash ~ '^[0-9a-f]{64}$'),
   active boolean NOT NULL DEFAULT true,
@@ -334,7 +334,7 @@ CREATE TABLE IF NOT EXISTS crove_hr.attendance_qr_config (
   created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id),
-  CONSTRAINT attendance_qr_config_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id)
+  CONSTRAINT attendance_qr_config_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES ludy_kernel.legal_entity (org_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS attendance_qr_config_org_entity_idx
@@ -347,10 +347,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS attendance_qr_config_active_entity_uq
 CREATE INDEX IF NOT EXISTS attendance_qr_config_entity_idx
   ON crove_hr.attendance_qr_config (legal_entity_id, org_id);
 
-SELECT crove_kernel.apply_tenant_rls('crove_hr.attendance_qr_config');
-REVOKE ALL ON crove_hr.attendance_qr_config FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT SELECT, INSERT ON crove_hr.attendance_qr_config TO crove_tenant;
-GRANT UPDATE (active, updated_at) ON crove_hr.attendance_qr_config TO crove_tenant;
+SELECT ludy_kernel.apply_tenant_rls('crove_hr.attendance_qr_config');
+REVOKE ALL ON crove_hr.attendance_qr_config FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT SELECT, INSERT ON crove_hr.attendance_qr_config TO ludy_tenant;
+GRANT UPDATE (active, updated_at) ON crove_hr.attendance_qr_config TO ludy_tenant;
 
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.attendance_qr_config;
 CREATE TRIGGER b_legal_entity
@@ -362,19 +362,19 @@ DO $$
 BEGIN
   EXECUTE 'DROP POLICY IF EXISTS le_scope ON crove_hr.attendance_qr_config';
   EXECUTE
-    'CREATE POLICY le_scope ON crove_hr.attendance_qr_config AS RESTRICTIVE FOR ALL TO crove_tenant '
-    'USING (''*'' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])) '
-    'WITH CHECK (''*'' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))';
+    'CREATE POLICY le_scope ON crove_hr.attendance_qr_config AS RESTRICTIVE FOR ALL TO ludy_tenant '
+    'USING (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])) '
+    'WITH CHECK (''*'' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))';
 
   EXECUTE 'DROP POLICY IF EXISTS owner_admin ON crove_hr.attendance_qr_config';
   EXECUTE
-    'CREATE POLICY owner_admin ON crove_hr.attendance_qr_config AS RESTRICTIVE FOR ALL TO crove_tenant '
-    'USING ((SELECT crove_kernel.ctx_actor_type()) = ''user'' AND EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = attendance_qr_config.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN (''owner'', ''admin''))) '
-    'WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = ''user'' AND EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = attendance_qr_config.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN (''owner'', ''admin'')))';
+    'CREATE POLICY owner_admin ON crove_hr.attendance_qr_config AS RESTRICTIVE FOR ALL TO ludy_tenant '
+    'USING ((SELECT ludy_kernel.ctx_actor_type()) = ''user'' AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = attendance_qr_config.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN (''owner'', ''admin''))) '
+    'WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = ''user'' AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = attendance_qr_config.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN (''owner'', ''admin'')))';
 
   EXECUTE 'DROP POLICY IF EXISTS hr_attendance_qr_config_delete ON crove_hr.attendance_qr_config';
   EXECUTE
-    'CREATE POLICY hr_attendance_qr_config_delete ON crove_hr.attendance_qr_config AS RESTRICTIVE FOR DELETE TO crove_tenant '
+    'CREATE POLICY hr_attendance_qr_config_delete ON crove_hr.attendance_qr_config AS RESTRICTIVE FOR DELETE TO ludy_tenant '
     'USING (false)';
 END $$;
 
@@ -390,25 +390,25 @@ DECLARE
 BEGIN
   PERFORM pg_catalog.set_config('crove_hr.qr_verified_hash', '', true);
 
-  IF crove_kernel.ctx_actor_type() <> 'user'
-     OR crove_kernel.ctx_org_id() IS DISTINCT FROM p_org_id
+  IF ludy_kernel.ctx_actor_type() <> 'user'
+     OR ludy_kernel.ctx_org_id() IS DISTINCT FROM p_org_id
      OR p_legal_entity_id IS NULL
      OR p_qr_secret_hash IS NULL THEN
     RETURN false;
   END IF;
 
   IF NOT (
-    '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
-    OR p_legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+    '*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
+    OR p_legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
   ) THEN
     RETURN false;
   END IF;
 
   IF NOT EXISTS (
     SELECT 1
-    FROM crove_kernel.tenant_member m
+    FROM ludy_kernel.tenant_member m
     WHERE m.org_id = p_org_id
-      AND m.user_id = crove_kernel.ctx_user_id()
+      AND m.user_id = ludy_kernel.ctx_user_id()
       AND m.role <> 'viewer'
   ) THEN
     RETURN false;
@@ -419,7 +419,7 @@ BEGIN
     FROM crove_hr.payroll_employee e
     WHERE e.org_id = p_org_id
       AND e.legal_entity_id = p_legal_entity_id
-      AND e.user_id = crove_kernel.ctx_user_id()
+      AND e.user_id = ludy_kernel.ctx_user_id()
       AND e.erased_at IS NULL
       AND e.status = 'active'
   ) THEN
@@ -441,5 +441,5 @@ BEGIN
 
   RETURN v_matched;
 END $$;
-REVOKE ALL ON FUNCTION crove_hr.verify_attendance_qr(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_hr.verify_attendance_qr(uuid, uuid, text) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_hr.verify_attendance_qr(uuid, uuid, text) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_hr.verify_attendance_qr(uuid, uuid, text) TO ludy_tenant;

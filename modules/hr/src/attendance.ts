@@ -949,7 +949,7 @@ export const attendanceQrRotate = defineCommand({
 
     // Serialize concurrent QR rotations on the legal entity row so deactivate + insert never collides on active_entity_uq (23505).
     await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', legalEntityId)
