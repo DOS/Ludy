@@ -1419,6 +1419,16 @@ export type ProjectsProjectColumnTable = Refine<
   }
 >;
 
+export const PROJECT_CYCLE_STATUSES = ['upcoming', 'active', 'completed'] as const;
+export type ProjectCycleStatus = (typeof PROJECT_CYCLE_STATUSES)[number];
+
+export type ProjectsProjectCycleTable = Refine<
+  G.ProjectsProjectCycleTable,
+  {
+    status: Generated<ProjectCycleStatus>;
+  }
+>;
+
 // Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
@@ -1651,6 +1661,7 @@ type Refined = Tables<{
   'crove_notes.todo': NotesTodoTable;
   'crove_projects.project': ProjectsProjectTable;
   'crove_projects.project_column': ProjectsProjectColumnTable;
+  'crove_projects.project_cycle': ProjectsProjectCycleTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;

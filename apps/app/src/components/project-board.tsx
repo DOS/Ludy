@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Kanban board and responsive compact list view for a project (#2591, ADR-0048).
-import type { ProjectColumn, ProjectSeat, ProjectTaskCard, TaskChecklistStep } from '@ludy/kernel-contract';
+import {
+  PROJECT_TASK_STORY_POINTS_MAX,
+  PROJECT_TASK_STORY_POINTS_MIN,
+  type ProjectColumn,
+  type ProjectSeat,
+  type ProjectTaskCard,
+  type TaskChecklistStep,
+} from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
-import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -234,12 +241,169 @@ function QuickAddTask({
   );
 }
 
+export function parseStoryPointsDraft(
+  draft: string,
+  badInput: boolean,
+): { valid: true; value: number | null } | { valid: false } {
+  if (badInput) return { valid: false };
+  const trimmed = draft.trim();
+  if (trimmed === '') return { valid: true, value: null };
+  const parsed = Number(trimmed);
+  if (
+    Number.isInteger(parsed) &&
+    parsed >= PROJECT_TASK_STORY_POINTS_MIN &&
+    parsed <= PROJECT_TASK_STORY_POINTS_MAX
+  ) {
+    return { valid: true, value: parsed };
+  }
+  return { valid: false };
+}
+
+function StoryPointsChip({
+  task,
+  pointsEnabled,
+  canEdit,
+  onSetTaskPoints,
+}: {
+  task: ProjectTaskCard;
+  pointsEnabled: boolean;
+  canEdit: boolean;
+  onSetTaskPoints?: ((taskId: string, storyPoints: number | null) => void) | undefined;
+}) {
+  const t = useTranslations('projects');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [invalid, setInvalid] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
+
+  const editable = pointsEnabled && canEdit && !task.checkedOut && onSetTaskPoints !== undefined;
+  const hasPoints = task.storyPoints !== null && task.storyPoints !== undefined;
+  const label = hasPoints ? t('cycles.pointsChip', { points: task.storyPoints! }) : t('cycles.setPointsShort');
+
+  useEffect(() => {
+    if (!editable) {
+      restoreFocusRef.current = false;
+      setEditing(false);
+      setDraft('');
+      setInvalid(false);
+    }
+  }, [editable]);
+
+  useEffect(() => {
+    if (!editing && editable && restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [editing, editable]);
+
+  if (!pointsEnabled) return null;
+
+  if (!editable) {
+    if (!hasPoints) return null;
+    return (
+      <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums" data-testid="task-points-badge">
+        {label}
+      </Badge>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setDraft(hasPoints ? String(task.storyPoints) : '');
+          setInvalid(false);
+          setEditing(true);
+        }}
+        aria-label={`${t('cycles.pointsInputLabel')}: ${label}`}
+        data-testid="task-points-trigger"
+        className="inline-flex min-h-11 items-center rounded-md border border-border bg-muted/40 px-2 text-[11px] font-medium text-foreground tabular-nums hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:min-h-6"
+      >
+        {label}
+      </button>
+    );
+  }
+
+  const commit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const badInput = Boolean(e.currentTarget.querySelector('input')?.validity.badInput);
+    const parsed = parseStoryPointsDraft(draft, badInput);
+    if (!parsed.valid) {
+      setInvalid(true);
+      return;
+    }
+    restoreFocusRef.current = true;
+    setInvalid(false);
+    onSetTaskPoints(task.id, parsed.value);
+    setEditing(false);
+  };
+
+  return (
+    <form
+      noValidate
+      onSubmit={commit}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e: KeyboardEvent<HTMLFormElement>) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          restoreFocusRef.current = true;
+          setInvalid(false);
+          setEditing(false);
+        }
+      }}
+      className="inline-flex flex-wrap items-center gap-1"
+      data-testid="task-points-editor"
+    >
+      <Input
+        type="number"
+        min={PROJECT_TASK_STORY_POINTS_MIN}
+        max={PROJECT_TASK_STORY_POINTS_MAX}
+        step={1}
+        inputMode="numeric"
+        autoFocus
+        aria-label={t('cycles.pointsInputLabel')}
+        aria-invalid={invalid || undefined}
+        placeholder={t('cycles.pointsPlaceholder')}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (invalid) setInvalid(false);
+        }}
+        className="h-11 w-16 px-2 text-xs md:h-7"
+      />
+      <Button type="submit" size="sm" variant="outline" className="min-h-11 px-2 text-xs md:min-h-7">
+        {t('cycles.pointsSave')}
+      </Button>
+      {invalid && (
+        <span role="alert" className="text-[11px] text-destructive">
+          {t('cycles.pointsPlaceholder')}
+        </span>
+      )}
+    </form>
+  );
+}
+
 function TaskMetaBadges({
   task,
   seats,
+  pointsEnabled = false,
+  cyclesEnabled = false,
+  cycleName,
+  canEdit = false,
+  onSetTaskPoints,
 }: {
   task: ProjectTaskCard;
   seats: readonly ProjectSeat[];
+  pointsEnabled?: boolean;
+  cyclesEnabled?: boolean;
+  cycleName?: string | undefined;
+  canEdit?: boolean;
+  onSetTaskPoints?: ((taskId: string, storyPoints: number | null) => void) | undefined;
 }) {
   const t = useTranslations('projects');
   const tt = useTranslations('tasks');
@@ -253,6 +417,12 @@ function TaskMetaBadges({
         {seat.isAgent ? <ProjectIcon name="bot" className="size-3 text-primary" /> : <ProjectIcon name="user" className="size-3 text-muted-foreground" />}
         <span className="truncate">{seat.label}</span>
       </span>
+      {cyclesEnabled && cycleName && (
+        <Badge variant="outline" className="h-5 px-1.5 text-[11px]" data-testid="task-cycle-badge">
+          {cycleName}
+        </Badge>
+      )}
+      <StoryPointsChip task={task} pointsEnabled={pointsEnabled} canEdit={canEdit} onSetTaskPoints={onSetTaskPoints} />
       {task.due && (
         <Badge variant={overdue ? 'destructive' : 'outline'} className="h-5 gap-1 px-1.5 text-[11px] tabular-nums">
           <ProjectIcon name="calendar" className="size-3" />
@@ -328,6 +498,9 @@ function TaskBoardCard({
   seats,
   customColumns,
   canEdit,
+  pointsEnabled,
+  cyclesEnabled,
+  cycleName,
   dragging,
   dropEdge,
   canMoveUp,
@@ -344,6 +517,7 @@ function TaskBoardCard({
   onMoveDown,
   onMoveStatus,
   onMoveColumn,
+  onSetTaskPoints,
   onEdit,
   onRemove,
 }: {
@@ -352,6 +526,9 @@ function TaskBoardCard({
   seats: readonly ProjectSeat[];
   customColumns: readonly ProjectColumn[];
   canEdit: boolean;
+  pointsEnabled: boolean;
+  cyclesEnabled: boolean;
+  cycleName?: string | undefined;
   dragging: boolean;
   dropEdge: 'before' | 'after' | null;
   canMoveUp: boolean;
@@ -368,6 +545,7 @@ function TaskBoardCard({
   onMoveDown: () => void;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus) => void;
   onMoveColumn?: ((taskId: string, column: ProjectColumn) => void) | undefined;
+  onSetTaskPoints?: ((taskId: string, storyPoints: number | null) => void) | undefined;
   onEdit: (task: ProjectTaskCard) => void;
   onRemove: (task: ProjectTaskCard) => void;
 }) {
@@ -466,7 +644,15 @@ function TaskBoardCard({
       </div>
 
       <div className="mt-2.5">
-        <TaskMetaBadges task={task} seats={seats} />
+        <TaskMetaBadges
+          task={task}
+          seats={seats}
+          pointsEnabled={pointsEnabled}
+          cyclesEnabled={cyclesEnabled}
+          cycleName={cycleName}
+          canEdit={canEdit}
+          onSetTaskPoints={onSetTaskPoints}
+        />
       </div>
 
       {canEdit && (
@@ -536,6 +722,10 @@ export function ProjectBoardView({
   includeCancelled,
   creatingTask,
   customSortActive = false,
+  cyclesEnabled = false,
+  pointsEnabled = false,
+  cycleNamesById,
+  onSetTaskPoints,
   onMoveStatus,
   onMoveColumn,
   onReorderTask,
@@ -552,6 +742,10 @@ export function ProjectBoardView({
   includeCancelled: boolean;
   creatingTask: boolean;
   customSortActive?: boolean;
+  cyclesEnabled?: boolean;
+  pointsEnabled?: boolean;
+  cycleNamesById?: ReadonlyMap<string, string>;
+  onSetTaskPoints?: ((taskId: string, storyPoints: number | null) => void) | undefined;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus, placement?: TaskPlacement) => void;
   onMoveColumn?: ((taskId: string, column: ProjectColumn, placement?: TaskPlacement) => void) | undefined;
   onReorderTask?: (taskId: string, placement: TaskPlacement) => void;
@@ -836,6 +1030,9 @@ export function ProjectBoardView({
                           seats={seats}
                           customColumns={customColumns}
                           canEdit={canEdit}
+                          pointsEnabled={pointsEnabled}
+                          cyclesEnabled={cyclesEnabled}
+                          cycleName={task.cycleId ? cycleNamesById?.get(task.cycleId) : undefined}
                           dragging={draggingId === task.id}
                           dropEdge={dropTarget?.anchorId === task.id ? dropTarget.place : null}
                           canMoveUp={!customSortActive && prev !== undefined}
@@ -860,6 +1057,7 @@ export function ProjectBoardView({
                           }}
                           onMoveStatus={(taskId, nextStatus) => requestMoveStatus(taskId, nextStatus)}
                           onMoveColumn={onMoveColumn ? (taskId, col) => requestMoveColumn(taskId, col) : undefined}
+                          onSetTaskPoints={onSetTaskPoints}
                           onEdit={onEditTask}
                           onRemove={setConfirmRemove}
                         />
@@ -951,6 +1149,17 @@ export function ProjectBoardView({
                             <span>{t('dependencies.cardBlockingBadge', { count: task.blockingCount ?? 0 })}</span>
                           </Badge>
                         )}
+                        {cyclesEnabled && task.cycleId && cycleNamesById?.get(task.cycleId) && (
+                          <Badge variant="outline" className="h-5 px-1.5 text-[11px]" data-testid="task-cycle-badge">
+                            {cycleNamesById.get(task.cycleId)}
+                          </Badge>
+                        )}
+                        <StoryPointsChip
+                          task={task}
+                          pointsEnabled={pointsEnabled}
+                          canEdit={canEdit}
+                          onSetTaskPoints={onSetTaskPoints}
+                        />
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">

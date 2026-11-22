@@ -24,6 +24,8 @@ import {
   NOTEBOOK_NAME_MAX,
   NOTEBOOK_STACK_MAX,
   PROJECT_COLUMN_NAME_MAX,
+  PROJECT_CYCLE_GOAL_MAX,
+  PROJECT_CYCLE_NAME_MAX,
   PROJECT_DESCRIPTION_MAX,
   PROJECT_NAME_MAX,
   PROJECT_TASK_TITLE_MAX,
@@ -555,6 +557,16 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A project board column's name, which may name a person: mentions are replaced with a redaction marker",
   },
+  'crove_projects.project_cycle.name': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A project cycle's name, which may mention a person: mentions are replaced with a redaction marker",
+  },
+  'crove_projects.project_cycle.goal': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A project cycle's goal, which may mention a person: mentions are replaced with a redaction marker",
+  },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'crove_sign.signer.name': {
     kind: 'name',
@@ -1053,6 +1065,8 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_projects.project.description',
   'crove_projects.project.template_tasks',
   'crove_projects.project_column.name',
+  'crove_projects.project_cycle.name',
+  'crove_projects.project_cycle.goal',
   'crove_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1814,6 +1828,28 @@ export const personalDataErase = defineCommand({
          WHERE o.org_id = pc.org_id AND o.id = pc.id AND pc.org_id = ${ctx.orgId}::uuid AND ${projectColumnName}
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name`.execute(ctx.trx);
       add('crove_projects.project_column.name', projectColumns.filter((c) => c.name).length);
+
+      // Project cycles whose name or goal quotes the person (#4361): replace mentions bounded to column limits.
+      const cycleName = freeTextMatch(probe, sql.ref('c.name'));
+      const cycleGoal = freeTextMatch(probe, sql.ref('c.goal'));
+      const { rows: cycles } = await sql<{ name: boolean; goal: boolean }>`
+        UPDATE crove_projects.project_cycle c
+           SET name = CASE
+                        WHEN ${cycleName}
+                          THEN COALESCE(
+                            NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('c.name'), REDACTED_MARK)}, ${PROJECT_CYCLE_NAME_MAX}::int)), ''),
+                            ${REDACTED_MARK}
+                          )
+                        ELSE c.name
+                      END,
+               goal = CASE WHEN ${cycleGoal} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('c.goal'), REDACTED_MARK)}, ${PROJECT_CYCLE_GOAL_MAX}::int)
+                           ELSE c.goal END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.project_cycle o
+         WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND (${cycleName} OR coalesce(${cycleGoal}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.goal'))}, false) AS goal`.execute(ctx.trx);
+      add('crove_projects.project_cycle.name', cycles.filter((c) => c.name).length);
+      add('crove_projects.project_cycle.goal', cycles.filter((c) => c.goal).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));

@@ -167,7 +167,17 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of crove_projects for erasure', () => {
-    expect(personal.length).toBe(4);
+    expect(personal.length).toBe(6);
+    expect(personal).toEqual(
+      expect.arrayContaining([
+        'crove_projects.project.name',
+        'crove_projects.project.description',
+        'crove_projects.project.template_tasks',
+        'crove_projects.project_column.name',
+        'crove_projects.project_cycle.name',
+        'crove_projects.project_cycle.goal',
+      ]),
+    );
     for (const key of personal) {
       expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
     }

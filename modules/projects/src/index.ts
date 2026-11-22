@@ -29,6 +29,7 @@ import {
 } from './templates.ts';
 import { projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
 import { projectTaskSetDates, projectTimeline } from './timeline.ts';
+import { projectCycleCommands, projectCycleQueries } from './cycles.ts';
 
 export { hasDependencyPath, projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
 export {
@@ -69,6 +70,21 @@ export {
   projectWeeklyStatusSource,
   type ProjectWeeklyStatusSource,
 } from './weekly-status.ts';
+export {
+  computeCycleBurndown,
+  projectCycleComplete,
+  projectCycleCreate,
+  projectCycleDelete,
+  projectCycleList,
+  projectCycleMetrics,
+  projectCycleStart,
+  projectCycleSummarySource,
+  projectCycleUpdate,
+  projectTaskSetCycle,
+  projectTaskSetPoints,
+  type BurndownTaskSample,
+  type ProjectCycleSummarySource,
+} from './cycles.ts';
 export {
   tasksFromNoteConfirm,
   tasksFromNoteSeats,
@@ -148,6 +164,7 @@ export const projectsCommands = [
   projectDependencyAdd,
   projectDependencyRemove,
   projectTaskSetDates,
+  ...projectCycleCommands,
 ];
 
 export const projectsQueries = [
@@ -166,4 +183,5 @@ export const projectsQueries = [
   projectTaskRecurrenceGet,
   projectDependencyList,
   projectTimeline,
+  ...projectCycleQueries,
 ];

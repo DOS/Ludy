@@ -11,6 +11,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(Object.keys(projectsManifest.tables.crove_projects).sort()).toEqual([
       'project',
       'project_column',
+      'project_cycle',
       'project_member',
       'project_task',
       'task_dependency',
@@ -22,10 +23,18 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.template_tasks).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.is_template).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project.cycles_enabled).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project.cycle_duration_weeks).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project.points_enabled).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project.owner_user_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_cycle.name).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project_cycle.goal).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project_cycle.status).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_member.user_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.task_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.start_on).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_task.cycle_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_task.story_points).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.recurrence).toBe('internal');
     expect(projectsManifest.tables.crove_projects.task_dependency.blocker_task_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.task_dependency.blocked_task_id).toBe('internal');
@@ -36,13 +45,18 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 32 commands and 15 queries with consistent module prefix', () => {
+  it('exports all 39 commands and 18 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
       'projects.column.init_defaults',
       'projects.column.reorder',
       'projects.column.update',
+      'projects.cycle.complete',
+      'projects.cycle.create',
+      'projects.cycle.delete',
+      'projects.cycle.start',
+      'projects.cycle.update',
       'projects.dependency.add',
       'projects.dependency.remove',
       'projects.member.add',
@@ -61,7 +75,9 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.task.recurrence.set',
       'projects.task.remove',
       'projects.task.reorder',
+      'projects.task.set_cycle',
       'projects.task.set_dates',
+      'projects.task.set_points',
       'projects.tasks_from_note.confirm',
       'projects.tasks_from_note.start',
       'projects.tasks_from_source.confirm',
@@ -73,6 +89,9 @@ describe('@ludy/mod-projects (#2591)', () => {
     ]);
     expect(projectsQueries.map((q) => q.name).sort()).toEqual([
       'projects.board',
+      'projects.cycle.list',
+      'projects.cycle.metrics',
+      'projects.cycle_summary_source',
       'projects.dependency.list',
       'projects.project.get',
       'projects.project.list',

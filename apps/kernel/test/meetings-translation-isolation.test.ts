@@ -81,6 +81,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_projects_dependencies.sql',
       // #2605 (projects custom columns): the purge restatement that adds crove_projects.project_column restates the whole list, the translation table included; its body is the previous one.
       'crove_kernel_org_purge_projects_columns.sql',
+      // #4361 (Projects cycles): the purge restatement that adds crove_projects.project_cycle restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_projects_cycles.sql',
     ]);
   });
 });

@@ -16,6 +16,9 @@ export interface ProjectRow {
   description: string | null;
   owner_user_id: string | null;
   status: ProjectStatus;
+  cycles_enabled: boolean;
+  cycle_duration_weeks: number;
+  points_enabled: boolean;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -67,7 +70,19 @@ export function assertNotArchived(row: ProjectRow): void {
 export async function loadProject(trx: Trx, orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
   let q = trx
     .selectFrom('crove_projects.project')
-    .select(['id', 'name', 'description', 'owner_user_id', 'status', 'created_by', 'created_at', 'updated_at'])
+    .select([
+      'id',
+      'name',
+      'description',
+      'owner_user_id',
+      'status',
+      'cycles_enabled',
+      'cycle_duration_weeks',
+      'points_enabled',
+      'created_by',
+      'created_at',
+      'updated_at',
+    ])
     .where('org_id', '=', orgId)
     .where('id', '=', projectId)
     .where('is_template', '=', false);

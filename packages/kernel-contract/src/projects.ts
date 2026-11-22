@@ -22,6 +22,15 @@ export const PROJECT_TASK_RECURRENCE_TIMES_MAX = 500;
 export const PROJECT_COLUMNS_MAX = 12;
 export const PROJECT_COLUMN_NAME_MAX = 80;
 export const PROJECT_COLUMN_WIP_MAX = 200;
+export const PROJECT_CYCLE_NAME_MAX = 120;
+export const PROJECT_CYCLE_GOAL_MAX = 1000;
+export const PROJECT_CYCLE_DURATION_WEEKS_MIN = 1;
+export const PROJECT_CYCLE_DURATION_WEEKS_MAX = 4;
+export const PROJECT_CYCLE_MAX_DAYS = 90;
+export const PROJECT_CYCLE_LIST_LIMIT = 100;
+export const PROJECT_CYCLE_VELOCITY_LIMIT = 12;
+export const PROJECT_TASK_STORY_POINTS_MIN = 0;
+export const PROJECT_TASK_STORY_POINTS_MAX = 100;
 
 export const BUILTIN_PROJECT_TEMPLATE_KEYS = ['monthly-close', 'client-onboarding', 'campaign-launch'] as const;
 export type BuiltinProjectTemplateKey = (typeof BUILTIN_PROJECT_TEMPLATE_KEYS)[number];
@@ -237,10 +246,16 @@ export const zProjectCreate = z.strictObject({
 });
 export type ProjectCreateInput = z.infer<typeof zProjectCreate>;
 
+export const zProjectCycleDurationWeeks = z.number().int().min(PROJECT_CYCLE_DURATION_WEEKS_MIN).max(PROJECT_CYCLE_DURATION_WEEKS_MAX);
+export const zProjectStoryPoints = z.number().int().min(PROJECT_TASK_STORY_POINTS_MIN).max(PROJECT_TASK_STORY_POINTS_MAX);
+
 export const zProjectUpdate = z.strictObject({
   projectId: zId,
   name: zProjectName.optional(),
   description: zProjectDescription.nullable().optional(),
+  cyclesEnabled: z.boolean().optional(),
+  cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
+  pointsEnabled: z.boolean().optional(),
 });
 export type ProjectUpdateInput = z.infer<typeof zProjectUpdate>;
 
@@ -297,6 +312,8 @@ export const zProjectTaskCreate = z.strictObject({
   status: z.enum(BOARD_TASK_STATUSES).optional(),
   columnId: zId.optional(),
   checklist: zTaskChecklist.optional(),
+  cycleId: zId.nullable().optional(),
+  storyPoints: zProjectStoryPoints.nullable().optional(),
 });
 export type ProjectTaskCreateInput = z.infer<typeof zProjectTaskCreate>;
 
@@ -307,6 +324,9 @@ export const zProjectSummary = z.object({
   ownerUserId: zId.nullable(),
   ownerName: z.string().nullable(),
   status: zProjectStatus,
+  cyclesEnabled: z.boolean().optional(),
+  cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
+  pointsEnabled: z.boolean().optional(),
   memberCount: z.number().int().nonnegative(),
   openTaskCount: z.number().int().nonnegative(),
   doneTaskCount: z.number().int().nonnegative(),
@@ -323,6 +343,9 @@ export const zProjectDetail = z.object({
   ownerUserId: zId.nullable(),
   ownerName: z.string().nullable(),
   status: zProjectStatus,
+  cyclesEnabled: z.boolean().optional(),
+  cycleDurationWeeks: zProjectCycleDurationWeeks.optional(),
+  pointsEnabled: z.boolean().optional(),
   canManage: z.boolean(),
   canWrite: z.boolean(),
   createdAt: z.string(),
@@ -369,6 +392,8 @@ export const zProjectTaskCard = z.object({
   commentCount: z.number().int().nonnegative(),
   createdAt: z.string(),
   addedAt: z.string(),
+  cycleId: zId.nullable().optional(),
+  storyPoints: zProjectStoryPoints.nullable().optional(),
   recurrence: zProjectTaskRecurrence.nullable().optional(),
   recurrenceCount: z.number().int().nonnegative().optional(),
   recurrenceLastDue: zLocalDate.nullable().optional(),
@@ -378,6 +403,41 @@ export const zProjectTaskCard = z.object({
   blockingCount: z.number().int().nonnegative().optional(),
 });
 export type ProjectTaskCard = z.infer<typeof zProjectTaskCard>;
+
+export const PROJECT_CYCLE_STATUSES = ['upcoming', 'active', 'completed'] as const;
+export type ProjectCycleStatus = (typeof PROJECT_CYCLE_STATUSES)[number];
+export const zProjectCycleStatus = z.enum(PROJECT_CYCLE_STATUSES);
+
+export const zProjectCycle = z.object({
+  id: zId,
+  projectId: zId,
+  number: z.number().int().positive(),
+  name: z.string(),
+  goal: z.string().nullable(),
+  status: zProjectCycleStatus,
+  startsOn: zLocalDate,
+  endsOn: zLocalDate,
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  totalTasks: z.number().int().nonnegative(),
+  openTasks: z.number().int().nonnegative(),
+  doneTasks: z.number().int().nonnegative(),
+  cancelledTasks: z.number().int().nonnegative(),
+  totalPoints: z.number().int().nonnegative(),
+  donePoints: z.number().int().nonnegative(),
+});
+export type ProjectCycle = z.infer<typeof zProjectCycle>;
+
+export const zProjectCycleFilter = z.discriminatedUnion('mode', [
+  z.strictObject({ mode: z.literal('all') }),
+  z.strictObject({ mode: z.literal('active') }),
+  z.strictObject({ mode: z.literal('backlog') }),
+  z.strictObject({ mode: z.literal('upcoming') }),
+  z.strictObject({ mode: z.literal('cycle'), cycleId: zId }),
+]);
+export type ProjectCycleFilter = z.infer<typeof zProjectCycleFilter>;
 
 export const zProjectListInput = z.strictObject({
   status: z.array(zProjectStatus).max(4).optional(),
@@ -395,6 +455,7 @@ export const zProjectBoardInput = z.strictObject({
   positionId: z.union([zId, z.literal('root')]).optional(),
   status: z.array(zTaskStatus).max(6).optional(),
   includeCancelled: z.boolean().optional(),
+  cycleFilter: zProjectCycleFilter.optional(),
   filters: zFilterAstShape.optional(),
   sort: zSavedViewSortShape.nullable().optional(),
 });
@@ -408,6 +469,7 @@ export const zProjectBoard = z.object({
   viewerHasSeat: z.boolean(),
   columns: z.array(zProjectColumn).optional(),
   tasks: z.array(zProjectTaskCard),
+  activeCycle: zProjectCycle.nullable().optional(),
   totalVisible: z.number().int().nonnegative(),
   hiddenByEntityCount: z.number().int().nonnegative(),
   truncated: z.boolean(),
@@ -1021,4 +1083,175 @@ export const zProjectTimeline = z.object({
   today: zLocalDate,
 });
 export type ProjectTimeline = z.infer<typeof zProjectTimeline>;
+
+// Opt-in Sprints / Cycles, Story points, deterministic burndown/velocity, and Vy cycle summary (#4361, docs/plan/projects-v2.md section 4.1).
+export const zProjectCycleName = z.string().trim().min(1).max(PROJECT_CYCLE_NAME_MAX);
+export const zProjectCycleGoal = z.string().trim().max(PROJECT_CYCLE_GOAL_MAX);
+
+export const zProjectCycleCreateInput = z.strictObject({
+  projectId: zId,
+  name: zProjectCycleName,
+  goal: zProjectCycleGoal.nullable().optional(),
+  startsOn: zLocalDate.optional(),
+  endsOn: zLocalDate.optional(),
+});
+export type ProjectCycleCreateInput = z.infer<typeof zProjectCycleCreateInput>;
+
+export const zProjectCycleUpdateInput = z.strictObject({
+  projectId: zId,
+  cycleId: zId,
+  name: zProjectCycleName.optional(),
+  goal: zProjectCycleGoal.nullable().optional(),
+  startsOn: zLocalDate.optional(),
+  endsOn: zLocalDate.optional(),
+});
+export type ProjectCycleUpdateInput = z.infer<typeof zProjectCycleUpdateInput>;
+
+export const zProjectCycleDeleteInput = z.strictObject({
+  projectId: zId,
+  cycleId: zId,
+});
+export type ProjectCycleDeleteInput = z.infer<typeof zProjectCycleDeleteInput>;
+
+export const zProjectCycleStartInput = z.strictObject({
+  projectId: zId,
+  cycleId: zId,
+});
+export type ProjectCycleStartInput = z.infer<typeof zProjectCycleStartInput>;
+
+export const zProjectCycleCarryover = z.discriminatedUnion('mode', [
+  z.strictObject({ mode: z.literal('none') }),
+  z.strictObject({ mode: z.literal('backlog') }),
+  z.strictObject({ mode: z.literal('cycle'), targetCycleId: zId }),
+]);
+export type ProjectCycleCarryover = z.infer<typeof zProjectCycleCarryover>;
+
+export const zProjectCycleCompleteInput = z.strictObject({
+  projectId: zId,
+  cycleId: zId,
+  carryover: zProjectCycleCarryover,
+});
+export type ProjectCycleCompleteInput = z.infer<typeof zProjectCycleCompleteInput>;
+
+export const zProjectTaskSetCycleInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  cycleId: zId.nullable(),
+});
+export type ProjectTaskSetCycleInput = z.infer<typeof zProjectTaskSetCycleInput>;
+
+export const zProjectTaskSetPointsInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  storyPoints: zProjectStoryPoints.nullable(),
+});
+export type ProjectTaskSetPointsInput = z.infer<typeof zProjectTaskSetPointsInput>;
+
+export const zProjectCycleMutateResult = z.object({
+  cycle: zProjectCycle,
+});
+export type ProjectCycleMutateResult = z.infer<typeof zProjectCycleMutateResult>;
+
+export const zProjectCycleDeleteResult = z.object({
+  projectId: zId,
+  cycleId: zId,
+  deleted: z.boolean(),
+});
+export type ProjectCycleDeleteResult = z.infer<typeof zProjectCycleDeleteResult>;
+
+export const zProjectCycleCompleteResult = z.object({
+  cycle: zProjectCycle,
+  carriedOverCount: z.number().int().nonnegative(),
+  targetCycleId: zId.nullable(),
+});
+export type ProjectCycleCompleteResult = z.infer<typeof zProjectCycleCompleteResult>;
+
+export const zProjectTaskSetCycleResult = z.object({
+  projectId: zId,
+  taskId: zId,
+  cycleId: zId.nullable(),
+});
+export type ProjectTaskSetCycleResult = z.infer<typeof zProjectTaskSetCycleResult>;
+
+export const zProjectTaskSetPointsResult = z.object({
+  projectId: zId,
+  taskId: zId,
+  storyPoints: zProjectStoryPoints.nullable(),
+});
+export type ProjectTaskSetPointsResult = z.infer<typeof zProjectTaskSetPointsResult>;
+
+export const zProjectCycleListInput = z.strictObject({
+  projectId: zId,
+});
+export type ProjectCycleListInput = z.infer<typeof zProjectCycleListInput>;
+
+export const zProjectCycleListResult = z.object({
+  cycles: z.array(zProjectCycle),
+  backlogTaskCount: z.number().int().nonnegative(),
+  backlogPoints: z.number().int().nonnegative(),
+  hiddenByEntityCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type ProjectCycleListResult = z.infer<typeof zProjectCycleListResult>;
+
+export const zProjectCycleBurndownPoint = z.object({
+  date: zLocalDate,
+  idealRemainingTasks: z.number().nonnegative(),
+  idealRemainingPoints: z.number().nonnegative(),
+  remainingTasks: z.number().int().nonnegative().nullable(),
+  remainingPoints: z.number().int().nonnegative().nullable(),
+});
+export type ProjectCycleBurndownPoint = z.infer<typeof zProjectCycleBurndownPoint>;
+
+export const zProjectCycleVelocityPoint = z.object({
+  cycleId: zId,
+  number: z.number().int().positive(),
+  name: z.string(),
+  startsOn: zLocalDate,
+  endsOn: zLocalDate,
+  completedTasks: z.number().int().nonnegative(),
+  totalTasks: z.number().int().nonnegative(),
+  completedPoints: z.number().int().nonnegative(),
+  committedPoints: z.number().int().nonnegative(),
+});
+export type ProjectCycleVelocityPoint = z.infer<typeof zProjectCycleVelocityPoint>;
+
+export const zProjectCycleMetricsInput = z.strictObject({
+  projectId: zId,
+  cycleId: zId.optional(),
+});
+export type ProjectCycleMetricsInput = z.infer<typeof zProjectCycleMetricsInput>;
+
+export const zProjectCycleMetrics = z.object({
+  projectId: zId,
+  selectedCycle: zProjectCycle.nullable(),
+  burndown: z.array(zProjectCycleBurndownPoint),
+  velocity: z.array(zProjectCycleVelocityPoint),
+  averageVelocityTasks: z.number().nonnegative(),
+  averageVelocityPoints: z.number().nonnegative(),
+  hiddenByEntityCount: z.number().int().nonnegative(),
+});
+export type ProjectCycleMetrics = z.infer<typeof zProjectCycleMetrics>;
+
+export const zProjectCycleSummaryInput = z.strictObject({
+  projectId: zId,
+  cycleId: zId.optional(),
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type ProjectCycleSummaryInput = z.infer<typeof zProjectCycleSummaryInput>;
+
+export const zProjectCycleSummary = z.strictObject({
+  ai: z.enum(PROJECT_WEEKLY_STATUS_STATES),
+  project: z.strictObject({
+    id: zId,
+    name: z.string(),
+    status: zProjectStatus,
+  }),
+  cycle: zProjectCycle.nullable(),
+  metrics: zProjectCycleMetrics,
+  hiddenByEntityCount: z.number().int().nonnegative(),
+  sentences: z.array(z.string().max(400)).max(5),
+  truncated: z.boolean(),
+});
+export type ProjectCycleSummary = z.infer<typeof zProjectCycleSummary>;
 

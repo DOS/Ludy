@@ -30,6 +30,7 @@ export const COLUMN_COLOR_DOT_CLASS: Record<ProjectColumnColor, string> = {
 export const projectsInstalled = (): boolean => installedModules().includes('projects');
 
 export const PROJECT_WEEKLY_STATUS_QUERY_PREFIX = ['projects', 'weeklyStatus'] as const;
+export const PROJECT_CYCLE_SUMMARY_QUERY_PREFIX = ['projects', 'cycleSummary'] as const;
 
 export function projectWeeklyStatusQueryKey(
   slug: string,
@@ -37,6 +38,15 @@ export function projectWeeklyStatusQueryKey(
   language: 'vi' | 'en',
 ): readonly ['projects', 'weeklyStatus', string, string, 'vi' | 'en'] {
   return [...PROJECT_WEEKLY_STATUS_QUERY_PREFIX, slug, projectId, language];
+}
+
+export function projectCycleSummaryQueryKey(
+  slug: string,
+  projectId: string,
+  cycleId: string | null,
+  language: 'vi' | 'en',
+): readonly ['projects', 'cycleSummary', string, string, string, 'vi' | 'en'] {
+  return [...PROJECT_CYCLE_SUMMARY_QUERY_PREFIX, slug, projectId, cycleId ?? 'default', language];
 }
 
 export const PROJECT_BOARD_COLUMNS = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;

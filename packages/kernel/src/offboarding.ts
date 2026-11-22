@@ -281,6 +281,7 @@ export const EXPORT_TABLES = {
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_column': { from: 'crove_projects.project_column', omit: [] },
+  'projects.project_cycle': { from: 'crove_projects.project_cycle', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
   'projects.task_dependency': { from: 'crove_projects.task_dependency', omit: [] },
