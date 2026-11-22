@@ -2,7 +2,7 @@
 // The deterministic part of a sales e-invoice draft (#2500, plan einvoice-issue.md section 8 step 2): the amounts of a draft from
 // its lines (decimal arithmetic, never a typed total) and the checks Decree 254 Art. 10 and the provider's rules ask of it. Pure:
 // no database, no provider. A failed check is a code on a field; nothing is sent either way.
-import type { BuyerIdentityKind, BuyerKind, DraftIssue, DraftIssueCode } from '@ludy/kernel-contract';
+import { isVietnamHoliday, type BuyerIdentityKind, type BuyerKind, type DraftIssue, type DraftIssueCode } from '@ludy/kernel-contract';
 import { computeLineTotals, money, normalizeVatRate, parseTaxCode, reducedRateApplies, sumLineTotals } from '@ludy/l10n-vn';
 
 export { normalizeVatRate };
@@ -68,14 +68,19 @@ export function computeDraft(lines: readonly DraftLineInput[]): ComputedDraft {
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const isDay = (value: string): boolean => DAY.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
-// The day after `date` that is a working day (YYYY-MM-DD): Monday to Friday. Public holidays are not in this rule: the repository holds no calendar of them (the government
-// decides some each year), so a holiday counts as a working day here and the warning can be a day late, never a day early.
+// The day after `date` that is a working day (YYYY-MM-DD): not a Saturday, a Sunday or a Vietnamese public holiday of the shared calendar (packages/kernel-contract calendar.ts: the fixed
+// dates every year and the Tết and Hùng Kings days of the years in its lunar table; a year beyond the table has the fixed ones only). The government also moves days off and sets
+// compensation days by decision each year, and the calendar does not carry them, so the answer is exact only where the calendar is. A day the calendar lacks counts as a working day
+// and an invoice that was in time can be flagged late (the person gives a reason); a day it lists wrongly lets a truly late invoice pass. The table for 2027 is uncertain until the
+// accountant confirms it (#2520).
 export function nextWorkingDay(date: string): string {
   const next = new Date(`${date}T00:00:00Z`);
+  let day: string;
   do {
     next.setUTCDate(next.getUTCDate() + 1);
-  } while (next.getUTCDay() === 0 || next.getUTCDay() === 6);
-  return next.toISOString().slice(0, 10);
+    day = next.toISOString().slice(0, 10);
+  } while (next.getUTCDay() === 0 || next.getUTCDay() === 6 || isVietnamHoliday(day));
+  return day;
 }
 
 // A sale invoiced after its next working day (Decree 254 Art. 9, as read by the accountant of #2506: signed and sent for the code by the next working day) is a late invoice:
