@@ -596,13 +596,24 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       },
     ) as unknown as ConversationReader;
 
-    const httpAiOn = makeHttp(o, { elsewhere: otherOrg, conversationReader: reader, hrCvWaitMs: 3000 });
-    // Run worker relay right after upload submits to test synchronous 200 ready return
-    const workerDrainPromise = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        void drainQueuedCvJobs(o.orgId).then(() => resolve());
-      }, 250);
-    });
+    const httpAiOn = makeHttp(o, { elsewhere: otherOrg, conversationReader: reader, hrCvWaitMs: 6000 });
+    // Wait until the outbox event commits, then drain it via worker + real crove-extract so POST returns 200 ready deterministically
+    const workerDrainPromise = (async () => {
+      for (let i = 0; i < 60; i += 1) {
+        const pending = await withAdmin((c) =>
+          c.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM crove_kernel.outbox WHERE org_id = $1 AND event_name = 'hr.recruiting.cv_extract_queued' AND delivered_at IS NULL`,
+            [o.orgId],
+          ),
+        );
+        if (Number(pending.rows[0]?.count ?? 0) > 0) {
+          await drainQueuedCvJobs(o.orgId);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error('timed out waiting for hr.recruiting.cv_extract_queued outbox row');
+    })();
     const docxReady = await httpAiOn.postCv(
       o.owner,
       docxBytes,
