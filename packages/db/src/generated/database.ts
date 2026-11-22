@@ -252,6 +252,7 @@ export interface CroveSignSchema {
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
@@ -3843,6 +3844,29 @@ export interface SignCaSigningRequestTable {
   poll_attempts: Generated<number>;
   next_poll_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   signed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.envelope_obligation */
+export interface SignEnvelopeObligationTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  counterparty_name: string | null;
+  effective_date: string | null;
+  expiry_date: string | null;
+  renewal_notice_days: number | null;
+  auto_renew: Generated<boolean>;
+  contract_value: string | null;
+  currency: Generated<string>;
+  obligations_json: ColumnType<unknown, string | undefined, string>;
+  proposal_json: ColumnType<unknown, string | null | undefined, string | null>;
+  prompt_version: string | null;
+  status: Generated<string>;
+  confirmed_by: string | null;
+  confirmed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;

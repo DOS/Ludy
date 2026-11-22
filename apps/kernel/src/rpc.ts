@@ -78,6 +78,7 @@ import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   compareSignPdfVersions,
   proposeEnvelopeAnalysis,
+  proposeEnvelopeObligations,
   proposeSignContractDraftClauses,
   signAi,
   type SignAi,
@@ -572,7 +573,11 @@ export function createRpcHandler(
     conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
     suggestionBudget(),
   );
-  const signCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }));
+  const signCoworker = signAi(
+    signAiReader ?? null,
+    new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+    new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+  );
   const signAcceptanceCoworker = signAcceptanceAi(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
     suggestionBudget(),
@@ -4794,6 +4799,27 @@ export function createRpcHandler(
         ),
         list_requests: os.sign.ca.list_requests.handler(signQuery('sign.ca.requests.by_envelope')),
         initiate_request: os.sign.ca.initiate_request.handler(signCommand('sign.ca.request.initiate')),
+      },
+      obligation: {
+        get: os.sign.obligation.get.handler(signQuery('sign.obligation.get')),
+        renewals_list: os.sign.obligation.renewals_list.handler(signQuery('sign.obligation.renewals_list')),
+        extract: os.sign.obligation.extract.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeObligations({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              ...(input.pages ? { pages: input.pages } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        upsert: os.sign.obligation.upsert.handler(signCommand('sign.obligation.upsert')),
+        dismiss_proposal: os.sign.obligation.dismiss_proposal.handler(signCommand('sign.obligation.dismiss_proposal')),
+        complete_item: os.sign.obligation.complete_item.handler(signCommand('sign.obligation.complete_item')),
       },
     },
   });

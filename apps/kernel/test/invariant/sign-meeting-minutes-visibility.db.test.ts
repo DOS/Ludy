@@ -966,6 +966,117 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       { actor: asSystem('sign-pdf-seal'), orgId },
     );
 
+    // Post-signature obligations (#3821 + ADR-0047): creator confirms obligations on completed confidential meeting_minutes envelope;
+    // permitted readers (recorderId, attendeeId) can read/list/see Today alerts, while non-reader owners/admins/members/viewers get 404 or 0 items.
+    await runtime.execute(
+      'sign.obligation.upsert',
+      {
+        envelopeId: recEnv.envelopeId,
+        counterpartyName: 'Doi tac bien ban mat',
+        effectiveDate: '2026-11-01',
+        expiryDate: '2026-12-01',
+        renewalNoticeDays: 15,
+        autoRenew: true,
+        contractValue: '50000000',
+        currency: 'VND',
+        obligations: [
+          {
+            id: 'mtg-obl-1',
+            title: 'Hoan tat hanh dong bien ban hop',
+            dueDate: '2026-11-22',
+            status: 'pending',
+          },
+        ],
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+
+    for (const readerId of [recorderId, attendeeId]) {
+      const gotObl = await runtime.query<{ obligation: { envelopeId: string; status: string } | null }>(
+        'sign.obligation.get',
+        { envelopeId: recEnv.envelopeId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(gotObl.obligation?.envelopeId).toBe(recEnv.envelopeId);
+      expect(gotObl.obligation?.status).toBe('confirmed');
+
+      const renewals = await runtime.query<{ items: Array<{ envelope: { id: string } }> }>(
+        'sign.obligation.renewals_list',
+        { limit: 20 },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(renewals.items.map((x) => x.envelope.id)).toContain(recEnv.envelopeId);
+
+      const todayItems = await runtime.query<Array<{ href?: string }>>(
+        'sign.obligations.today',
+        { now: '2026-11-21T09:00:00+07:00' },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(todayItems.some((item) => item.href === `/sign/envelopes/${recEnv.envelopeId}`)).toBe(true);
+    }
+
+    for (const nonReaderId of [ownerId, adminId, outsiderMemberId, viewerId]) {
+      await expect(
+        runtime.query('sign.obligation.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+
+      const renewals = await runtime.query<{ items: Array<{ envelope: { id: string } }> }>(
+        'sign.obligation.renewals_list',
+        { limit: 20 },
+        { actor: asUser(nonReaderId), orgId },
+      );
+      expect(renewals.items.map((x) => x.envelope.id)).not.toContain(recEnv.envelopeId);
+
+      const todayItems = await runtime.query<Array<{ href?: string }>>(
+        'sign.obligations.today',
+        { now: '2026-11-21T09:00:00+07:00' },
+        { actor: asUser(nonReaderId), orgId },
+      );
+      expect(todayItems.some((item) => item.href === `/sign/envelopes/${recEnv.envelopeId}`)).toBe(false);
+    }
+
+    for (const nonReaderWriterId of [ownerId, adminId, outsiderMemberId]) {
+      await expect(
+        runtime.query('sign.obligation.source', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderWriterId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.obligation.upsert',
+          {
+            envelopeId: recEnv.envelopeId,
+            autoRenew: false,
+            currency: 'VND',
+            obligations: [],
+          },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.obligation.propose',
+          {
+            envelopeId: recEnv.envelopeId,
+            proposal: { autoRenew: false, currency: 'VND', citations: [], obligations: [] },
+          },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.obligation.dismiss_proposal',
+          { envelopeId: recEnv.envelopeId },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.obligation.complete_item',
+          { envelopeId: recEnv.envelopeId, itemId: 'mtg-obl-1', completed: true },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    }
+
     // System sweep & cleanup commands continue to run cleanly with meeting_minutes rows present.
     await workerRuntime.execute('sign.envelope.expire_sweep', {}, { actor: asSystem('sign-expire-sweep'), orgId });
     await workerRuntime.execute('sign.org.cleanup', {}, { actor: asSystem('sign-cleanup'), orgId });
@@ -1034,6 +1145,25 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     expect(exportedEnvIds).not.toContain(recEnv.envelopeId);
     expect(exportedEnvIds).not.toContain(attTplEnv.envelopeId);
 
+    await adminPool!.query(
+      `INSERT INTO crove_sign.envelope_obligation (org_id, envelope_id, status, created_by)
+       VALUES ($1::uuid, $2::uuid, 'confirmed', $3::uuid)`,
+      [orgId, standaloneEnv.envelopeId, ownerId],
+    );
+    const exportedObligationEnvIds: string[] = [];
+    await workerRuntime.stream(
+      'kernel.org.export.snapshot',
+      { table: 'sign.envelope_obligation' },
+      { actor: asSystem('org-export'), orgId },
+      async (batch) => {
+        for (const line of (batch as { lines: string[] }).lines) {
+          exportedObligationEnvIds.push((JSON.parse(line) as { envelope_id: string }).envelope_id);
+        }
+      },
+    );
+    expect(exportedObligationEnvIds).toContain(standaloneEnv.envelopeId);
+    expect(exportedObligationEnvIds).not.toContain(recEnv.envelopeId);
+
     // 6. Direct SQL RLS + SECURITY DEFINER checks under crove_app (non-reader owner & agent context)!
     const appClient = await appPool!.connect();
     try {
@@ -1043,7 +1173,7 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         contextToken(ownerId, orgId),
       ]);
 
-      for (const table of ['envelope', 'signer', 'field', 'ai_analysis', 'signing_event'] as const) {
+      for (const table of ['envelope', 'envelope_obligation', 'signer', 'field', 'ai_analysis', 'signing_event'] as const) {
         const idCol = table === 'envelope' ? 'id' : 'envelope_id';
         const { rowCount } = await appClient.query(
           `SELECT 1 FROM crove_sign.${table} WHERE org_id = $1::uuid AND ${idCol} = $2::uuid`,
@@ -1051,6 +1181,16 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         );
         expect(rowCount, `non-reader owner SELECT on crove_sign.${table}`).toBe(0);
       }
+
+      await appClient.query('SAVEPOINT sp_obl_ins');
+      await expect(
+        appClient.query(
+          `INSERT INTO crove_sign.envelope_obligation (org_id, envelope_id, status, created_by)
+           VALUES ($1::uuid, $2::uuid, 'confirmed', $3::uuid)`,
+          [orgId, attTplEnv.envelopeId, ownerId],
+        ),
+      ).rejects.toThrow(/row-level security/);
+      await appClient.query('ROLLBACK TO SAVEPOINT sp_obl_ins');
 
       await appClient.query('SAVEPOINT sp_mint');
       await expect(
@@ -1120,6 +1260,11 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         [orgId, recEnv.envelopeId],
       );
       expect(envRows.rowCount).toBe(0);
+      const oblRows = await workerClient.query(
+        'SELECT id FROM crove_sign.envelope_obligation WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
+        [orgId, recEnv.envelopeId],
+      );
+      expect(oblRows.rowCount).toBe(0);
       const canRead = await workerClient.query<{ ok: boolean }>(
         'SELECT crove_sign.can_read_sign_file($1::uuid) AS ok',
         [sealedFileId],
