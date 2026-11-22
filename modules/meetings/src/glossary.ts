@@ -3,7 +3,7 @@
 //
 // meetings.glossary.add          an owner or admin adds a term (at most 60 terms an org, one row per term whatever the case)
 // meetings.glossary.update       rewrites a term (same rules); the identity and the author stay
-// meetings.glossary.remove       deletes a term (nothing copies a term into a meeting, so a removed term changes no published result)
+// meetings.glossary.remove       deletes a term (affects future glossary reads only; words already written into existing drafts or published results are not rewritten)
 // meetings.glossary.list         the terms, for an owner or admin only; a member gets 403 (the database policy says the same: nobody else reads the table)
 // meetings.glossary.for_meeting  the terms for the recorder's own Vy run only, sensitive (audited), reading only `term text` through crove_meetings.glossary_for_recorder
 //

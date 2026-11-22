@@ -24,6 +24,7 @@ describe('glossaryTerms', () => {
     expect(glossaryTerms(many)).toHaveLength(GLOSSARY_LIMITS.terms);
     const long = Array.from({ length: 60 }, (_, i) => `${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}${'x'.repeat(36)}`);
     const kept = glossaryTerms(long);
+    expect(kept).toEqual(long.slice(0, 30));
     expect(kept.join(', ').length).toBeLessThanOrEqual(GLOSSARY_LIMITS.chars);
     expect(kept.length).toBeLessThan(60);
     expect(kept.every((t) => t.length === 38)).toBe(true);
@@ -57,6 +58,10 @@ describe('spellGlossary', () => {
     // The three letters are counted over the whole term; a longer one in lower case is rewritten.
     expect(spellGlossary('dùng vat 10%', ['VAT 10%'])).toBe('dùng vat 10%');
     expect(spellGlossary('dùng misa', ['MISA'])).toBe('dùng MISA');
+    // Trailing combining mark stays part of the word and overlapping phrases prefer the full phrase.
+    expect(spellGlossary('crove\u0338 và crove', ['Crove'])).toBe('crove\u0338 và Crove');
+    expect(spellGlossary('cloud crove and crove', ['Cloud Crove', 'CROVE'])).toBe('Cloud Crove and CROVE');
+    expect(spellGlossary('Cloud Crove and crove', ['CROVE', 'Cloud Crove'])).toBe('Cloud Crove and CROVE');
   });
 
   it('returns Unicode form C and the text itself when there is nothing to do', () => {
@@ -71,6 +76,9 @@ describe('termsInSource and writesTerm', () => {
     expect(termsInSource('Gặp CROVE và Misa Amis tuần sau', ['Crove', 'MISA AMIS', 'Ludy'])).toEqual(['Crove', 'MISA AMIS']);
     expect(termsInSource('Hợp tác với Thành', ['Thanh'])).toEqual(['Thanh']);
     expect(termsInSource('croveland', ['Crove'])).toEqual([]);
+    expect(termsInSource('Có ai gửi báo cáo không?', ['AI'])).toEqual([]);
+    expect(termsInSource('Có AI gửi báo cáo không?', ['AI'])).toEqual(['AI']);
+    expect(termsInSource('ai làm việc này? AI đang chạy', ['AI'])).toEqual(['AI']);
     expect(termsInSource('bất kỳ', [])).toEqual([]);
   });
 
@@ -78,6 +86,7 @@ describe('termsInSource and writesTerm', () => {
     expect(writesTerm('Working with MISA  AMIS today', 'MISA AMIS')).toBe(true);
     expect(writesTerm('Working with misa amis today', 'MISA AMIS')).toBe(false);
     expect(writesTerm('Crovey', 'Crove')).toBe(false);
+    expect(writesTerm('Crove\u0338', 'Crove')).toBe(false);
     expect(writesTerm('anything', '')).toBe(false);
     expect(writesTerm('anything', '   ')).toBe(false);
   });

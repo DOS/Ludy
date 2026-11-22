@@ -64,7 +64,7 @@ function jsonObject(raw: string): unknown {
  * is empty after cleaning, is not 3 to 80 characters (counted in UTF-16 units, like the contract and the database; never cut to fit), carries a way to reach someone off the page, a run of 8 or more digits or a
  * figure the transcript does not write, or repeats an earlier candidate (compared without case and after NFKC).
  */
-export function checkTitles(raw: string, segments: readonly SummarySegment[]): MeetingTitleAnswer {
+export function checkTitles(raw: string, segments: readonly SummarySegment[], glossary: readonly string[] = []): MeetingTitleAnswer {
   const root = jsonObject(raw);
   if (!isRecord(root) || !Array.isArray(root.titles)) throw new TitleError('TITLE_UNPARSABLE');
   // The figures the meeting says (the speakers' words, not the clock of the lines).
@@ -77,7 +77,8 @@ export function checkTitles(raw: string, segments: readonly SummarySegment[]): M
       dropped += 1;
       continue;
     }
-    const title = foldTitleText(entry);
+    const folded = foldTitleText(entry);
+    const title = glossary.length === 0 ? folded : spellGlossary(folded, glossary);
     const key = title.normalize('NFKC').toLowerCase();
     const digits = title.normalize('NFKC').replace(/[^\p{Nd}]/gu, '').length;
     if (
@@ -122,7 +123,6 @@ export async function suggestMeetingTitles(input: MeetingTitleInput, ports: Boun
     { instruction: INSTRUCTION(input.language, glossary), subject: privateText(block + text), maxSubjectChars: TITLE_LIMITS.transcriptBytes + block.length, feature: 'meetings.title' },
     ports,
   );
-  const answer = checkTitles(revealPrivateText(out.text), input.segments);
-  // The organization's spelling of a term in a candidate (case or spacing only), by code, after the checks.
-  return { answer: glossary.length === 0 ? answer : { ...answer, titles: answer.titles.map((title) => spellGlossary(title, glossary)) }, usage: out.usage };
+  const answer = checkTitles(revealPrivateText(out.text), input.segments, glossary);
+  return { answer, usage: out.usage };
 }

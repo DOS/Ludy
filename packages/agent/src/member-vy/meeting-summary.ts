@@ -247,12 +247,19 @@ function checkSpeakers(raw: unknown, segments: readonly SummarySegment[], attend
  * figure the transcript does not hold, or carries a way to reach someone, is removed; an item's "who" or "when" with a foreign figure is blanked; an
  * item's second that points into no segment is dropped. An answer that is not an object throws SUMMARY_UNPARSABLE, and one with nothing left SUMMARY_EMPTY.
  */
-export function checkSummary(raw: string, segments: readonly SummarySegment[], template: SummaryTemplate = { code: 'general', sections: [] }, attendees: readonly string[] = []): MeetingSummaryBody {
+export function checkSummary(
+  raw: string,
+  segments: readonly SummarySegment[],
+  template: SummaryTemplate = { code: 'general', sections: [] },
+  attendees: readonly string[] = [],
+  glossary: readonly string[] = [],
+): MeetingSummaryBody {
   const parsed = jsonObject(raw);
   if (!isRecord(parsed)) throw new SummaryError('SUMMARY_UNPARSABLE');
   const known = new Set(segments.flatMap((s) => numbersIn(s.text)));
   const foreign = (text: string): boolean => numbersIn(text).some((n) => !known.has(n));
   const bad = (text: string): boolean => foreign(text) || hasContact(text);
+  const spell = (text: string): string => (glossary.length === 0 ? text : spellGlossary(text, glossary));
   let dropped = 0;
 
   const useSections = template.sections.length > 0;
@@ -276,7 +283,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
           const sentence = oneLine(piece, SUMMARY_LIMITS.sectionChars);
           if (sentence === '') continue;
           if (bad(sentence)) dropped += 1;
-          else pieces.push(sentence);
+          else pieces.push(glossary.length === 0 ? sentence : oneLine(spell(sentence), SUMMARY_LIMITS.sectionChars));
         }
         const line = pieces.join(' ');
         if (line === '') continue;
@@ -301,7 +308,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
       const line = oneLine(piece, SUMMARY_LIMITS.summaryChars);
       if (line === '') continue;
       if (bad(line)) dropped += 1;
-      else sentences.push(line);
+      else sentences.push(spell(line));
     }
   }
   const summary = sentences.join(' ').slice(0, SUMMARY_LIMITS.summaryChars);
@@ -313,7 +320,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
       const line = oneLine(entry, SUMMARY_LIMITS.decisionChars);
       if (line === '') continue;
       if (bad(line)) dropped += 1;
-      else if (decisions.length < SUMMARY_LIMITS.decisions) decisions.push(line);
+      else if (decisions.length < SUMMARY_LIMITS.decisions) decisions.push(glossary.length === 0 ? line : oneLine(spell(line), SUMMARY_LIMITS.decisionChars));
     }
   }
 
@@ -321,12 +328,13 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
   if (Array.isArray(parsed.items)) {
     for (const entry of parsed.items) {
       if (!isRecord(entry) || typeof entry.title !== 'string') continue;
-      const title = oneLine(entry.title, SUMMARY_LIMITS.titleChars);
+      const rawTitle = oneLine(entry.title, SUMMARY_LIMITS.titleChars);
       // A foreign figure in the title refuses the item; a contact detail does not (it stays, flagged by the module's own check, for a person to read).
-      if (title === '' || foreign(title)) {
+      if (rawTitle === '' || foreign(rawTitle)) {
         dropped += 1;
         continue;
       }
+      const title = glossary.length === 0 ? rawTitle : oneLine(spell(rawTitle), SUMMARY_LIMITS.titleChars);
       const field = (value: unknown): string => {
         const text = typeof value === 'string' ? oneLine(value, SUMMARY_LIMITS.textChars) : '';
         // A name or a time that carries a figure the transcript lacks, or a way to reach someone, is blanked: readers see these words beside the item.
@@ -411,22 +419,6 @@ export interface MeetingSummaryResult {
   usage: { inputTokens: number; outputTokens: number };
 }
 
-/**
- * The organization's spelling (#4043): the text of the summary, the sections, the decisions and the titles of the items, with a term written the glossary's way wherever the model had only its
- * case or spacing different (spellGlossary). Code, not the model, decides; nothing else of the body changes, and with no terms the body is returned as it came.
- */
-export function spellSummary(body: MeetingSummaryBody, glossary: readonly string[]): MeetingSummaryBody {
-  if (glossary.length === 0) return body;
-  const spell = (text: string) => spellGlossary(text, glossary);
-  return {
-    ...body,
-    sections: body.sections.map((s) => ({ ...s, text: spell(s.text) })),
-    summary: spell(body.summary),
-    decisions: body.decisions.map(spell),
-    items: body.items.map((item) => ({ ...item, title: spell(item.title) })),
-  };
-}
-
 /** One run of the recorder's Vy over a transcript: the model is asked once, the checks above decide what is kept. */
 export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundPorts): Promise<MeetingSummaryResult> {
   const text = transcriptLines(input.segments);
@@ -446,7 +438,7 @@ export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundP
     { instruction: INSTRUCTION(input.language, template, attendees, glossary), subject: privateText(labels + roster + header + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length + header.length },
     ports,
   );
-  const parsed = spellSummary(checkSummary(revealPrivateText(out.text), input.segments, template, attendees), glossary);
+  const parsed = checkSummary(revealPrivateText(out.text), input.segments, template, attendees, glossary);
   return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
 }
 

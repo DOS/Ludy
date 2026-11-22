@@ -53,8 +53,9 @@ export function glossaryData(terms: readonly string[]): string {
 }
 
 // What a word run is made of: a letter or a digit on either side ends it, nothing else does (a hyphen, a slash and a full stop stay inside a name such as "e-Invoice" or "VAT 10%").
+// A trailing combining mark (\p{M}, such as \u0338 that stays uncomposed in NFC) extends the word so "Crove\u0338" is neither rewritten nor treated as an exact match.
 const EDGE_BEFORE = '(?<![\\p{L}\\p{N}])';
-const EDGE_AFTER = '(?![\\p{L}\\p{N}])';
+const EDGE_AFTER = '(?![\\p{L}\\p{N}\\p{M}])';
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // A term as a pattern: its words joined by any run of spaces; the marks stay exactly as the term writes them.
@@ -64,23 +65,42 @@ function termPattern(term: string, flags: string): RegExp {
 }
 
 const letterCount = (term: string): number => (term.match(/\p{L}/gu) ?? []).length;
+const isShortCapitalized = (term: string): boolean => letterCount(term) <= 3 && term !== term.toLocaleLowerCase('vi');
 
 /**
  * Writes a term the way the glossary does wherever the text has it with another case or other spacing. A short term (three letters or fewer) that the glossary writes with a capital is
  * left alone where the text has it all in lower case: "AI" must not turn the Vietnamese "ai" (who) into an acronym. A difference in diacritics is never rewritten. Unicode form C in and out.
  */
 export function spellGlossary(text: string, terms: readonly string[]): string {
-  let out = text.normalize('NFC');
-  for (const term of terms) {
+  const normalized = text.normalize('NFC');
+  const candidates: Array<{ start: number; end: number; replacement: string; order: number }> = [];
+  for (let order = 0; order < terms.length; order += 1) {
+    const term = terms[order] as string;
     if (term.trim() === '') continue;
-    const short = letterCount(term) <= 3 && term !== term.toLocaleLowerCase('vi');
-    out = out.replace(termPattern(term, 'giu'), (found) => {
-      if (found === term) return found;
-      if (short && found === found.toLocaleLowerCase('vi')) return found;
-      return term;
-    });
+    const short = isShortCapitalized(term);
+    for (const match of normalized.matchAll(termPattern(term, 'giu'))) {
+      if (match.index === undefined) continue;
+      const found = match[0];
+      if (short && found === found.toLocaleLowerCase('vi')) continue;
+      candidates.push({ start: match.index, end: match.index + found.length, replacement: found === term ? found : term, order });
+    }
   }
-  return out;
+  if (candidates.length === 0) return normalized;
+  // Longest match in the original text wins over shorter sub-terms inside it, keeping glossary order on ties.
+  candidates.sort((a, b) => b.end - b.start - (a.end - a.start) || a.order - b.order || a.start - b.start);
+  const chosen: typeof candidates = [];
+  for (const candidate of candidates) {
+    if (chosen.some((taken) => candidate.start < taken.end && candidate.end > taken.start)) continue;
+    chosen.push(candidate);
+  }
+  chosen.sort((a, b) => a.start - b.start);
+  let out = '';
+  let cursor = 0;
+  for (const span of chosen) {
+    out += normalized.slice(cursor, span.start) + span.replacement;
+    cursor = span.end;
+  }
+  return out + normalized.slice(cursor);
 }
 
 // Case and marks folded away (and the Vietnamese đ with them), the compatibility form so a full-width letter counts as the plain one.
@@ -88,12 +108,43 @@ export function foldForGlossary(text: string): string {
   return text.normalize('NFKC').normalize('NFD').replace(/\p{M}/gu, '').replace(/[đĐ]/gu, 'd').toLowerCase();
 }
 
+// Folds source text while mapping each folded UTF-16 code unit back to its span in source.normalize('NFKC') for short-term case checks.
+function foldSourceWithSpans(source: string): { normSource: string; folded: string; origStart: number[]; origEnd: number[] } {
+  const normSource = source.normalize('NFKC');
+  let folded = '';
+  const origStart: number[] = [];
+  const origEnd: number[] = [];
+  for (let offset = 0; offset < normSource.length; ) {
+    const codePoint = normSource.codePointAt(offset) as number;
+    const nextOffset = offset + (codePoint > 0xffff ? 2 : 1);
+    const part = foldForGlossary(normSource.slice(offset, nextOffset));
+    if (part === '') {
+      if (origEnd.length > 0) origEnd[origEnd.length - 1] = nextOffset;
+    } else {
+      folded += part;
+      for (let i = 0; i < part.length; i += 1) {
+        origStart.push(offset);
+        origEnd.push(nextOffset);
+      }
+    }
+    offset = nextOffset;
+  }
+  return { normSource, folded, origStart, origEnd };
+}
+
 /** The terms a source text mentions, case and marks folded, whole words only, in the glossary's order. */
 export function termsInSource(source: string, terms: readonly string[]): string[] {
-  const folded = foldForGlossary(source);
+  const { normSource, folded, origStart, origEnd } = foldSourceWithSpans(source);
   return terms.filter((term) => {
     const key = foldForGlossary(term);
-    return key !== '' && termPattern(key, 'u').test(folded);
+    if (key === '') return false;
+    if (!isShortCapitalized(term)) return termPattern(key, 'u').test(folded);
+    for (const match of folded.matchAll(termPattern(key, 'gu'))) {
+      if (match.index === undefined || match[0].length === 0) continue;
+      const span = normSource.slice(origStart[match.index] as number, origEnd[match.index + match[0].length - 1] as number);
+      if (span !== span.toLocaleLowerCase('vi')) return true;
+    }
+    return false;
   });
 }
 

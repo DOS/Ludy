@@ -103,7 +103,7 @@ export function anchorSeconds(segments: readonly SummarySegment[]): Set<number> 
  * integer equal to the whole second of a real line, its title is empty after cleaning, it carries a way to reach someone off the page, a run of 8 or more digits, or a figure the transcript does not write.
  * No chapter left is CHAPTERS_EMPTY.
  */
-export function checkChapters(raw: string, segments: readonly SummarySegment[]): MeetingChaptersBody {
+export function checkChapters(raw: string, segments: readonly SummarySegment[], glossary: readonly string[] = []): MeetingChaptersBody {
   const root = jsonObject(raw);
   if (!isRecord(root) || !Array.isArray(root.chapters)) throw new ChaptersError('CHAPTERS_UNPARSABLE');
   const anchors = anchorSeconds(segments);
@@ -117,7 +117,8 @@ export function checkChapters(raw: string, segments: readonly SummarySegment[]):
       continue;
     }
     const second = entry.startSecond;
-    const title = cleanChapterTitle(entry.title);
+    const baseTitle = cleanChapterTitle(entry.title);
+    const title = glossary.length === 0 ? baseTitle : cleanChapterTitle(spellGlossary(baseTitle, glossary));
     const figures = numbersIn(title);
     const digits = title.normalize('NFKC').replace(/[^\p{Nd}]/gu, '').length;
     if (
@@ -165,8 +166,6 @@ export async function chapterMeeting(input: MeetingChaptersInput, ports: BoundPo
     { instruction: INSTRUCTION(input.language, glossary), subject: privateText(block + text), maxSubjectChars: CHAPTER_LIMITS.transcriptBytes + block.length, feature: 'meetings.chapters' },
     ports,
   );
-  const checked = checkChapters(revealPrivateText(out.text), input.segments);
-  // The organization's spelling of a term in a title (case or spacing only), by code, after the checks; the second a chapter starts at is untouched.
-  const parsed = glossary.length === 0 ? checked : { ...checked, chapters: checked.chapters.map((c) => ({ ...c, title: spellGlossary(c.title, glossary) })) };
+  const parsed = checkChapters(revealPrivateText(out.text), input.segments, glossary);
   return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
 }

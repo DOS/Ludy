@@ -466,6 +466,10 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     await exec('owner', 'meetings.glossary.update', { termId: cleanedAdd.termId, term: 'Ludy Cloud' });
     expect((await query<GlossaryTerms>('owner', 'meetings.glossary.list')).terms.map((t) => t.term)).toContain('Ludy Cloud');
 
+    const auditBeforeOff = (
+      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
+    ).rows[0]?.n;
+
     prompts = [];
     modelCalls = 0;
     expect(await refuses(runMeetingSummary(summaryDeps(sumModel), orgId, asUser('recorder'), meetingId))).toBe('SUMMARY_OFF');
@@ -475,5 +479,9 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     expect(await refuses(runTranscriptTranslation(translationDeps(translatingModel()), orgId, asUser('recorder'), meetingId))).toBe('TRANSLATE_OFF');
     expect(modelCalls).toBe(0);
     expect(prompts).toEqual([]);
+    const auditAfterOff = (
+      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
+    ).rows[0]?.n;
+    expect(auditAfterOff).toBe(auditBeforeOff);
   });
 });
