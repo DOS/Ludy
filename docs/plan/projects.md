@@ -95,6 +95,8 @@ The same proposal step later runs on a meeting's notes, once the Meeting Notes m
 ## 7. What waits, checked against the gate
 
 > **Update (2026-11-22, Projects v2):** Since this 2026-11-04 gate table, `#2606` to `#2610` have shipped in `M3 Paid pilot`, and owner JOY decided on 2026-11-22 ([#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7072041736), `A1` and `A2`) to reopen `#2605`, `#2601`, `#2604` (Wave 1 `P1`) and `#2599`, `#2600` (Wave 2 `P2`, lean slice without Accounting auto-invoicing) plus opt-in Sprints/Cycles & Story points (`#4361`) in [projects-v2.md](projects-v2.md) and [ADR-0056](../adr/0056-projects-v2-cycles-columns-dependencies-privacy.md). `#2602` and `#2603` remain in the Icebox.
+>
+> **Update (2026-11-22, Public Roadmap):** On 2026-11-22 ([#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7073382197)), owner JOY also approved an opt-in Public Roadmap (`Ideas`, `Roadmap`, `Changelog`, `?embed=1`, 6-digit email OTP voting without CAPTCHA per `#203`, Vy AI dedupe/changelog draft, and MCP read tools) in [projects-public-roadmap.md](projects-public-roadmap.md) ([projects-public-roadmap.vi.md](projects-public-roadmap.vi.md)) and [ADR-0057](../adr/0057-projects-public-roadmap-ideas-voting-changelog.md) (issues [#4397](https://github.com/DOS/Ludy/issues/4397), [#4398](https://github.com/DOS/Ludy/issues/4398), [#4399](https://github.com/DOS/Ludy/issues/4399), [#4400](https://github.com/DOS/Ludy/issues/4400)). Private authenticated client portals (`#2603`) stay separate and remain in the Icebox.
 
 | Item | Gate result (2026-11-04 baseline) | Where it goes |
 | --- | --- | --- |
