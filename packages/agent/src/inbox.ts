@@ -13,7 +13,17 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
-import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
+import {
+  PayrollCoworker,
+  type PayrollCallOptions,
+  type PayrollDiffExplainResult,
+  type PayrollDiffSheet,
+  type PayrollFlagResult,
+  type PayrollPrepareResult,
+  type PayrollSheet,
+  type PayslipExplainRequest,
+  type PayslipExplainResult,
+} from './payroll-coworker.ts';
 import {
   createLaborComplianceGenerator,
   reviewLaborCompliance,
@@ -691,6 +701,9 @@ export class InboxReader {
   }
   payrollExplain(request: PayslipExplainRequest, options?: PayrollCallOptions): Promise<PayslipExplainResult> {
     return this.payroll.explain(request, options);
+  }
+  payrollDiffExplain(sheet: PayrollDiffSheet, options?: PayrollCallOptions): Promise<PayrollDiffExplainResult> {
+    return this.payroll.explainDiff(sheet, options);
   }
   laborCheck(input: LaborComplianceInput, options?: Omit<ReviewLaborComplianceOptions, 'generate'>): Promise<LaborComplianceResult> {
     return reviewLaborCompliance(input, { ...options, generate: this.generateLaborCheck });

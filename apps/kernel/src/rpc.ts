@@ -63,7 +63,7 @@ import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { saveMeetingSummaryAsNote } from './notes-meeting-summary.ts';
-import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
+import { explainPayrollDiff, explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
@@ -525,12 +525,18 @@ export function createRpcHandler(
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
-      ? { payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader), payrollFlag: conversationReader.payrollFlag.bind(conversationReader), payrollExplain: conversationReader.payrollExplain.bind(conversationReader) }
+      ? {
+          payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader),
+          payrollFlag: conversationReader.payrollFlag.bind(conversationReader),
+          payrollExplain: conversationReader.payrollExplain.bind(conversationReader),
+          ...(conversationReader.payrollDiffExplain ? { payrollDiffExplain: conversationReader.payrollDiffExplain.bind(conversationReader) } : {}),
+        }
       : null,
     budget: payrollPrepareBudget,
     prepareBudget: payrollPrepareBudget,
     flagBudget: suggestionBudget(),
     explainBudget: suggestionBudget(),
+    diffBudget: suggestionBudget(),
   };
   const laborCheckAi: LaborCheckAi = {
     reader: conversationReader?.laborCheck ? { laborCheck: conversationReader.laborCheck.bind(conversationReader) } : null,
@@ -759,6 +765,7 @@ export function createRpcHandler(
     sheet: (runId) => runtime.query<HrRunSheet>('hr.payroll.run.sheet', { runId }, { actor, orgId }),
     runs: (legalEntityId) => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120, legalEntityId }, { actor, orgId }),
     payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
+    previewDiff: (input) => runtime.query('hr.payroll.preview_diff', input, { actor, orgId }),
   });
   const laborCheckPorts = (orgId: string, actor: UserActor): LaborCheckPorts => ({
     read: (input) => runtime.query<HrLaborCheckSnapshot>('hr.payroll.labor_check.read', input, { actor, orgId }),
@@ -1223,16 +1230,19 @@ export function createRpcHandler(
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
         settlement: os.hr.payroll.settlement.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.payroll.settlement', input, { actor, orgId }))),
+        // Continuous payroll fluctuation preview and What-Changed diff (#4445): read-only, owners and admins.
+        previewDiff: os.hr.payroll.previewDiff.handler(hrQuery('hr.payroll.preview_diff')),
         lines: {
           setInputs: os.hr.payroll.lines.setInputs.handler(hrCommand('hr.payroll.line.inputs.set')),
           adjust: os.hr.payroll.lines.adjust.handler(hrCommand('hr.payroll.line.adjust')),
           payslip: os.hr.payroll.lines.payslip.handler(hrQuery('hr.payroll.line.payslip')),
         },
-        // The coworker's part (#2534): the stored run is read through the audited sensitive queries in the member's own authority, then the model is asked outside any transaction.
+        // The coworker's part (#2534, #4445): the stored run is read through the audited sensitive queries in the member's own authority, then the model is asked outside any transaction.
         coworker: {
           prepare: os.hr.payroll.coworker.prepare.handler(({ context, input }) => inHr(context, (orgId, actor) => prepareMonth(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.runId, input.lang ?? 'vi'))),
           flag: os.hr.payroll.coworker.flag.handler(({ context, input }) => inHr(context, (orgId, actor) => flagMonth(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.runId, input.lang ?? 'vi'))),
           explain: os.hr.payroll.coworker.explain.handler(({ context, input }) => inHr(context, (orgId, actor) => explainPayslip(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.lineId, input.lang ?? 'vi'))),
+          explainDiff: os.hr.payroll.coworker.explainDiff.handler(({ context, input }) => inHr(context, (orgId, actor) => explainPayrollDiff(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input))),
         },
       },
       recruiting: {

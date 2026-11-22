@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { hrEmployeeCommands, hrEmployeeQueries } from './employees.ts';
+import { hrPayrollPreviewQueries } from './payroll-preview.ts';
 import { hrPayrollCommands, hrPayrollQueries } from './payroll-run.ts';
 import { hrPaymentCommands, hrPaymentQueries } from './payroll-payment.ts';
 import { hrPostingCommands } from './payroll-posting.ts';
@@ -20,6 +21,7 @@ export * from './leave-requests.ts';
 export * from './recruiting.ts';
 export * from './today.ts';
 export * from './payroll-run.ts';
+export * from './payroll-preview.ts';
 export * from './payroll-posting.ts';
 export * from './declarations.ts';
 export * from './labor-register.ts';
@@ -29,5 +31,5 @@ export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
 export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrRecruitingCommands];
-export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrRecruitingQueries, ...hrTodayQueries];
+export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrRecruitingQueries, ...hrTodayQueries];
 export { hrManifest } from './manifest.ts';

@@ -66,7 +66,7 @@ const userOf = (actor: QueryContext['actor']): string => {
 };
 
 const runTarget = (input: { runId: string }) => ({ type: 'hr.payroll_run', id: input.runId });
-const runNotFound = () => new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
+export const runNotFound = () => new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
 const lineNotFound = () => new DomainError('HR_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng lương này');
 const notDraft = () => new DomainError('HR_RUN_NOT_DRAFT', 409, 'Bảng lương đã được duyệt, không sửa được nữa; sửa sai bằng dòng điều chỉnh ở kỳ lương sau');
 
@@ -87,7 +87,7 @@ interface Terms {
   termMonths: number | null;
 }
 
-interface Person {
+export interface Person {
   employeeId: string;
   endedOn: string | null;
   isForeign: boolean;
@@ -98,7 +98,7 @@ interface Person {
   dependents: number;
 }
 
-interface LineFigures {
+export interface LineFigures {
   status: 'calculated' | 'refused';
   gross: string | null;
   employee_insurance: string | null;
@@ -161,7 +161,7 @@ function calculationOf(person: Person, inputs: HrPayrollInputs, month: string, w
 }
 
 // The calculator's answer as the columns of a line, or its refusal in words. Only a refusal the calculator names is caught: any other error is a bug and surfaces.
-function figuresOf(person: Person, inputs: HrPayrollInputs, month: string, workingDays: string): LineFigures {
+export function figuresOf(person: Person, inputs: HrPayrollInputs, month: string, workingDays: string): LineFigures {
   try {
     const c = calculationOf(person, inputs, month, workingDays);
     const start = monthStart(month);
@@ -217,7 +217,7 @@ function figuresOf(person: Person, inputs: HrPayrollInputs, month: string, worki
 }
 
 // The people a month pays and the terms and dependents each has on it, read in the user's context (the people tables are owner and admin only in the database).
-async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string, month: string): Promise<Person[]> {
+export async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string, month: string): Promise<Person[]> {
   const start = monthStart(month);
   const end = monthEnd(month);
   const employees = await ctx.trx
@@ -274,7 +274,7 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
   return people;
 }
 
-const parseInputs = (value: unknown): HrPayrollInputs => zHrPayrollInputs.parse(value ?? {});
+export const parseInputs = (value: unknown): HrPayrollInputs => zHrPayrollInputs.parse(value ?? {});
 
 function formatSyncBhxhDays(raw: string): string {
   const exact = money(raw);
@@ -289,12 +289,12 @@ function formatSyncBhxhDays(raw: string): string {
   return normalized;
 }
 
-interface BhxhLeaveSummary {
+export interface BhxhLeaveSummary {
   sicknessBhxhDays?: string;
   maternityBhxhDays?: string;
 }
 
-async function loadBhxhLeaveByEmployee(
+export async function loadBhxhLeaveByEmployee(
   ctx: Pick<QueryContext, 'trx' | 'orgId'>,
   employeeIds: readonly string[],
   month: string,
@@ -329,7 +329,7 @@ function recurringOf(previous: unknown): HrPayrollInputs {
   return zHrPayrollInputs.parse(kept);
 }
 
-function initialInputsFor(
+export function initialInputsFor(
   person: Person,
   previous?: { employment_id: string | null; inputs: unknown },
   bhxh?: BhxhLeaveSummary,
@@ -739,7 +739,7 @@ export const runApplyThirteenthMonth = defineCommand({
   },
 });
 
-function formatSyncUnpaidDays(raw: string): string {
+export function formatSyncUnpaidDays(raw: string): string {
   const exact = money(raw);
   const normalized = exact.toFixed();
   if (exact.isNegative() || exact.greaterThan('99.9') || !/^\d{1,2}(\.\d)?$/.test(normalized)) {
@@ -1096,7 +1096,7 @@ export const figuresOfLine = (l: StoredLine): HrRunFigures | null =>
 
 const zeroFigures = (): Record<keyof HrRunFigures, Decimal> => ({ gross: money(0), employeeInsurance: money(0), employerInsurance: money(0), unionFee: money(0), taxableIncome: money(0), pit: money(0), net: money(0), employerCost: money(0) });
 
-function totalsOf(lines: readonly StoredLine[]): HrRunFigures {
+export function totalsOf(lines: readonly StoredLine[]): HrRunFigures {
   const t = zeroFigures();
   for (const l of lines) {
     const f = figuresOfLine(l);
@@ -1107,7 +1107,7 @@ function totalsOf(lines: readonly StoredLine[]): HrRunFigures {
 }
 
 const refsOf = (value: unknown): RuleRef[] => (Array.isArray(value) ? (value as RuleRef[]) : []);
-const checksOf = (value: unknown): HrCheck[] => (Array.isArray(value) ? (value as HrCheck[]) : []);
+export const checksOf = (value: unknown): HrCheck[] => (Array.isArray(value) ? (value as HrCheck[]) : []);
 
 function sameChecks(stored: readonly HrCheck[], fresh: readonly HrCheck[]): boolean {
   if (stored.length !== fresh.length) return false;

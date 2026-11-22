@@ -17,6 +17,8 @@ import type {
   HrCoworkerExplained,
   HrCoworkerFlagged,
   HrCoworkerPrepared,
+  HrPayrollDiffExplained,
+  HrPayrollPreviewDiff,
   HrPayslip,
   HrRunSheet,
   HrRunSummary,
@@ -38,7 +40,7 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from '../src/payroll-coworker-ai.ts';
+import { explainPayrollDiff, explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from '../src/payroll-coworker-ai.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 class EmptyBlobStore implements BlobStore {
@@ -55,6 +57,9 @@ vi.mock('@ludy/l10n-vn', async (importOriginal) => {
   const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return { ...real, PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })) };
 });
+const setRuleStatus = (status: 'confirmed' | 'commentary') => {
+  for (const row of PAYROLL_RULES) (row as { status: string }).status = status;
+};
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -71,6 +76,13 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
   const root = parseVaultKey(randomBytes(32).toString('base64'));
   const subjectVault = new SubjectVault(new CredentialVault([root]).deriveKeys(SUBJECT_WRAP_INFO));
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+  const asMfa = (userId: string) => ({
+    type: 'user' as const,
+    userId,
+    aal: 'aal2' as const,
+    sessionId: randomUUID(),
+    mfaAt: Math.floor(Date.now() / 1000),
+  });
 
   async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -130,6 +142,15 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
             seenPrompts.push(`${system}\n${prompt}`);
             const netMatch = /(?:Thực nhận|Net pay): ([^\n]+)/u.exec(prompt);
             const text = netMatch ? `Khoản nhận cuối cùng là ${netMatch[1]}.` : 'Không có số liệu.';
+            return { output: { text }, usage: { inputTokens: 4, outputTokens: 4 } };
+          },
+          diffExplain: async ({ system, prompt }) => {
+            seenPrompts.push(`${system}\n${prompt}`);
+            const employerMatch = /(?:Tổng chi phí người sử dụng lao động|Total employer cost): ([^\n]+)/u.exec(prompt);
+            const aliasMatch = /- (P\d+):/u.exec(prompt);
+            const text = employerMatch
+              ? `Tổng chi phí người sử dụng lao động ${employerMatch[1]}${aliasMatch ? ` do ${aliasMatch[1]}` : ''}.`
+              : 'Không có biến động.';
             return { output: { text }, usage: { inputTokens: 4, outputTokens: 4 } };
           },
         },
@@ -426,5 +447,149 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
     expect(flagged.ai).toBe('used');
     expect(prepared.items.some((i) => i.kind === 'component_changed' && i.employeeId === emp.employeeId)).toBe(true);
     expect(flagged.items.some((i) => i.kind === 'pay_moved' && i.employeeId === emp.employeeId)).toBe(true);
+  });
+
+  it('serves /api/rpc hr.payroll.previewDiff and coworker.explainDiff with RBAC, MODULE_OFF, busy/quiet rate ticket, P1 pseudonymization, and AI-off/failed fallback (#4445)', async () => {
+    const o = await setupOrg();
+    await withAdmin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by)
+         VALUES ($1, $2, 'finance.chief_accountant', $3)`,
+        [o.orgId, o.member, o.owner],
+      );
+    });
+    const emp = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+      displayName: 'Nguyễn Minh Thuỵ Canary',
+      employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '18000000' },
+    });
+    const rSep = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-09' });
+    const sSep = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: rSep.runId });
+    setRuleStatus('confirmed');
+    try {
+      await rt.execute('hr.payroll.run.approve', { runId: rSep.runId, fingerprint: sSep.fingerprint, acceptFlags: true }, { actor: asMfa(o.owner), orgId: o.orgId });
+    } finally {
+      setRuleStatus('commentary');
+    }
+    // Identical Oct run -> QUIET diff
+    const rOct = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-10' });
+    // Draft Nov run with salary raise -> non-quiet diff
+    await o.exec<HrWritten>(o.owner, 'hr.payroll.employment.add', {
+      employeeId: emp.employeeId,
+      effectiveFrom: '2026-11-01',
+      contractType: 'indefinite',
+      region: 'I',
+      baseWage: '22000000',
+    });
+    const rNov = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-11' });
+
+    const seenPrompts: string[] = [];
+    const users = new Map<string, AuthUser>(
+      [o.owner, o.admin, o.member, o.viewer].map((id) => [
+        id,
+        { userId: id, email: '', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null },
+      ]),
+    );
+    const makeApp = (conversationReader: InboxReader | null) =>
+      createHttpApp({
+        config: loadConfig({
+          DATABASE_URL: appUrl,
+          AUTH_JWT_SECRET: 'test-only-jwt-secret-for-hr-preview-0123456789',
+          AUTH_ISSUER: 'test-auth',
+          WEB_DIST: '/nonexistent',
+        }),
+        runtime: rt,
+        store: new EmptyBlobStore(),
+        authenticate: async (header) => users.get(String(header).replace('Bearer ', ''))!,
+        pool,
+        aiEnabled: conversationReader !== null,
+        ...(conversationReader ? { conversationReader } : {}),
+      });
+
+    const appWithAi = makeApp(buildReader(seenPrompts));
+    const rpcPost = (appInstance: ReturnType<typeof makeApp>, path: string, userId: string, body: unknown) =>
+      appInstance.request(`/api/rpc/${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${userId}`,
+          'x-crove-org': o.slug,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ json: body }),
+      });
+
+    const baselineAudits = await sensitiveAuditCount(o.orgId);
+
+    // Finance-only member & viewer refused 403 before rate ticket or sensitive read
+    for (const blocked of [o.member, o.viewer]) {
+      expect((await rpcPost(appWithAi, 'hr/payroll/previewDiff', blocked, { runId: rNov.runId })).status).toBe(403);
+      expect((await rpcPost(appWithAi, 'hr/payroll/coworker/explainDiff', blocked, { runId: rNov.runId, lang: 'vi' })).status).toBe(403);
+    }
+    expect(await sensitiveAuditCount(o.orgId)).toBe(baselineAudits);
+
+    // MODULE_OFF refused 404 before sensitive read
+    await o.exec(o.owner, 'kernel.org.set_app', { module: 'hr', enabled: false });
+    expect((await rpcPost(appWithAi, 'hr/payroll/previewDiff', o.owner, { runId: rNov.runId })).status).toBe(404);
+    expect((await rpcPost(appWithAi, 'hr/payroll/coworker/explainDiff', o.owner, { runId: rNov.runId, lang: 'vi' })).status).toBe(404);
+    expect(await sensitiveAuditCount(o.orgId)).toBe(baselineAudits);
+    await o.exec(o.owner, 'kernel.org.set_app', { module: 'hr', enabled: true });
+
+    // Owner/admin RPC previewDiff + explainDiff over HTTP
+    const diffRes = await rpcPost(appWithAi, 'hr/payroll/previewDiff', o.admin, { runId: rNov.runId });
+    expect(diffRes.status).toBe(200);
+    const diffBody = (await diffRes.json()) as { json: HrPayrollPreviewDiff };
+    expect(diffBody.json.mode).toBe('draft_run');
+    expect(diffBody.json.prior?.runId).toBe(rSep.runId);
+    expect(diffBody.json.rows[0]?.reasons).toEqual(['salary_change']);
+
+    const aiRes = await rpcPost(appWithAi, 'hr/payroll/coworker/explainDiff', o.owner, { runId: rNov.runId, lang: 'vi' });
+    expect(aiRes.status).toBe(200);
+    const aiBody = (await aiRes.json()) as { json: HrPayrollDiffExplained };
+    expect(aiBody.json.ai).toBe('used');
+    expect(aiBody.json.text).toContain('Nguyễn Minh Thuỵ Canary');
+    expect(aiBody.json.deterministicText).toContain('Nguyễn Minh Thuỵ Canary');
+    // Prompt sent ONLY P1/P2 alias and NEVER leaked employee display name
+    expect(seenPrompts.some((p) => p.includes('P1:') && !p.includes('Nguyễn Minh Thuỵ Canary'))).toBe(true);
+
+    // AI off fallback returns deterministicText cleanly with ai: 'off'
+    const appNoAi = makeApp(null);
+    const offRes = await rpcPost(appNoAi, 'hr/payroll/coworker/explainDiff', o.owner, { runId: rNov.runId, lang: 'en' });
+    expect(offRes.status).toBe(200);
+    const offBody = (await offRes.json()) as { json: HrPayrollDiffExplained };
+    expect(offBody.json.ai).toBe('off');
+    expect(offBody.json.text).toBeNull();
+    expect(offBody.json.deterministicText).toContain('Employer cost');
+
+    // Rate-limit busy & QUIET ticket refund checks
+    const reads = o.readsFor(o.owner);
+    reads.previewDiff = (input) => o.query<HrPayrollPreviewDiff>(o.owner, 'hr.payroll.preview_diff', input);
+    const tightAi: PayrollAi = {
+      reader: buildReader(),
+      budget: new DraftBudget({ perUserPerMinute: 1 }),
+      diffBudget: new DraftBudget({ perUserPerMinute: 1 }),
+    };
+    const quietOut = await explainPayrollDiff(tightAi, reads, o.orgId, o.owner, { runId: rOct.runId, lang: 'vi' });
+    expect(quietOut.ai).toBe('quiet');
+    // Refunded quiet ticket lets next changed call succeed:
+    const usedOut = await explainPayrollDiff(tightAi, reads, o.orgId, o.owner, { runId: rNov.runId, lang: 'vi' });
+    expect(usedOut.ai).toBe('used');
+    // Second call within minute triggers busy BEFORE previewDiff runs -> 0 new sensitive audits:
+    const auditsBeforeBusy = await sensitiveAuditCount(o.orgId);
+    const busyOut = await explainPayrollDiff(tightAi, reads, o.orgId, o.owner, { runId: rNov.runId, lang: 'vi' });
+    expect(busyOut).toEqual({ ai: 'busy', text: null, deterministicText: '' });
+    expect(await sensitiveAuditCount(o.orgId)).toBe(auditsBeforeBusy);
+
+    // Ungrounded AI output dropped cleanly to ai: 'failed' with deterministicText preserved
+    const hallucinatingAi: PayrollAi = {
+      reader: new InboxReader(
+        { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' },
+        { payroll: { diffExplain: async () => ({ output: { text: 'Chi phí tăng 999.000.000 đồng.' } }) } },
+      ),
+      budget: new DraftBudget({ perUserPerMinute: 10 }),
+      diffBudget: new DraftBudget({ perUserPerMinute: 10 }),
+    };
+    const badOut = await explainPayrollDiff(hallucinatingAi, reads, o.orgId, o.owner, { runId: rNov.runId, lang: 'vi' });
+    expect(badOut.ai).toBe('failed');
+    expect(badOut.text).toBeNull();
+    expect(badOut.deterministicText).toContain('Nguyễn Minh Thuỵ Canary');
   });
 });

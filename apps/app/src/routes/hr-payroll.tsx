@@ -9,19 +9,34 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { money, toMoney, type PayrollBreakdown } from '@ludy/l10n-vn';
-import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_INSURANCE_FUNDS, HR_OVERTIME_DAY_KINDS, PAYROLL_PAYMENT_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@ludy/kernel-contract';
+import {
+  HR_ALLOWANCE_TYPES,
+  HR_DEDUCTION_KINDS,
+  HR_INSURANCE_FUNDS,
+  HR_OVERTIME_DAY_KINDS,
+  PAYROLL_PAYMENT_KINDS,
+  vietnamToday,
+  type HrLineView,
+  type HrPayrollDiffExplained,
+  type HrPayrollDiffReason,
+  type HrPayrollInputs,
+  type HrPayrollPreviewDiff,
+  type HrPayslip,
+  type HrRuleView,
+  type HrRunSheet,
+} from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
-import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
 import { ThirteenthMonthPanel } from '../components/hr-thirteenth-month-panel.tsx';
 import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { cashAccountChoices } from '../lib/vouchers.ts';
@@ -741,6 +756,309 @@ function BankFile({ runId, month, legalEntityId }: { runId: string; month: strin
   );
 }
 
+const REASON_BADGE_VARIANT: Record<HrPayrollDiffReason, 'success' | 'destructive' | 'brand' | 'warning' | 'secondary' | 'outline'> = {
+  new_hire: 'success',
+  terminated: 'destructive',
+  salary_change: 'brand',
+  leave_change: 'warning',
+  allowance_change: 'secondary',
+  deduction_change: 'outline',
+};
+
+export function formatSignedMoney(f: { money: Money }, value: string): string {
+  const d = money(value);
+  if (d.isZero()) return f.money('0', 'VND');
+  const formatted = f.money(value, 'VND');
+  return d.greaterThan(0) ? `+${formatted}` : formatted;
+}
+
+function formatHeadcountDelta(delta: number): string {
+  return delta > 0 ? `+${delta}` : String(delta);
+}
+
+export function localDiffSummary(diff: HrPayrollPreviewDiff, f: { money: Money }, locale: string): string {
+  if (diff.prior === null) {
+    return locale === 'en'
+      ? `Baseline period (${diff.current.headcount} people): employer cost ${f.money(diff.totals.employerCost, 'VND')}, net pay ${f.money(diff.totals.net, 'VND')}.`
+      : `Kỳ đầu tiên (${diff.current.headcount} người): tổng chi phí công ty ${f.money(diff.totals.employerCost, 'VND')}, thực nhận ${f.money(diff.totals.net, 'VND')}.`;
+  }
+  const changed = diff.rows.filter((r) => r.changed);
+  if (changed.length === 0 && diff.deltas.headcountDelta === 0 && money(diff.deltas.employerCostDelta).isZero()) {
+    return locale === 'en'
+      ? 'No payroll fluctuations compared with the prior finalized run.'
+      : 'Không có biến động so với kỳ lương đã duyệt gần nhất.';
+  }
+  const movers = changed
+    .slice(0, 2)
+    .map((r) => r.employeeName)
+    .join(', ');
+  return locale === 'en'
+    ? `Employer cost ${formatSignedMoney(f, diff.deltas.employerCostDelta)}, net pay ${formatSignedMoney(f, diff.deltas.netDelta)}${movers ? `; top movers: ${movers}` : ''}.`
+    : `Tổng chi phí công ty ${formatSignedMoney(f, diff.deltas.employerCostDelta)}, thực nhận ${formatSignedMoney(f, diff.deltas.netDelta)}${movers ? `; biến động chính: ${movers}` : ''}.`;
+}
+
+export function PayrollDiffNarration({
+  answer,
+  fallback,
+}: {
+  answer: HrPayrollDiffExplained;
+  fallback: string;
+}) {
+  const t = useTranslations('hrPayroll');
+  if (answer.ai === 'used' && answer.text !== null) {
+    return (
+      <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 text-sm" data-testid="hr-diff-narration">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="proposal" data-testid="hr-diff-ai-state">
+            {t('diff.aiBadge')}
+          </Badge>
+          <span>{answer.text}</span>
+        </div>
+      </div>
+    );
+  }
+  const fallbackState = answer.ai === 'used' ? 'failed' : answer.ai;
+  return (
+    <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 text-sm" data-testid="hr-diff-narration">
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground" data-testid="hr-diff-ai-state">
+          {t(`diff.aiStates.${fallbackState}`)}
+        </p>
+        <p>{answer.deterministicText !== '' ? answer.deterministicText : fallback}</p>
+      </div>
+    </div>
+  );
+}
+
+function PayrollDiffExplainArea({
+  diff,
+  askInput,
+}: {
+  diff: HrPayrollPreviewDiff;
+  askInput: { runId?: string; month?: string; legalEntityId?: string };
+}) {
+  const t = useTranslations('hrPayroll');
+  const f = useFormat();
+  const locale = useLocale();
+  const explain = useMutation({
+    mutationFn: () =>
+      client.hr.payroll.coworker.explainDiff({
+        ...askInput,
+        lang: locale === 'en' ? 'en' : 'vi',
+      }),
+  });
+  const answer = explain.data;
+  const fallback = localDiffSummary(diff, f, locale);
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="max-md:min-h-11"
+          loading={explain.isPending}
+          onClick={() => explain.mutate()}
+          data-testid="hr-diff-explain-btn"
+        >
+          {t('diff.askAi')}
+        </Button>
+      </div>
+      {explain.error && <ErrorText>{errorMessage(explain.error)}</ErrorText>}
+      {answer && <PayrollDiffNarration answer={answer} fallback={fallback} />}
+    </div>
+  );
+}
+
+// Continuous payroll fluctuation preview and What-Changed diff before lock (#4445, Stage 5E):
+// compares the draft run, finalized run, or projected snapshot from active employments and approved leave
+// against the immediately preceding finalized run of the same legal entity. Read-only, works 100% with AI off.
+export function PayrollDiffPanel({
+  runId,
+  month,
+  legalEntityId,
+  headingLevel = 'h2',
+}: {
+  runId?: string;
+  month?: string;
+  legalEntityId?: string;
+  headingLevel?: 'h2' | 'h3';
+}) {
+  const t = useTranslations('hrPayroll');
+  const f = useFormat();
+  const [showUnchanged, setShowUnchanged] = useState(false);
+
+  const queryInput =
+    runId !== undefined
+      ? { runId, includeUnchanged: true }
+      : {
+          ...(month !== undefined ? { month } : {}),
+          ...(legalEntityId !== undefined ? { legalEntityId } : {}),
+          includeUnchanged: true,
+        };
+  const q = useQuery({ ...orpc.hr.payroll.previewDiff.queryOptions({ input: queryInput }), ...ONCE });
+
+  if (q.isPending) {
+    return (
+      <div className="mb-6" data-testid="hr-diff-panel">
+        <TableSkeleton columns={5} />
+      </div>
+    );
+  }
+  if (q.error) {
+    return (
+      <Card className="mb-6 block p-4" aria-label={t('diff.title')} data-testid="hr-diff-panel">
+        <ErrorText>{errorMessage(q.error)}</ErrorText>
+      </Card>
+    );
+  }
+
+  const diff = q.data;
+  const visibleRows = showUnchanged ? diff.rows : diff.rows.filter((r) => r.changed);
+  const explainInput =
+    runId !== undefined
+      ? { runId }
+      : {
+          ...(month !== undefined ? { month } : {}),
+          ...(legalEntityId !== undefined ? { legalEntityId } : {}),
+        };
+  const explainKey = `${diff.mode}:${diff.legalEntityId}:${diff.month}:${diff.totals.gross}:${diff.totals.employerCost}:${diff.totals.net}:${diff.current.headcount}:${diff.rows.filter((r) => r.changed).length}`;
+
+  const kpis = [
+    {
+      key: 'headcount',
+      label: t('diff.kpi.headcount'),
+      value: String(diff.totals.headcount),
+      delta: t('diff.deltaCount', { count: formatHeadcountDelta(diff.deltas.headcountDelta) }),
+    },
+    {
+      key: 'gross',
+      label: t('diff.kpi.gross'),
+      value: f.money(diff.totals.gross, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.grossDelta),
+    },
+    {
+      key: 'deductions',
+      label: t('diff.kpi.deductions'),
+      value: f.money(diff.totals.employeeDeductions, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.employeeDeductionDelta),
+    },
+    {
+      key: 'net',
+      label: t('diff.kpi.net'),
+      value: f.money(diff.totals.net, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.netDelta),
+    },
+    {
+      key: 'employerCost',
+      label: t('diff.kpi.employerCost'),
+      value: f.money(diff.totals.employerCost, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.employerCostDelta),
+    },
+  ] as const;
+
+  const Heading = headingLevel;
+  return (
+    <Card className="mb-6 block p-4" aria-label={t('diff.title')} data-testid="hr-diff-panel">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Heading className="text-base font-semibold">{t('diff.title')}</Heading>
+            <Badge variant={diff.mode === 'finalized_run' ? 'brand' : 'secondary'} data-testid="hr-diff-mode">
+              {t(`diff.modes.${diff.mode}`, { month: diff.month })}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="hr-diff-baseline">
+            {diff.prior
+              ? t('diff.compareWith', { month: diff.prior.month, status: t(`status.${diff.prior.status ?? 'approved'}`) })
+              : t('diff.noPrior')}
+          </p>
+        </div>
+        {diff.unchangedCount > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-md:min-h-11"
+            onClick={() => setShowUnchanged((v) => !v)}
+            data-testid="hr-diff-toggle-unchanged"
+          >
+            {showUnchanged ? t('diff.hideUnchanged', { count: diff.unchangedCount }) : t('diff.showUnchanged', { count: diff.unchangedCount })}
+          </Button>
+        )}
+      </div>
+
+      <PayrollDiffExplainArea key={explainKey} diff={diff} askInput={explainInput} />
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5" data-testid="hr-diff-kpi">
+        {kpis.map((item) => (
+          <div key={item.key} className="rounded-md border border-border bg-card p-3" data-testid={`hr-diff-kpi-${item.key}`}>
+            <p className="text-xs text-muted-foreground">{item.label}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums">{item.value}</p>
+            <p className="mt-0.5 text-xs text-subtle-foreground tabular-nums">{item.delta}</p>
+          </div>
+        ))}
+      </div>
+
+      {visibleRows.length === 0 ? (
+        <Empty title={t('diff.emptyChanged')} hint={t('diff.emptyHint')} />
+      ) : (
+        <Table className="[&_td]:whitespace-normal" data-testid="hr-diff-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col" className="px-4 py-3">{t('diff.colEmployee')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3">{t('diff.colReasons')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colPriorNet')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colCurrentNet')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colNetDelta')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colGrossDelta')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colDeductionDelta')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colEmployerCostDelta')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visibleRows.map((row) => (
+              <TableRow key={row.employeeId} data-testid="hr-diff-row">
+                <TableCell className="px-4 py-3 font-medium">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span>{row.employeeName}</span>
+                    {row.hasRefused && <Badge variant="destructive">{t('diff.refusedTag')}</Badge>}
+                    {!row.hasRefused && row.hasFlags && <Badge variant="warning">{t('diff.flaggedTag')}</Badge>}
+                  </div>
+                </TableCell>
+                <TableCell className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {row.reasons.map((reason) => (
+                      <Badge key={reason} variant={REASON_BADGE_VARIANT[reason]}>
+                        {t(`diff.reasons.${reason}`)}
+                      </Badge>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{row.prior ? f.money(row.prior.net, 'VND') : '-'}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{row.current ? f.money(row.current.net, 'VND') : '-'}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap font-medium`}>{formatSignedMoney(f, row.netDelta)}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, row.grossDelta)}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, row.employeeDeductionDelta)}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, row.employerCostDelta)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+          <TableFooter className={`${TOTAL_RULE} [&_tr]:hover:bg-transparent`}>
+            <TableRow>
+              <TableCell className="px-4 py-3" colSpan={2}>{t('diff.totalRow', { count: diff.totals.headcount })}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{diff.priorTotals ? f.money(diff.priorTotals.net, 'VND') : f.money('0', 'VND')}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{f.money(diff.totals.net, 'VND')}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap font-semibold`}>{formatSignedMoney(f, diff.deltas.netDelta)}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, diff.deltas.grossDelta)}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, diff.deltas.employeeDeductionDelta)}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, diff.deltas.employerCostDelta)}</TableCell>
+            </TableRow>
+          </TableFooter>
+        </Table>
+      )}
+    </Card>
+  );
+}
+
 export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: readonly { id: string; month: string }[]; onBack: () => void }) {
   const t = useTranslations('hrPayroll');
   const f = useFormat();
@@ -813,6 +1131,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       </div>
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
+      <PayrollDiffPanel runId={runId} headingLevel="h3" />
       {draft && hasPayLines && thirteenthOpen && (
         <ThirteenthMonthPanel
           runId={runId}
@@ -1002,6 +1321,8 @@ export function HrPayrollPage() {
   const rows = list.data ?? [];
   const sheetMonth = rows.find((r) => r.id === open)?.month;
   const approvedRuns = rows.filter((r) => r.status !== 'draft' && (sheetMonth === undefined || r.month < sheetMonth)).map((r) => ({ id: r.id, month: r.month }));
+  const matchingMonthRuns = rows.filter((r) => r.month === month);
+  const selectedMonthRunId = matchingMonthRuns.length === 1 ? matchingMonthRuns[0]?.id : undefined;
   return (
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
@@ -1022,6 +1343,9 @@ export function HrPayrollPage() {
             <p className="mt-2 text-xs text-subtle-foreground">{t('openHint')}</p>
             {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
           </Card>
+          {list.isSuccess && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && (
+            <PayrollDiffPanel {...(selectedMonthRunId !== undefined ? { runId: selectedMonthRunId } : { month })} />
+          )}
           {list.isPending ? (
             <TableSkeleton columns={5} />
           ) : list.error ? (
