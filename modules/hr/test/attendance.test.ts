@@ -400,6 +400,49 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
     expect(truncatedRollup.nightHours).toBe('0');
     expect(truncatedRollup.overtimeHours).toBe('0');
     expect(truncatedRollup.overtime).toEqual([]);
+
+    // Sunday (weekly_rest_day) 14:00-01:00+1d ICT: truncated 300m (14:00-19:00) earns 5h day OT / 0h night OT,
+    // while full 660m preserves 8h day OT + 3h night OT (22:00-01:00).
+    const sundayTruncated = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      entries: [
+        {
+          workDate: '2026-09-27',
+          checkedInAt: new Date('2026-09-27T07:00:00Z'),
+          checkedOutAt: new Date('2026-09-27T18:00:00Z'),
+          workedMinutes: 300,
+          status: 'adjusted',
+        },
+      ],
+    });
+    expect(sundayTruncated.overtimeHours).toBe('5');
+    expect(sundayTruncated.overtime).toEqual([{ dayKind: 'weekly_rest_day', night: false, hours: '5' }]);
+
+    const sundayFull = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      entries: [
+        {
+          workDate: '2026-09-27',
+          checkedInAt: new Date('2026-09-27T07:00:00Z'),
+          checkedOutAt: new Date('2026-09-27T18:00:00Z'),
+          workedMinutes: 660,
+          status: 'present',
+        },
+      ],
+    });
+    expect(sundayFull.overtimeHours).toBe('11');
+    expect(sundayFull.overtime).toEqual([
+      { dayKind: 'weekly_rest_day', night: false, hours: '8' },
+      { dayKind: 'weekly_rest_day', night: true, hours: '3' },
+    ]);
   });
 
   it('ignores logs outside inclusive [hireDate, endedOn] employment window for both monthly and hourly rollups', () => {

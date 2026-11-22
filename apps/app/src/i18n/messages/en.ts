@@ -15185,6 +15185,7 @@ export const en = {
       HR_ATTENDANCE_CHECKIN_REQUIRED: 'Check-in time is required unless status is adjusted',
       HR_ATTENDANCE_MINUTES_REQUIRED: 'Present or half-day attendance requires valid worked minutes',
       HR_ATTENDANCE_MISSING_CHECKOUT: 'Some shifts are missing checkout; adjust them before payroll rollup',
+      HR_ATTENDANCE_CONFLICT: 'This attendance entry was modified elsewhere. Refresh before saving.',
       HR_ROLLUP_HOURLY_MISSING: 'Hourly employee has no valid worked hours for rollup',
       HR_RUN_NOT_FOUND: 'This pay run was not found',
       HR_LINE_NOT_FOUND: 'This pay line was not found',

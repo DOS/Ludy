@@ -235,6 +235,11 @@ BEGIN
     RAISE EXCEPTION 'self checkout must set checked_out_at within server window' USING ERRCODE = '23514';
   END IF;
 
+  IF OLD.work_date < ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1)
+     OR OLD.work_date > (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date THEN
+    RAISE EXCEPTION 'self checkout only allowed for today or yesterday shift' USING ERRCODE = '23514';
+  END IF;
+
   v_expected_minutes := LEAST(1440, GREATEST(0, pg_catalog.floor(pg_catalog.date_part('epoch', NEW.checked_out_at - OLD.checked_in_at) / 60)))::integer;
   v_expected_status := CASE WHEN v_expected_minutes >= 360 THEN 'present' ELSE 'half_day' END;
 

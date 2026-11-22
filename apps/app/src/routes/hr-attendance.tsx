@@ -10,7 +10,9 @@ import {
   vietnamMonth,
   vietnamToday,
   type HrAdminAttendanceRow,
+  type HrAttendanceAdjust,
   type HrAttendanceAnomaliesBrief,
+  type HrAttendanceMethod,
   type HrAttendanceQrRotateResult,
   type HrAttendanceRollupResult,
   type HrEmployeeSummary,
@@ -78,16 +80,48 @@ function toVnTimeInput(iso: string | null | undefined): string {
   return new Date(ms + VN_OFFSET_MS).toISOString().slice(11, 16);
 }
 
+type RotatedQrBanner = HrAttendanceQrRotateResult & {
+  previousConfigId: string | null;
+};
+
 /** Accepts an async QR rotation response only when the page is still focused on that legal entity. */
 export function shouldApplyRotatedQr(currentEntityId: string, rotatedEntityId: string): boolean {
   return !currentEntityId || currentEntityId === rotatedEntityId;
+}
+
+/** Hides the rotated QR poster once the server confirms a newer active QR config replaced it. */
+export function shouldShowRotatedQr(args: {
+  currentEntityId: string;
+  rotatedQr: Pick<RotatedQrBanner, 'configId' | 'legalEntityId' | 'previousConfigId'> | null;
+  qrConfig: { configured: boolean; activeConfigId: string | null; legalEntityId: string } | null | undefined;
+  isRefreshing?: boolean;
+}): boolean {
+  const { rotatedQr, qrConfig } = args;
+  if (!rotatedQr || !shouldApplyRotatedQr(args.currentEntityId, rotatedQr.legalEntityId)) {
+    return false;
+  }
+  if (!qrConfig || qrConfig.legalEntityId !== rotatedQr.legalEntityId) {
+    return true;
+  }
+  if (!qrConfig.configured) {
+    // Keep a newly created poster visible only while its initial post-rotation query refresh is still pending.
+    return rotatedQr.previousConfigId === null && Boolean(args.isRefreshing);
+  }
+  if (
+    qrConfig.activeConfigId &&
+    qrConfig.activeConfigId !== rotatedQr.configId &&
+    qrConfig.activeConfigId !== rotatedQr.previousConfigId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /** Resets entity-scoped transient admin panel state whenever the active legal entity selector changes. */
 export function entitySwitchResetState(nextEntityId: string) {
   return {
     selectedEntityId: nextEntityId,
-    rotatedQr: null as HrAttendanceQrRotateResult | null,
+    rotatedQr: null as RotatedQrBanner | null,
     copiedUrl: false,
     lyBrief: null as HrAttendanceAnomaliesBrief | null,
     rollupResult: null as HrAttendanceRollupResult | null,
@@ -121,6 +155,37 @@ export function resolveAdjustmentTimestamps(args: {
   return { checkedInAt, checkedOutAt };
 }
 
+/** Builds an adjustment submit payload with `expectedUpdatedAt` when editing an existing row. */
+export function buildAttendanceAdjustInput(args: {
+  editingRow: Pick<HrAdminAttendanceRow, 'employeeId' | 'workDate' | 'checkedInAt' | 'checkedOutAt' | 'updatedAt'> | null;
+  employeeId: string;
+  workDate: string;
+  checkedInTime: string;
+  checkedOutTime: string;
+  checkInMethod: HrAttendanceMethod;
+  status: 'present' | 'half_day' | 'adjusted';
+  note: string;
+}): HrAttendanceAdjust {
+  const { checkedInAt, checkedOutAt } = resolveAdjustmentTimestamps(args);
+  const sameTarget =
+    args.editingRow !== null &&
+    args.editingRow.employeeId === args.employeeId &&
+    args.editingRow.workDate === args.workDate
+      ? args.editingRow
+      : null;
+  const trimmedNote = args.note.trim();
+  return {
+    employeeId: args.employeeId,
+    workDate: args.workDate,
+    checkedInAt,
+    checkedOutAt,
+    checkInMethod: args.checkInMethod,
+    status: args.status,
+    note: trimmedNote ? trimmedNote : null,
+    ...(sameTarget ? { expectedUpdatedAt: sameTarget.updatedAt } : {}),
+  };
+}
+
 export function HrAttendancePage() {
   const { slug } = useParams({ strict: false }) as { slug?: string };
   const t = useTranslations('hrAttendance');
@@ -131,7 +196,7 @@ export function HrAttendancePage() {
   const [month, setMonth] = useState(() => vietnamMonth(new Date()));
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
-  const [rotatedQr, setRotatedQr] = useState<HrAttendanceQrRotateResult | null>(null);
+  const [rotatedQr, setRotatedQr] = useState<RotatedQrBanner | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [lyBrief, setLyBrief] = useState<HrAttendanceAnomaliesBrief | null>(null);
   const [selectedRunId, setSelectedRunId] = useState('');
@@ -182,12 +247,17 @@ export function HrAttendancePage() {
   };
 
   const activeEntityIdRef = useRef('');
+  const qrConfigRef = useRef<{ legalEntityId: string; activeConfigId: string | null } | null>(null);
 
   const rotateQr = useMutation({
     ...orpc.hr.attendance.qr.rotate.mutationOptions(),
-    onSuccess: async (data) => {
-      if (shouldApplyRotatedQr(activeEntityIdRef.current, data.legalEntityId)) {
-        setRotatedQr(data);
+    onSuccess: async (rotated) => {
+      if (shouldApplyRotatedQr(activeEntityIdRef.current, rotated.legalEntityId)) {
+        const previousConfigId =
+          qrConfigRef.current?.legalEntityId === rotated.legalEntityId
+            ? qrConfigRef.current.activeConfigId
+            : null;
+        setRotatedQr({ ...rotated, previousConfigId });
         setCopiedUrl(false);
       }
       await refreshAttendance();
@@ -223,6 +293,9 @@ export function HrAttendancePage() {
   const entities = entitiesQ.data ?? [];
   const activeEntityId = selectedEntityId || data?.legalEntityId || '';
   activeEntityIdRef.current = activeEntityId;
+  qrConfigRef.current = data
+    ? { legalEntityId: data.legalEntityId, activeConfigId: data.qrConfig.activeConfigId }
+    : null;
   const scopedEmployees: readonly HrEmployeeSummary[] = (employeesQ.data ?? []).filter(
     (e) => (e.status === 'active' || e.id === adjEmpId) && (!activeEntityId || e.legalEntityId === activeEntityId),
   );
@@ -273,8 +346,14 @@ export function HrAttendancePage() {
     );
   }
 
-  const visibleRotatedQr =
-    rotatedQr && shouldApplyRotatedQr(activeEntityId, rotatedQr.legalEntityId) ? rotatedQr : null;
+  const visibleRotatedQr = shouldShowRotatedQr({
+    currentEntityId: activeEntityId,
+    rotatedQr,
+    qrConfig: data?.qrConfig,
+    isRefreshing: rotateQr.isPending || listQ.isFetching,
+  })
+    ? rotatedQr
+    : null;
 
   const checkInLink =
     visibleRotatedQr && slug && typeof window !== 'undefined'
@@ -661,22 +740,18 @@ export function HrAttendancePage() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!adjEmpId || !adjDate) return;
-              const { checkedInAt, checkedOutAt } = resolveAdjustmentTimestamps({
-                editingRow,
-                employeeId: adjEmpId,
-                workDate: adjDate,
-                checkedInTime: adjIn,
-                checkedOutTime: adjOut,
-              });
-              saveAdjust.mutate({
-                employeeId: adjEmpId,
-                workDate: adjDate,
-                checkedInAt,
-                checkedOutAt,
-                checkInMethod: adjMethod,
-                status: adjStatus,
-                ...(adjNote.trim() ? { note: adjNote.trim() } : { note: null }),
-              });
+              saveAdjust.mutate(
+                buildAttendanceAdjustInput({
+                  editingRow,
+                  employeeId: adjEmpId,
+                  workDate: adjDate,
+                  checkedInTime: adjIn,
+                  checkedOutTime: adjOut,
+                  checkInMethod: adjMethod,
+                  status: adjStatus,
+                  note: adjNote,
+                }),
+              );
             }}
             data-testid="hr-attendance-adjust-form"
           >

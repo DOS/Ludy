@@ -16,9 +16,11 @@ import { setActiveLocale } from '../src/i18n/runtime.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import {
   HrAttendancePage,
+  buildAttendanceAdjustInput,
   entitySwitchResetState,
   resolveAdjustmentTimestamps,
   shouldApplyRotatedQr,
+  shouldShowRotatedQr,
 } from '../src/routes/hr-attendance.tsx';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -425,5 +427,79 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
       checkedInAt: '2026-09-10T15:00:00.000Z',
       checkedOutAt: '2026-09-11T10:30:00.000Z',
     });
+
+    // Rotated QR visibility keeps poster during its own refresh, hides immediately when another manager supersedes it
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-2', legalEntityId: 'le-1', previousConfigId: 'cfg-1' },
+        qrConfig: { configured: true, activeConfigId: 'cfg-1', legalEntityId: 'le-1' },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-2', legalEntityId: 'le-1', previousConfigId: 'cfg-1' },
+        qrConfig: { configured: true, activeConfigId: 'cfg-2', legalEntityId: 'le-1' },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-2', legalEntityId: 'le-1', previousConfigId: 'cfg-1' },
+        qrConfig: { configured: true, activeConfigId: 'cfg-3', legalEntityId: 'le-1' },
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-1', legalEntityId: 'le-1', previousConfigId: null },
+        qrConfig: { configured: false, activeConfigId: null, legalEntityId: 'le-1' },
+        isRefreshing: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-1', legalEntityId: 'le-1', previousConfigId: null },
+        qrConfig: { configured: false, activeConfigId: null, legalEntityId: 'le-1' },
+        isRefreshing: false,
+      }),
+    ).toBe(false);
+
+    // Adjust payload forwards expectedUpdatedAt for matching edit row and omits it for new/other targets
+    expect(
+      buildAttendanceAdjustInput({
+        editingRow: { ...row0830, updatedAt: '2026-09-10T10:30:20.000Z' },
+        employeeId: 'emp-1',
+        workDate: '2026-09-10',
+        checkedInTime: '08:30',
+        checkedOutTime: '17:30',
+        checkInMethod: 'manual',
+        status: 'adjusted',
+        note: '  Ghi chú điều chỉnh  ',
+      }),
+    ).toEqual({
+      employeeId: 'emp-1',
+      workDate: '2026-09-10',
+      checkedInAt: '2026-09-10T01:30:45.000Z',
+      checkedOutAt: '2026-09-10T10:30:20.000Z',
+      checkInMethod: 'manual',
+      status: 'adjusted',
+      note: 'Ghi chú điều chỉnh',
+      expectedUpdatedAt: '2026-09-10T10:30:20.000Z',
+    });
+    expect(
+      buildAttendanceAdjustInput({
+        editingRow: { ...row0830, updatedAt: '2026-09-10T10:30:20.000Z' },
+        employeeId: 'emp-2',
+        workDate: '2026-09-10',
+        checkedInTime: '08:30',
+        checkedOutTime: '17:30',
+        checkInMethod: 'manual',
+        status: 'adjusted',
+        note: '',
+      }).expectedUpdatedAt,
+    ).toBeUndefined();
   });
 });

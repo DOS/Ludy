@@ -15185,6 +15185,7 @@ export const vi = {
       HR_ATTENDANCE_CHECKIN_REQUIRED: 'Cần có giờ check-in trừ khi trạng thái là điều chỉnh',
       HR_ATTENDANCE_MINUTES_REQUIRED: 'Trạng thái đã chấm công hoặc nửa ngày công phải có số phút công hợp lệ',
       HR_ATTENDANCE_MISSING_CHECKOUT: 'Còn ngày công chưa check-out trong tháng, hãy điều chỉnh trước khi tổng hợp lương',
+      HR_ATTENDANCE_CONFLICT: 'Bảng chấm công đã được cập nhật bởi thao tác khác. Vui lòng tải lại trước khi lưu.',
       HR_ROLLUP_HOURLY_MISSING: 'Nhân viên lương theo giờ thiếu giờ công hợp lệ',
       HR_RUN_NOT_FOUND: 'Không tìm thấy bảng lương này',
       HR_LINE_NOT_FOUND: 'Không tìm thấy dòng lương này',

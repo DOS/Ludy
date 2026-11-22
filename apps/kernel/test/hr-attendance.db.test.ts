@@ -305,9 +305,11 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     });
     expect(rlsUnlinked).toBe(0);
 
-    // Viewer blocked across RPC AND DB RLS even if an employee row was linked to the viewer's user_id
+    // Viewer blocked across RPC AND DB RLS even if an employee row with no today log was linked to the viewer's user_id
+    const empViewerRes = await o1.hire('Lê Kiểm Tra Viewer');
+    const empViewerId = empViewerRes.employeeId as string;
     await withAdmin((c) =>
-      c.query('UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.viewer, o1.orgId, o1.empAId]),
+      c.query('UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.viewer, o1.orgId, empViewerId]),
     );
     await expect(o1.query(o1.viewer, 'hr.self.attendance.list', { month })).rejects.toBeInstanceOf(DomainError);
     await expect(o1.exec(o1.viewer, 'hr.self.attendance.check_in', { method: 'web' })).rejects.toBeInstanceOf(DomainError);
@@ -319,24 +321,31 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const empInfo = await withAdmin(async (c) => {
       const { rows } = await c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2', [
         o1.orgId,
-        o1.empAId,
+        empViewerId,
       ]);
       return rows[0]!;
     });
-    await expect(
-      runAsUserInOrg(o1.viewer, o1.orgId, (c) =>
-        c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
-           VALUES ($1, $2, $3, '2026-11-01', now(), 'web', 'missing_checkout')`,
-          [o1.orgId, empInfo.legal_entity_id, o1.empAId],
-        ),
+    const viewerSqlErr = await runAsUserInOrg(o1.viewer, o1.orgId, (c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, pg_catalog.now(), 'web', 'missing_checkout')`,
+        [o1.orgId, empInfo.legal_entity_id, empViewerId],
       ),
-    ).rejects.toThrow();
+    ).catch((e: unknown) => e as { code?: string });
+    expect(viewerSqlErr).toMatchObject({ code: '42501' });
 
-    // Restore empA -> memberA link
+    // Relink that same employee (with no today log yet) to a regular linked member -> exact same SQL INSERT shape succeeds
     await withAdmin((c) =>
-      c.query('UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.memberA, o1.orgId, o1.empAId]),
+      c.query('UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.unlinked, o1.orgId, empViewerId]),
     );
+    const memberSqlRes = await runAsUserInOrg(o1.unlinked, o1.orgId, (c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, pg_catalog.now(), 'web', 'missing_checkout')`,
+        [o1.orgId, empInfo.legal_entity_id, empViewerId],
+      ),
+    );
+    expect(memberSqlRes.rowCount).toBe(1);
 
     // memberA check-out succeeds once, and double check-out fails
     const outA = await o1.exec<HrAttendanceLogView>(o1.memberA, 'hr.self.attendance.check_out', { workDate: today });
@@ -401,8 +410,36 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       ),
     ).rejects.toThrow();
 
-    // Overnight openLog: yesterday's missing_checkout surfaces in self.attendance.list when today has no log, and ended staff cannot check in/out via SQL
+    // Overnight openLog: yesterday's missing_checkout surfaces in self.attendance.list when today has no log,
+    // while stale (>= 2 days old) open shifts are rejected by attendance_log_update_guard (23514) and ended staff cannot check in/out via SQL
     await withAdmin((c) => c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2`, [o1.orgId, o1.empBId]));
+    const twoDaysAgoVn = vietnamToday(new Date(Date.now() - 2 * 86_400_000));
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         SELECT org_id, legal_entity_id, id, $3::date, now() - interval '9 hours', 'web', 'missing_checkout'
+         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+        [o1.orgId, o1.empBId, twoDaysAgoVn],
+      ),
+    );
+    const staleSelfSqlErr = await runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
+      c.query(
+        `UPDATE crove_hr.attendance_log
+         SET checked_out_at = pg_catalog.now(), worked_minutes = 540, status = 'present'
+         WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`,
+        [o1.orgId, o1.empBId, twoDaysAgoVn],
+      ),
+    ).catch((e: unknown) => e as { code?: string; message?: string });
+    expect(staleSelfSqlErr).toMatchObject({ code: '23514' });
+    expect(String((staleSelfSqlErr as { message?: string }).message ?? '')).toContain('today or yesterday');
+    await withAdmin((c) =>
+      c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`, [
+        o1.orgId,
+        o1.empBId,
+        twoDaysAgoVn,
+      ]),
+    );
+
     const yesterdayVn = vietnamToday(new Date(Date.now() - 86_400_000));
     await withAdmin((c) =>
       c.query(
@@ -905,5 +942,53 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const midRow = rolled.rows.find((r) => r.employeeId === empMidId)!;
     expect(midRow.workedHours).toBe('8');
     expect(midRow.overtimeHours).toBe('0');
+  });
+
+  it('rejects stale expectedUpdatedAt adjust after employee self check-out while allowing deliberate clear with fresh updatedAt', async () => {
+    const o = await createAttendanceOrg();
+    const openShift = await o.exec<HrAttendanceLogView>(o.memberA, 'hr.self.attendance.check_in', { method: 'web' });
+    expect(openShift.status).toBe('missing_checkout');
+    expect(openShift.checkedOutAt).toBeNull();
+
+    // Employee checks out before HR submits the previously opened note edit form
+    const closedShift = await o.exec<HrAttendanceLogView>(o.memberA, 'hr.self.attendance.check_out', {
+      workDate: openShift.workDate,
+    });
+    expect(closedShift.checkedOutAt).not.toBeNull();
+    expect(closedShift.updatedAt).not.toBe(openShift.updatedAt);
+
+    // Stale expectedUpdatedAt is rejected with 409 HR_ATTENDANCE_CONFLICT and leaves checkout intact
+    await expect(
+      o.exec(o.owner, 'hr.attendance.adjust', {
+        employeeId: o.empAId,
+        workDate: openShift.workDate,
+        checkedInAt: openShift.checkedInAt,
+        checkedOutAt: null,
+        checkInMethod: 'web',
+        status: 'adjusted',
+        note: 'Ghi chú khi mở form cũ',
+        expectedUpdatedAt: openShift.updatedAt,
+      }),
+    ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_CONFLICT', status: 409 });
+
+    const persisted = await o.query<HrAttendanceListResult>(o.owner, 'hr.attendance.list', {
+      month: openShift.workDate.slice(0, 7),
+    });
+    const currentRow = persisted.logs.find((l) => l.id === openShift.id);
+    expect(currentRow?.checkedOutAt).toBe(closedShift.checkedOutAt);
+
+    // Deliberate clear after refreshing to fresh updatedAt succeeds
+    const cleared = await o.exec<HrAttendanceLogView>(o.owner, 'hr.attendance.adjust', {
+      employeeId: o.empAId,
+      workDate: openShift.workDate,
+      checkedInAt: closedShift.checkedInAt,
+      checkedOutAt: null,
+      checkInMethod: 'web',
+      status: 'adjusted',
+      note: 'Quản lý chủ động xóa giờ check-out sau khi tải lại',
+      expectedUpdatedAt: closedShift.updatedAt,
+    });
+    expect(cleared.checkedOutAt).toBeNull();
+    expect(cleared.workedMinutes).toBeNull();
   });
 });

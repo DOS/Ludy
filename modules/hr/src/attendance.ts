@@ -294,7 +294,11 @@ export function computeEmployeeAttendanceRollup(args: {
       otMinutes['normal_day:night'] += otNight;
       otMinutes['normal_day:day'] += Math.max(0, extraMins - otNight);
     } else {
-      const night = e.checkedInAt && e.checkedOutAt ? Math.min(mins, nightOverlapMinutes(e.checkedInAt, e.checkedOutAt)) : 0;
+      const creditedEnd =
+        e.checkedInAt && e.checkedOutAt
+          ? new Date(Math.min(e.checkedOutAt.getTime(), e.checkedInAt.getTime() + mins * 60_000))
+          : null;
+      const night = e.checkedInAt && creditedEnd ? Math.min(mins, nightOverlapMinutes(e.checkedInAt, creditedEnd)) : 0;
       otMinutes[`${kind}:night`] += night;
       otMinutes[`${kind}:day`] += Math.max(0, mins - night);
     }
@@ -816,6 +820,17 @@ export const attendanceAdjust = defineCommand({
       .where('work_date', '=', parsed.workDate)
       .forUpdate()
       .executeTakeFirst();
+
+    if (
+      parsed.expectedUpdatedAt !== undefined &&
+      (!existing || existing.updated_at.toISOString() !== new Date(parsed.expectedUpdatedAt).toISOString())
+    ) {
+      throw new DomainError(
+        'HR_ATTENDANCE_CONFLICT',
+        409,
+        'Bảng chấm công đã được cập nhật bởi thao tác khác. Vui lòng tải lại trước khi lưu.',
+      );
+    }
 
     const checkedInAt =
       parsed.checkedInAt !== undefined

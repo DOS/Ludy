@@ -140,6 +140,7 @@ export const zHrAttendanceAdjust = z
     workedMinutes: z.number().int().min(0).max(1440).nullable().optional(),
     status: z.enum(['present', 'half_day', 'adjusted']).default('adjusted'),
     note: z.string().trim().min(1).max(HR_ATTENDANCE_NOTE_MAX).nullable().optional(),
+    expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
   })
   .refine(
     (v) => {
