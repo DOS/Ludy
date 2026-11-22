@@ -155,7 +155,7 @@ const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
 });
 const zCashForecastOut = z.object({
-  sentence: z.string().describe('Up to three plain sentences on when the lowest balance is expected and what drives it, citing only the figures and dates given, each written exactly as given, with no advice and no promise'),
+  sentence: z.string().describe('Up to three plain sentences on what drives the lowest balance of the cash forecast, in words only: no digit, no amount, no date, no advice and no promise'),
 });
 const zVatLateOut = z.object({
   sentence: z.string().describe('One to three plain sentences naming each late sales invoice and the period of its sale, each written exactly as given, with no other number'),

@@ -66,71 +66,75 @@ describe('checkCashForecastSentence', () => {
   const vi = (text: string) => checkCashForecastSentence(FACTS, { sentence: text });
   const en = (text: string) => checkCashForecastSentence(EN, { sentence: text });
 
-  it('keeps a sentence whose every number and date is given, as written', () => {
-    const text = 'Số dư thấp nhất dự kiến vào ngày 2026-12-18, còn 2.500.000 đồng, sau khoản phải trả 8.000.000 đồng.';
+  it('keeps a sentence that says what drives the low point in words only', () => {
+    const text = 'Số dư thấp nhất dự kiến đến sau khoản phải trả người bán lớn nhất, trước khi các khoản thu tiếp theo về; dự báo chưa gồm lương và thuế phải nộp.';
     expect(vi(text)).toEqual({ kind: 'sentence', text });
-    const english = 'The lowest balance is expected on 2026-12-18 at 2,500,000 dong, after a payment of 8,000,000 dong.';
+    const english = 'The lowest balance is expected after the largest payment to a supplier, before the receipts that follow; the forecast leaves out payroll and tax payments.';
     expect(en(english)).toEqual({ kind: 'sentence', text: english });
   });
 
-  it('refuses a number or a date the facts do not hold', () => {
-    expect(vi('Số dư thấp nhất dự kiến còn 2.600.000 đồng.')).toEqual({ kind: 'none', code: 'FIGURES' });
+  // A figure cannot be swapped on the wrong label because none can be written: any digit refuses the text, even one the facts hold (the balance of day 90 put beside "the lowest balance" would pass a check
+  // that only asks whether the number is among the given ones).
+  it('refuses any digit, a figure of the facts included, so a given figure cannot sit on the wrong label', () => {
+    expect(vi('Số dư thấp nhất dự kiến là 7.000.000 đồng.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected to be 7,000,000 dong.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected to be 2,500,000 dong.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected on 2026-12-18.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance comes after 30 days.')).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(vi('Số dư thấp nhất dự kiến vào ngày 2026-12-19.')).toEqual({ kind: 'none', code: 'FIGURES' });
-    expect(en('The balance is expected to fall by 7,500,000 dong.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(vi('Số dư thấp nhất dự kiến còn 2,5 triệu đồng.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
-  it('refuses a scaled number, a number in words and an invisible character', () => {
-    expect(vi('Số dư thấp nhất dự kiến còn 2,5 triệu đồng.')).toEqual({ kind: 'none', code: 'FIGURES' });
-    expect(en('The lowest balance is expected to be about 2 million.')).toEqual({ kind: 'none', code: 'FIGURES' });
+  it('refuses a number in words, a scaled number, a month or day by name, and an invisible character', () => {
     expect(vi('Số dư thấp nhất dự kiến giảm hai mươi phần trăm.')).toEqual({ kind: 'none', code: 'FIGURES' });
-    expect(en('The lowest balance is expected on 2026-12-18 at 2,500,000​ dong.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected to be about two million.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected in December.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected on Friday, after a payment.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(vi('Số dư thấp nhất dự kiến vào chủ nhật.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(en('The lowest balance is expected after a pay\u200bment.')).toEqual({ kind: 'none', code: 'FIGURES' });
+    // "may" is a word of the language, not a month.
+    const may = 'The lowest balance may come after the largest payment to a supplier.';
+    expect(en(may)).toEqual({ kind: 'sentence', text: may });
   });
 
   it('refuses a link', () => {
-    expect(en('The lowest balance is expected on 2026-12-18, see example.com for the details.')).toEqual({ kind: 'none', code: 'LINK' });
+    expect(en('The lowest balance is expected after a payment, see example.com for the details.')).toEqual({ kind: 'none', code: 'LINK' });
   });
 
   it('refuses advice to move, borrow, delay or chase money, in both languages', () => {
     for (const text of [
-      'Số dư thấp nhất dự kiến vào ngày 2026-12-18; nên hoãn khoản phải trả 8.000.000 đồng.',
-      'Số dư thấp nhất dự kiến vào ngày 2026-12-18, hãy đòi nợ khách hàng.',
-      'Số dư thấp nhất dự kiến vào ngày 2026-12-18; có thể vay thêm để bù.',
-      'Số dư thấp nhất dự kiến vào ngày 2026-12-18, cần phải chuyển tiền vào tài khoản.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả; nên hoãn khoản phải trả đó.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, hãy đòi nợ khách hàng.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả; có thể vay thêm để bù.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, cần phải chuyển tiền vào tài khoản.',
     ]) {
       expect(vi(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
     }
     for (const text of [
-      'The lowest balance is expected on 2026-12-18; you should delay the payment of 8,000,000 dong.',
-      'The lowest balance is expected on 2026-12-18, so consider a loan.',
-      'The lowest balance is expected on 2026-12-18; try to collect the receipts earlier.',
-      'The lowest balance is expected on 2026-12-18 and you may need to transfer money.',
-      'The lowest balance is expected on 2026-12-18; it is better to pay later.',
+      'The lowest balance is expected after a payment to a supplier; you should delay that payment.',
+      'The lowest balance is expected after a payment to a supplier, so consider a loan.',
+      'The lowest balance is expected after a payment to a supplier; try to collect the receipts earlier.',
+      'The lowest balance is expected after a payment to a supplier and you may need to transfer money.',
+      'The lowest balance is expected after a payment to a supplier; it is better to pay later.',
     ]) {
       expect(en(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
     }
   });
 
   it('refuses a promise or a certainty, in both languages', () => {
-    for (const text of ['Số dư thấp nhất sẽ là 2.500.000 đồng vào ngày 2026-12-18.', 'Chắc chắn số dư thấp nhất là 2.500.000 đồng vào ngày 2026-12-18.', 'Tôi đảm bảo số dư thấp nhất là 2.500.000 đồng.']) {
+    for (const text of ['Số dư thấp nhất sẽ đến sau khoản phải trả người bán lớn nhất.', 'Chắc chắn số dư thấp nhất đến sau một khoản phải trả.', 'Tôi đảm bảo số dư thấp nhất đến sau một khoản phải trả.']) {
       expect(vi(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
     }
-    for (const text of ['The balance will be 2,500,000 dong on 2026-12-18.', 'The lowest balance is certainly 2,500,000 dong on 2026-12-18.', 'It is guaranteed that the balance stays above 2,500,000 dong.']) {
+    for (const text of ['The balance will be lowest after a payment to a supplier.', 'The lowest balance is certainly after a payment to a supplier.', 'It is guaranteed that the balance stays above the lowest point.']) {
       expect(en(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
     }
-  });
-
-  it('does not take a word that only describes the figures for advice or a promise', () => {
-    const text = 'Số dư thấp nhất dự kiến vào ngày 2026-12-18, còn 2.500.000 đồng; dự báo chưa gồm lương và thuế phải nộp.';
-    expect(vi(text)).toEqual({ kind: 'sentence', text });
-    const english = 'The lowest balance is expected on 2026-12-18 at 2,500,000 dong; the forecast leaves out payroll and tax payments.';
-    expect(en(english)).toEqual({ kind: 'sentence', text: english });
   });
 
   it('refuses an empty answer, a missing answer, more than three sentences and a text that is too long', () => {
     expect(vi('   ')).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkCashForecastSentence(FACTS, null)).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(en('Expected low. Expected low. Expected low. Expected low.')).toEqual({ kind: 'none', code: 'TOO_LONG' });
-    expect(en(`The lowest balance is expected on 2026-12-18. ${'x'.repeat(500)}`)).toEqual({ kind: 'none', code: 'TOO_LONG' });
+    expect(en(`The lowest balance is expected after a payment. ${'x'.repeat(500)}`)).toEqual({ kind: 'none', code: 'TOO_LONG' });
   });
 });
 
@@ -152,7 +156,7 @@ describe('InboxReader.cashForecastSentence', () => {
   it('gives the model the facts and the rules, checks its text and reports the tokens it used', async () => {
     const seen: string[] = [];
     const used: Array<{ inputTokens: number; outputTokens: number }> = [];
-    const text = 'Số dư thấp nhất dự kiến vào ngày 2026-12-18, còn 2.500.000 đồng.';
+    const text = 'Số dư thấp nhất dự kiến đến sau khoản phải trả người bán lớn nhất.';
     expect(await reader(text, seen).cashForecastSentence(FACTS, (u) => used.push(u))).toEqual({ kind: 'sentence', text });
     expect(seen[0]).toContain('Write in Vietnamese');
     expect(seen[1]).toContain('Số dư thấp nhất ngày 2026-12-18: 2.500.000 đồng');
@@ -160,7 +164,7 @@ describe('InboxReader.cashForecastSentence', () => {
   });
 
   it('refuses a model text that holds advice, and a missing answer', async () => {
-    expect(await reader('Số dư thấp nhất dự kiến vào ngày 2026-12-18; nên hoãn khoản phải trả.').cashForecastSentence(FACTS)).toEqual({ kind: 'none', code: 'ADVICE' });
+    expect(await reader('Số dư thấp nhất dự kiến đến sau một khoản phải trả; nên hoãn khoản đó.').cashForecastSentence(FACTS)).toEqual({ kind: 'none', code: 'ADVICE' });
     expect(await reader(null).cashForecastSentence(FACTS)).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 });
