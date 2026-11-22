@@ -15,6 +15,7 @@ import { OPEN_TASK_STATUSES, taskDueDay, taskDueFromDay } from '../lib/agents.ts
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { duplicateTaskSearch, findDuplicateTask } from '../lib/task-duplicate.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
@@ -153,7 +154,7 @@ export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; char
         <FormPanel
           opener={opener}
           title={t('editTask')}
-          description={fresh.task.title}
+          description={taskTitleText(fresh.task)}
           onClose={onClose}
           footer={
             <Button type="button" variant="outline" onClick={onClose}>
@@ -247,7 +248,7 @@ function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; char
     <FormPanel
       opener={opener}
       title={t('editTask')}
-      description={initial.title}
+      description={taskTitleText(initial)}
       busy={update.isPending}
       dirty={dirty}
       onClose={onClose}
