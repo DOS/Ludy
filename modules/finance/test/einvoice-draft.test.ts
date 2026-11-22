@@ -96,6 +96,7 @@ describe('checkDraft', () => {
 });
 
 // #3535: a sale invoiced after its next working day is a late invoice: it needs the person's reason, and it stays in the VAT period of its sale.
+// The 2027 cases below pin calendar.ts's 2027 table, which is uncertain until the accountant confirms it (#2520, #4387): if that table changes, update these cases with it.
 describe('nextWorkingDay', () => {
   it('is the next day on a weekday, and Monday after a Friday or a weekend', () => {
     expect(nextWorkingDay('2026-11-02')).toBe('2026-11-03'); // Monday
