@@ -2,7 +2,7 @@
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
 // - exactly the commands WRITES and ENGAGE_WRITES run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the thirteen Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
 //   the sealed write context runs (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares; the only other
-//   commands that carry `mcp` are the 14 proposal-only Engage twins of E4 (#3863), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
+//   commands that carry `mcp` are the proposal-only Engage twins of E4 (#3863, #4181, #4148), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
 //   (pinned below, and in mcp-proposals.db.test.ts);
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);
@@ -125,7 +125,7 @@ const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 // The R1 write twins of the Engage coworkers (epic #3857, E2, issue #3861; ADR-0051 decisions 10 and 11, owner decision 2026-11-19): each runs the same steps a person's click runs for the app's own
 // command (assign, resolve, reopen, note, link a contact, new contact, new deal, move a deal, save or revise a draft quote, mark a next step done or snoozed, save an ads draft), under
 // `ludy.engage.write` (the ads draft under `ludy.ads.draft`), each in its own sealed write context (test/invariant/mcp-engage-write.db.test.ts pins the database side). This list is exact: all thirteen
-// carry `mcp`, none else does, and each with the scope named here. (`kernel.conversation.follow_up` has no twin: its task is an event and wakes an agent, which the sealed context does not allow.)
+// carry `mcp`, none else does, and each with the scope named here. (`kernel.conversation.follow_up` has no R1 twin: its task is an event and wakes an agent, which the sealed context does not allow; a coworker asks for it as a proposal, #4148.)
 const ENGAGE_WRITES: readonly string[] = [
   'kernel.mcp.conversation_assign:ludy.engage.write',
   'kernel.mcp.conversation_resolve:ludy.engage.write',
@@ -184,6 +184,8 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
     'ads.schedule.shorten_approved': 'ludy.ads.draft',
     // Step 1 of 2 for #4181: the twin that cancels a queued raise of a running ad; the change that adds it is the next PR.
     'ads.manage.cancel_approved': 'ludy.ads.draft',
+    // Step 1 of 2 for #4148: the twin that creates a team task linked to a thread, run as the approver; the change that adds it is the next PR.
+    'kernel.conversation.follow_up_approved': 'ludy.engage.write',
   };
   it('has only the proposal-only twins of the Engage commands (E4) as commands a grant reaches as a proposal, each R2, access proposal, under its scope', () => {
     const proposing = commands.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');

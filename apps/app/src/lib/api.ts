@@ -5,7 +5,7 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@ludy/meeting-recorder';
 import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, type contract, type NoteAttachment, type UploadPurpose } from '@ludy/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
@@ -189,6 +189,51 @@ export async function fetchNoteAttachmentBlob(
 ): Promise<Blob> {
   const response = await apiFetch(`/api/notes/attachments/${encodeURIComponent(attachmentId)}`, orgSlug === undefined ? {} : { orgSlug });
   return response.blob();
+}
+
+export async function importEvernoteEnex(
+  file: File,
+  options: { targetNotebookId?: string | null; ignoreFileNotebooks?: boolean; skipDuplicates?: boolean } = {},
+  orgSlug?: string | null,
+): Promise<EnexImportResult> {
+  if (file.size === 0) throw new ClientError('notes.import.invalidSizeEmpty', (t) => t('notes.import.invalidSizeEmpty'));
+  if (file.size > ENEX_MAX_FILE_BYTES) throw new ClientError('notes.import.invalidSizeLimit', (t) => t('notes.import.invalidSizeLimit'));
+  const form = new FormData();
+  form.append('file', file);
+  if (options.targetNotebookId) form.append('targetNotebookId', options.targetNotebookId);
+  if (options.ignoreFileNotebooks) form.append('ignoreFileNotebooks', 'true');
+  if (options.skipDuplicates) form.append('skipDuplicates', 'true');
+  const response = await retryWhileBusy(() =>
+    apiFetch('/api/notes/import/enex', {
+      method: 'POST',
+      body: form,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
+    }),
+  );
+  return (await response.json()) as EnexImportResult;
+}
+
+export async function importTodoistCsv(
+  file: File,
+  options: { targetListId?: string | null; useInboxWhenNoList?: boolean; timeZone?: string; skipDuplicates?: boolean } = {},
+  orgSlug?: string | null,
+): Promise<TodoistImportResult> {
+  if (file.size === 0) throw new ClientError('myWork.import.invalidSizeEmpty', (t) => t('myWork.import.invalidSizeEmpty'));
+  if (file.size > TODOIST_CSV_MAX_BYTES) throw new ClientError('myWork.import.invalidSizeLimit', (t) => t('myWork.import.invalidSizeLimit'));
+  const form = new FormData();
+  form.append('file', file);
+  if (options.targetListId) form.append('targetListId', options.targetListId);
+  if (options.useInboxWhenNoList) form.append('useInboxWhenNoList', 'true');
+  if (options.timeZone) form.append('timeZone', options.timeZone);
+  if (options.skipDuplicates) form.append('skipDuplicates', 'true');
+  const response = await retryWhileBusy(() =>
+    apiFetch('/api/notes/import/todoist', {
+      method: 'POST',
+      body: form,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
+    }),
+  );
+  return (await response.json()) as TodoistImportResult;
 }
 
 type Uploaded = { fileId: string; duplicate: boolean };

@@ -65,7 +65,7 @@ export const zAdsCampaignPlan = z.strictObject({
   targeting: zAdsTargeting,
   // Traffic and Engagement send people to a page; Messenger opens a conversation with the Page instead.
   linkUrl: z.url({ protocol: /^https$/ }).max(2000).nullable(),
-  // The Facebook Page of a Messenger ad, a channel connection of the org.
+  // The Facebook Page every ad runs as, a channel connection of the org. The launch job stops a plan without one (page_required), so local validation asks for it for every objective.
   pageConnectionId: zId.nullable(),
   // Where the creative comes from: a Social post of the org (its id is kept, never its text) and/or a file of the media library.
   sourcePostId: zId.nullable(),
