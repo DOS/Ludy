@@ -32,6 +32,8 @@ describe('engageViewOf', () => {
     // The set the database's title filter refuses: soft hyphen, Arabic letter mark, Mongolian vowel separator, line and paragraph separators, invisible operators, annotation marks, tag characters.
     const odd = 'a\u00ADb\u061Cc\u180Ed\u2028e\u2029f\u206Ag\u206Fh\uFFF9i\uFFFBj\u{E0041}k';
     expect(engageViewOf(REPLY?.kind ?? '', REPLY?.command ?? '', { body: odd })?.fields[0]?.value).toBe('a<U+00AD>b<U+061C>c<U+180E>d<U+2028>e<U+2029>f<U+206A>g<U+206F>h<U+FFF9>i<U+FFFB>j<U+E0041>k');
+    // The Hangul fillers and the braille blank (#4423): a value made of them no longer looks empty on the card.
+    expect(engageViewOf(REPLY?.kind ?? '', REPLY?.command ?? '', { body: 'a\u115Fb\u1160c\u3164d\uFFA0e\u2800f' })?.fields[0]?.value).toBe('a<U+115F>b<U+1160>c<U+3164>d<U+FFA0>e<U+2800>f');
   });
 
   it('is nothing for another kind, or a payload that is not an object', () => {

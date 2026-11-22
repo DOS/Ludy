@@ -6,11 +6,14 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
+  NOTE_TITLE_MAX,
   PROJECT_WEEKLY_STATUS_BUCKET_LIMIT,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
   PROJECT_WEEKLY_STATUS_MAIL_TEMPLATE,
   PROJECT_WEEKLY_STATUS_NOTE_TAG,
+  PROJECT_WEEKLY_STATUS_SUMMARY_MAX,
   VIETNAM_TIME_ZONE,
+  markHiddenText,
   zId,
   zProjectWeeklyStatusMailPayload,
   zProjectWeeklyStatusSendMailInput,
@@ -24,6 +27,9 @@ import {
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { z } from 'zod';
 import { READERS, loadProject, userOf } from './projects.ts';
+
+// The text of an unedited AI draft with its invisible characters written out, cut to the field's own bound (a marker is longer than the character it stands for, so a hostile text could pass it).
+const markedDraft = (text: string, max: number): string => Array.from(markHiddenText(text)).slice(0, max).join('');
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
@@ -405,8 +411,10 @@ export const projectWeeklyStatusShareNote = defineCommand({
       throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
     }
     const note = await ctx.run<{ noteId: string; revision: number }>('notes.note.create', {
-      title: input.title,
-      body: input.body,
+      // An unedited draft of the AI coworker (`tainted`) may carry a task title it copied, with characters nobody can see: they are written out as <U+202E> and the like in what is stored, so the note cannot reorder or
+      // hide text for the members who read it (#4423). A text a person edited is theirs.
+      title: input.tainted ? markedDraft(input.title, NOTE_TITLE_MAX) : input.title,
+      body: input.tainted ? markedDraft(input.body, PROJECT_WEEKLY_STATUS_SUMMARY_MAX) : input.body,
       tags: [PROJECT_WEEKLY_STATUS_NOTE_TAG],
       visibility: 'org',
       tainted: Boolean(input.tainted),
@@ -522,7 +530,8 @@ export const projectWeeklyStatusSendMail = defineCommand({
       nextFrom: win.nextFrom,
       nextTo: win.nextTo,
       counts,
-      summary: input.summary,
+      // As for the note: an unedited AI draft is mailed with its invisible characters written out (#4423).
+      summary: input.tainted ? markedDraft(input.summary, PROJECT_WEEKLY_STATUS_SUMMARY_MAX) : input.summary,
       language: input.language,
       aiGenerated: Boolean(input.tainted),
     });
@@ -535,7 +544,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
         source: PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
         sourceId: project.id,
         templateKey: PROJECT_WEEKLY_STATUS_MAIL_TEMPLATE,
-        subject: input.subject,
+        subject: input.tainted ? markedDraft(input.subject, NOTE_TITLE_MAX) : input.subject,
         payload,
       });
       sentCount = queued.sentCount;

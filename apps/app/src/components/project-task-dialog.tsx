@@ -35,7 +35,7 @@ import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { PROJECT_STATUSES, PROJECT_WEEKLY_STATUS_QUERY_PREFIX, projectStatusVariant, taskStatusVariant } from '../lib/projects.ts';
-import { taskTitleText } from '../lib/task-title.ts';
+import { taskTitleHidden, taskTitleText } from '../lib/task-title.ts';
 
 export const refreshProjectQueries = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
@@ -428,6 +428,11 @@ export function EditProjectTaskDialog({
               }}
             />
             <FieldError id={titleField.id}>{titleError ? t('errors.taskTitleRequired') : null}</FieldError>
+            {taskTitleHidden({ title, tainted: task.tainted }) !== null && (
+              <p className="break-words text-xs text-warning" data-testid="task-title-hidden">
+                {tt('titleHidden', { marked: taskTitleHidden({ title, tainted: task.tainted }) ?? '' })}
+              </p>
+            )}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">

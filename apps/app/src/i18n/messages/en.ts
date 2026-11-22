@@ -10805,6 +10805,7 @@ export const en = {
     unknownPosition: 'Position removed',
     tainted: 'Outside content',
     taintedHint: 'This task was made from unverified content (an email, a file). Check it before acting on it.',
+    titleHidden: 'An AI coworker wrote this title, and it holds characters you cannot see: {marked}',
     status: {
       todo: 'To do',
       in_progress: 'In progress',

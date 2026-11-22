@@ -15,7 +15,7 @@ import { OPEN_TASK_STATUSES, taskDueDay, taskDueFromDay } from '../lib/agents.ts
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { duplicateTaskSearch, findDuplicateTask, type DuplicateTaskHit } from '../lib/task-duplicate.ts';
-import { taskTitleText } from '../lib/task-title.ts';
+import { taskTitleHidden, taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
@@ -211,6 +211,8 @@ function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; char
   const titleField = fieldControl(`task-${task.id}-title`, { error: titleError });
 
   // What differs from the task as it was opened: the patch the server gets, and what a close would throw away.
+  // A tainted title that holds characters nobody can see in the field is written out beside it, so the person who edits it sees what it holds (#4423).
+  const hiddenInTitle = taskTitleHidden({ title, tainted: task.tainted });
   const nextTitle = title.trim();
   const nextAssignee = assignee || null;
   // A step typed in the new-step box and not added yet is saved with the form: pressing Save is the intent, not a reason to lose it.
@@ -291,6 +293,11 @@ function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; char
         <FieldError id={titleField.id} className="mt-1">
           {titleError ? t('titleRequired') : null}
         </FieldError>
+        {hiddenInTitle !== null && (
+          <span className="mt-1 block break-words text-warning" data-testid="task-title-hidden">
+            {t('titleHidden', { marked: hiddenInTitle })}
+          </span>
+        )}
       </label>
       <label className="block text-xs">
         <span className="text-subtle-foreground">{t('assignTo')}</span>

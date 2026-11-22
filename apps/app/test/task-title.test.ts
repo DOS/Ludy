@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The title of a tainted task is written out with a visible code for the characters that reorder or hide text (#4370), like the Inbox card does; a person's own title is shown as typed.
 import { describe, expect, it } from 'vitest';
-import { taskTitleText } from '../src/lib/task-title.ts';
+import { taskTitleHidden, taskTitleText } from '../src/lib/task-title.ts';
 
 describe('the title of a task as it is shown', () => {
   it('writes the direction marks, the zero-width and the tag characters of a tainted title out as visible codes', () => {
@@ -17,5 +17,17 @@ describe('the title of a task as it is shown', () => {
     expect(taskTitleText({ title: 'Nhóm 👨‍👩‍👧', tainted: true })).toBe('Nhóm 👨‍👩‍👧');
     expect(taskTitleText({ title: 'Của người‮', tainted: false })).toBe('Của người‮');
     expect(taskTitleText({ title: 'Của người‮' })).toBe('Của người‮');
+  });
+
+  it('marks the Hangul fillers and the braille blank, so a title made of them does not look empty (#4423)', () => {
+    expect(taskTitleText({ title: '\u3164\u2800\u115f', tainted: true })).toBe('\u27e8U+3164\u27e9\u27e8U+2800\u27e9\u27e8U+115F\u27e9');
+  });
+
+  it('says what a tainted title holds beside the edit field, and nothing for a plain or a person\'s own title (#4423)', () => {
+    expect(taskTitleHidden({ title: 'Gửi\u202e báo giá', tainted: true })).toBe('Gửi\u27e8U+202E\u27e9 báo giá');
+    expect(taskTitleHidden({ title: 'Gửi báo giá', tainted: true })).toBeNull();
+    expect(taskTitleHidden({ title: 'Gửi\u202e báo giá', tainted: false })).toBeNull();
+    // An emoji joiner is not worth a warning.
+    expect(taskTitleHidden({ title: '👨\u200d👩', tainted: true })).toBeNull();
   });
 });
