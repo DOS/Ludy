@@ -155,6 +155,30 @@ describe('the card of an AI coworker\'s ask', () => {
   });
 });
 
+describe('the follow-up task card (#4148)', () => {
+  const task = {
+    command: 'kernel.conversation.follow_up_approved',
+    fields: [
+      { key: 'conversationId', value: '7d1f', long: false },
+      { key: 'title', value: 'Gửi báo giá 20 hộp cho chị Lan', long: false },
+      { key: 'assigneePositionId', value: '9c2e', long: false },
+      { key: 'due', value: '2030-01-15T16:59:00.000Z', long: false },
+    ],
+    about: [{ label: 'contact', value: 'Trần Thị Khách' }, { label: 'assignee', value: 'Lịch hẹn' }],
+  } satisfies EngageProposalView;
+  it('says in words that a task for the team is being asked, the seat that gets it and the due day in the reader\'s clock, in both languages', () => {
+    const vi = render('vi', 'pending', task, 'kernel.conversation_follow_up');
+    for (const word of ['Tạo công việc này cho nhóm', 'Tiêu đề công việc', 'Vị trí nhận công việc', 'Hạn', 'Gửi báo giá 20 hộp cho chị Lan', 'Lịch hẹn', '2030-01-15T16:59:00.000Z']) expect(vi, word).toContain(word);
+    const en = render('en', 'pending', task, 'kernel.conversation_follow_up');
+    for (const word of ['Create this task for the team', 'Task title', 'Seat that gets the task', 'Due', 'Gửi báo giá 20 hộp cho chị Lan']) expect(en, word).toContain(word);
+    for (const html of [vi, en]) {
+      expect(html).not.toContain('engageAbout');
+      expect(html).not.toContain('engageKinds');
+      expect(html).not.toContain('engageField');
+    }
+  });
+});
+
 describe('the plain card a member or a viewer sees instead (L4 of #4160)', () => {
   const hidden = (locale: 'vi' | 'en', status = 'pending', client: { client: string; host: string } | null = { client: 'Dy', host: 'dy.example.org' }) =>
     renderToStaticMarkup(

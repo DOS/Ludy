@@ -12,7 +12,7 @@
 //     `tainted: true`, and the descriptions tell the client so;
 //   - a per-grant write budget (a few writes a minute): a client that loops is answered 429 with the seconds to wait before anything runs.
 // Nothing above R1 is here: a reply, a hide, sending or deciding a quote, a booking change, launching, boosting or pausing ads are R2 or R3 and become proposals a person approves in Ludy (E4).
-// `kernel.conversation.follow_up` has no tool: its task is an event and wakes the assignee's agent, which the sealed write context does not allow.
+// `kernel.conversation.follow_up` has no R1 tool: its task is an event and wakes the assignee's agent, which the sealed write context does not allow; `ludy_conversation_follow_up` asks for it as a proposal (E4, #4148).
 import { z } from 'zod';
 import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { mcpConversationAssign, mcpConversationLinkContact, mcpConversationNote, mcpConversationReopen, mcpConversationResolve, mcpPartyCreate } from '@ludy/kernel';

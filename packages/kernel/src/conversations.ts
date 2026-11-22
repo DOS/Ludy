@@ -2233,6 +2233,8 @@ export const conversationFollowUp = defineCommand({
       title: input.title,
       positionId: input.assigneePositionId,
       due: input.due ?? null,
+      // Under an approved proposal the title is what an AI coworker wrote (kernel.conversation.follow_up_approved, #4148), so the task is tainted; a person's own click has no proposal.
+      tainted: ctx.proposalId !== null,
     });
     ctx.audit({ conversation_id: conversation.id, task_id: created.taskId });
     return { taskId: created.taskId };

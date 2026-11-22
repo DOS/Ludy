@@ -788,7 +788,8 @@ export const createTaskFromMeeting = defineCommand({
 // inside its kernel.conversation.follow_up command (ctx.run), after it has read and locked the thread under row-level security, so the task and the thread's
 // audit row commit together. The task takes the title the person typed, the seat they picked (none: the owner at the root of the chart, a one-person
 // company's default), a due date and a `kernel.conversation` source_ref this command sets itself from the thread's id. The description is always empty and
-// the task is never tainted: a task is read by every member, and neither a customer's words nor a model's text are copied into it by this path. No RPC
+// the task is not tainted when a person typed the title: a task is read by every member, and neither a customer's words nor a model's text are copied into it by this path.
+// It is tainted when the title came from an AI coworker's proposal a person approved (#4148): the follow-up command says so, and the wake-up of the assignee's agent is then tainted too. No RPC
 // route reaches it.
 export const createTaskFromConversation = defineCommand({
   name: 'kernel.task.create_from_conversation',
@@ -797,6 +798,8 @@ export const createTaskFromConversation = defineCommand({
     title: zTaskTitle,
     positionId: zId.nullable(),
     due: z.iso.datetime({ offset: true }).nullable(),
+    // Set only by kernel.conversation.follow_up when it runs under an approved proposal (an AI coworker wrote the title, #4148): the task is then tainted, as a task from a note or a meeting is. Absent: false.
+    tainted: z.boolean().optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -812,7 +815,7 @@ export const createTaskFromConversation = defineCommand({
       assigneePositionId: input.positionId,
       due: input.due,
       sourceRef: { type: 'kernel.conversation', id: input.conversationId },
-      tainted: false,
+      tainted: input.tainted ?? false,
     });
     ctx.audit({ taskId: created.taskId, conversationId: input.conversationId, positionId: input.positionId });
     return created;
