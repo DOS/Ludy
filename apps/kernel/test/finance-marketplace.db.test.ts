@@ -335,9 +335,11 @@ suite('marketplace order reports (#2515)', () => {
     await expect(insert(await lineOf('S2'), 'return', '2')).rejects.toThrow(/STOCK_ORDER_STAGE/);
     // A line cancelled without shipping passes the stage and is still refused a return with no shipment behind it.
     await expect(insert(await lineOf('S3'), 'return', '1')).rejects.toThrow(/STOCK_ORDER_RETURN/);
-    // The ways stock really moves still work: the shipment of S2 exists, and returned and cancelled-after-shipping lines bring it back.
+    // The ways stock really moves still work: the shipment of S2 exists, and a line cancelled after it shipped brings it back once a person says the goods are back (#4355).
     expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship']);
-    expect(await confirm(o, (await read(o, report(row('S2', 'Đã hủy', 'QC-1', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    expect(await confirm(o, (await read(o, report(row('S2', 'Đã hủy', 'QC-1', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-2');
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: await lineOf('S2'), decision: 'back' }, o.member);
     expect(await onHand(o, item)).toBe('0');
   });
 
@@ -438,12 +440,12 @@ suite('marketplace order reports (#2515)', () => {
     expect(await rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId])).toHaveLength(0);
   });
 
-  it('has nothing to take back from a line cancelled after it shipped, whose stock came back by itself', async () => {
+  it('has nothing to take back from a line cancelled after it shipped: its goods are the answer of "goods back?", not an assignment (#4355)', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-A');
     await confirm(o, (await read(o, report(row('V1', 'Đang giao', 'QC-A', 2)))).fileId);
     await confirm(o, (await read(o, report(row('V1', 'Đã hủy', 'QC-A', 2)))).fileId);
-    expect(await onHand(o, item)).toBe('0');
+    expect(await onHand(o, item)).toBe('-2');
     const [v1] = await rows<{ id: string }>("SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = 'V1'", [o.orgId]);
     await expect(execute(o, 'finance.marketplace.unassign', { lineId: v1?.id }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_CANCELLED' });
   });
@@ -568,8 +570,10 @@ suite('marketplace order reports (#2515)', () => {
     const second = await read(o, report(row('U4', 'Đang giao', 'LẠ-7', 1)));
     expect(await confirm(o, second.fileId)).toMatchObject({ newLines: 1, stockMoves: 1 });
     expect(await onHand(o, item)).toBe('-9');
-    // A return of the assigned line brings back what the shipment took, through the same item.
-    expect(await confirm(o, (await read(o, report(row('U1', 'Đã hoàn trả', 'LẠ-7', 3)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    // A return of the assigned line moves nothing by itself; the person's answer brings back what the shipment took, through the same item (#4355).
+    expect(await confirm(o, (await read(o, report(row('U1', 'Đã hoàn trả', 'LẠ-7', 3)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('-9');
+    await execute(o, 'finance.marketplace_return.decide', { orderLineId: line, decision: 'back' }, o.member);
     expect(await onHand(o, item)).toBe('-3');
   });
 
