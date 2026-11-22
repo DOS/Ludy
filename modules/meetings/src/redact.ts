@@ -18,11 +18,12 @@ import {
   zTranscriptRedactCandidates,
   zTranscriptRedacted,
 } from '@ludy/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 type Trx = QueryContext['trx'];
+export type DropDraftTranslationsFn = (trx: CommandContext['trx'], orgId: string, meetingId: string, memberUserId: string) => Promise<number>;
 
 const MAX_LENGTH_BY_SURFACE: Readonly<Record<RedactionSurface, number>> = {
   'transcript_segment.text': 4000,
@@ -216,7 +217,7 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
         marks jsonb
       )
     ),
-    detected AS (
+    detected AS MATERIALIZED (
       SELECT req.idx, d.start_pos, d.kind
       FROM req
       CROSS JOIN LATERAL crove_kernel.text_detect(req.text) AS d
@@ -446,8 +447,9 @@ export const transcriptRedactCandidates = defineQuery({
   },
 });
 
-// Applies recorder-confirmed redactions atomically on draft surfaces only, drops private Vy results and draft translations, and audits counts only.
-export const transcriptRedact = defineCommand({
+// Builds the redaction commands, taking the delete-only draft-translation helper from translate.ts so this file stays isolated from that table.
+export function createRedactCommands(dropDraftTranslations: DropDraftTranslationsFn) {
+  const transcriptRedact = defineCommand({
   name: 'meetings.transcript.redact',
   input: zTranscriptRedact,
   risk: 'R1',
@@ -714,14 +716,7 @@ export const transcriptRedact = defineCommand({
 
     // D5: Drop the recorder's own draft translations before row updates (so count includes draft summary translations
     // that triggers would otherwise clear) and drop private Vy results + cancel running runs via the kernel command.
-    const delTrans = await ctx.trx
-      .deleteFrom('crove_meetings.translation')
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
-      .where('member_user_id', '=', userId)
-      .where('source_stage', '=', 'draft')
-      .executeTakeFirst();
-    const droppedTranslations = Number(delTrans.numDeletedRows ?? 0);
+    const droppedTranslations = await dropDraftTranslations(ctx.trx, ctx.orgId, input.meetingId, userId);
 
     const droppedVy = await ctx.run<{ cancelled: number; removed: number }>('kernel.member_vy.subject_results.drop', {
       subjectType: 'meeting',
@@ -859,7 +854,9 @@ export const transcriptRedact = defineCommand({
       droppedTranslations,
     });
   },
-});
+  });
 
-export const redactCommands = [transcriptRedact];
+  return [transcriptRedact];
+}
+
 export const redactQueries = [transcriptRedactCandidates];

@@ -5,7 +5,7 @@ import type { MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
-import { redactCommands, redactQueries } from './redact.ts';
+import { createRedactCommands, redactQueries } from './redact.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
@@ -22,7 +22,7 @@ import { speakerCommands } from './speaker.ts';
 import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
-import { translateCommands } from './translate.ts';
+import { dropDraftTranslationsForMember, translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
@@ -1019,7 +1019,7 @@ export const meetingsCommands = [
   meetingMediaDiscard,
   transcriptDraftStore,
   transcriptCorrect,
-  ...redactCommands,
+  ...createRedactCommands(dropDraftTranslationsForMember),
   ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
