@@ -74,6 +74,8 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
 
   let orgProjectId = '';
   let privateProjectId = '';
+  let privateColumnId = '';
+  let privateCycleId = '';
   let orgTaskId = '';
   let unlinkedOrgTaskId = '';
   let privateTaskId = '';
@@ -333,6 +335,18 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       { projectId: privateProjectId, blockerTaskId: privateTaskId, blockedTaskId: agentPrivateTaskId },
       { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
     );
+    const initCols = await appRt.execute<{ columns: Array<{ id: string }> }>(
+      'projects.column.init_defaults',
+      { projectId: privateProjectId },
+      { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
+    );
+    privateColumnId = initCols.columns[0]!.id;
+    const createdCycle = await appRt.execute<{ cycle: { id: string } }>(
+      'projects.cycle.create',
+      { projectId: privateProjectId, name: 'Chu kỳ Mật 1' },
+      { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
+    );
+    privateCycleId = createdCycle.cycle.id;
 
     // Seed comments on both org task and private task.
     await appRt.execute(
@@ -515,7 +529,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
           ORDER BY t.relname`,
       );
       expect(projTables.map((r) => r.table_name)).toEqual(
-        expect.arrayContaining(['project', 'project_member', 'project_task', 'task_dependency']),
+        expect.arrayContaining(['project', 'project_column', 'project_cycle', 'project_member', 'project_task', 'task_dependency']),
       );
       for (const row of projTables) {
         expect(row.relrowsecurity, `${row.table_name} RLS enabled`).toBe(true);
@@ -650,16 +664,20 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         const projects = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project WHERE NOT is_template')).rows.map((r) => r.id);
         const members = (await dbClient.query<{ project_id: string }>('SELECT project_id FROM crove_projects.project_member')).rows.map((r) => r.project_id);
         const projectTasks = (await dbClient.query<{ task_id: string }>('SELECT task_id FROM crove_projects.project_task')).rows.map((r) => r.task_id);
+        const columns = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project_column')).rows.map((r) => r.id);
+        const cycles = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project_cycle')).rows.map((r) => r.id);
         const dependencies = (await dbClient.query<{ project_id: string }>('SELECT project_id FROM crove_projects.task_dependency')).rows.map((r) => r.project_id);
         const tasks = (await dbClient.query<{ id: string }>('SELECT id FROM crove_kernel.task')).rows.map((r) => r.id);
         const comments = (await dbClient.query<{ id: string }>('SELECT id FROM crove_kernel.task_comment')).rows.map((r) => r.id);
         const links = (await dbClient.query<{ id: string }>('SELECT id FROM crove_notes.link')).rows.map((r) => r.id);
-        return { projects, members, projectTasks, dependencies, tasks, comments, links };
+        return { projects, members, projectTasks, columns, cycles, dependencies, tasks, comments, links };
       });
 
       expect(seen.projects.includes(privateProjectId), `${c.actor.name}: project`).toBe(c.readsPrivateProject);
       expect(seen.members.includes(privateProjectId), `${c.actor.name}: project_member`).toBe(c.readsPrivateProject);
       expect(seen.projectTasks.includes(privateTaskId), `${c.actor.name}: project_task`).toBe(c.readsPrivateProject);
+      expect(seen.columns.includes(privateColumnId), `${c.actor.name}: project_column`).toBe(c.readsPrivateProject);
+      expect(seen.cycles.includes(privateCycleId), `${c.actor.name}: project_cycle`).toBe(c.readsPrivateProject);
       expect(seen.dependencies.includes(privateProjectId), `${c.actor.name}: task_dependency`).toBe(c.readsPrivateProject);
       expect(seen.tasks.includes(privateTaskId), `${c.actor.name}: human private task`).toBe(c.readsPrivateHumanTask);
       expect(seen.tasks.includes(agentPrivateTaskId), `${c.actor.name}: agent private task`).toBe(c.readsPrivateAgentTask);
@@ -722,7 +740,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       expect(insPt).toMatchObject({ ok: false, code: '42501' });
       expect(await attemptSql(actor, `DELETE FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
 
-      // Cannot insert or delete dependency edges on a private project.
+      // Cannot insert or delete dependency edges, columns, or cycles on a private project.
       const insDep = await attemptSql(
         actor,
         `INSERT INTO crove_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id, created_by) VALUES ($1, $2, $3, $4, $5)`,
@@ -730,6 +748,22 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       );
       expect(insDep).toMatchObject({ ok: false, code: '42501' });
       expect(await attemptSql(actor, `DELETE FROM crove_projects.task_dependency WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
+
+      const insCol = await attemptSql(
+        actor,
+        `INSERT INTO crove_projects.project_column (org_id, project_id, name, task_status, sort_key) VALUES ($1, $2, $3, 'todo', 'zzzz')`,
+        [orgId, privateProjectId, 'Hijack col'],
+      );
+      expect(insCol).toMatchObject({ ok: false, code: '42501' });
+      expect(await attemptSql(actor, `DELETE FROM crove_projects.project_column WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
+
+      const insCycle = await attemptSql(
+        actor,
+        `INSERT INTO crove_projects.project_cycle (org_id, project_id, number, name, starts_on, ends_on, created_by) VALUES ($1, $2, 99, $3, '2026-11-01', '2026-11-14', $4)`,
+        [orgId, privateProjectId, 'Hijack cycle', targetUid],
+      );
+      expect(insCycle).toMatchObject({ ok: false, code: '42501' });
+      expect(await attemptSql(actor, `DELETE FROM crove_projects.project_cycle WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
 
       // Cannot update private task or insert comment on private task.
       expect(await attemptSql(actor, `UPDATE crove_kernel.task SET title = 'Tamper' WHERE org_id = $1 AND id = $2`, [orgId, privateTaskId])).toEqual({ ok: true, rowCount: 0 });
@@ -850,6 +884,20 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         code: 'PROJECT_NOT_FOUND',
         status: 404,
       });
+      await expect(appRt.query('projects.timeline', { projectId: privateProjectId }, { actor, orgId })).rejects.toMatchObject({
+        code: 'PROJECT_NOT_FOUND',
+        status: 404,
+      });
+      await expect(appRt.query('projects.cycle.list', { projectId: privateProjectId }, { actor, orgId })).rejects.toMatchObject({
+        code: 'PROJECT_NOT_FOUND',
+        status: 404,
+      });
+      await expect(
+        appRt.query('projects.cycle.metrics', { projectId: privateProjectId, cycleId: privateCycleId }, { actor, orgId }),
+      ).rejects.toMatchObject({
+        code: 'PROJECT_NOT_FOUND',
+        status: 404,
+      });
       await expect(
         appRt.query('projects.weekly_status_source', { projectId: privateProjectId }, { actor, orgId }),
       ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
@@ -917,6 +965,20 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       appRt.execute(
         'projects.project.update',
         { projectId: privateProjectId, name: 'Hijack' },
+        { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
+    await expect(
+      appRt.execute(
+        'projects.column.create',
+        { projectId: privateProjectId, name: 'Hijack Col', taskStatus: 'todo' },
+        { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
+    await expect(
+      appRt.execute(
+        'projects.cycle.create',
+        { projectId: privateProjectId, name: 'Hijack Cycle' },
         { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
       ),
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
