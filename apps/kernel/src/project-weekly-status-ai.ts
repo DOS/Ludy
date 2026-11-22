@@ -69,6 +69,7 @@ async function generateSummary(
       nextTo: source.window.nextTo,
     },
     counts: source.counts,
+    ...(source.columns && source.columns.length > 0 ? { columns: source.columns } : {}),
     tasks: {
       doneThisWeek: toTaskFacts(source.tasks.doneThisWeek),
       overdue: toTaskFacts(source.tasks.overdue),
@@ -117,6 +118,7 @@ export async function prepareProjectWeeklyStatus(
     project: source.project,
     window: source.window,
     counts: source.counts,
+    ...(source.columns && source.columns.length > 0 ? { columns: source.columns } : {}),
     tasks: source.tasks,
     ...(bottlenecks.length > 0 ? { bottlenecks } : {}),
     hiddenByEntityCount: source.hiddenByEntityCount,

@@ -2,7 +2,7 @@
 // Projects list and board/list screens (/o/$slug/projects and /o/$slug/projects/$id, issue #2591, ADR-0048).
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
-import type { FilterAst, ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort, TaskChecklistStep } from '@ludy/kernel-contract';
+import type { FilterAst, ProjectBoard, ProjectColumn, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort, TaskChecklistStep } from '@ludy/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -19,6 +19,7 @@ import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ProjectBoardView, type BoardColumnStatus } from '../components/project-board.tsx';
 import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-sign-handoff.tsx';
+import { ProjectColumnsDialog } from '../components/project-columns-dialog.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
@@ -39,11 +40,13 @@ import { clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   PROJECT_STATUSES,
   boardPlaceholderForProject,
+  commitBoardColumnMove,
   commitBoardStatusMove,
   createBoardMutationQueue,
   defaultProjectView,
   filterProjects,
   hasUnseatedTeamMembers,
+  optimisticMoveColumn,
   optimisticMoveTask,
   optimisticReorderTask,
   projectCompletionPct,
@@ -65,6 +68,7 @@ export function boardOrderClientForOrg(
   return {
     setTaskStatus: (input) => scopedOrpc.tasks.setStatus.call(input),
     reorderTask: (input) => scopedOrpc.projects.reorderTask.call(input),
+    moveTaskColumn: (input) => scopedOrpc.projects.moveTaskColumn.call(input),
   };
 }
 
@@ -276,6 +280,7 @@ export function ProjectDetailPage() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [proposeSourceOpen, setProposeSourceOpen] = useState(false);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ProjectTaskCard | null>(null);
   const [moveError, setMoveError] = useState<unknown>(null);
@@ -432,6 +437,12 @@ export function ProjectDetailPage() {
                   {t('detail.saveAsTemplate')}
                 </Button>
               )}
+              {project.canManage && project.status !== 'archived' && (
+                <Button variant="outline" onClick={() => setColumnsOpen(true)} data-testid="customize-columns-button">
+                  <NavIcon name="settings" />
+                  {t('detail.customizeColumns')}
+                </Button>
+              )}
               <Button variant="outline" onClick={() => setSettingsOpen(true)} data-testid="project-settings-button">
                 <NavIcon name="settings" />
                 {t('detail.settingsTeam')}
@@ -572,6 +583,7 @@ export function ProjectDetailPage() {
         view={view}
         tasks={tasks}
         seats={seats}
+        columns={board.columns}
         canEdit={project.canWrite}
         includeCancelled={effectiveIncludeCancelled}
         creatingTask={createTask.isPending}
@@ -584,6 +596,18 @@ export function ProjectDetailPage() {
               commitBoardStatusMove(
                 orgClient,
                 { projectId: capturedProjectId, taskId, nextStatus, placement },
+                markCommitted,
+              ),
+          );
+        }}
+        onMoveColumn={(taskId: string, column: ProjectColumn, placement?: TaskPlacement) => {
+          const capturedProjectId = project.id;
+          enqueueBoardMutation(
+            (items) => optimisticMoveColumn(items, taskId, column, placement),
+            (orgClient, markCommitted) =>
+              commitBoardColumnMove(
+                orgClient,
+                { projectId: capturedProjectId, taskId, column, placement },
                 markCommitted,
               ),
           );
@@ -604,7 +628,10 @@ export function ProjectDetailPage() {
             },
           );
         }}
-        onCreateTask={(input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus }, done) => {
+        onCreateTask={(
+          input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus; columnId?: string },
+          done,
+        ) => {
           createTask.mutate(
             {
               projectId: project.id,
@@ -613,6 +640,7 @@ export function ProjectDetailPage() {
               ...(input.due ? { due: input.due } : {}),
               ...(input.checklist?.length ? { checklist: input.checklist } : {}),
               status: input.status,
+              ...(input.columnId ? { columnId: input.columnId } : {}),
               idempotencyKey: crypto.randomUUID(),
             },
             { onSuccess: done },
@@ -677,6 +705,13 @@ export function ProjectDetailPage() {
         onOpenChange={setSettingsOpen}
         project={project}
         members={members}
+      />
+      <ProjectColumnsDialog
+        open={columnsOpen}
+        onOpenChange={setColumnsOpen}
+        projectId={project.id}
+        columns={board.columns ?? []}
+        canManage={project.canManage && project.status !== 'archived'}
       />
     </div>
   );

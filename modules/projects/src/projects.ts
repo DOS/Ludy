@@ -6,12 +6,9 @@ import {
   PROJECT_BOARD_LIMIT,
   PROJECT_LIST_LIMIT,
   PROJECT_UNASSIGNED_LIMIT,
-  REBALANCE_AT,
   auditValue,
-  keyBetween,
   normalizeFilter,
   parseTaskChecklist,
-  spreadKeys,
   tableWrite,
   vietnamToday,
   zId,
@@ -42,8 +39,9 @@ import {
   type ProjectTaskReorderResult,
 } from '@ludy/kernel-contract';
 import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@ludy/kernel';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
+import { loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type ProjectOrderRow } from './columns.ts';
 import { parseStoredRecurrence } from './recurring.ts';
 import {
   READERS,
@@ -459,94 +457,6 @@ export const projectTaskRemove = defineCommand({
   },
 });
 
-interface ProjectOrderRow {
-  task_id: string;
-  sort_key: string | null;
-}
-
-async function rebalanceProjectTasks(ctx: CommandContext, projectId: string, rows: ReadonlyArray<{ task_id: string }>): Promise<Map<string, string>> {
-  const keys = spreadKeys(rows.length);
-  const taskIds = rows.map((r) => r.task_id);
-  if (taskIds.length > 0) {
-    await sql`UPDATE crove_projects.project_task AS pt SET sort_key = v.key
-      FROM unnest(${taskIds}::uuid[], ${keys}::text[]) AS v(task_id, key)
-      WHERE pt.org_id = ${ctx.orgId}::uuid
-        AND pt.project_id = ${projectId}::uuid
-        AND pt.task_id = v.task_id`.execute(ctx.trx);
-  }
-  return new Map(taskIds.map((id, i) => [id, keys[i] as string]));
-}
-
-async function ensureRemainingSortKeys(ctx: CommandContext, projectId: string, rows: Array<ProjectOrderRow>): Promise<void> {
-  const firstNull = rows.findIndex((r) => r.sort_key === null);
-  if (firstNull < 0) return;
-  if (firstNull === 0) {
-    const fresh = await rebalanceProjectTasks(ctx, projectId, rows);
-    for (const r of rows) r.sort_key = fresh.get(r.task_id) ?? null;
-    return;
-  }
-  const beforeFirstNull = rows[firstNull - 1];
-  let prev: string | null = beforeFirstNull ? beforeFirstNull.sort_key : null;
-  const filledIds: string[] = [];
-  const filledKeys: string[] = [];
-  let overflow = false;
-  for (let i = firstNull; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r) continue;
-    if (r.sort_key !== null) {
-      overflow = true;
-      break;
-    }
-    const next = keyBetween(prev, null);
-    if (next.length > REBALANCE_AT) {
-      overflow = true;
-      break;
-    }
-    filledIds.push(r.task_id);
-    filledKeys.push(next);
-    prev = next;
-  }
-  if (overflow) {
-    const fresh = await rebalanceProjectTasks(ctx, projectId, rows);
-    for (const r of rows) r.sort_key = fresh.get(r.task_id) ?? null;
-    return;
-  }
-  await sql`UPDATE crove_projects.project_task AS pt SET sort_key = v.key
-    FROM unnest(${filledIds}::uuid[], ${filledKeys}::text[]) AS v(task_id, key)
-    WHERE pt.org_id = ${ctx.orgId}::uuid
-      AND pt.project_id = ${projectId}::uuid
-      AND pt.task_id = v.task_id`.execute(ctx.trx);
-  for (let i = 0; i < filledIds.length; i++) {
-    const targetRow = rows[firstNull + i];
-    const key = filledKeys[i];
-    if (targetRow && key !== undefined) targetRow.sort_key = key;
-  }
-}
-
-async function placeProjectTaskBetween(
-  ctx: CommandContext,
-  projectId: string,
-  rows: Array<ProjectOrderRow>,
-  lo: number,
-  hi: number,
-): Promise<string> {
-  await ensureRemainingSortKeys(ctx, projectId, rows);
-  const keyAt = (i: number) => (i < 0 || i >= rows.length ? null : (rows[i]?.sort_key ?? null));
-  const a = keyAt(lo);
-  const b = keyAt(hi);
-  if (a === null || b === null || a < b) {
-    const key = keyBetween(a, b);
-    if (key.length <= REBALANCE_AT && (a === null || a < key) && (b === null || key < b)) return key;
-  }
-  const fresh = await rebalanceProjectTasks(ctx, projectId, rows);
-  const freshAt = (i: number) => {
-    if (i < 0 || i >= rows.length) return null;
-    const item = rows[i];
-    return item ? (fresh.get(item.task_id) ?? null) : null;
-  };
-  return keyBetween(freshAt(lo), freshAt(hi));
-}
-
 export const projectTaskReorder = defineCommand({
   name: 'projects.task.reorder',
   input: zProjectTaskReorder,
@@ -617,6 +527,24 @@ export const projectTaskCreate = defineCommand({
     const preview = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
     assertNotArchived(preview);
 
+    let effectiveStatus = input.status ?? 'todo';
+    if (input.columnId !== undefined) {
+      const requestedColumn = await ctx.trx
+        .selectFrom('crove_projects.project_column')
+        .select(['id', 'task_status'])
+        .where('org_id', '=', ctx.orgId)
+        .where('project_id', '=', preview.id)
+        .where('id', '=', input.columnId)
+        .executeTakeFirst();
+      if (!requestedColumn) {
+        throw new DomainError('COLUMN_NOT_FOUND', 404, 'Không tìm thấy cột trên bảng dự án');
+      }
+      if (input.status !== undefined && input.status !== requestedColumn.task_status) {
+        throw new DomainError('COLUMN_STATUS_MISMATCH', 400, 'Trạng thái không khớp với cột đã chọn');
+      }
+      effectiveStatus = requestedColumn.task_status;
+    }
+
     const { taskId } = await ctx.run<{ taskId: string }>('kernel.task.create', {
       title: input.title,
       ...(input.description !== undefined ? { description: input.description } : {}),
@@ -625,12 +553,27 @@ export const projectTaskCreate = defineCommand({
       ...(input.checklist !== undefined ? { checklist: input.checklist } : {}),
     });
 
-    if (input.status !== undefined && input.status !== 'todo') {
-      await ctx.run('kernel.task.set_status', { id: taskId, status: input.status });
+    if (effectiveStatus !== 'todo') {
+      await ctx.run('kernel.task.set_status', { id: taskId, status: effectiveStatus });
     }
 
     const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertNotArchived(row);
+
+    const columns = await loadProjectColumns(ctx.trx, ctx.orgId, row.id, false);
+    let columnId: string | null = null;
+    if (input.columnId !== undefined) {
+      const matched = columns.find((c) => c.id === input.columnId);
+      if (!matched) {
+        throw new DomainError('COLUMN_NOT_FOUND', 404, 'Không tìm thấy cột trên bảng dự án');
+      }
+      if (matched.taskStatus !== effectiveStatus) {
+        throw new DomainError('COLUMN_STATUS_MISMATCH', 400, 'Trạng thái không khớp với cột đã chọn');
+      }
+      columnId = matched.id;
+    } else if (columns.length > 0) {
+      columnId = resolveTaskColumnId(columns, null, effectiveStatus);
+    }
 
     await ctx.trx
       .insertInto('crove_projects.project_task')
@@ -638,6 +581,7 @@ export const projectTaskCreate = defineCommand({
         org_id: ctx.orgId,
         project_id: row.id,
         task_id: taskId,
+        column_id: columnId,
         added_by: userId,
         created_at: ctx.now,
       })
@@ -647,7 +591,8 @@ export const projectTaskCreate = defineCommand({
       projectId: row.id,
       taskId,
       assigneePositionId: input.assigneePositionId,
-      status: input.status ?? 'todo',
+      status: effectiveStatus,
+      ...(columnId !== null ? { columnId } : {}),
     });
     await ctx.emit('projects.task.created', { projectId: row.id, taskId });
     await ctx.activity('projects.project', row.id, 'projects.task.created', 'Tạo việc mới trong dự án');
@@ -893,8 +838,10 @@ export const projectBoard = defineQuery({
         ? sortTerms('kernel.task', input.sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: 'asc' })
         : null;
 
+    const columns = await loadProjectColumns(ctx.trx, ctx.orgId, row.id, false);
+
     if (input.status !== undefined && input.status.length === 0) {
-      return { project, members, seats, isTeamOrg, viewerHasSeat, tasks: [], totalVisible: 0, hiddenByEntityCount, truncated: false };
+      return { project, members, seats, isTeamOrg, viewerHasSeat, columns, tasks: [], totalVisible: 0, hiddenByEntityCount, truncated: false };
     }
 
     let taskQuery = ctx.trx
@@ -905,6 +852,7 @@ export const projectBoard = defineQuery({
         't.title',
         't.description',
         't.status',
+        'pt.column_id',
         't.assignee_position_id',
         't.due',
         't.checklist',
@@ -1006,27 +954,31 @@ export const projectBoard = defineQuery({
       for (const b of blockingRows) blockingCounts.set(b.task_id, Number(b.n));
     }
 
-    const tasks: ProjectTaskCard[] = page.map((t) => ({
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      status: t.status as TaskStatus,
-      assigneePositionId: t.assignee_position_id,
-      due: t.due === null ? null : new Date(t.due).toISOString(),
-      checklist: parseTaskChecklist(t.checklist),
-      tainted: t.tainted,
-      checkedOut: Boolean(t.checked_out),
-      commentCount: commentCounts.get(t.id) ?? 0,
-      createdAt: new Date(t.created_at).toISOString(),
-      addedAt: new Date(t.added_at).toISOString(),
-      recurrence: parseStoredRecurrence(t.recurrence),
-      recurrenceCount: t.recurrence_count,
-      recurrenceLastDue: t.recurrence_last_due,
-      recurrenceNextAt: t.recurrence_next_at === null ? null : new Date(t.recurrence_next_at).toISOString(),
-      recurrenceSourceTaskId: t.recurrence_source_task_id,
-      openBlockerCount: openBlockerCounts.get(t.id) ?? 0,
-      blockingCount: blockingCounts.get(t.id) ?? 0,
-    }));
+    const tasks: ProjectTaskCard[] = page.map((t) => {
+      const status = t.status as TaskStatus;
+      return {
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        status,
+        columnId: resolveTaskColumnId(columns, t.column_id, status),
+        assigneePositionId: t.assignee_position_id,
+        due: t.due === null ? null : new Date(t.due).toISOString(),
+        checklist: parseTaskChecklist(t.checklist),
+        tainted: t.tainted,
+        checkedOut: Boolean(t.checked_out),
+        commentCount: commentCounts.get(t.id) ?? 0,
+        createdAt: new Date(t.created_at).toISOString(),
+        addedAt: new Date(t.added_at).toISOString(),
+        recurrence: parseStoredRecurrence(t.recurrence),
+        recurrenceCount: t.recurrence_count,
+        recurrenceLastDue: t.recurrence_last_due,
+        recurrenceNextAt: t.recurrence_next_at === null ? null : new Date(t.recurrence_next_at).toISOString(),
+        recurrenceSourceTaskId: t.recurrence_source_task_id,
+        openBlockerCount: openBlockerCounts.get(t.id) ?? 0,
+        blockingCount: blockingCounts.get(t.id) ?? 0,
+      };
+    });
 
     return {
       project,
@@ -1034,6 +986,7 @@ export const projectBoard = defineQuery({
       seats,
       isTeamOrg,
       viewerHasSeat,
+      columns,
       tasks,
       totalVisible,
       hiddenByEntityCount,

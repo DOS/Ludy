@@ -76,6 +76,26 @@ export {
   type SourceQueryResponse,
 } from './tasks-from-source.ts';
 import { projectsCommands as baseProjectsCommands } from './projects.ts';
+import {
+  projectColumnCreate,
+  projectColumnDelete,
+  projectColumnInitDefaults,
+  projectColumnReorder,
+  projectColumnUpdate,
+  projectTaskMoveColumn,
+} from './columns.ts';
+export {
+  loadProjectColumns,
+  placeProjectTaskBetween,
+  projectColumnCreate,
+  projectColumnDelete,
+  projectColumnInitDefaults,
+  projectColumnReorder,
+  projectColumnUpdate,
+  projectTaskMoveColumn,
+  resolveTaskColumnId,
+  type ProjectOrderRow,
+} from './columns.ts';
 export {
   projectArchive,
   projectBoard,
@@ -97,6 +117,12 @@ export {
 
 export const projectsCommands = [
   ...baseProjectsCommands,
+  projectColumnInitDefaults,
+  projectColumnCreate,
+  projectColumnUpdate,
+  projectColumnReorder,
+  projectColumnDelete,
+  projectTaskMoveColumn,
   projectWeeklyStatusShareNote,
   projectWeeklyStatusSendMail,
   tasksFromSourceStart,

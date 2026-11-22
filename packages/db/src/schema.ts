@@ -1396,14 +1396,26 @@ export type MeetingsCaptureSessionTable = Refine<
   { kind: MeetingCaptureKind; ended_reason: MeetingCaptureEndedReason | null }
 >;
 
-// Projects that group kernel tasks (#2591, ADR-0048).
+// Projects that group kernel tasks (#2591, ADR-0048) and custom board columns (#2605, ADR-0056).
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+export const PROJECT_COLUMN_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
+export type ProjectColumnStatus = (typeof PROJECT_COLUMN_STATUSES)[number];
+export const PROJECT_COLUMN_COLORS = ['neutral', 'primary', 'warning', 'proposal', 'success', 'destructive'] as const;
+export type ProjectColumnColor = (typeof PROJECT_COLUMN_COLORS)[number];
 
 export type ProjectsProjectTable = Refine<
   G.ProjectsProjectTable,
   {
     status: Generated<ProjectStatus>;
+  }
+>;
+
+export type ProjectsProjectColumnTable = Refine<
+  G.ProjectsProjectColumnTable,
+  {
+    task_status: ProjectColumnStatus;
+    color: Generated<ProjectColumnColor>;
   }
 >;
 
@@ -1638,6 +1650,7 @@ type Refined = Tables<{
   'crove_notes.notebook': NotesNotebookTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_projects.project': ProjectsProjectTable;
+  'crove_projects.project_column': ProjectsProjectColumnTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;

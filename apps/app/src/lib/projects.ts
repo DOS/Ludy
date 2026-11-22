@@ -1,16 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Client-side ordering, filtering and view helpers for Projects (issue #2591, ADR-0048, plan §9 P2).
-import type {
-  FilterAst,
-  ProjectBoard,
-  ProjectStatus,
-  ProjectSummary,
-  ProjectTaskCard,
-  ProjectTaskProjectEntry,
-  ProjectTaskRef,
+import {
+  PROJECT_COLUMN_COLORS,
+  type BoardTaskStatus,
+  type FilterAst,
+  type ProjectBoard,
+  type ProjectColumn,
+  type ProjectColumnColor,
+  type ProjectStatus,
+  type ProjectSummary,
+  type ProjectTaskCard,
+  type ProjectTaskProjectEntry,
+  type ProjectTaskRef,
 } from '@ludy/kernel-contract';
 import type { TaskStatus } from './agents.ts';
 import { installedModules } from './org-modules.ts';
+
+export { PROJECT_COLUMN_COLORS };
+
+export const COLUMN_COLOR_DOT_CLASS: Record<ProjectColumnColor, string> = {
+  neutral: 'bg-muted-foreground/50',
+  primary: 'bg-primary',
+  warning: 'bg-warning',
+  proposal: 'bg-proposal',
+  success: 'bg-success',
+  destructive: 'bg-destructive',
+};
 
 export const projectsInstalled = (): boolean => installedModules().includes('projects');
 
@@ -102,6 +117,92 @@ export function optimisticMoveTask(
   placement?: TaskPlacement,
 ): ProjectTaskCard[] {
   const moved = tasks.map((task) => (task.id === taskId ? { ...task, status: nextStatus } : task));
+  return placement ? optimisticReorderTask(moved, taskId, placement) : moved;
+}
+
+export function resolveBoardColumnId(
+  columns: readonly ProjectColumn[] | undefined,
+  task: Pick<ProjectTaskCard, 'status' | 'columnId'>,
+): string | null {
+  if (!columns || columns.length === 0 || task.status === 'cancelled') return null;
+  if (task.columnId) {
+    const matched = columns.find((col) => col.id === task.columnId);
+    if (matched && matched.taskStatus === task.status) return matched.id;
+  }
+  const byStatus = columns.find((col) => col.taskStatus === task.status);
+  return byStatus ? byStatus.id : null;
+}
+
+export type BoardBucket =
+  | { kind: 'custom'; key: string; column: ProjectColumn; tasks: ProjectTaskCard[] }
+  | { kind: 'canonical'; key: string; status: TaskStatus; tasks: ProjectTaskCard[] };
+
+export function groupBoardTasksByColumn(
+  tasks: readonly ProjectTaskCard[],
+  columns: readonly ProjectColumn[] | undefined,
+  includeCancelled: boolean,
+): BoardBucket[] {
+  if (!columns || columns.length === 0) {
+    const grouped = groupBoardTasks(tasks, includeCancelled);
+    return boardColumns(includeCancelled).map((status) => ({
+      kind: 'canonical',
+      key: status,
+      status,
+      tasks: grouped[status],
+    }));
+  }
+
+  const byColumnId = new Map<string, ProjectTaskCard[]>();
+  for (const col of columns) byColumnId.set(col.id, []);
+  const unmappedByStatus = new Map<BoardTaskStatus, ProjectTaskCard[]>();
+  const cancelled: ProjectTaskCard[] = [];
+
+  for (const task of tasks) {
+    if (task.status === 'cancelled') {
+      if (includeCancelled) cancelled.push(task);
+      continue;
+    }
+    const columnId = resolveBoardColumnId(columns, task);
+    if (columnId) {
+      byColumnId.get(columnId)?.push(task);
+    } else {
+      const status = task.status as BoardTaskStatus;
+      const list = unmappedByStatus.get(status) ?? [];
+      list.push(task);
+      unmappedByStatus.set(status, list);
+    }
+  }
+
+  const buckets: BoardBucket[] = columns.map((column) => ({
+    kind: 'custom',
+    key: column.id,
+    column,
+    tasks: byColumnId.get(column.id) ?? [],
+  }));
+
+  for (const status of PROJECT_BOARD_COLUMNS) {
+    const list = unmappedByStatus.get(status);
+    if (list && list.length > 0) {
+      buckets.push({ kind: 'canonical', key: status, status, tasks: list });
+    }
+  }
+
+  if (includeCancelled) {
+    buckets.push({ kind: 'canonical', key: 'cancelled', status: 'cancelled', tasks: cancelled });
+  }
+
+  return buckets;
+}
+
+export function optimisticMoveColumn(
+  tasks: readonly ProjectTaskCard[],
+  taskId: string,
+  targetColumn: Pick<ProjectColumn, 'id' | 'taskStatus'>,
+  placement?: TaskPlacement,
+): ProjectTaskCard[] {
+  const moved = tasks.map((task) =>
+    task.id === taskId ? { ...task, status: targetColumn.taskStatus, columnId: targetColumn.id } : task,
+  );
   return placement ? optimisticReorderTask(moved, taskId, placement) : moved;
 }
 
@@ -257,6 +358,14 @@ export interface BoardOrderClient {
     anchorId: string;
     idempotencyKey: string;
   }) => Promise<unknown>;
+  moveTaskColumn?: (input: {
+    projectId: string;
+    taskId: string;
+    columnId: string;
+    place?: TaskPlacement['place'];
+    anchorId?: string;
+    idempotencyKey: string;
+  }) => Promise<unknown>;
 }
 
 /**
@@ -280,6 +389,41 @@ export async function commitBoardStatusMove(
       idempotencyKey: createKey(),
     });
   }
+}
+
+export async function commitBoardColumnMove(
+  orgClient: BoardOrderClient,
+  input: {
+    projectId: string;
+    taskId: string;
+    column: Pick<ProjectColumn, 'id' | 'taskStatus'>;
+    placement?: TaskPlacement | undefined;
+  },
+  markCommitted: () => void,
+  createKey: () => string = () => crypto.randomUUID(),
+): Promise<void> {
+  if (orgClient.moveTaskColumn) {
+    await orgClient.moveTaskColumn({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      columnId: input.column.id,
+      ...(input.placement ? { place: input.placement.place, anchorId: input.placement.anchorId } : {}),
+      idempotencyKey: createKey(),
+    });
+    markCommitted();
+    return;
+  }
+  await commitBoardStatusMove(
+    orgClient,
+    {
+      projectId: input.projectId,
+      taskId: input.taskId,
+      nextStatus: input.column.taskStatus,
+      placement: input.placement,
+    },
+    markCommitted,
+    createKey,
+  );
 }
 
 /** Serializes optimistic board mutations while binding each queued step to the slug that queued it (#2610). */

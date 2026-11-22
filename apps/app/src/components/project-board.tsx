@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Kanban board and responsive compact list view for a project (#2591, ADR-0048).
-import type { ProjectSeat, ProjectTaskCard, TaskChecklistStep } from '@ludy/kernel-contract';
+import type { ProjectColumn, ProjectSeat, ProjectTaskCard, TaskChecklistStep } from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
 import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
@@ -18,10 +18,12 @@ import { useFormat } from '../i18n/provider.tsx';
 import { TASK_STATUSES, taskDueFromDay, type TaskStatus } from '../lib/agents.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import {
-  boardColumns,
-  groupBoardTasks,
+  COLUMN_COLOR_DOT_CLASS,
+  groupBoardTasksByColumn,
   isTaskOverdue,
+  resolveBoardColumnId,
   taskStatusVariant,
+  type BoardBucket,
   type ProjectViewMode,
   type TaskPlacement,
 } from '../lib/projects.ts';
@@ -63,14 +65,19 @@ function seatDisplay(
 
 function QuickAddTask({
   status,
+  columnId,
   seats,
   busy,
   onCreate,
 }: {
   status: BoardColumnStatus;
+  columnId?: string | undefined;
   seats: readonly ProjectSeat[];
   busy: boolean;
-  onCreate: (input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus }, done: () => void) => void;
+  onCreate: (
+    input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus; columnId?: string },
+    done: () => void,
+  ) => void;
 }) {
   const t = useTranslations('projects');
   const tt = useTranslations('tasks');
@@ -114,6 +121,7 @@ function QuickAddTask({
         ...(due ? { due } : {}),
         ...(nextChecklist.length > 0 ? { checklist: nextChecklist } : {}),
         status,
+        ...(columnId ? { columnId } : {}),
       },
       () => {
         setTitle('');
@@ -140,9 +148,9 @@ function QuickAddTask({
       <button
         ref={triggerRef}
         type="button"
-        data-testid={`quick-add-${status}`}
+        data-testid={columnId ? `quick-add-column-${columnId}` : `quick-add-${status}`}
         onClick={() => setOpen(true)}
-        className="flex min-h-10 w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8"
+        className="flex min-h-11 w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8"
       >
         <ProjectIcon name="plus" className="size-3.5" />
         <span>{t('board.quickAddTrigger')}</span>
@@ -154,7 +162,7 @@ function QuickAddTask({
     <form
       onSubmit={submit}
       onKeyDown={onKeyDown}
-      data-testid={`quick-add-form-${status}`}
+      data-testid={columnId ? `quick-add-form-column-${columnId}` : `quick-add-form-${status}`}
       className="space-y-2 rounded-lg border border-primary/40 bg-card p-2.5"
     >
       <Input
@@ -192,7 +200,7 @@ function QuickAddTask({
           />
           <TaskChecklistEditor
             key={resetCount}
-            idPrefix={`quick-add-${status}`}
+            idPrefix={columnId ? `quick-add-${columnId}` : `quick-add-${status}`}
             label={t('modals.taskChecklistLabel')}
             value={checklist}
             stepError={stepError}
@@ -318,6 +326,7 @@ function TaskBoardCard({
   slug,
   task,
   seats,
+  customColumns,
   canEdit,
   dragging,
   dropEdge,
@@ -334,12 +343,14 @@ function TaskBoardCard({
   onMoveUp,
   onMoveDown,
   onMoveStatus,
+  onMoveColumn,
   onEdit,
   onRemove,
 }: {
   slug: string;
   task: ProjectTaskCard;
   seats: readonly ProjectSeat[];
+  customColumns: readonly ProjectColumn[];
   canEdit: boolean;
   dragging: boolean;
   dropEdge: 'before' | 'after' | null;
@@ -356,12 +367,14 @@ function TaskBoardCard({
   onMoveUp: () => void;
   onMoveDown: () => void;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus) => void;
+  onMoveColumn?: ((taskId: string, column: ProjectColumn) => void) | undefined;
   onEdit: (task: ProjectTaskCard) => void;
   onRemove: (task: ProjectTaskCard) => void;
 }) {
   const t = useTranslations('projects');
   const tt = useTranslations('tasks');
   const draggable = canEdit && !task.checkedOut;
+  const resolvedColumnId = resolveBoardColumnId(customColumns, task);
   const dropRing =
     dropEdge === 'before'
       ? 'border-t-2 border-t-primary ring-1 ring-primary/25'
@@ -374,6 +387,7 @@ function TaskBoardCard({
       data-testid="project-task-card"
       data-task-id={task.id}
       data-task-status={task.status}
+      data-column-id={resolvedColumnId ?? undefined}
       draggable={draggable}
       onDragStart={(e) => {
         if (!draggable) return;
@@ -457,23 +471,59 @@ function TaskBoardCard({
 
       {canEdit && (
         <div className="mt-2.5 border-t border-border/60 pt-2">
-          <NativeSelect
-            aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
-            disabled={task.checkedOut}
-            value={task.status}
-            onChange={(e) => onMoveStatus(task.id, e.target.value as TaskStatus)}
-            className="h-8 w-full text-xs"
-          >
-            {TASK_STATUSES.map((st) => (
-              <NativeSelectOption key={st} value={st}>
-                {tt(`status.${st}`)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          {customColumns.length > 0 && onMoveColumn ? (
+            <NativeSelect
+              aria-label={t('task.changeColumnOf', { title: taskTitleText(task) })}
+              data-testid="card-column-switcher"
+              disabled={task.checkedOut}
+              value={task.status === 'cancelled' ? '__cancelled__' : (resolvedColumnId ?? `__unmapped__:${task.status}`)}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (next === '__cancelled__') {
+                  onMoveStatus(task.id, 'cancelled');
+                  return;
+                }
+                const target = customColumns.find((col) => col.id === next);
+                if (target) onMoveColumn(task.id, target);
+              }}
+              className="w-full [&_select]:min-h-11 [&_select]:text-xs"
+            >
+              {resolvedColumnId === null && task.status !== 'cancelled' && (
+                <NativeSelectOption value={`__unmapped__:${task.status}`} disabled>
+                  {tt(`status.${task.status}`)}
+                </NativeSelectOption>
+              )}
+              {customColumns.map((col) => (
+                <NativeSelectOption key={col.id} value={col.id}>
+                  {col.name}
+                </NativeSelectOption>
+              ))}
+              <NativeSelectOption value="__cancelled__">{tt('status.cancelled')}</NativeSelectOption>
+            </NativeSelect>
+          ) : (
+            <NativeSelect
+              aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
+              disabled={task.checkedOut}
+              value={task.status}
+              onChange={(e) => onMoveStatus(task.id, e.target.value as TaskStatus)}
+              className="h-8 w-full text-xs"
+            >
+              {TASK_STATUSES.map((st) => (
+                <NativeSelectOption key={st} value={st}>
+                  {tt(`status.${st}`)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          )}
         </div>
       )}
     </li>
   );
+}
+
+function bucketKeyOfTask(task: ProjectTaskCard, customColumns: readonly ProjectColumn[]): string {
+  if (customColumns.length === 0 || task.status === 'cancelled') return task.status;
+  return resolveBoardColumnId(customColumns, task) ?? task.status;
 }
 
 export function ProjectBoardView({
@@ -481,11 +531,13 @@ export function ProjectBoardView({
   view,
   tasks,
   seats,
+  columns: customColumnsProp,
   canEdit,
   includeCancelled,
   creatingTask,
   customSortActive = false,
   onMoveStatus,
+  onMoveColumn,
   onReorderTask,
   onCreateTask,
   onEditTask,
@@ -495,13 +547,18 @@ export function ProjectBoardView({
   view: ProjectViewMode;
   tasks: readonly ProjectTaskCard[];
   seats: readonly ProjectSeat[];
+  columns?: readonly ProjectColumn[] | undefined;
   canEdit: boolean;
   includeCancelled: boolean;
   creatingTask: boolean;
   customSortActive?: boolean;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus, placement?: TaskPlacement) => void;
+  onMoveColumn?: ((taskId: string, column: ProjectColumn, placement?: TaskPlacement) => void) | undefined;
   onReorderTask?: (taskId: string, placement: TaskPlacement) => void;
-  onCreateTask: (input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus }, done: () => void) => void;
+  onCreateTask: (
+    input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus; columnId?: string },
+    done: () => void,
+  ) => void;
   onEditTask: (task: ProjectTaskCard) => void;
   onRemoveTask: (taskId: string) => void;
 }) {
@@ -510,17 +567,19 @@ export function ProjectBoardView({
   const f = useFormat();
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [overStatus, setOverStatus] = useState<TaskStatus | null>(null);
+  const [overBucketKey, setOverBucketKey] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ anchorId: string; place: 'before' | 'after' } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ProjectTaskCard | null>(null);
   const [pendingBlockedMove, setPendingBlockedMove] = useState<{
     task: ProjectTaskCard;
     nextStatus: TaskStatus;
+    column?: ProjectColumn | undefined;
     placement?: TaskPlacement | undefined;
   } | null>(null);
 
-  const columns = boardColumns(includeCancelled);
-  const grouped = groupBoardTasks(tasks, includeCancelled);
+  const customColumns = customColumnsProp ?? [];
+  const hasCustomColumns = customColumns.length > 0;
+  const buckets = groupBoardTasksByColumn(tasks, customColumns, includeCancelled);
   const listTasks = includeCancelled ? tasks : tasks.filter((item) => item.status !== 'cancelled');
   const showReorder = canEdit && onReorderTask !== undefined;
 
@@ -533,22 +592,45 @@ export function ProjectBoardView({
     onMoveStatus(taskId, nextStatus, placement);
   };
 
+  const requestMoveColumn = (taskId: string, column: ProjectColumn, placement?: TaskPlacement) => {
+    if (!onMoveColumn) {
+      requestMoveStatus(taskId, column.taskStatus, placement);
+      return;
+    }
+    const targetTask = tasks.find((item) => item.id === taskId);
+    if (targetTask && shouldConfirmBlockedStatusMove(targetTask.status, column.taskStatus, targetTask.openBlockerCount ?? 0)) {
+      setPendingBlockedMove({ task: targetTask, nextStatus: column.taskStatus, column, placement });
+      return;
+    }
+    onMoveColumn(taskId, column, placement);
+  };
+
   const clearDrag = () => {
     setDraggingId(null);
-    setOverStatus(null);
+    setOverBucketKey(null);
     setDropTarget(null);
   };
 
-  const handleDropOnColumn = (e: DragEvent<HTMLElement>, targetStatus: TaskStatus) => {
+  const moveAcrossBuckets = (taskId: string, bucket: BoardBucket, placement?: TaskPlacement) => {
+    if (bucket.kind === 'custom' && onMoveColumn) {
+      requestMoveColumn(taskId, bucket.column, placement);
+      return;
+    }
+    const nextStatus = bucket.kind === 'canonical' ? bucket.status : bucket.column.taskStatus;
+    requestMoveStatus(taskId, nextStatus, placement);
+  };
+
+  const handleDropOnBucket = (e: DragEvent<HTMLElement>, bucket: BoardBucket) => {
     e.preventDefault();
     const droppedId = e.dataTransfer.getData('text/plain') || draggingId;
     clearDrag();
     if (!canEdit || !droppedId) return;
     const task = tasks.find((item) => item.id === droppedId);
     if (!task) return;
-    if (task.status === targetStatus) {
+    const currentKey = bucketKeyOfTask(task, customColumns);
+    if (currentKey === bucket.key) {
       if (!customSortActive && onReorderTask) {
-        const items = grouped[targetStatus];
+        const items = bucket.tasks;
         const last = items[items.length - 1];
         if (last && last.id !== droppedId) {
           onReorderTask(droppedId, { place: 'after', anchorId: last.id });
@@ -557,26 +639,27 @@ export function ProjectBoardView({
       return;
     }
     if (task.checkedOut) return;
-    requestMoveStatus(droppedId, targetStatus);
+    moveAcrossBuckets(droppedId, bucket);
   };
 
-  const handleDragOverCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number) => {
+  const handleDragOverCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number, targetBucket: BoardBucket) => {
     if (!canEdit || !draggingId || draggingId === targetTask.id) return;
     const draggingTask = tasks.find((item) => item.id === draggingId);
     if (!draggingTask) return;
-    const sameColumn = draggingTask.status === targetTask.status;
+    const draggingKey = bucketKeyOfTask(draggingTask, customColumns);
+    const sameColumn = draggingKey === targetBucket.key;
     if (sameColumn && (customSortActive || !onReorderTask)) return;
     if (!sameColumn && draggingTask.checkedOut) return;
-    const columnItems = grouped[targetTask.status];
+    const columnItems = targetBucket.tasks;
     const draggingIndex = sameColumn ? columnItems.findIndex((item) => item.id === draggingId) : -1;
     const place = dropPlaceForCard(e, sameColumn, draggingIndex, targetIndex);
     e.preventDefault();
     e.stopPropagation();
-    setOverStatus((cur) => (cur === targetTask.status ? cur : targetTask.status));
+    setOverBucketKey((cur) => (cur === targetBucket.key ? cur : targetBucket.key));
     setDropTarget((cur) => (cur?.anchorId === targetTask.id && cur.place === place ? cur : { anchorId: targetTask.id, place }));
   };
 
-  const handleDropOnCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number) => {
+  const handleDropOnCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number, targetBucket: BoardBucket) => {
     e.preventDefault();
     e.stopPropagation();
     const droppedId = e.dataTransfer.getData('text/plain') || draggingId;
@@ -584,8 +667,9 @@ export function ProjectBoardView({
     if (!canEdit || !droppedId || droppedId === targetTask.id) return;
     const droppedTask = tasks.find((item) => item.id === droppedId);
     if (!droppedTask) return;
-    const sameColumn = droppedTask.status === targetTask.status;
-    const columnItems = grouped[targetTask.status];
+    const droppedKey = bucketKeyOfTask(droppedTask, customColumns);
+    const sameColumn = droppedKey === targetBucket.key;
+    const columnItems = targetBucket.tasks;
     const draggingIndex = sameColumn ? columnItems.findIndex((item) => item.id === droppedId) : -1;
     const place = dropPlaceForCard(e, sameColumn, draggingIndex, targetIndex);
     if (sameColumn) {
@@ -596,7 +680,7 @@ export function ProjectBoardView({
       return;
     }
     if (droppedTask.checkedOut) return;
-    requestMoveStatus(droppedId, targetTask.status, !customSortActive && onReorderTask ? { place, anchorId: targetTask.id } : undefined);
+    moveAcrossBuckets(droppedId, targetBucket, !customSortActive && onReorderTask ? { place, anchorId: targetTask.id } : undefined);
   };
 
   return (
@@ -625,16 +709,20 @@ export function ProjectBoardView({
           }}
           title={t('dependencies.moveBlockedTitle')}
           description={t('dependencies.moveBlockedDesc', {
-            title: pendingBlockedMove.task.title,
+            title: taskTitleText(pendingBlockedMove.task),
             count: pendingBlockedMove.task.openBlockerCount ?? 0,
           })}
           confirm={t('dependencies.moveBlockedConfirm')}
           onConfirm={() => {
-            onMoveStatus(
-              pendingBlockedMove.task.id,
-              pendingBlockedMove.nextStatus,
-              pendingBlockedMove.placement,
-            );
+            if (pendingBlockedMove.column && onMoveColumn) {
+              onMoveColumn(pendingBlockedMove.task.id, pendingBlockedMove.column, pendingBlockedMove.placement);
+            } else {
+              onMoveStatus(
+                pendingBlockedMove.task.id,
+                pendingBlockedMove.nextStatus,
+                pendingBlockedMove.placement,
+              );
+            }
             setPendingBlockedMove(null);
           }}
         />
@@ -649,17 +737,30 @@ export function ProjectBoardView({
       {view === 'board' ? (
         <div
           data-testid="project-board"
-          className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${columns.length === 6 ? '2xl:grid-cols-6' : '2xl:grid-cols-5'}`}
+          className={
+            hasCustomColumns
+              ? 'flex gap-3 overflow-x-auto pb-2'
+              : `grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${buckets.length === 6 ? '2xl:grid-cols-6' : '2xl:grid-cols-5'}`
+          }
         >
-          {columns.map((status) => {
-            const items = grouped[status];
-            const isOver = overStatus === status;
+          {buckets.map((bucket) => {
+            const items = bucket.tasks;
+            const isOver = overBucketKey === bucket.key;
+            const isCustom = bucket.kind === 'custom';
+            const status = isCustom ? bucket.column.taskStatus : bucket.status;
+            const title = isCustom ? bucket.column.name : tt(`status.${bucket.status}`);
+            const dotClass = isCustom ? COLUMN_COLOR_DOT_CLASS[bucket.column.color] : COLUMN_DOT_CLASS[bucket.status];
+            const wipLimit = isCustom ? bucket.column.wipLimit : null;
+            const overWip = wipLimit !== null && items.length > wipLimit;
             const quickAddStatus: BoardColumnStatus | null = status === 'cancelled' ? null : status;
+            const quickAddColumnId = isCustom ? bucket.column.id : undefined;
+
             return (
               <section
-                key={status}
-                aria-label={t('board.columnLabel', { status: tt(`status.${status}`) })}
+                key={bucket.key}
+                aria-label={t('board.columnLabel', { status: title })}
                 data-testid="project-column"
+                data-column-id={isCustom ? bucket.column.id : undefined}
                 data-status={status}
                 onDragEnter={(e) => {
                   if (canEdit) e.preventDefault();
@@ -667,32 +768,58 @@ export function ProjectBoardView({
                 onDragOver={(e) => {
                   if (!canEdit) return;
                   e.preventDefault();
-                  setOverStatus((cur) => (cur === status ? cur : status));
+                  setOverBucketKey((cur) => (cur === bucket.key ? cur : bucket.key));
                   setDropTarget((cur) => (cur ? null : cur));
                 }}
                 onDragLeave={(e) => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                    setOverStatus((cur) => (cur === status ? null : cur));
+                    setOverBucketKey((cur) => (cur === bucket.key ? null : cur));
                   }
                 }}
-                onDrop={(e) => handleDropOnColumn(e, status)}
-                className={`flex min-w-0 flex-col rounded-xl border border-border bg-muted/35 p-2.5 transition-colors ${
-                  isOver ? 'border-primary/60 bg-primary/5 ring-2 ring-primary/30' : ''
+                onDrop={(e) => handleDropOnBucket(e, bucket)}
+                className={`flex min-w-0 flex-col rounded-xl border bg-muted/35 p-2.5 transition-colors ${
+                  hasCustomColumns ? 'w-72 shrink-0 md:w-80' : ''
+                } ${
+                  isOver
+                    ? 'border-primary/60 bg-primary/5 ring-2 ring-primary/30'
+                    : overWip
+                      ? 'border-warning/60'
+                      : 'border-border'
                 }`}
               >
                 <header className="mb-2.5 flex items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`size-2 rounded-full ${COLUMN_DOT_CLASS[status]}`} aria-hidden="true" />
-                    <h2 className="text-xs font-semibold tracking-wide text-foreground uppercase">
-                      {tt(`status.${status}`)}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className={`size-2 shrink-0 rounded-full ${dotClass}`} aria-hidden="true" />
+                    <h2
+                      className="truncate text-xs font-semibold tracking-wide text-foreground uppercase"
+                      title={isCustom ? `${title} · ${tt(`status.${status}`)}` : title}
+                    >
+                      {title}
                     </h2>
                   </div>
-                  <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums">
-                    {items.length}
-                  </Badge>
+                  {wipLimit !== null ? (
+                    <Badge
+                      variant={overWip ? 'warning' : 'outline'}
+                      data-testid={overWip ? 'column-wip-exceeded' : 'column-wip-count'}
+                      aria-label={
+                        overWip
+                          ? t('board.wipExceededLabel', { count: String(items.length), limit: String(wipLimit) })
+                          : t('board.wipCountLabel', { count: String(items.length), limit: String(wipLimit) })
+                      }
+                      className="h-5 shrink-0 px-1.5 text-[11px] tabular-nums"
+                    >
+                      {overWip
+                        ? t('board.wipExceededText', { count: String(items.length), limit: String(wipLimit) })
+                        : t('board.wipBadge', { count: String(items.length), limit: String(wipLimit) })}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[11px] tabular-nums">
+                      {items.length}
+                    </Badge>
+                  )}
                 </header>
 
-                <ul className="space-y-2" aria-label={tt(`status.${status}`)}>
+                <ul className="space-y-2" aria-label={title}>
                   {items.length === 0 ? (
                     <li className="rounded-lg border border-dashed border-border/70 px-3 py-5 text-center text-xs text-muted-foreground">
                       {t('board.emptyColumn')}
@@ -707,6 +834,7 @@ export function ProjectBoardView({
                           slug={slug}
                           task={task}
                           seats={seats}
+                          customColumns={customColumns}
                           canEdit={canEdit}
                           dragging={draggingId === task.id}
                           dropEdge={dropTarget?.anchorId === task.id ? dropTarget.place : null}
@@ -718,8 +846,8 @@ export function ProjectBoardView({
                           showReorder={showReorder}
                           onDragStart={() => setDraggingId(task.id)}
                           onDragEnd={clearDrag}
-                          onDragOverCard={(e) => handleDragOverCard(e, task, idx)}
-                          onDropOnCard={(e) => handleDropOnCard(e, task, idx)}
+                          onDragOverCard={(e) => handleDragOverCard(e, task, idx, bucket)}
+                          onDropOnCard={(e) => handleDropOnCard(e, task, idx, bucket)}
                           onMoveUp={() => {
                             if (!customSortActive && onReorderTask && prev) {
                               onReorderTask(task.id, { place: 'before', anchorId: prev.id });
@@ -731,6 +859,7 @@ export function ProjectBoardView({
                             }
                           }}
                           onMoveStatus={(taskId, nextStatus) => requestMoveStatus(taskId, nextStatus)}
+                          onMoveColumn={onMoveColumn ? (taskId, col) => requestMoveColumn(taskId, col) : undefined}
                           onEdit={onEditTask}
                           onRemove={setConfirmRemove}
                         />
@@ -741,7 +870,13 @@ export function ProjectBoardView({
 
                 {canEdit && quickAddStatus && (
                   <div className="mt-2 pt-1">
-                    <QuickAddTask status={quickAddStatus} seats={seats} busy={creatingTask} onCreate={onCreateTask} />
+                    <QuickAddTask
+                      status={quickAddStatus}
+                      columnId={quickAddColumnId}
+                      seats={seats}
+                      busy={creatingTask}
+                      onCreate={onCreateTask}
+                    />
                   </div>
                 )}
               </section>
@@ -774,7 +909,12 @@ export function ProjectBoardView({
                   >
                     <div className="min-w-0 flex-1 space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`size-2 shrink-0 rounded-full ${COLUMN_DOT_CLASS[task.status]}`} aria-hidden="true" />
+                        {(() => {
+                          const listDotColId = hasCustomColumns ? resolveBoardColumnId(customColumns, task) : null;
+                          const listDotCol = listDotColId ? customColumns.find((c) => c.id === listDotColId) : undefined;
+                          const dot = listDotCol ? COLUMN_COLOR_DOT_CLASS[listDotCol.color] : COLUMN_DOT_CLASS[task.status];
+                          return <span className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />;
+                        })()}
                         <Link
                           to="/o/$slug/tasks/$id"
                           params={{ slug, id: task.id }}
@@ -834,23 +974,59 @@ export function ProjectBoardView({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-                      {canEdit ? (
-                        <NativeSelect
-                          aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
-                          disabled={task.checkedOut}
-                          value={task.status}
-                          onChange={(e) => requestMoveStatus(task.id, e.target.value as TaskStatus)}
-                          className="h-10 min-w-32 text-xs sm:h-8"
-                        >
-                          {TASK_STATUSES.map((st) => (
-                            <NativeSelectOption key={st} value={st}>
-                              {tt(`status.${st}`)}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                      ) : (
-                        <Badge variant={taskStatusVariant(task.status)}>{tt(`status.${task.status}`)}</Badge>
-                      )}
+                      {(() => {
+                        const listColId = hasCustomColumns ? resolveBoardColumnId(customColumns, task) : null;
+                        const listCol = listColId ? customColumns.find((c) => c.id === listColId) : undefined;
+                        if (canEdit) {
+                          if (hasCustomColumns && onMoveColumn) {
+                            return (
+                              <NativeSelect
+                                aria-label={t('task.changeColumnOf', { title: taskTitleText(task) })}
+                                disabled={task.checkedOut}
+                                value={task.status === 'cancelled' ? '__cancelled__' : (listColId ?? `__unmapped__:${task.status}`)}
+                                onChange={(e) => {
+                                  const next = e.target.value;
+                                  if (next === '__cancelled__') {
+                                    requestMoveStatus(task.id, 'cancelled');
+                                    return;
+                                  }
+                                  const target = customColumns.find((col) => col.id === next);
+                                  if (target) requestMoveColumn(task.id, target);
+                                }}
+                                className="min-w-36 [&_select]:min-h-11 [&_select]:text-xs"
+                              >
+                                {listColId === null && task.status !== 'cancelled' && (
+                                  <NativeSelectOption value={`__unmapped__:${task.status}`} disabled>
+                                    {tt(`status.${task.status}`)}
+                                  </NativeSelectOption>
+                                )}
+                                {customColumns.map((col) => (
+                                  <NativeSelectOption key={col.id} value={col.id}>
+                                    {col.name}
+                                  </NativeSelectOption>
+                                ))}
+                                <NativeSelectOption value="__cancelled__">{tt('status.cancelled')}</NativeSelectOption>
+                              </NativeSelect>
+                            );
+                          }
+                          return (
+                            <NativeSelect
+                              aria-label={t('task.changeStatusOf', { title: taskTitleText(task) })}
+                              disabled={task.checkedOut}
+                              value={task.status}
+                              onChange={(e) => requestMoveStatus(task.id, e.target.value as TaskStatus)}
+                              className="h-10 min-w-32 text-xs sm:h-8"
+                            >
+                              {TASK_STATUSES.map((st) => (
+                                <NativeSelectOption key={st} value={st}>
+                                  {tt(`status.${st}`)}
+                                </NativeSelectOption>
+                              ))}
+                            </NativeSelect>
+                          );
+                        }
+                        return <Badge variant={taskStatusVariant(task.status)}>{listCol ? listCol.name : tt(`status.${task.status}`)}</Badge>;
+                      })()}
                       {canEdit && (
                         <div className="flex items-center gap-1">
                           {showReorder && (

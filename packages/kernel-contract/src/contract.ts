@@ -584,10 +584,27 @@ import {
   zMeetingHooksSwitch,
 } from './meeting-hook.ts';
 import {
+  COLUMN_CREATE_PLACEMENT_ISSUE,
+  DELETE_SAME_FALLBACK_COLUMN_ISSUE,
+  REORDER_SAME_COLUMN_ISSUE,
+  TASK_MOVE_COLUMN_PLACEMENT_ISSUE,
+  distinctDeleteFallbackColumn,
+  distinctColumnReorderTargets,
+  validColumnCreatePlacement,
+  validTaskMoveColumnPlacement,
   zProjectArchive,
   zProjectBoard,
   zProjectBoardInput,
   zProjectCandidateTask,
+  zProjectColumnCreateFields,
+  zProjectColumnDeleteFields,
+  zProjectColumnDeleteResult,
+  zProjectColumnInitDefaultsInput,
+  zProjectColumnInitDefaultsResult,
+  zProjectColumnMutateResult,
+  zProjectColumnReorderFields,
+  zProjectColumnReorderResult,
+  zProjectColumnUpdateInput,
   zProjectCreate,
   zProjectCreateFromTemplateFields,
   zProjectCreateFromTemplateResult,
@@ -599,6 +616,8 @@ import {
   zProjectSetStatus,
   zProjectStatus,
   zProjectTaskCreate,
+  zProjectTaskMoveColumnFields,
+  zProjectTaskMoveColumnResult,
   zProjectTaskMutate,
   zProjectTaskProjectEntry,
   zProjectTaskProjectsInput,
@@ -3462,6 +3481,24 @@ export const contract = {
     removeDependency: oc
       .input(zProjectDependencyRemoveInput.extend({ idempotencyKey: zId }))
       .output(zProjectDependencyRemoveResult),
+    initDefaultColumns: oc
+      .input(zProjectColumnInitDefaultsInput.extend({ idempotencyKey: zId }))
+      .output(zProjectColumnInitDefaultsResult),
+    createColumn: oc
+      .input(zProjectColumnCreateFields.extend({ idempotencyKey: zId }).refine(validColumnCreatePlacement, COLUMN_CREATE_PLACEMENT_ISSUE))
+      .output(zProjectColumnMutateResult),
+    updateColumn: oc
+      .input(zProjectColumnUpdateInput.extend({ idempotencyKey: zId }))
+      .output(zProjectColumnMutateResult),
+    reorderColumn: oc
+      .input(zProjectColumnReorderFields.extend({ idempotencyKey: zId }).refine(distinctColumnReorderTargets, REORDER_SAME_COLUMN_ISSUE))
+      .output(zProjectColumnReorderResult),
+    deleteColumn: oc
+      .input(zProjectColumnDeleteFields.extend({ idempotencyKey: zId }).refine(distinctDeleteFallbackColumn, DELETE_SAME_FALLBACK_COLUMN_ISSUE))
+      .output(zProjectColumnDeleteResult),
+    moveTaskColumn: oc
+      .input(zProjectTaskMoveColumnFields.extend({ idempotencyKey: zId }).refine(validTaskMoveColumnPlacement, TASK_MOVE_COLUMN_PLACEMENT_ISSUE))
+      .output(zProjectTaskMoveColumnResult),
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {

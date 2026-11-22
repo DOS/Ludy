@@ -19,6 +19,9 @@ export const PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX = 2000;
 export const PROJECT_TEMPLATE_TASK_DUE_OFFSET_MAX = 365;
 export const PROJECT_TASK_RECURRENCE_INTERVAL_MAX = 12;
 export const PROJECT_TASK_RECURRENCE_TIMES_MAX = 500;
+export const PROJECT_COLUMNS_MAX = 12;
+export const PROJECT_COLUMN_NAME_MAX = 80;
+export const PROJECT_COLUMN_WIP_MAX = 200;
 
 export const BUILTIN_PROJECT_TEMPLATE_KEYS = ['monthly-close', 'client-onboarding', 'campaign-launch'] as const;
 export type BuiltinProjectTemplateKey = (typeof BUILTIN_PROJECT_TEMPLATE_KEYS)[number];
@@ -69,6 +72,159 @@ export const zProjectStatus = z.enum(PROJECT_STATUSES);
 // Board columns are the five open/done statuses; cancelled sits behind a filter (ADR-0048 point 2).
 export const BOARD_TASK_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
 export type BoardTaskStatus = (typeof BOARD_TASK_STATUSES)[number];
+export const zProjectColumnStatus = z.enum(BOARD_TASK_STATUSES);
+
+// Custom project board column semantic colors mapped to @ludy/ui tokens (#2605, ADR-0056).
+export const PROJECT_COLUMN_COLORS = ['neutral', 'primary', 'warning', 'proposal', 'success', 'destructive'] as const;
+export type ProjectColumnColor = (typeof PROJECT_COLUMN_COLORS)[number];
+export const zProjectColumnColor = z.enum(PROJECT_COLUMN_COLORS);
+
+export const zProjectColumnName = z.string().trim().min(1).max(PROJECT_COLUMN_NAME_MAX);
+export const zProjectColumnWipLimit = z.number().int().min(1).max(PROJECT_COLUMN_WIP_MAX).nullable();
+
+export const zProjectColumn = z.object({
+  id: zId,
+  projectId: zId,
+  name: z.string(),
+  taskStatus: zProjectColumnStatus,
+  color: zProjectColumnColor,
+  wipLimit: zProjectColumnWipLimit,
+  sortKey: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectColumn = z.infer<typeof zProjectColumn>;
+
+export const zProjectColumnInitDefaultsInput = z.strictObject({
+  projectId: zId,
+  language: z.enum(['vi', 'en']).default('vi'),
+});
+export type ProjectColumnInitDefaultsInput = z.input<typeof zProjectColumnInitDefaultsInput>;
+
+export const zProjectColumnInitDefaultsResult = z.object({
+  projectId: zId,
+  columns: z.array(zProjectColumn),
+  initialized: z.boolean(),
+});
+export type ProjectColumnInitDefaultsResult = z.infer<typeof zProjectColumnInitDefaultsResult>;
+
+export const zProjectColumnCreateFields = z.strictObject({
+  projectId: zId,
+  name: zProjectColumnName,
+  taskStatus: zProjectColumnStatus,
+  color: zProjectColumnColor.optional(),
+  wipLimit: zProjectColumnWipLimit.optional(),
+  place: z.enum(['before', 'after']).optional(),
+  anchorId: zId.optional(),
+});
+export const validColumnCreatePlacement = (v: {
+  place?: 'before' | 'after' | undefined;
+  anchorId?: string | undefined;
+}): boolean => (v.place === undefined) === (v.anchorId === undefined);
+export const COLUMN_CREATE_PLACEMENT_ISSUE = {
+  message: 'Both place and anchorId are required when placing relative to another column',
+  path: ['anchorId'],
+};
+export const zProjectColumnCreateInput = zProjectColumnCreateFields.refine(
+  validColumnCreatePlacement,
+  COLUMN_CREATE_PLACEMENT_ISSUE,
+);
+export type ProjectColumnCreateInput = z.infer<typeof zProjectColumnCreateInput>;
+
+export const zProjectColumnUpdateInput = z.strictObject({
+  projectId: zId,
+  columnId: zId,
+  name: zProjectColumnName.optional(),
+  taskStatus: zProjectColumnStatus.optional(),
+  color: zProjectColumnColor.optional(),
+  wipLimit: zProjectColumnWipLimit.optional(),
+});
+export type ProjectColumnUpdateInput = z.infer<typeof zProjectColumnUpdateInput>;
+
+export const zProjectColumnMutateResult = z.object({
+  projectId: zId,
+  column: zProjectColumn,
+});
+export type ProjectColumnMutateResult = z.infer<typeof zProjectColumnMutateResult>;
+
+export const zProjectColumnReorderFields = z.strictObject({
+  projectId: zId,
+  columnId: zId,
+  place: z.enum(['before', 'after']),
+  anchorId: zId,
+});
+export const distinctColumnReorderTargets = (v: { columnId: string; anchorId: string }): boolean => v.columnId !== v.anchorId;
+export const REORDER_SAME_COLUMN_ISSUE = { message: 'A column is not moved next to itself', path: ['anchorId'] };
+export const zProjectColumnReorderInput = zProjectColumnReorderFields.refine(
+  distinctColumnReorderTargets,
+  REORDER_SAME_COLUMN_ISSUE,
+);
+export type ProjectColumnReorderInput = z.infer<typeof zProjectColumnReorderInput>;
+
+export const zProjectColumnReorderResult = z.object({
+  projectId: zId,
+  columns: z.array(zProjectColumn),
+});
+export type ProjectColumnReorderResult = z.infer<typeof zProjectColumnReorderResult>;
+
+export const zProjectColumnDeleteFields = z.strictObject({
+  projectId: zId,
+  columnId: zId,
+  fallbackColumnId: zId,
+});
+export const distinctDeleteFallbackColumn = (v: { columnId: string; fallbackColumnId: string }): boolean =>
+  v.columnId !== v.fallbackColumnId;
+export const DELETE_SAME_FALLBACK_COLUMN_ISSUE = {
+  message: 'Fallback column must be different from the deleted column',
+  path: ['fallbackColumnId'],
+};
+export const zProjectColumnDeleteInput = zProjectColumnDeleteFields.refine(
+  distinctDeleteFallbackColumn,
+  DELETE_SAME_FALLBACK_COLUMN_ISSUE,
+);
+export type ProjectColumnDeleteInput = z.infer<typeof zProjectColumnDeleteInput>;
+
+export const zProjectColumnDeleteResult = z.object({
+  projectId: zId,
+  deletedColumnId: zId,
+  fallbackColumnId: zId,
+  columns: z.array(zProjectColumn),
+});
+export type ProjectColumnDeleteResult = z.infer<typeof zProjectColumnDeleteResult>;
+
+export const zProjectTaskMoveColumnFields = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  columnId: zId,
+  place: z.enum(['before', 'after']).optional(),
+  anchorId: zId.optional(),
+});
+export const validTaskMoveColumnPlacement = (v: {
+  taskId: string;
+  place?: 'before' | 'after' | undefined;
+  anchorId?: string | undefined;
+}): boolean => {
+  if ((v.place === undefined) !== (v.anchorId === undefined)) return false;
+  if (v.anchorId !== undefined && v.anchorId === v.taskId) return false;
+  return true;
+};
+export const TASK_MOVE_COLUMN_PLACEMENT_ISSUE = {
+  message: 'Both place and anchorId are required when placing relative to another task, and anchorId must differ from taskId',
+  path: ['anchorId'],
+};
+export const zProjectTaskMoveColumnInput = zProjectTaskMoveColumnFields.refine(
+  validTaskMoveColumnPlacement,
+  TASK_MOVE_COLUMN_PLACEMENT_ISSUE,
+);
+export type ProjectTaskMoveColumnInput = z.infer<typeof zProjectTaskMoveColumnInput>;
+
+export const zProjectTaskMoveColumnResult = z.object({
+  projectId: zId,
+  taskId: zId,
+  columnId: zId,
+  status: zProjectColumnStatus,
+});
+export type ProjectTaskMoveColumnResult = z.infer<typeof zProjectTaskMoveColumnResult>;
 
 export const zProjectName = z.string().trim().min(1).max(PROJECT_NAME_MAX);
 export const zProjectDescription = z.string().trim().max(PROJECT_DESCRIPTION_MAX);
@@ -138,6 +294,7 @@ export const zProjectTaskCreate = z.strictObject({
   assigneePositionId: zId.nullable(),
   due: z.iso.datetime().optional(),
   status: z.enum(BOARD_TASK_STATUSES).optional(),
+  columnId: zId.optional(),
   checklist: zTaskChecklist.optional(),
 });
 export type ProjectTaskCreateInput = z.infer<typeof zProjectTaskCreate>;
@@ -201,6 +358,7 @@ export const zProjectTaskCard = z.object({
   title: z.string(),
   description: z.string().nullable(),
   status: zTaskStatus,
+  columnId: zId.nullable().optional(),
   assigneePositionId: zId.nullable(),
   due: z.string().nullable(),
   checklist: z.array(zTaskChecklistStepView),
@@ -246,6 +404,7 @@ export const zProjectBoard = z.object({
   seats: z.array(zProjectSeat),
   isTeamOrg: z.boolean(),
   viewerHasSeat: z.boolean(),
+  columns: z.array(zProjectColumn).optional(),
   tasks: z.array(zProjectTaskCard),
   totalVisible: z.number().int().nonnegative(),
   hiddenByEntityCount: z.number().int().nonnegative(),
@@ -344,6 +503,16 @@ export const zProjectWeeklyStatusBottleneck = z.strictObject({
 });
 export type ProjectWeeklyStatusBottleneck = z.infer<typeof zProjectWeeklyStatusBottleneck>;
 
+export const zProjectWeeklyStatusColumn = z.strictObject({
+  id: zId,
+  name: z.string(),
+  taskStatus: zProjectColumnStatus,
+  color: zProjectColumnColor,
+  wipLimit: zProjectColumnWipLimit,
+  taskCount: z.number().int().nonnegative(),
+});
+export type ProjectWeeklyStatusColumn = z.infer<typeof zProjectWeeklyStatusColumn>;
+
 export const zProjectWeeklyStatus = z.strictObject({
   ai: z.enum(PROJECT_WEEKLY_STATUS_STATES),
   project: z.strictObject({
@@ -359,6 +528,7 @@ export const zProjectWeeklyStatus = z.strictObject({
     timeZone: z.string(),
   }),
   counts: zProjectWeeklyStatusCounts,
+  columns: z.array(zProjectWeeklyStatusColumn).optional(),
   tasks: zProjectWeeklyStatusTasks,
   bottlenecks: z.array(zProjectWeeklyStatusBottleneck).optional(),
   hiddenByEntityCount: z.number().int().nonnegative(),
