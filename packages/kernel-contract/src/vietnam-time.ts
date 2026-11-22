@@ -16,6 +16,12 @@ export function vietnamToday(now: Date = new Date()): string {
   return new Date(now.getTime() + VIETNAM_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+// 'YYYY-MM-DD' of an instant (`Date` or ISO timestamp) in Vietnam (UTC+7).
+export function vietnamDate(value: Date | string): string {
+  const instant = value instanceof Date ? value : new Date(value);
+  return vietnamToday(instant);
+}
+
 // 'YYYY-MM' of `now` in Vietnam.
 export function vietnamMonth(now: Date = new Date()): string {
   return vietnamToday(now).slice(0, 7);

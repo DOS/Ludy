@@ -2,7 +2,7 @@
 // Shared database loaders and permission checks for the projects module.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
-import type { ProjectStatus } from '@ludy/kernel-contract';
+import type { ProjectSeat, ProjectSeatHolder, ProjectStatus } from '@ludy/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -127,4 +127,155 @@ export function ownerDisplayName(profiles: ReadonlyMap<string, MemberProfile>, o
   const profile = profiles.get(ownerUserId);
   if (!profile) return null;
   return profile.displayName ?? profile.email ?? null;
+}
+
+type SeatStatus = ProjectSeat['status'];
+
+export async function countHiddenProjectTasks(trx: Trx, orgId: string, projectId: string): Promise<number> {
+  // Compare project_task against le_scope-filtered crove_kernel.task without SECURITY DEFINER.
+  const { rows } = await sql<{ count: string }>`
+    SELECT pg_catalog.count(*)::text AS count
+      FROM crove_projects.project_task pt
+     WHERE pt.org_id = ${orgId}::uuid
+       AND pt.project_id = ${projectId}::uuid
+       AND NOT EXISTS (
+         SELECT 1 FROM crove_kernel.task t
+          WHERE t.org_id = pt.org_id AND t.id = pt.task_id
+       )`.execute(trx);
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function loadProjectSeatsAndProfiles(
+  trx: Trx,
+  orgId: string,
+  projectId: string,
+  onProjectIds: ReadonlySet<string>,
+  extraProfileIds: readonly string[] = [],
+): Promise<{
+  seats: ProjectSeat[];
+  profiles: Map<string, MemberProfile>;
+  positionRows: Array<{
+    id: string;
+    title: string;
+    status: string;
+    holder_user_id: string | null;
+    holder_agent_id: string | null;
+  }>;
+}> {
+  const { rows: usedPositionRows } = await sql<{ id: string }>`
+    SELECT DISTINCT t.assignee_position_id AS id
+      FROM crove_projects.project_task pt
+      JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+     WHERE pt.org_id = ${orgId}::uuid
+       AND pt.project_id = ${projectId}::uuid
+       AND t.assignee_position_id IS NOT NULL`.execute(trx);
+  const usedPositionIds = usedPositionRows.map((p) => p.id);
+
+  const positionRows = await trx
+    .selectFrom('crove_kernel.position')
+    .select(['id', 'title', 'status', 'holder_user_id', 'holder_agent_id'])
+    .where('org_id', '=', orgId)
+    .where((eb) =>
+      usedPositionIds.length > 0 ? eb.or([eb('status', '<>', 'archived'), eb('id', 'in', usedPositionIds)]) : eb('status', '<>', 'archived'),
+    )
+    .orderBy('title', 'asc')
+    .orderBy('id', 'asc')
+    .execute();
+
+  const agentIds = positionRows.map((p) => p.holder_agent_id).filter((id): id is string => id !== null);
+  const positionUserIds = positionRows.map((p) => p.holder_user_id).filter((id): id is string => id !== null);
+  const allProfileIds = [...new Set([...extraProfileIds, ...positionUserIds])];
+  const profiles = await memberProfilesMap(trx, allProfileIds);
+
+  const agentNames = new Map<string, string>();
+  if (agentIds.length > 0) {
+    const agents = await trx
+      .selectFrom('crove_kernel.agent')
+      .select(['id', 'display_name'])
+      .where('org_id', '=', orgId)
+      .where('id', 'in', agentIds)
+      .execute();
+    for (const a of agents) agentNames.set(a.id, a.display_name);
+  }
+
+  const seats: ProjectSeat[] = positionRows.map((p) => {
+    let holder: ProjectSeatHolder | null = null;
+    if (p.holder_user_id !== null) {
+      const prof = profiles.get(p.holder_user_id);
+      holder = {
+        type: 'user',
+        userId: p.holder_user_id,
+        displayName: prof?.displayName ?? null,
+        email: prof?.email ?? null,
+      };
+    } else if (p.holder_agent_id !== null) {
+      holder = {
+        type: 'agent',
+        agentId: p.holder_agent_id,
+        name: agentNames.get(p.holder_agent_id) ?? null,
+      };
+    }
+    return {
+      id: p.id,
+      title: p.title,
+      status: p.status as SeatStatus,
+      onProject: p.holder_user_id !== null && onProjectIds.has(p.holder_user_id),
+      holder,
+    };
+  });
+
+  return { seats, profiles, positionRows };
+}
+
+export async function loadProjectTaskCounts(
+  trx: Trx,
+  orgId: string,
+  projectId: string,
+  taskIds: readonly string[],
+): Promise<{
+  commentCounts: Map<string, number>;
+  openBlockerCounts: Map<string, number>;
+  blockingCounts: Map<string, number>;
+}> {
+  const commentCounts = new Map<string, number>();
+  const openBlockerCounts = new Map<string, number>();
+  const blockingCounts = new Map<string, number>();
+  if (taskIds.length === 0) {
+    return { commentCounts, openBlockerCounts, blockingCounts };
+  }
+  const [{ rows: counts }, { rows: blockerRows }, { rows: blockingRows }] = await Promise.all([
+    sql<{ task_id: string; n: string }>`
+      SELECT task_id, pg_catalog.count(*)::text AS n
+        FROM crove_kernel.task_comment
+       WHERE org_id = ${orgId}::uuid
+         AND task_id = ANY(${[...taskIds]}::uuid[])
+       GROUP BY task_id`.execute(trx),
+    sql<{ task_id: string; n: string }>`
+      SELECT d.blocked_task_id AS task_id, pg_catalog.count(*)::text AS n
+        FROM crove_projects.task_dependency d
+        JOIN crove_kernel.task bt
+          ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
+       WHERE d.org_id = ${orgId}::uuid
+         AND d.project_id = ${projectId}::uuid
+         AND d.blocked_task_id = ANY(${[...taskIds]}::uuid[])
+         AND bt.status NOT IN ('done', 'cancelled')
+       GROUP BY d.blocked_task_id`.execute(trx),
+    sql<{ task_id: string; n: string }>`
+      SELECT d.blocker_task_id AS task_id, pg_catalog.count(*)::text AS n
+        FROM crove_projects.task_dependency d
+        JOIN crove_kernel.task bt
+          ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
+        JOIN crove_kernel.task dt
+          ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
+       WHERE d.org_id = ${orgId}::uuid
+         AND d.project_id = ${projectId}::uuid
+         AND d.blocker_task_id = ANY(${[...taskIds]}::uuid[])
+         AND bt.status NOT IN ('done', 'cancelled')
+         AND dt.status NOT IN ('done', 'cancelled')
+       GROUP BY d.blocker_task_id`.execute(trx),
+  ]);
+  for (const c of counts) commentCounts.set(c.task_id, Number(c.n));
+  for (const b of blockerRows) openBlockerCounts.set(b.task_id, Number(b.n));
+  for (const b of blockingRows) blockingCounts.set(b.task_id, Number(b.n));
+  return { commentCounts, openBlockerCounts, blockingCounts };
 }

@@ -43,7 +43,7 @@ export const PROJECT_BOARD_COLUMNS = ['todo', 'in_progress', 'waiting', 'in_revi
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export const PHONE_BREAKPOINT_PX = 768;
 
-export type ProjectViewMode = 'board' | 'list';
+export type ProjectViewMode = 'board' | 'list' | 'timeline';
 export type ProjectStatusFilter = 'open' | ProjectStatus | 'all';
 
 export function defaultProjectView(width: number): ProjectViewMode {

@@ -30,8 +30,6 @@ import {
   type ProjectDetail,
   type ProjectListResult,
   type ProjectMemberView,
-  type ProjectSeat,
-  type ProjectSeatHolder,
   type ProjectStatus,
   type ProjectSummary,
   type ProjectTaskCard,
@@ -40,6 +38,7 @@ import {
 } from '@ludy/kernel-contract';
 import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@ludy/kernel';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { isValidScheduleRange } from './domain/timeline.ts';
 import { projectsManifest } from './manifest.ts';
 import { loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type ProjectOrderRow } from './columns.ts';
 import { parseStoredRecurrence } from './recurring.ts';
@@ -51,9 +50,12 @@ import {
   assertOrgMembers,
   canManageProject,
   canWriteProject,
+  countHiddenProjectTasks,
   descriptionOf,
   loadOrgMembers,
   loadProject,
+  loadProjectSeatsAndProfiles,
+  loadProjectTaskCounts,
   memberProfilesMap,
   ownerDisplayName,
   taskNotFound,
@@ -67,7 +69,6 @@ const TABLES = projectsManifest.tables;
 const PROJECT = TABLES.crove_projects.project;
 
 type TaskStatus = ProjectTaskCard['status'];
-type SeatStatus = ProjectSeat['status'];
 
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
 
@@ -522,6 +523,9 @@ export const projectTaskCreate = defineCommand({
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string }> => {
     const userId = userOf(ctx.actor);
+    if (!isValidScheduleRange(input.startOn ?? null, input.due ?? null)) {
+      throw new DomainError('INVALID_DATE_RANGE', 422, 'Ngày bắt đầu không được sau hạn hoàn thành');
+    }
     // Check existence/status without a row lock before calling kernel.task.create (which locks crove_kernel.position),
     // then lock crove_projects.project afterwards so concurrent task/project writes share the position -> project lock order.
     const preview = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
@@ -582,6 +586,7 @@ export const projectTaskCreate = defineCommand({
         project_id: row.id,
         task_id: taskId,
         column_id: columnId,
+        start_on: input.startOn ?? null,
         added_by: userId,
         created_at: ctx.now,
       })
@@ -723,41 +728,7 @@ export const projectBoard = defineQuery({
       .execute();
     const onProjectIds = new Set(projectMemberRows.map((m) => m.user_id));
 
-    const { rows: usedPositionRows } = await sql<{ id: string }>`
-      SELECT DISTINCT t.assignee_position_id AS id
-        FROM crove_projects.project_task pt
-        JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
-       WHERE pt.org_id = ${ctx.orgId}::uuid
-         AND pt.project_id = ${row.id}::uuid
-         AND t.assignee_position_id IS NOT NULL`.execute(ctx.trx);
-    const usedPositionIds = usedPositionRows.map((p) => p.id);
-
-    const positionRows = await ctx.trx
-      .selectFrom('crove_kernel.position')
-      .select(['id', 'title', 'status', 'holder_user_id', 'holder_agent_id'])
-      .where('org_id', '=', ctx.orgId)
-      .where((eb) =>
-        usedPositionIds.length > 0 ? eb.or([eb('status', '<>', 'archived'), eb('id', 'in', usedPositionIds)]) : eb('status', '<>', 'archived'),
-      )
-      .orderBy('title', 'asc')
-      .orderBy('id', 'asc')
-      .execute();
-
-    const agentIds = positionRows.map((p) => p.holder_agent_id).filter((id): id is string => id !== null);
-    const positionUserIds = positionRows.map((p) => p.holder_user_id).filter((id): id is string => id !== null);
-    const allProfileIds = [...new Set([...profileIds, ...positionUserIds])];
-    const profiles = await memberProfilesMap(ctx.trx, allProfileIds);
-
-    const agentNames = new Map<string, string>();
-    if (agentIds.length > 0) {
-      const agents = await ctx.trx
-        .selectFrom('crove_kernel.agent')
-        .select(['id', 'display_name'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', 'in', agentIds)
-        .execute();
-      for (const a of agents) agentNames.set(a.id, a.display_name);
-    }
+    const { seats, profiles, positionRows } = await loadProjectSeatsAndProfiles(ctx.trx, ctx.orgId, row.id, onProjectIds, profileIds);
 
     const members: ProjectMemberView[] = orgMembers.map((m) => {
       const p = profiles.get(m.userId);
@@ -771,43 +742,7 @@ export const projectBoard = defineQuery({
     });
 
     const viewerHasSeat = positionRows.some((p) => p.status !== 'archived' && p.holder_user_id === userId);
-    const seats: ProjectSeat[] = positionRows.map((p) => {
-      let holder: ProjectSeatHolder | null = null;
-      if (p.holder_user_id !== null) {
-        const prof = profiles.get(p.holder_user_id);
-        holder = {
-          type: 'user',
-          userId: p.holder_user_id,
-          displayName: prof?.displayName ?? null,
-          email: prof?.email ?? null,
-        };
-      } else if (p.holder_agent_id !== null) {
-        holder = {
-          type: 'agent',
-          agentId: p.holder_agent_id,
-          name: agentNames.get(p.holder_agent_id) ?? null,
-        };
-      }
-      return {
-        id: p.id,
-        title: p.title,
-        status: p.status as SeatStatus,
-        onProject: p.holder_user_id !== null && onProjectIds.has(p.holder_user_id),
-        holder,
-      };
-    });
-
-    // Compare project_task against le_scope-filtered crove_kernel.task without SECURITY DEFINER.
-    const { rows: hiddenRows } = await sql<{ count: string }>`
-      SELECT pg_catalog.count(*)::text AS count
-        FROM crove_projects.project_task pt
-       WHERE pt.org_id = ${ctx.orgId}::uuid
-         AND pt.project_id = ${row.id}::uuid
-         AND NOT EXISTS (
-           SELECT 1 FROM crove_kernel.task t
-            WHERE t.org_id = pt.org_id AND t.id = pt.task_id
-         )`.execute(ctx.trx);
-    const hiddenByEntityCount = Number(hiddenRows[0]?.count ?? 0);
+    const hiddenByEntityCount = await countHiddenProjectTasks(ctx.trx, ctx.orgId, row.id);
 
     const project: ProjectDetail = {
       id: row.id,
@@ -854,6 +789,7 @@ export const projectBoard = defineQuery({
         't.status',
         'pt.column_id',
         't.assignee_position_id',
+        'pt.start_on',
         't.due',
         't.checklist',
         't.tainted',
@@ -913,46 +849,8 @@ export const projectBoard = defineQuery({
     const page = truncated ? rawTasks.slice(0, PROJECT_BOARD_LIMIT) : rawTasks;
     const totalVisible = truncated ? Number((await countQuery.executeTakeFirstOrThrow()).n) : page.length;
 
-    const commentCounts = new Map<string, number>();
-    const openBlockerCounts = new Map<string, number>();
-    const blockingCounts = new Map<string, number>();
-    if (page.length > 0) {
-      const taskIds = page.map((t) => t.id);
-      const [{ rows: counts }, { rows: blockerRows }, { rows: blockingRows }] = await Promise.all([
-        sql<{ task_id: string; n: string }>`
-          SELECT task_id, pg_catalog.count(*)::text AS n
-            FROM crove_kernel.task_comment
-           WHERE org_id = ${ctx.orgId}::uuid
-             AND task_id = ANY(${taskIds}::uuid[])
-           GROUP BY task_id`.execute(ctx.trx),
-        sql<{ task_id: string; n: string }>`
-          SELECT d.blocked_task_id AS task_id, pg_catalog.count(*)::text AS n
-            FROM crove_projects.task_dependency d
-            JOIN crove_kernel.task bt
-              ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-           WHERE d.org_id = ${ctx.orgId}::uuid
-             AND d.project_id = ${row.id}::uuid
-             AND d.blocked_task_id = ANY(${taskIds}::uuid[])
-             AND bt.status NOT IN ('done', 'cancelled')
-           GROUP BY d.blocked_task_id`.execute(ctx.trx),
-        sql<{ task_id: string; n: string }>`
-          SELECT d.blocker_task_id AS task_id, pg_catalog.count(*)::text AS n
-            FROM crove_projects.task_dependency d
-            JOIN crove_kernel.task bt
-              ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-            JOIN crove_kernel.task dt
-              ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
-           WHERE d.org_id = ${ctx.orgId}::uuid
-             AND d.project_id = ${row.id}::uuid
-             AND d.blocker_task_id = ANY(${taskIds}::uuid[])
-             AND bt.status NOT IN ('done', 'cancelled')
-             AND dt.status NOT IN ('done', 'cancelled')
-           GROUP BY d.blocker_task_id`.execute(ctx.trx),
-      ]);
-      for (const c of counts) commentCounts.set(c.task_id, Number(c.n));
-      for (const b of blockerRows) openBlockerCounts.set(b.task_id, Number(b.n));
-      for (const b of blockingRows) blockingCounts.set(b.task_id, Number(b.n));
-    }
+    const taskIds = page.map((t) => t.id);
+    const { commentCounts, openBlockerCounts, blockingCounts } = await loadProjectTaskCounts(ctx.trx, ctx.orgId, row.id, taskIds);
 
     const tasks: ProjectTaskCard[] = page.map((t) => {
       const status = t.status as TaskStatus;
@@ -963,6 +861,7 @@ export const projectBoard = defineQuery({
         status,
         columnId: resolveTaskColumnId(columns, t.column_id, status),
         assigneePositionId: t.assignee_position_id,
+        startOn: t.start_on,
         due: t.due === null ? null : new Date(t.due).toISOString(),
         checklist: parseTaskChecklist(t.checklist),
         tainted: t.tainted,

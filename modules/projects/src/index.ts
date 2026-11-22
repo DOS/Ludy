@@ -28,8 +28,20 @@ import {
   projectTemplateList,
 } from './templates.ts';
 import { projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
+import { projectTaskSetDates, projectTimeline } from './timeline.ts';
 
 export { hasDependencyPath, projectDependencyAdd, projectDependencyList, projectDependencyRemove } from './dependencies.ts';
+export {
+  computeCriticalPath,
+  daysBetweenLocalDates as timelineDaysBetween,
+  detectTimelineConflicts,
+  isValidScheduleRange,
+  taskScheduleSpanDays,
+  type CriticalPathResult,
+  type TimelineEdgeRef,
+  type TimelineScheduleTask,
+} from './domain/timeline.ts';
+export { projectTaskSetDates, projectTimeline } from './timeline.ts';
 export { projectsManifest } from './manifest.ts';
 export { projectsToday } from './today.ts';
 export {
@@ -135,6 +147,7 @@ export const projectsCommands = [
   projectRecurringAdvance,
   projectDependencyAdd,
   projectDependencyRemove,
+  projectTaskSetDates,
 ];
 
 export const projectsQueries = [
@@ -152,4 +165,5 @@ export const projectsQueries = [
   projectTemplateList,
   projectTaskRecurrenceGet,
   projectDependencyList,
+  projectTimeline,
 ];

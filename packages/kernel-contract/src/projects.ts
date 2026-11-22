@@ -292,6 +292,7 @@ export const zProjectTaskCreate = z.strictObject({
   title: z.string().trim().min(1).max(300),
   description: z.string().max(10000).optional(),
   assigneePositionId: zId.nullable(),
+  startOn: zLocalDate.nullable().optional(),
   due: z.iso.datetime().optional(),
   status: z.enum(BOARD_TASK_STATUSES).optional(),
   columnId: zId.optional(),
@@ -360,6 +361,7 @@ export const zProjectTaskCard = z.object({
   status: zTaskStatus,
   columnId: zId.nullable().optional(),
   assigneePositionId: zId.nullable(),
+  startOn: zLocalDate.nullable().optional(),
   due: z.string().nullable(),
   checklist: z.array(zTaskChecklistStepView),
   tainted: z.boolean(),
@@ -930,4 +932,93 @@ export const zProjectDependencyListResult = z.object({
   totalEdges: z.number().int().nonnegative(),
 });
 export type ProjectDependencyListResult = z.infer<typeof zProjectDependencyListResult>;
+
+// Project Gantt / Timeline view (#2599, docs/plan/projects-v2.md section 5.1, ADR-0056 section 5).
+export const PROJECT_TIMELINE_LIMIT = 200;
+
+export const zProjectTaskSetDatesInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  startOn: zLocalDate.nullable().optional(),
+  due: z.iso.datetime({ offset: true }).nullable().optional(),
+});
+export type ProjectTaskSetDatesInput = z.infer<typeof zProjectTaskSetDatesInput>;
+
+export const zProjectTaskSetDatesResult = z.object({
+  projectId: zId,
+  taskId: zId,
+  startOn: zLocalDate.nullable(),
+  due: z.string().nullable(),
+});
+export type ProjectTaskSetDatesResult = z.infer<typeof zProjectTaskSetDatesResult>;
+
+export const zProjectTimelineInput = z.strictObject({
+  projectId: zId,
+  positionId: z.union([zId, z.literal('root')]).optional(),
+  includeCancelled: z.boolean().optional(),
+});
+export type ProjectTimelineInput = z.infer<typeof zProjectTimelineInput>;
+
+export const zProjectTimelineTask = z.object({
+  id: zId,
+  title: z.string(),
+  description: z.string().nullable(),
+  status: zTaskStatus,
+  startOn: zLocalDate.nullable(),
+  due: z.string().nullable(),
+  assigneePositionId: zId.nullable(),
+  assigneeTitle: z.string().nullable(),
+  tainted: z.boolean(),
+  checkedOut: z.boolean(),
+  commentCount: z.number().int().nonnegative(),
+  openBlockerCount: z.number().int().nonnegative(),
+  blockingCount: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectTimelineTask = z.infer<typeof zProjectTimelineTask>;
+
+export const zProjectTimelineEdge = z.object({
+  id: zId,
+  blockerTaskId: zId,
+  blockedTaskId: zId,
+});
+export type ProjectTimelineEdge = z.infer<typeof zProjectTimelineEdge>;
+
+export const zProjectTimelineConflict = z.object({
+  dependencyId: zId,
+  blockerTaskId: zId,
+  blockedTaskId: zId,
+  blockerDueDate: zLocalDate,
+  blockedTargetDate: zLocalDate,
+  blockedField: z.enum(['start_on', 'due']),
+});
+export type ProjectTimelineConflict = z.infer<typeof zProjectTimelineConflict>;
+
+export const zProjectTimelineCycle = z.object({
+  id: zId,
+  number: z.number().int().min(1),
+  name: z.string(),
+  status: z.enum(['upcoming', 'active', 'completed']),
+  startsOn: zLocalDate,
+  endsOn: zLocalDate,
+});
+export type ProjectTimelineCycle = z.infer<typeof zProjectTimelineCycle>;
+
+export const zProjectTimeline = z.object({
+  project: zProjectDetail,
+  seats: z.array(zProjectSeat),
+  tasks: z.array(zProjectTimelineTask),
+  edges: z.array(zProjectTimelineEdge),
+  conflicts: z.array(zProjectTimelineConflict),
+  criticalPathTaskIds: z.array(zId),
+  criticalPathLength: z.number().int().nonnegative(),
+  criticalPathSpanDays: z.number().int().nonnegative(),
+  cycles: z.array(zProjectTimelineCycle).optional(),
+  totalVisible: z.number().int().nonnegative(),
+  hiddenByEntityCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  today: zLocalDate,
+});
+export type ProjectTimeline = z.infer<typeof zProjectTimeline>;
 
