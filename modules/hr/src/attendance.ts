@@ -56,11 +56,6 @@ import {
   resolveDraftLineTarget,
 } from './payroll-run.ts';
 
-const ATTENDANCE_LOG = hrManifest.tables.crove_hr.attendance_log;
-const ATTENDANCE_QR_CONFIG = hrManifest.tables.crove_hr.attendance_qr_config;
-const PAYROLL_LINE = hrManifest.tables.crove_hr.payroll_line;
-const PAYROLL_RUN = hrManifest.tables.crove_hr.payroll_run;
-
 export const HALF_DAY_THRESHOLD_MINUTES = 360;
 export const SHORT_DAY_ANOMALY_MINUTES = 240;
 export const LONG_DAY_ANOMALY_MINUTES = 600;
@@ -1108,5 +1103,3 @@ export const hrAttendanceQueries = [
   attendanceList,
   attendanceAnomaliesRead,
 ];
-
-export { ATTENDANCE_LOG, ATTENDANCE_QR_CONFIG, PAYROLL_LINE, PAYROLL_RUN };
