@@ -53,6 +53,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { cn } from '@ludy/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
 import { MyWorkVyPlannerPanel, MyWorkVyPlannerTrigger } from '../components/my-work-vy-planner.tsx';
+import { NoteImportDialog } from '../components/note-import-dialog.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -1271,6 +1272,10 @@ export function MyWorkPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [listDialog, setListDialog] = useState<{ mode: 'create'; list: null } | { mode: 'edit'; list: TodoListSummary } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const me = useQuery(orpc.me.get.queryOptions());
+  const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  const writer = role !== undefined && role !== 'viewer';
   const [draggedTodoId, setDraggedTodoId] = useState<string | null>(null);
   const draggedTodoIdRef = useRef<string | null>(null);
   const [dropDay, setDropDay] = useState<string | null>(null);
@@ -1310,7 +1315,7 @@ export function MyWorkPage() {
     }),
     [listView, effectiveListFilter, tagFilter, priorityFilter],
   );
-  const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: myWorkInput }), refetchInterval, enabled: needsWork });
+  const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: myWorkInput }), refetchInterval, enabled: needsWork || importOpen });
   const closed = useQuery({ ...orpc.notes.todos.list.queryOptions({ input: closedInput }), refetchInterval, enabled: view === 'done' || view === 'trash' });
   const list = needsWork ? work : closed;
   const chart = useQuery({ ...orpc.chart.get.queryOptions(), enabled: (work.data?.tasks.length ?? 0) > 0 });
@@ -1760,12 +1765,19 @@ export function MyWorkPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <MyWorkVyPlannerTrigger
-            slug={slug}
-            open={vyOpen}
-            onToggle={() => setVyOpen((v) => !v)}
-            buttonRef={vyTriggerRef}
-          />
+          <div className="flex flex-wrap gap-2">
+            <MyWorkVyPlannerTrigger
+              slug={slug}
+              open={vyOpen}
+              onToggle={() => setVyOpen((v) => !v)}
+              buttonRef={vyTriggerRef}
+            />
+            {writer && (
+              <Button type="button" variant="outline" data-testid="my-work-import-csv-btn" onClick={() => setImportOpen(true)}>
+                {t('import.button')}
+              </Button>
+            )}
+          </div>
         }
       />
       <MyWorkVyPlannerPanel
@@ -2291,6 +2303,28 @@ export function MyWorkPage() {
           reschedule.mutate({ todoIds: reschedulePrompt.todoIds, dueOn, bulk: reschedulePrompt.bulk });
         }}
       />
+      {writer && (
+        <NoteImportDialog
+          mode="todoist"
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          slug={slug}
+          todoLists={personalLists}
+          existingTodoTitles={(work.data?.todos ?? []).map((item) => item.title)}
+          defaultListId={activeList?.id ?? null}
+          timeZone={viewerTz}
+          onImported={(result) => {
+            refresh();
+            setView('open');
+            if (result.listIds.length === 1 && result.listIds[0]) {
+              setListFilter(result.listIds[0]);
+            } else if (result.listIds.length > 1) {
+              setListFilter('all');
+            }
+            if (result.todoIds[0]) setSelected(result.todoIds[0]);
+          }}
+        />
+      )}
     </div>
   );
 }
