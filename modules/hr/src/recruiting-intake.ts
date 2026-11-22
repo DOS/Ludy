@@ -118,12 +118,13 @@ export function inferSuggestedSource(text: string): (typeof HR_CANDIDATE_SOURCES
       // Ignore malformed URLs found inside untrusted CV plain text.
     }
   }
-  if (/\bzalo\b/i.test(text)) return 'zalo_oa';
-  if (/\bfacebook\b/i.test(text)) return 'facebook';
-  if (/\b(?:vietnamworks|topcv|itviec|linkedin)\b/i.test(text)) {
+  const withoutUrls = text.replace(/https?:\/\/[^\s<>()]+/gi, ' ');
+  if (/\bzalo\b/i.test(withoutUrls)) return 'zalo_oa';
+  if (/\bfacebook\b/i.test(withoutUrls)) return 'facebook';
+  if (/\b(?:vietnamworks|topcv|itviec|linkedin)\b/i.test(withoutUrls)) {
     return 'job_board';
   }
-  if (/\b(?:giới\s+thiệu|referral)\b/iu.test(text)) return 'referral';
+  if (/\b(?:giới\s+thiệu|referral)\b/iu.test(withoutUrls)) return 'referral';
   return 'direct';
 }
 
