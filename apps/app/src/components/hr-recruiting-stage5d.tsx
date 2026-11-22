@@ -1,0 +1,389 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Stage 5D HR recruiting UI panels (#4446):
+// 1. CvIntakePanel: uploads PDF/DOCX CV via crove-extract sandbox into a tainted editable proposal draft.
+// 2. FunnelAnalyticsSection: pure SQL recruiting funnel BI metrics & source breakdown (0 LLM cost).
+// 3. EngageInvitePanel: slot-backed Vietnamese interview invite draft for Zalo OA / Facebook (human copy & manual send only).
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useLocale, useTranslations } from 'use-intl';
+import {
+  HR_ENGAGE_CHANNELS,
+  type HrCandidateView,
+  type HrCvExtractDraft,
+  type HrEngageChannel,
+  type HrInterviewerOption,
+  type HrInviteDraftResult,
+  type HrOpeningView,
+  type HrRecruitingAnalyticsResult,
+} from '@ludy/kernel-contract';
+import { Alert } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
+import { useFormat } from '../i18n/provider.tsx';
+import { client, errorMessage, extractRecruitingCv, orpc } from '../lib/api.ts';
+
+const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
+const NUM = 'px-4 py-3 text-right tabular-nums';
+
+export function CvIntakePanel({
+  openings,
+  defaultOpeningId,
+  onDraftReady,
+  onClose,
+}: {
+  openings: readonly HrOpeningView[];
+  defaultOpeningId?: string;
+  onDraftReady: (draft: HrCvExtractDraft) => void;
+  onClose: () => void;
+}) {
+  const t = useTranslations('hrRecruiting');
+  const locale = useLocale() === 'en' ? 'en' : 'vi';
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [openingId, setOpeningId] = useState(defaultOpeningId ?? '');
+  const openOptions = openings.filter((o) => o.status === 'open');
+
+  const extract = useMutation({
+    mutationFn: () => {
+      if (!selectedFile) throw new Error('missing file');
+      return extractRecruitingCv(selectedFile, {
+        ...(openingId ? { openingId } : {}),
+        lang: locale,
+      });
+    },
+    onSuccess: (draft) => {
+      onDraftReady(draft);
+    },
+  });
+
+  return (
+    <Card className="mb-6 block border-dashed border-proposal/70 p-4" data-testid="hr-cv-intake-panel">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-medium text-foreground">{t('cvExtract.title')}</h2>
+            <Badge variant="proposal">{t('cvExtract.proposalBadge')}</Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{t('cvExtract.subtitle')}</p>
+        </div>
+        <Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={onClose}>
+          {t('close')}
+        </Button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="hr-cv-file">{t('cvExtract.fileLabel')}</Label>
+          <Input
+            id="hr-cv-file"
+            type="file"
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+            data-testid="hr-cv-file-input"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="hr-cv-opening">{t('cvExtract.openingLabel')}</Label>
+          <NativeSelect id="hr-cv-opening" value={openingId} onChange={(e) => setOpeningId(e.target.value)} data-testid="hr-cv-opening-select">
+            <NativeSelectOption value="">{t('fields.noOpening')}</NativeSelectOption>
+            {openOptions.map((o) => (
+              <NativeSelectOption key={o.id} value={o.id}>
+                {o.title}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+      </div>
+      {extract.error && <ErrorText>{errorMessage(extract.error)}</ErrorText>}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          className="max-md:min-h-11"
+          loading={extract.isPending}
+          disabled={!selectedFile}
+          onClick={() => extract.mutate()}
+          data-testid="hr-cv-extract-submit"
+        >
+          {extract.isPending ? t('cvExtract.extracting') : t('cvExtract.extractButton')}
+        </Button>
+        <Button variant="ghost" className="max-md:min-h-11" onClick={onClose}>
+          {t('cancel')}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+export function FunnelAnalyticsSection({
+  selectedOpeningId,
+  analyticsOverride,
+}: {
+  selectedOpeningId?: string;
+  analyticsOverride?: HrRecruitingAnalyticsResult;
+}) {
+  const t = useTranslations('hrRecruiting');
+  const query = useQuery({
+    ...orpc.hr.recruiting.analytics.queryOptions({
+      input: selectedOpeningId ? { openingId: selectedOpeningId } : {},
+    }),
+    enabled: analyticsOverride === undefined,
+    ...ONCE,
+  });
+
+  const data = analyticsOverride ?? query.data;
+
+  return (
+    <section className="mb-6" data-testid="hr-recruiting-analytics">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-medium text-foreground">{t('analytics.title')}</h2>
+            <Badge variant="outline">{t('analytics.zeroLlmBadge')}</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">{t('analytics.subtitle')}</p>
+        </div>
+      </div>
+
+      {analyticsOverride === undefined && query.isPending ? (
+        <TableSkeleton columns={4} />
+      ) : analyticsOverride === undefined && query.error ? (
+        <ErrorText>{errorMessage(query.error)}</ErrorText>
+      ) : !data ? null : (
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Card className="p-3">
+              <p className="text-xs text-muted-foreground">{t('analytics.totalCandidates')}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-total">
+                {data.totalCandidates}
+              </p>
+            </Card>
+            <Card className="p-3">
+              <p className="text-xs text-muted-foreground">{t('analytics.activeCandidates')}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-active">
+                {data.activeCandidates}
+              </p>
+            </Card>
+            <Card className="p-3">
+              <p className="text-xs text-muted-foreground">{t('analytics.hiredCount')}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-hired">
+                {data.hiredCount}
+              </p>
+            </Card>
+            <Card className="p-3">
+              <p className="text-xs text-muted-foreground">{t('analytics.avgTimeToHire')}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-avg-days">
+                {data.timeToHire.avgDays !== null ? t('analytics.daysUnit', { days: data.timeToHire.avgDays }) : t('analytics.noData')}
+              </p>
+            </Card>
+            <Card className="p-3">
+              <p className="text-xs text-muted-foreground">{t('analytics.medianTimeToHire')}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-median-days">
+                {data.timeToHire.medianDays !== null ? t('analytics.daysUnit', { days: data.timeToHire.medianDays }) : t('analytics.noData')}
+              </p>
+            </Card>
+            <Card className="p-3">
+              <p className="text-xs text-muted-foreground">{t('analytics.erasedExcluded')}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums" data-testid="hr-analytics-erased">
+                {data.erasedExcludedCount}
+              </p>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">{t('analytics.funnelTitle')}</h3>
+              <DataTable
+                head={[
+                  t('analytics.fromStage'),
+                  t('analytics.toStage'),
+                  t('analytics.enteredCount'),
+                  t('analytics.reachedCount'),
+                  t('analytics.conversionPct'),
+                  t('analytics.dropOffPct'),
+                ]}
+                numeric={[2, 3, 4, 5]}
+              >
+                {data.funnel.map((step) => (
+                  <TableRow key={`${step.fromStage}-${step.toStage}`} data-testid="hr-analytics-funnel-row">
+                    <TableCell className="px-4 py-2">{t(`stages.${step.fromStage}`)}</TableCell>
+                    <TableCell className="px-4 py-2">{t(`stages.${step.toStage}`)}</TableCell>
+                    <TableCell className={NUM}>{step.enteredFromCount}</TableCell>
+                    <TableCell className={NUM}>{step.reachedToCount}</TableCell>
+                    <TableCell className={NUM}>{step.conversionPct !== null ? `${step.conversionPct}%` : t('analytics.noData')}</TableCell>
+                    <TableCell className={NUM}>{step.dropOffPct !== null ? `${step.dropOffPct}%` : t('analytics.noData')}</TableCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">{t('analytics.sourcesTitle')}</h3>
+              <DataTable
+                head={[
+                  t('analytics.sourceName'),
+                  t('analytics.totalCandidates'),
+                  t('analytics.hiredCount'),
+                  t('analytics.hireRatePct'),
+                  t('analytics.avgDaysCol'),
+                ]}
+                numeric={[1, 2, 3, 4]}
+              >
+                {data.sources.map((src) => (
+                  <TableRow key={src.source} data-testid="hr-analytics-source-row">
+                    <TableCell className="px-4 py-2 font-medium">{t(`sources.${src.source}`)}</TableCell>
+                    <TableCell className={NUM}>{src.totalCount}</TableCell>
+                    <TableCell className={NUM}>{src.hiredCount}</TableCell>
+                    <TableCell className={NUM}>{src.hireRatePct !== null ? `${src.hireRatePct}%` : t('analytics.noData')}</TableCell>
+                    <TableCell className={NUM}>{src.avgTimeToHireDays !== null ? t('analytics.daysUnit', { days: src.avgTimeToHireDays }) : t('analytics.noData')}</TableCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function EngageInvitePanel({
+  candidate,
+  initialDraft,
+}: {
+  candidate: HrCandidateView;
+  initialDraft?: HrInviteDraftResult;
+}) {
+  const t = useTranslations('hrRecruiting');
+  const f = useFormat();
+  const locale = useLocale() === 'en' ? 'en' : 'vi';
+  const defaultChannel: HrEngageChannel = candidate.source === 'facebook' ? 'facebook' : 'zalo_oa';
+  const [channel, setChannel] = useState<HrEngageChannel>(initialDraft?.channel ?? defaultChannel);
+  const [interviewerUserId, setInterviewerUserId] = useState<string>(candidate.interviewerUserId ?? '');
+  const [draft, setDraft] = useState<HrInviteDraftResult | null>(initialDraft ?? null);
+  const [messageText, setMessageText] = useState(initialDraft?.message ?? '');
+  const [copied, setCopied] = useState(false);
+
+  const interviewersQuery = useQuery({
+    ...orpc.hr.recruiting.interviewers.list.queryOptions(),
+    ...ONCE,
+  });
+  const interviewers: HrInterviewerOption[] = interviewersQuery.data ?? [];
+
+  const generate = useMutation({
+    mutationFn: () =>
+      client.hr.recruiting.inviteDraft({
+        candidateId: candidate.id,
+        channel,
+        ...(interviewerUserId ? { interviewerUserId } : {}),
+        lang: locale,
+      }),
+    onSuccess: (res) => {
+      setDraft(res);
+      setMessageText(res.message);
+      setCopied(false);
+    },
+  });
+
+  const handleCopy = async () => {
+    if (!messageText) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(messageText).catch(() => undefined);
+    }
+    setCopied(true);
+  };
+
+  return (
+    <section className="mt-4 rounded-md border border-dashed border-proposal/60 bg-proposal/5 p-3" data-testid="hr-engage-invite-panel">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-foreground">{t('engageInvite.title')}</h3>
+            <Badge variant="proposal">{t('cvExtract.proposalBadge')}</Badge>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('engageInvite.subtitle')}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="space-y-1">
+          <Label htmlFor="hr-engage-channel-select">{t('engageInvite.channelLabel')}</Label>
+          <NativeSelect
+            id="hr-engage-channel-select"
+            value={channel}
+            onChange={(e) => setChannel(e.target.value as HrEngageChannel)}
+            data-testid="hr-engage-channel"
+          >
+            {HR_ENGAGE_CHANNELS.map((ch) => (
+              <NativeSelectOption key={ch} value={ch}>
+                {t(`engageInvite.channels.${ch}`)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="hr-engage-interviewer">{t('interview.interviewer')}</Label>
+          <NativeSelect
+            id="hr-engage-interviewer"
+            value={interviewerUserId}
+            onChange={(e) => setInterviewerUserId(e.target.value)}
+          >
+            <NativeSelectOption value="">{t('interview.defaultSelfInterviewer')}</NativeSelectOption>
+            {interviewers.map((m) => (
+              <NativeSelectOption key={m.userId} value={m.userId}>
+                {m.displayName}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="flex items-end">
+          <Button
+            size="sm"
+            variant="outline"
+            className="max-md:min-h-11"
+            loading={generate.isPending}
+            onClick={() => generate.mutate()}
+            data-testid="hr-engage-draft-run"
+          >
+            {t('engageInvite.generate')}
+          </Button>
+        </div>
+      </div>
+
+      {generate.error && <ErrorText>{errorMessage(generate.error)}</ErrorText>}
+
+      {draft && (
+        <div className="mt-3 space-y-2">
+          <Alert>{t('engageInvite.manualNotice')}</Alert>
+          {draft.slots.length > 0 ? (
+            <div className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{t('engageInvite.availableSlots')}: </span>
+              {draft.slots.map((s) => f.dateTime(s.startIso)).join(' · ')}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t('engageInvite.noSlots')}</p>
+          )}
+          <div className="space-y-1">
+            <Label htmlFor="hr-engage-message-box">{t('engageInvite.messageLabel')}</Label>
+            <Textarea
+              id="hr-engage-message-box"
+              rows={6}
+              value={messageText}
+              onChange={(e) => {
+                setMessageText(e.target.value);
+                setCopied(false);
+              }}
+              data-testid="hr-engage-draft-message"
+            />
+          </div>
+          <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => void handleCopy()} data-testid="hr-engage-draft-copy">
+            {copied ? t('engageInvite.copied') : t('engageInvite.copy')}
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}

@@ -5,7 +5,7 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@ludy/meeting-recorder';
 import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
-import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, HR_CV_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type HrCvExtractDraft, type HrCvExtractResponse, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
@@ -453,4 +453,52 @@ export async function uploadFiles(
   const results: Uploaded[] = [];
   for (const file of files) results.push(...(await send([file])).files);
   return { files: results };
+}
+
+export async function extractRecruitingCv(
+  file: File,
+  options: { openingId?: string; legalEntityId?: string; lang?: 'vi' | 'en'; useAi?: boolean; orgSlug?: string | null } = {},
+): Promise<HrCvExtractDraft> {
+  if (file.size === 0) {
+    throw new ClientError('hrRecruiting.cvExtract.emptyFile', (t) => t('hrRecruiting.cvExtract.emptyFile'));
+  }
+  if (file.size > HR_CV_MAX_BYTES) {
+    throw new ClientError('hrRecruiting.cvExtract.fileTooLarge', (t) => t('hrRecruiting.cvExtract.fileTooLarge'));
+  }
+  const form = new FormData();
+  form.append('file', file, file.name || 'cv');
+  if (options.openingId) form.append('openingId', options.openingId);
+  if (options.legalEntityId) form.append('legalEntityId', options.legalEntityId);
+  if (options.lang) form.append('lang', options.lang);
+  if (options.useAi === false) form.append('useAi', 'false');
+
+  const orgOpt = options.orgSlug === undefined ? {} : { orgSlug: options.orgSlug };
+  const initialRes = await retryWhileBusy(() =>
+    apiFetch('/api/hr/recruiting/cv-extract', {
+      method: 'POST',
+      body: form,
+      ...orgOpt,
+    }),
+  );
+  let payload = (await initialRes.json()) as HrCvExtractResponse;
+  if (payload.status === 'ready') return payload.draft;
+
+  const params = new URLSearchParams();
+  if (options.openingId) params.set('openingId', options.openingId);
+  if (options.legalEntityId) params.set('legalEntityId', options.legalEntityId);
+  if (options.lang) params.set('lang', options.lang);
+  if (options.useAi === false) params.set('useAi', 'false');
+  const query = params.toString();
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const pollRes = await apiFetch(
+      `/api/hr/recruiting/cv-extract/${encodeURIComponent(payload.jobId)}${query ? `?${query}` : ''}`,
+      orgOpt,
+    );
+    payload = (await pollRes.json()) as HrCvExtractResponse;
+    if (payload.status === 'ready') return payload.draft;
+  }
+
+  throw new ClientError('hrRecruiting.cvExtract.timedOut', (t) => t('hrRecruiting.cvExtract.timedOut'));
 }

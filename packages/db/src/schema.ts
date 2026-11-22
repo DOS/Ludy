@@ -1213,6 +1213,8 @@ export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'co
 export const HR_PAY_BASES = ['monthly', 'hourly', 'piece_rate'] as const;
 export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
 export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
+export const HR_CANDIDATE_SOURCES = ['direct', 'zalo_oa', 'facebook', 'referral', 'job_board', 'other'] as const;
+export type HrCandidateSource = (typeof HR_CANDIDATE_SOURCES)[number];
 // Departments per legal entity (#3412): optional team structure with default pay_function.
 export type HrDepartmentTable = Refine<
   G.HrDepartmentTable,
@@ -1238,6 +1240,7 @@ export type HrCandidateTable = Refine<
   {
     legal_entity_id: LegalEntityColumn;
     stage: Generated<(typeof HR_CANDIDATE_STAGES)[number]>;
+    source: Generated<HrCandidateSource>;
   },
   'legal_entity_id'
 >;

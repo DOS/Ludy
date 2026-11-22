@@ -135,6 +135,8 @@ export const QUEUES = {
   signCaReconcile: 'sign-ca-reconcile',
   signExpireSweep: 'sign-expire-sweep',
   signCleanup: 'sign-cleanup',
+  // Worker-side sandboxed PDF/DOCX CV text extraction via crove-extract (#4446 Stage 5D, T12).
+  hrCvExtract: 'hr-cv-extract',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -278,6 +280,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.signCaReconcile]: 'none',
   [QUEUES.signExpireSweep]: 'none',
   [QUEUES.signCleanup]: 'none',
+  // HR CV extraction talks only to the internal crove-extract sandbox and shared BlobStore (#4446).
+  [QUEUES.hrCvExtract]: 'none',
   [QUEUES.deadLetter]: 'none',
 };
 

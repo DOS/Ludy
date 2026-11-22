@@ -11,19 +11,27 @@
 import {
   AiBudgetExhaustedError,
   PayrollPromptLeakError,
+  proposeCvCandidateDraft,
   reviewCandidateProfile,
+  type CvExtractProposal,
   type InboxReader,
   type RecruitingBriefAiReason,
   type RecruitingBriefResult,
 } from '@ludy/agent';
 import type { HrRecruitingBriefAsk, HrRecruitingBriefResult } from '@ludy/kernel-contract';
 import { DomainError } from '@ludy/kernel-runtime';
-import type { HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
+import type { CvDraftProposerInput, CvDraftProposerResult, HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface RecruitingBriefAi {
   reader: Pick<InboxReader, 'recruitingBrief'> | null;
   budget: DraftBudget;
+}
+
+export interface RecruitingCvAi {
+  reader: Pick<InboxReader, 'cvExtract'> | null;
+  budget: DraftBudget;
+  aiEnabled: boolean;
 }
 
 export interface RecruitingBriefPorts {
@@ -110,4 +118,38 @@ export async function generateRecruitingBrief(
     interviewQuestions: result.interviewQuestions,
     ai: result.ai,
   };
+}
+
+/**
+ * Runs optional metered Ly CV field extraction with strict deterministic fallback when AI is off, over budget,
+ * rate-limited, unavailable, or produces ungrounded output. Never auto-creates candidates or makes screening decisions.
+ */
+export async function proposeCvDraftWithLy(
+  ai: RecruitingCvAi,
+  orgId: string,
+  userId: string,
+  input: CvDraftProposerInput,
+  useAi = true,
+): Promise<CvDraftProposerResult & CvExtractProposal> {
+  if (!useAi || !ai.aiEnabled || !ai.reader) {
+    return proposeCvCandidateDraft(input, { aiDisabledReason: 'ai_off' });
+  }
+  const ticket = ai.budget.take(orgId, userId);
+  if (!ticket.allowed) {
+    return proposeCvCandidateDraft(input, { aiDisabledReason: 'rate_limited' });
+  }
+  try {
+    return await ai.reader.cvExtract(input);
+  } catch (error: unknown) {
+    if (error instanceof AiBudgetExhaustedError) {
+      return proposeCvCandidateDraft(input, { aiDisabledReason: 'budget' });
+    }
+    if (isRateLimitError(error)) {
+      return proposeCvCandidateDraft(input, { aiDisabledReason: 'rate_limited' });
+    }
+    console.error('[hr-cv-extract-ai] proposal failed', error instanceof Error ? error.name : typeof error);
+    return proposeCvCandidateDraft(input, { aiDisabledReason: 'unavailable' });
+  } finally {
+    ticket.release();
+  }
 }
