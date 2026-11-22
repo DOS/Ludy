@@ -63,6 +63,7 @@ const ALL_KNOWN_ROLES = new Set<string>([
   ...DB_ROLE_NAMES.map((r) => `ludy_${r}`),
 ]);
 const WRAPPED = new WeakSet<object>();
+const RAW_QUERY = new WeakMap<object, (...args: unknown[]) => unknown>();
 
 export interface DbIdentifiers {
   readonly isKernelLudy: boolean;
@@ -249,11 +250,48 @@ function rewriteQueryArgs(args: unknown[], ids: DbIdentifiers): void {
   }
 }
 
+function rawQuery<R = Record<string, unknown>>(
+  client: QueryClientLike,
+  text: string,
+  values?: unknown[],
+): Promise<{ rows: R[] }> {
+  const orig = RAW_QUERY.get(client) ?? (client.query.bind(client) as (...args: unknown[]) => unknown);
+  return (values !== undefined ? orig(text, values) : orig(text)) as Promise<{ rows: R[] }>;
+}
+
+export async function auditRoleFunctionExecute(
+  client: QueryClientLike,
+  ids: DbIdentifiers | undefined,
+  fn: string,
+  checkedLegacyRoles: readonly string[],
+): Promise<Array<{ rolname: string; canonicalRole: string; canExecute: boolean }>> {
+  const activeFn = ids ? ids.rewriteSql(fn) : fn;
+  const canonicalRoles = [...checkedLegacyRoles];
+  const ludyTwinRoles = canonicalRoles.map((r) => (r.startsWith('crove_') ? `ludy_${r.slice('crove_'.length)}` : r));
+  const res = await rawQuery<{ rolname: string; canonical_role: string; can_execute: boolean }>(
+    client,
+    `SELECT r.rolname,
+            ($2::text[])[i] AS canonical_role,
+            pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS can_execute
+     FROM pg_catalog.generate_subscripts($2::text[], 1) AS i
+     JOIN pg_catalog.pg_roles r
+       ON r.rolname IN (($2::text[])[i], ($3::text[])[i])
+     ORDER BY i, r.rolname`,
+    [activeFn, canonicalRoles, ludyTwinRoles],
+  );
+  return res.rows.map((row) => ({
+    rolname: row.rolname,
+    canonicalRole: row.canonical_role,
+    canExecute: row.can_execute,
+  }));
+}
+
 export function wrapClient<T extends object>(client: T, ids: DbIdentifiers): T {
   if (WRAPPED.has(client)) return client;
   WRAPPED.add(client);
   const raw = client as { query: (...args: unknown[]) => unknown };
   const origQuery = raw.query.bind(client);
+  RAW_QUERY.set(client, origQuery);
   raw.query = (...args: unknown[]) => {
     rewriteQueryArgs(args, ids);
     return origQuery(...args);
@@ -269,6 +307,7 @@ export function wrapPool(pool: Pool, ids: DbIdentifiers): Pool {
     connect: (...args: unknown[]) => unknown;
   };
   const origQuery = raw.query.bind(pool);
+  RAW_QUERY.set(pool, origQuery);
   raw.query = (...args: unknown[]) => {
     rewriteQueryArgs(args, ids);
     return origQuery(...args);

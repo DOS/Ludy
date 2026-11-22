@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
 import {
   createOrg,
   kernelCommands,
@@ -23,10 +23,18 @@ import {
   signManifest,
   signQueries,
 } from '../../src/index.ts';
+import {
+  auditRoleFunctionExecute,
+  resolveDbIdentifiers,
+  roleUrl,
+  setActiveRolePasswords,
+  wrapPool,
+  type DbIdentifiers,
+} from './fixtures/db-identifiers.ts';
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -36,6 +44,7 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
   let workerPool: Pool | undefined;
+  let ids!: DbIdentifiers;
   let runtime: Runtime;
   let workerRuntime: Runtime;
 
@@ -78,18 +87,12 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'mtg-mod-app-pw', crove_worker: 'mtg-mod-worker-pw' });
+    ids = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'mtg-mod-app-pw', crove_worker: 'mtg-mod-worker-pw' }, ids);
 
-    const loginUrl = (user: string, pw: string) => {
-      const u = new URL(adminUrl);
-      u.username = user;
-      u.password = pw;
-      return u.toString();
-    };
-
-    adminPool = createPool({ connectionString: adminUrl, max: 2 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'mtg-mod-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'mtg-mod-worker-pw'), max: 3 });
+    adminPool = wrapPool(createPool({ connectionString: adminUrl, max: 2 }), ids);
+    appPool = wrapPool(createPool({ connectionString: roleUrl(adminUrl, 'crove_app', 'mtg-mod-app-pw', ids), max: 6 }), ids);
+    workerPool = wrapPool(createPool({ connectionString: roleUrl(adminUrl, 'crove_worker', 'mtg-mod-worker-pw', ids), max: 3 }), ids);
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);
@@ -130,53 +133,70 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
   });
 
   it('pins search_path and restricts EXECUTE privileges on all crove_sign meeting-minutes SECURITY DEFINER functions', async () => {
-    const roles = ['PUBLIC', 'crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader'];
+    const fnSignatures = [
+      'crove_sign.is_meeting_minutes_reader(uuid,uuid)',
+      'crove_sign.has_shared_meeting_minutes(uuid,uuid)',
+      'crove_sign.check_meeting_minutes_source(uuid)',
+      'crove_sign.can_create_meeting_minutes_envelope(uuid,uuid)',
+      'crove_sign.can_access_meeting_minutes_envelope(uuid,uuid,uuid)',
+      'crove_sign.is_exportable_envelope(uuid,text,uuid)',
+      'crove_sign.is_exportable_envelope_id(uuid,uuid)',
+      'crove_sign.is_exportable_sign_file(uuid,uuid,text)',
+      'crove_sign.can_attach_confidential_source_file(uuid,uuid,text,uuid,timestamptz,boolean)',
+      'crove_sign.can_attach_template_source(uuid,uuid,uuid,text)',
+      'crove_sign.can_read_sign_file(uuid)',
+      'crove_sign.mint_in_person_signing_token(uuid,uuid,text,timestamptz)',
+    ] as const;
+
     const { rows } = await adminPool!.query<{
       fn: string;
       definer: boolean;
       config: string[];
       public_exec: boolean;
-      callers: string[];
     }>(
       `SELECT p.oid::regprocedure::text AS fn,
               p.prosecdef AS definer,
               p.proconfig AS config,
-              has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
-              ARRAY(
-                SELECT r FROM unnest($1::text[]) r
-                WHERE r <> 'PUBLIC' AND has_function_privilege(r, p.oid, 'EXECUTE')
-                ORDER BY r
-              ) AS callers
-         FROM pg_proc p
+              pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
+         FROM pg_catalog.pg_proc p
         WHERE p.oid IN (
-          'crove_sign.is_meeting_minutes_reader(uuid,uuid)'::regprocedure,
-          'crove_sign.has_shared_meeting_minutes(uuid,uuid)'::regprocedure,
-          'crove_sign.check_meeting_minutes_source(uuid)'::regprocedure,
-          'crove_sign.can_create_meeting_minutes_envelope(uuid,uuid)'::regprocedure,
-          'crove_sign.can_access_meeting_minutes_envelope(uuid,uuid,uuid)'::regprocedure,
-          'crove_sign.is_exportable_envelope(uuid,text,uuid)'::regprocedure,
-          'crove_sign.is_exportable_envelope_id(uuid,uuid)'::regprocedure,
-          'crove_sign.is_exportable_sign_file(uuid,uuid,text)'::regprocedure,
-          'crove_sign.can_attach_confidential_source_file(uuid,uuid,text,uuid,timestamptz,boolean)'::regprocedure,
-          'crove_sign.can_attach_template_source(uuid,uuid,uuid,text)'::regprocedure,
-          'crove_sign.can_read_sign_file(uuid)'::regprocedure,
-          'crove_sign.mint_in_person_signing_token(uuid,uuid,text,timestamptz)'::regprocedure
+          ${fnSignatures.map((sig) => `'${sig}'::regprocedure`).join(',\n          ')}
         )
         ORDER BY 1`,
-      [roles],
     );
 
     const internalOnlyFns = new Set([
       'crove_sign.is_meeting_minutes_reader(uuid,uuid)',
       'crove_sign.has_shared_meeting_minutes(uuid,uuid)',
     ]);
-    const expectedCallers = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'];
+    const expectedCallers = new Set(['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker']);
+    const checkedCanonicalRoles = [
+      'crove_app',
+      'crove_worker',
+      'crove_tenant',
+      'crove_definer_tenant',
+      'crove_auth_reader',
+    ] as const;
+
     expect(rows).toHaveLength(12);
     for (const row of rows) {
-      expect(row.definer, row.fn).toBe(true);
-      expect(row.config, row.fn).toEqual(['search_path=pg_catalog, pg_temp']);
-      expect(row.public_exec, row.fn).toBe(false);
-      expect(row.callers, row.fn).toEqual(internalOnlyFns.has(row.fn) ? [] : expectedCallers);
+      const canonicalFn = ids.toCanonicalTable(row.fn);
+      expect(row.definer, canonicalFn).toBe(true);
+      expect(row.config, canonicalFn).toEqual(['search_path=pg_catalog, pg_temp']);
+      expect(row.public_exec, canonicalFn).toBe(false);
+    }
+
+    for (const fn of fnSignatures) {
+      const roleRows = await auditRoleFunctionExecute(adminPool!, ids, fn, checkedCanonicalRoles);
+      const resolvedCanonical = new Set(roleRows.map((r) => r.canonicalRole));
+      for (const canonicalRole of checkedCanonicalRoles) {
+        expect(resolvedCanonical.has(canonicalRole), `${fn} resolved ${canonicalRole}`).toBe(true);
+      }
+      const isInternalOnly = internalOnlyFns.has(fn);
+      for (const roleRow of roleRows) {
+        const expected = !isInternalOnly && expectedCallers.has(roleRow.canonicalRole);
+        expect(roleRow.canExecute, `${roleRow.rolname} (${roleRow.canonicalRole}) execute ${fn}`).toBe(expected);
+      }
     }
   });
 
@@ -314,7 +334,7 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
       await client.query('BEGIN');
       await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
         orgId,
-        mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerId,
           orgId,
           sessionId: null,
