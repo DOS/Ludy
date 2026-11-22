@@ -23,6 +23,7 @@ import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { payoutPaths, payoutProposal, type PayoutProposal } from './marketplace-payout-posting.ts';
+import { goodsBackOnLines } from './marketplace-return.ts';
 import { postedSettlementTax, postingsOf, settlementPosted } from './marketplace-settlement-months.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
@@ -124,6 +125,17 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .where('org_id', '=', ctx.orgId)
     .where('settlement_id', '=', settlement.id)
     .execute();
+  // A carrier compensation is for goods that were lost: an order whose goods came back to stock (a person's answer, or the old automatic return) cannot also have lost them, or the cost would be taken twice
+  // (#4355). The order is checked, not the line: a settlement line carries the report's row key, which is not the order line's. Both the request and the approval build here, so both refuse.
+  // A line that is not one of the settlement's is left to the adjustment check below (ADJUSTMENT_LINE), which comes first.
+  const ownLines = new Set(lines.map((l) => String(l.id).toLowerCase()));
+  const goodsBack = await goodsBackOnLines(
+    ctx,
+    adjustments.flatMap((a) => (a.kind === 'carrier_compensation' && ownLines.has(a.lineId.toLowerCase()) ? [a.lineId.toLowerCase()] : [])),
+  );
+  if (goodsBack !== null) {
+    throw new DomainError('MARKETPLACE_PAYOUT_GOODS_BACK', 409, 'Hàng của đơn này đã được nhập lại kho nên không thể phân loại là hãng vận chuyển bồi thường hàng mất', { lineId: goodsBack });
+  }
   // A household's withheld tax is the settlement's 3331 and 3335; only a seller that is no household can have tax withheld by mistake (#4303 S4).
   const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', settlement.legal_entity_id).executeTakeFirst();
   // No row is no answer: never read as "not a household" (that would open the tax-withheld-by-mistake classification).

@@ -135,6 +135,14 @@ export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;
 export const zMarketplaceUnassign = z.strictObject({ lineId: zId, forget: z.boolean().default(false) });
 export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;
 
+// What a person says about a marketplace line that came back (#4355, rule 8 of #2520, the stock side): `back` (the goods are in the seller's hands again: a stock-in of the shipment's item and quantity is
+// written, priced by the month close at the month's average, Dr 156 / Cr 632) or `not_back` (a refund-only claim, a loss: nothing moves). The platform's status only offers the question; no report decides it.
+// A line is offered while it is returned (or cancelled after it shipped), has its shipment, no return move and no decision for its live attempt, and no payout proposal classifies carrier compensation on
+// its order (#4338). MARKETPLACE_RETURN_NOT_FOUND (404), MARKETPLACE_RETURN_NOT_OFFERED (422), MARKETPLACE_RETURN_DECIDED (409, a second answer), MARKETPLACE_RETURN_COMPENSATED (409).
+export const zMarketplaceReturnDecide = z.strictObject({ orderLineId: zId, decision: z.enum(['back', 'not_back']) });
+export const zMarketplaceReturnDecided = z.object({ orderLineId: zId, decision: z.enum(['back', 'not_back']), moveId: zId.nullable() });
+export type MarketplaceReturnDecided = z.infer<typeof zMarketplaceReturnDecided>;
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Income reports (#2516, ADR-0045 points 5 and 7): what a platform paid for the orders of a period, read from the platform's income file and staged until a member confirms. Like the
 // order report, no buyer data of any kind appears here: the reader has no field for it.

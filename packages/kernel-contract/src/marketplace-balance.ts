@@ -155,6 +155,23 @@ export const zMarketplaceFeeAccrualReversal = z.object({
   proposalId: zId.nullable(),
 });
 export type MarketplaceFeeAccrualReversal = z.infer<typeof zMarketplaceFeeAccrualReversal>;
+// A marketplace line that came back and waits for a person to say whether its goods did (#4355): the platform's status only offers the question. `quantity` is the shipment's, in the item's unit; the
+// order number is the platform's own, no buyer data is held anywhere. Answered with `marketplace.returns.decide`.
+export const zMarketplaceReturnToConfirm = z.object({
+  orderLineId: zId,
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  orderNo: z.string(),
+  sku: z.string().nullable(),
+  itemCode: z.string(),
+  itemName: z.string(),
+  unit: z.string(),
+  quantity: z.string(),
+  stage: z.enum(['returned', 'cancelled']),
+  shippedAt: zLocalDate.nullable(),
+});
+export type MarketplaceReturnToConfirm = z.infer<typeof zMarketplaceReturnToConfirm>;
 export const zMarketplaceWorklist = z.object({
   postingConfirmed: z.boolean(),
   // The same gate for the sales path alone: the settlement rows follow it (a settlement entry needs no payout or fee path, #4303 S3b).
@@ -165,6 +182,8 @@ export const zMarketplaceWorklist = z.object({
   halfReversed: z.array(zMarketplaceHalfReversed),
   accruals: z.array(zMarketplaceFeeAccrual),
   accrualReversals: z.array(zMarketplaceFeeAccrualReversal),
+  // The lines that came back and wait for "are the goods back?" (#4355): a stock question, not an account one, so it is not held by the account map's gate.
+  returns: z.array(zMarketplaceReturnToConfirm),
 });
 export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;
 

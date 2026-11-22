@@ -50,7 +50,7 @@ export function canAdvance(from: Stage, to: Stage): boolean {
   return false;
 }
 
-// The stages that move stock: a shipment takes it out, a return brings it back; a placed order moves nothing, and a cancelled one only if it had shipped (it brings the stock back, see moveLineStock).
+// The stages whose shipment takes stock out; a placed order moves nothing, and a return or a cancellation after the shipment is a person's answer (marketplace-return.ts, #4355).
 const MOVES_STOCK: ReadonlySet<Stage> = new Set(['shipped', 'completed', 'returned']);
 
 // The summary a staged read keeps: the file's own figures, nothing of the orders' content beyond counts.
@@ -343,9 +343,9 @@ async function ensureOrder(ctx: CommandContext, legalEntityId: string, platform:
   return row.id;
 }
 
-// The stock a line moves, once: a shipment at the shipping day (or the order's, or today), a return after its shipment, both through the item the line names (the shipment's item for a
-// return). A line cancelled after it shipped (a failed delivery) brings its stock back like a return; one cancelled before shipping moved nothing. A line that names no item moves nothing
-// and waits for a person.
+// The stock a line moves, once: a shipment at the shipping day (or the order's, or today), through the item the line names. The return is not moved here any more (#4355): a line that came back,
+// or was cancelled after it shipped (a failed delivery), waits as "goods back?" and a person's answer writes the return move (marketplace-return.ts), because the report cannot tell a return from a
+// refund-only claim or a loss. A line cancelled before shipping moved nothing. A line that names no item moves nothing and waits for a person.
 async function moveLineStock(
   ctx: CommandContext,
   line: { id: string; stage: Stage; quantity: string; shippedAt: string | null; orderedAt: string | null; sku: string | null; attempt: number },
@@ -354,29 +354,26 @@ async function moveLineStock(
   // An item a person chose for the line (the assignment): used instead of looking the SKU up.
   explicit?: ItemMatch,
 ): Promise<number> {
-  if (!MOVES_STOCK.has(line.stage) && line.stage !== 'cancelled') return 0;
-  // The moves of the line's live attempt: an earlier attempt's were reversed when it was unassigned (#2633).
-  const made = await ctx.trx.selectFrom('crove_finance.stock_move').select(['order_move', 'item_id', 'quantity']).where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).where('order_attempt', '=', line.attempt).execute();
-  const ship = made.find((m) => m.order_move === 'ship');
-  const returned = made.find((m) => m.order_move === 'return');
-  // Cancelled: only a line that had shipped has anything to bring back.
-  if (line.stage === 'cancelled' && !ship) return 0;
+  // A placed, unknown or cancelled line moves nothing here: a cancelled line that shipped waits for a person's answer (#4355).
+  if (!MOVES_STOCK.has(line.stage)) return 0;
+  // The shipment of the line's live attempt: an earlier attempt's was reversed when it was unassigned (#2633).
+  const ship = await ctx.trx
+    .selectFrom('crove_finance.stock_move')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('order_line_id', '=', line.id)
+    .where('order_move', '=', 'ship')
+    .where('order_attempt', '=', line.attempt)
+    .executeTakeFirst();
   const day = line.shippedAt ?? line.orderedAt ?? today;
   let moves = 0;
-  let shipped = ship ? { itemId: ship.item_id, quantity: String(ship.quantity) } : null;
-  if (!shipped) {
+  if (!ship) {
     // A line taken back from an item (attempt 2 or more) is assigned again by a person only: the name taught for its SKU would put it on the same item at the next report (#2633).
     const match = explicit ?? (line.attempt === 1 && line.sku ? matches.get(normalizeAlias(line.sku)) : undefined);
     const quantity = movableQuantity(line.quantity);
     const signed = match && quantity !== null ? moveQuantity('sale', quantity, match.factor) : null;
     if (!match || signed === null) return 0;
     await writeStockMove(ctx, { itemId: match.itemId, date: day, quantity: signed, source: { type: 'order_line', orderLineId: line.id, move: 'ship', attempt: line.attempt } });
-    shipped = { itemId: match.itemId, quantity: signed };
-    moves += 1;
-  }
-  if ((line.stage === 'returned' || line.stage === 'cancelled') && !returned) {
-    const back = shipped.quantity.startsWith('-') ? shipped.quantity.slice(1) : `-${shipped.quantity}`;
-    await writeStockMove(ctx, { itemId: shipped.itemId, date: today, quantity: back, source: { type: 'order_line', orderLineId: line.id, move: 'return', attempt: line.attempt } });
     moves += 1;
   }
   return moves;
@@ -729,7 +726,7 @@ export const marketplaceUnassign = defineCommand({
       .where('l.id', '=', input.lineId)
       .executeTakeFirst();
     if (!line) throw new DomainError('MARKETPLACE_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng đơn hàng này');
-    if (line.stage === 'cancelled') throw new DomainError('MARKETPLACE_LINE_CANCELLED', 409, 'Đơn đã hủy nên kho đã tự hoàn lại; không có gì để bỏ gán');
+    if (line.stage === 'cancelled') throw new DomainError('MARKETPLACE_LINE_CANCELLED', 409, 'Đơn đã hủy sau khi giao: hàng hoàn lại được xử lý ở mục "hàng đã về chưa?", nên không có gì để bỏ gán');
     const live = await ctx.trx
       .selectFrom('crove_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'order_move'])
