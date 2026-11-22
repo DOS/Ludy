@@ -195,7 +195,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceVatRateSet, zMarketplaceVatRates, zMarketplaceVatRatesGet } from './marketplace-vat-rate.ts';
-import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMarketplaceAuthorizeReturn, zMarketplaceAuthorizeStarted, zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTestAnswer, zMarketplaceProviders, zMarketplacePushHookCreated, zMarketplacePushHookSet, zMarketplacePushHookStatus } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
@@ -2834,6 +2834,10 @@ export const contract = {
       // Finish: the page the platform returns the seller to calls this with the state and the one-time code. The code is sealed here and traded by the worker; the answer is only the connection. MARKETPLACE_AUTHORIZE_INVALID (400)
       // for a state that is wrong, used, ended, another member's or another org's.
       authorizeFinish: oc.input(zMarketplaceAuthorizeReturn).output(z.object({ id: zId })),
+      // The push address of one connection (#4348, S3b of #4315): owners and admins make it or replace it (the old one stops at once) and see it ONCE; the status never carries it. MARKETPLACE_CONNECTION_NOT_FOUND (404),
+      // MARKETPLACE_PUSH_UNSUPPORTED (422) for an adapter that takes no push or a deployment that does not run it, CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403) unless owner or admin.
+      pushHookSet: oc.input(zMarketplacePushHookSet).output(zMarketplacePushHookCreated),
+      pushHook: oc.input(zMarketplacePushHookSet).output(zMarketplacePushHookStatus),
     },
     // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated entries, by effective date and, within a date, in the order entered (the last of a date is in force); every role reads, owners and admins add rows from a date
     // (R1, audited; append-only, a wrong row is corrected by a later entry for any date outside a locked period). The suggested schedule on the settings field applies only when a person picks the method and confirms it.

@@ -87,13 +87,7 @@ interface PendingNoIdempotency {
   expires: string;
 }
 const PENDING_NO_IDEMPOTENCY_COMMANDS: Readonly<Record<string, PendingNoIdempotency>> = {
-  // #4348 (S3b of the marketplace push receiver, #4315): the owner's command that creates or rotates a connection's push
-  // address answers the one-time key, so a replay of a stored answer must never hand it out again. The same reason and shape
-  // as finance.bank_feed.hook_set; the runtime refuses an idempotency key on it with 400.
-  'finance.marketplace_connection.push_hook_set': {
-    reason: 'the answer of the owner command holds the one-time push address key, so it declares noIdempotency like finance.bank_feed.hook_set (#4348, #4315)',
-    expires: '2026-12-06',
-  },
+  // None now: #4348 moved finance.marketplace_connection.push_hook_set to the pinned list.
 };
 
 // What is wrong between the commands that declare noIdempotency and the two lists, one line each.
@@ -124,6 +118,7 @@ function noIdempotencyListProblems(
 describe('commands that declare noIdempotency (#3428)', () => {
   const PINNED_NO_IDEMPOTENCY_COMMANDS = [
     'finance.bank_feed.hook_set',
+    'finance.marketplace_connection.push_hook_set',
     'sign.direct.otp_mail_data',
     'sign.envelope.send',
     'sign.public.otp_mail_data',

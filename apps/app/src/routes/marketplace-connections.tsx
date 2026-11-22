@@ -14,6 +14,7 @@ import { Card } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Input } from '@ludy/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { MarketplacePushHook } from '../components/marketplace-push-hook.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -150,6 +151,8 @@ function ConnectionItem({ connection, adapters, entities, canManage, orgSlug }: 
           )}
         </div>
       )}
+      {/* The push address (#4348): only for an owner or admin, a live connection and an adapter this deployment can give an address for (the providers list says so: it pushes, the public URL is set, a broker runs). */}
+      {canManage && live && adapters.find((a) => a.id === adapterIdOf(connection))?.push === true && <MarketplacePushHook connection={connection} />}
       {watching && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
           {t('testQueued')}

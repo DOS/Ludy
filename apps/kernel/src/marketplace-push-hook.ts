@@ -10,6 +10,7 @@
 // Shopee (the definer stores NULL for any other adapter).
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
+import { MARKETPLACE_HOOK_KEY_LENGTH, marketplaceHookAddress } from '@ludy/kernel-contract';
 import type { Runtime } from '@ludy/kernel-runtime';
 
 // The most a push's body may be: a push is a few hundred bytes, so a larger one is not a platform's.
@@ -18,9 +19,6 @@ export const MAX_MARKETPLACE_PUSH_BYTES = 16 * 1024;
 export const MARKETPLACE_PUSHES_PER_MINUTE = 300;
 // Pushes one client address sends a minute across all hooks (the platforms push from a few addresses): more are answered with an empty 2xx and dropped, never a 429.
 export const MARKETPLACE_PUSH_ADDRESS_PER_MINUTE = 1200;
-// The hook key is 128 random bits as base64url: 22 characters.
-export const MARKETPLACE_HOOK_KEY_LENGTH = 22;
-
 const HOOK_KEY = new RegExp(`^[A-Za-z0-9_-]{${MARKETPLACE_HOOK_KEY_LENGTH}}$`);
 // A key of the wrong shape cannot be one of ours: the route answers 404 before it reads a body, and nothing is looked up for it.
 export const isMarketplaceHookKey = (key: string): boolean => HOOK_KEY.test(key);
@@ -32,12 +30,6 @@ export const marketplaceHookKeyHash = (key: string): string => createHash('sha25
 // The dedupe key of a push: the SHA-256 of the header, a newline (a header holds none) and the bytes, so a platform's retry of the same push is acknowledged and waits only once.
 export function marketplacePushDedupeKey(authorization: string, body: Uint8Array): string {
   return createHash('sha256').update(authorization, 'utf8').update('\n', 'utf8').update(body).digest('hex');
-}
-
-// The address a seller pastes into its platform app, and the address Shopee signs: the configured public URL, the adapter and the key. One function, so the screen of the owner's command (S3b) shows the very string the
-// route stores.
-export function marketplaceHookAddress(publicUrl: string, adapter: string, key: string): string {
-  return `${publicUrl.replace(/\/+$/, '')}/api/marketplace/${adapter}/webhook/${key}`;
 }
 
 // What the platform is answered. 200 carries an EMPTY body; 404 a bare not found; 500 a fixed code (the platform retries).

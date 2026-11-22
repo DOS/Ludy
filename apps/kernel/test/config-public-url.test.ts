@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PUBLIC_URL is the origin Shopee's push address is built from (#4346): the address is stored with each Shopee push and a definer refuses one of over 400 characters, so a PUBLIC_URL too long for it is refused at boot.
+import { MARKETPLACE_HOOK_KEY_LENGTH, marketplaceHookAddress } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { MARKETPLACE_HOOK_KEY_LENGTH, marketplaceHookAddress } from '../src/marketplace-push-hook.ts';
 
 const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', AUTH_SESSION_CHECK: 'jwt', PUBLIC_AUTH_URL: 'https://auth.example.test', WEB_DIST: '/nonexistent' };
 // The longest address the definer takes (marketplace_hook_put_notice: 1 to 400 characters).

@@ -15,6 +15,7 @@
 // - finance.marketplace_connection.poll_target (system query): what the worker needs to poll one connection, or why it must not.
 // - finance.marketplace_connection.list: every member reads the connections, their last test and their last poll.
 // No query, audit fact or error carries a credential, a buyer's data or a platform's own text: only ids, counts and states.
+import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { zChannelConnect } from '@ludy/kernel';
@@ -29,10 +30,13 @@ import {
   zMarketplaceIngestPage,
   zMarketplaceConnectionRecordTest,
   zMarketplacePlatform,
+  zMarketplacePushHookSet,
+  MARKETPLACE_PUSH_ADAPTERS,
   type MarketplaceAuthorizeBegun,
   type MarketplaceConnection,
   type MarketplaceConnectionTested,
   type MarketplacePageIngested,
+  type MarketplacePushHookStatus,
 } from '@ludy/kernel-contract';
 import type { Db, MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, sha256Hex } from '@ludy/kernel-runtime';
@@ -730,6 +734,73 @@ export async function marketplacePollDue(workerDb: Db, after: { orgId: string; i
   return rows.map((r) => ({ orgId: r.org_id, id: r.id, provider: r.provider }));
 }
 
+// The push address of a connection (#4348, S3b of #4315): 128 random bits as 22 base64url characters, shown once; the database keeps its SHA-256 only, in a definer-only table, through
+// crove_finance.marketplace_hook_set (owners and admins, checked there too from the sealed context). A second call replaces the key, so the old address stops at once, the pushes waiting for it are dropped and a hook
+// stopped by refused pushes takes pushes again. The address the owner sees is built from the key by the API, which knows the public URL (apps/kernel rpc.ts); the key leaves only in this command's answer.
+const marketplaceHookKey = () => randomBytes(16).toString('base64url');
+const marketplaceHookKeyHash = (key: string) => createHash('sha256').update(key, 'utf8').digest('hex');
+
+// What the definer's refusal of a connection that is no longer there or no longer active is to the caller: CHANNEL_NOT_ACTIVE, as when the command's own check sees it. Anything else is not this refusal.
+export function hookSetFailure(e: unknown): DomainError | null {
+  const err = e as { code?: unknown; message?: unknown } | null;
+  return err !== null && typeof err === 'object' && err.code === '22023' && typeof err.message === 'string' && err.message.includes('MARKETPLACE_HOOK_NOT_FOUND')
+    ? new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối với sàn không còn hoạt động; hãy kết nối lại')
+    : null;
+}
+
+export const marketplaceConnectionPushHookSet = defineCommand({
+  name: 'finance.marketplace_connection.push_hook_set',
+  input: zMarketplacePushHookSet,
+  // A row of Crove that makes an address valid or stops the old one; it posts nothing, reaches no platform and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency key,
+  // so no replay hands it out again, and the audit row keeps the connection and a flag, never the key.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  // The answer holds the key in plaintext, so it must never be stored for a replay (crove_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
+  noIdempotency: true,
+  target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ adapter: (typeof MARKETPLACE_PUSH_ADAPTERS)[number]; key: string; created: boolean }> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của sàn');
+    const connection = await ctx.trx
+      .selectFrom('crove_finance.marketplace_connection as c')
+      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .select(['ch.provider as provider', 'ch.status as status'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', input.id)
+      .executeTakeFirst();
+    if (!connection) throw notFound();
+    const adapter = marketplaceAdapterOf(connection.provider);
+    const pushAdapter = MARKETPLACE_PUSH_ADAPTERS.find((id) => id === adapter);
+    if (!pushAdapter) throw new DomainError('MARKETPLACE_PUSH_UNSUPPORTED', 422, 'Sàn này chưa nhận thông báo đẩy');
+    if (connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối với sàn không còn hoạt động; hãy kết nối lại');
+    const key = marketplaceHookKey();
+    // A channel connection revoked between the check above and the definer's own check is the same refusal, not a generic error.
+    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.marketplace_hook_set(${input.id}::uuid, ${marketplaceHookKeyHash(key)}) AS made`.execute(ctx.trx).catch((e: unknown) => {
+      throw hookSetFailure(e) ?? e;
+    });
+    const created = rows[0]?.made === true;
+    ctx.audit({ created });
+    return { adapter: pushAdapter, key, created };
+  },
+});
+
+export const marketplaceConnectionPushHook = defineQuery({
+  name: 'finance.marketplace_connection.push_hook',
+  input: zMarketplacePushHookSet,
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<MarketplacePushHookStatus> => {
+    // A connection that is not this org's answers as the command does (404), whether it has no hook or does not exist, so an id of another org learns nothing from either.
+    const known = await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    if (!known) throw notFound();
+    const { rows } = await sql<{ created_at: Date | string; rotated_at: Date | string | null; last_seen_at: Date | string | null; rejected_count: number; stopped: boolean }>`
+      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM crove_finance.marketplace_hook_status(${input.id}::uuid)`.execute(ctx.trx);
+    const row = rows[0];
+    if (!row) return { exists: false, createdAt: null, rotatedAt: null, lastSeenAt: null, rejectedCount: 0, stopped: false };
+    const iso = (v: Date | string | null) => (v === null ? null : new Date(v).toISOString());
+    return { exists: true, createdAt: iso(row.created_at), rotatedAt: iso(row.rotated_at), lastSeenAt: iso(row.last_seen_at), rejectedCount: Number(row.rejected_count), stopped: row.stopped };
+  },
+});
+
 export const marketplaceConnectionCommands = [
   marketplaceConnectionConnect,
   marketplaceConnectionRecordTest,
@@ -742,5 +813,6 @@ export const marketplaceConnectionCommands = [
   marketplaceConnectionAuthorizeFinish,
   marketplaceConnectionAuthorizeRecord,
   marketplaceConnectionAuthorizeComplete,
+  marketplaceConnectionPushHookSet,
 ];
-export const marketplaceConnectionQueries = [marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget, marketplaceConnectionStaged];
+export const marketplaceConnectionQueries = [marketplaceConnectionPushHook, marketplaceConnectionList, marketplaceConnectionTarget, marketplaceConnectionPollTarget, marketplaceConnectionAuthorizeLookup, marketplaceConnectionAuthorizeTarget, marketplaceConnectionStaged];

@@ -6133,6 +6133,37 @@ export const en = {
     oneRateNote: 'One rate per company. Goods at different rates are not split here; talk to your accountant.',
   },
   marketplaceConnections: {
+    pushHook: {
+      title: 'Push notifications from the marketplace',
+      intro:
+        'The marketplace tells Ludy as soon as there is a new order or return, through a notification address. Paste the address below into the notification (webhook or push) settings of the app you created on the marketplace. Skipping it is fine: Ludy still checks on a schedule.',
+      none: 'No notification address yet.',
+      create: 'Create address',
+      rotate: 'Replace the address',
+      createdAt: 'Address made {when}',
+      rotatedAt: 'Replaced {when}',
+      lastSeen: 'Last notification from the marketplace: {when}',
+      noNotice: 'Last notification from the marketplace: none yet',
+      rejected: '{count, plural, one {# notification refused this hour} other {# notifications refused this hour}}',
+      stopped:
+        'This address stopped taking notifications because too many were refused (10 in an hour). Replace the address and paste the new one into the app on the marketplace.',
+      shownOnce: 'Copy this address now. It is shown only once; after you close it, you can only make a new one.',
+      addressLabel: 'Notification address',
+      noteExact:
+        'Paste the whole address exactly, without adding or removing any character (a trailing slash included). Shopee signs the address too, so one wrong character makes its notifications be refused and the address stop.',
+      noteShared:
+        'An app used for several shops has a single address box: only the shop whose key is in that address gets notifications, and the other shops are still checked on a schedule.',
+      copy: 'Copy address',
+      copied: 'Copied',
+      copyFailed: 'Could not copy. Select the address and copy it by hand.',
+      close: 'I have pasted it, hide the address',
+      warnRotate:
+        'Replacing the address stops the old one at once. The marketplace keeps sending to the old address until you paste the new one into the app on the marketplace; in the meantime Ludy still checks on a schedule.',
+      confirmRotate: 'Yes, replace the address now',
+      replacedExisting: 'This address replaced an existing one; the old one no longer works. Paste this new address into the app on the marketplace.',
+      rotateFailed: 'The old address may have stopped working. Check the status above, or replace the address again.',
+      cancel: 'Keep the current address',
+    },
     title: 'Marketplaces: pull orders from your seller account',
     intro:
       'Connect your seller account on a marketplace to bring its orders into the Inbox. The system only reads orders and changes nothing on the marketplace. Pulled orders still wait for a person to confirm them in the Inbox, just like an uploaded report file; until then no order and no stock is recorded.',
@@ -14952,6 +14983,7 @@ export const en = {
       MARKETPLACE_CONNECTION_EXISTS: 'This legal entity already has a connection to this marketplace.',
       MARKETPLACE_CONNECTION_NOT_FOUND: 'That marketplace connection was not found.',
       MARKETPLACE_CONNECTION_LIVE: 'Disconnect from the marketplace before removing this row.',
+      MARKETPLACE_PUSH_UNSUPPORTED: 'This marketplace cannot send push notices to this system.',
       MISA_AMIS_DISABLED: 'This MISA connector (AMIS Kế toán or ASP) is not turned on in this system.',
       MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA connection (AMIS Kế toán or ASP); disconnect it before connecting again.',
       MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
@@ -15953,6 +15985,8 @@ export const en = {
         ingest_page: 'Take a page of orders from a marketplace into the Inbox and link it to the connection',
         list: 'See the marketplace connections',
         poll_target: 'See which marketplace connection to pull orders from',
+        push_hook: 'See whether a marketplace connection\'s push address is set and whether pushes arrive',
+        push_hook_set: 'Create or rotate the address a marketplace pushes order notices to',
         record_poll: 'Record the result of pulling orders from a marketplace',
         record_test: 'Record the result of a marketplace connection test',
         request_poll: 'Ask for a marketplace\'s orders now',

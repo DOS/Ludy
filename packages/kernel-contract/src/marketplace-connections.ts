@@ -17,8 +17,9 @@ export const zMarketplacePollState = z.enum(MARKETPLACE_POLL_STATE_KEYS);
 export type MarketplaceConnectionState = z.infer<typeof zMarketplaceConnectionState>;
 export type MarketplacePollState = z.infer<typeof zMarketplacePollState>;
 
-// An adapter this deployment offers: its id, whether it is the offline one (no host, nothing sent), the fields its connect form asks for (their names) and the platforms it serves.
-export const zMarketplaceAdapterInfo = z.object({ id: z.string(), offline: z.boolean(), connectFields: z.array(z.string()), platforms: z.array(zMarketplacePlatform) });
+// An adapter this deployment offers: its id, whether it is the offline one (no host, nothing sent), the fields its connect form asks for (their names) and the platforms it serves. `push`: this deployment can give the
+// seller a push address for it (the adapter takes pushes, it is not the offline one, the API's public URL is set and a credential broker runs), so the connection card shows the push address only then (#4348).
+export const zMarketplaceAdapterInfo = z.object({ id: z.string(), offline: z.boolean(), push: z.boolean(), connectFields: z.array(z.string()), platforms: z.array(zMarketplacePlatform) });
 export type MarketplaceAdapterInfo = z.infer<typeof zMarketplaceAdapterInfo>;
 
 // Every platform Ludy reads, whether an adapter serves it on this deployment or not. `adapter: false` means the org brings the platform's report as a file (the screen says "nhập file báo cáo").
@@ -127,3 +128,45 @@ export const zMarketplaceAuthorizeStarted = z.object({ authorizeUrl: z.url(), ex
 export type MarketplaceAuthorizeStarted = z.infer<typeof zMarketplaceAuthorizeStarted>;
 export const zMarketplaceAuthorizeReturn = z.strictObject({ state: z.string().min(16).max(200), code: z.string().min(1).max(400) });
 export type MarketplaceAuthorizeReturn = z.infer<typeof zMarketplaceAuthorizeReturn>;
+
+// The marketplaces whose platform pushes (webhooks) a seller's own app to Crove (#4348, S3b of #4315): the adapters the push route (POST /api/marketplace/<adapter>/webhook/<hookKey>) and the worker's verifiers know.
+export const MARKETPLACE_PUSH_ADAPTERS = ['tiktok_shop', 'shopee', 'lazada'] as const;
+export const MARKETPLACE_HOOK_KEY_LENGTH = 22;
+
+// The push address of one marketplace connection. `pushHookSet` makes the address or replaces it (the old one stops at once) and answers the address ONCE: it holds a key of 128 random bits, of which only the SHA-256
+// is kept, and it is built on the server from the configured public URL, the same string the route signs for Shopee. `pushHook` is the status, never the address or the key.
+export const zMarketplacePushHookSet = z.strictObject({ id: zId });
+export type MarketplacePushHookSet = z.infer<typeof zMarketplacePushHookSet>;
+export const zMarketplacePushHookCreated = z.strictObject({ adapter: z.enum(MARKETPLACE_PUSH_ADAPTERS), address: z.string().min(1).max(400), created: z.boolean() });
+export type MarketplacePushHookCreated = z.infer<typeof zMarketplacePushHookCreated>;
+export const zMarketplacePushHookStatus = z.strictObject({
+  exists: z.boolean(),
+  createdAt: z.string().nullable(),
+  rotatedAt: z.string().nullable(),
+  lastSeenAt: z.string().nullable(),
+  // Pushes the worker refused in the current hour; ten stop the hook until its address is replaced.
+  rejectedCount: z.number().int().min(0),
+  stopped: z.boolean(),
+});
+export type MarketplacePushHookStatus = z.infer<typeof zMarketplacePushHookStatus>;
+
+// The address a seller pastes into its platform app, and the address Shopee signs: the configured public URL of the API, the adapter and the key. One function, so the card of the owner shows the very string the route
+// stores with a Shopee push (apps/kernel marketplace-push-hook.ts, #4347).
+export const marketplaceHookAddress = (publicUrl: string, adapter: string, key: string): string => {
+  // Trailing slashes are cut by a loop, not a regex: `/\/+$/` backtracks quadratically on a long run of slashes (CodeQL js/polynomial-redos).
+  let end = publicUrl.length;
+  while (end > 0 && publicUrl.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return `${publicUrl.slice(0, end)}/api/marketplace/${adapter}/webhook/${key}`;
+};
+
+// Whether the API's configured public URL can carry a push address (#4348): an https URL with a host a platform can reach (not the localhost default, not a loopback address) and no query or fragment, which the address
+// would swallow. Platforms call https only, and Shopee signs the exact string, so an address on any other URL would never get a genuine push; the card is then not offered.
+export const marketplaceHookBaseUsable = (publicUrl: string | undefined): publicUrl is string => {
+  try {
+    const url = new URL(publicUrl ?? '');
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:' && host !== '' && host !== 'localhost' && !host.endsWith('.localhost') && !host.startsWith('127.') && host !== '[::1]' && url.search === '' && url.hash === '';
+  } catch {
+    return false;
+  }
+};

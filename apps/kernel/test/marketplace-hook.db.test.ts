@@ -63,10 +63,16 @@ suite('Marketplace push hook (#4316)', () => {
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;
+  let runtime: Runtime;
   const owner: Account = { subject: randomUUID(), email: 'owner@marketplace-hook.test', session: randomUUID(), userId: '' };
   const outsider: Account = { subject: randomUUID(), email: 'outsider@marketplace-hook.test', session: randomUUID(), userId: '' };
+  const adminUser: Account = { subject: randomUUID(), email: 'admin@marketplace-hook.test', session: randomUUID(), userId: '' };
+  const member: Account = { subject: randomUUID(), email: 'member@marketplace-hook.test', session: randomUUID(), userId: '' };
   let orgId = '';
   let otherOrgId = '';
+  // The org header of a call is the org's slug.
+  let slug = '';
+  let otherSlug = '';
   let connectionId = '';
   let otherConnectionId = '';
   let hookId = '';
@@ -130,22 +136,25 @@ suite('Marketplace push hook (#4316)', () => {
     pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
     workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
-    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
     const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
-    app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false }, marketplacePush: { adapters: ['shopee', 'tiktok_shop'] } });
-    for (const who of [owner, outsider]) {
+    app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, apiUrl: 'https://api.example.test', marketplaceProviders: { shopee: { id: 'shopee', hosts: [] }, tiktok_shop: { id: 'tiktok_shop', hosts: [] } } as never }, marketplacePush: { adapters: ['shopee', 'tiktok_shop'] } });
+    for (const who of [owner, outsider, adminUser, member]) {
       const me = await rpc('me/get', await tokenFor(who), undefined, null);
       expect(me.status).toBe(200);
       who.userId = String(me.body?.userId);
     }
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty nhận push', idempotencyKey: randomUUID() }, null);
     orgId = String(created.body?.orgId);
+    slug = String(created.body?.slug);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherOrgId = String(other.body?.orgId);
+    otherSlug = String(other.body?.slug);
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
     // A marketplace connection of each org (the channel connection that holds its credential, then the connection itself: its entity is the org's default, by its trigger), and a hook of each.
     const connect = async (org: string, by: string, adapter: string) => {
       const channel = randomUUID();
@@ -168,6 +177,106 @@ suite('Marketplace push hook (#4316)', () => {
     await root.connect();
     await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await root.end();
+  });
+
+  // The owner's command and the status (S3b, #4348), through the real app: a connection of its own (TikTok Shop) so the hook of the other tests is not touched.
+  describe('the owner command and the status', () => {
+    let pushConnectionId = '';
+    // The call names the caller's own org by its slug (the outsider's is the other one, so a connection of this org is not found for it, as an unknown id is).
+    const orgOf = (who: Account) => (who === outsider ? otherSlug : slug);
+    const pushSet = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHookSet', await tokenFor(who), { id }, orgOf(who));
+    const pushStatus = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHook', await tokenFor(who), { id }, orgOf(who));
+    const keyOf = (address: string) => String(address.split('/').pop());
+    const lookupTiktok = (hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', hash]);
+
+    beforeAll(async () => {
+      const channel = randomUUID();
+      pushConnectionId = randomUUID();
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_tiktok_shop', $3, 'Sàn thử', $4)", [orgId, channel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+      await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_tiktok_shop', 'tiktok_shop')", [orgId, pushConnectionId, channel]);
+    });
+
+    it('lets owners and admins make the address, refuses a member and an outsider, and keeps only the hash of the key', async () => {
+      expect((await pushSet(member)).status).toBe(403);
+      // The outsider's own org does not hold this connection: the same 404 an unknown id gets.
+      expect(await pushSet(outsider)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
+      expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toHaveLength(0);
+      const made = await pushSet(owner);
+      expect(made.status).toBe(200);
+      expect(made.body).toMatchObject({ adapter: 'tiktok_shop', created: true });
+      const address = String(made.body.address);
+      const newKey = keyOf(address);
+      expect(newKey).toMatch(/^[A-Za-z0-9_-]{22}$/);
+      // The address is the configured public URL, the adapter and the key, and nothing else.
+      expect(address).toBe(`https://api.example.test/api/marketplace/tiktok_shop/webhook/${newKey}`);
+      expect(made.body.key).toBeUndefined();
+      const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      expect(stored).toEqual([{ key_sha256: sha(newKey) }]);
+      expect(await lookupTiktok(sha(newKey))).toEqual([{ hook_id: expect.any(String), standing: 'ok' }]);
+      // The key, its hash and the address are in no audit row, and the status answers never carry them.
+      const audit = JSON.stringify(await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]));
+      for (const secret of [newKey, sha(newKey), address]) expect(audit).not.toContain(secret);
+      const status = await pushStatus(adminUser);
+      expect(status.status).toBe(200);
+      for (const secret of [newKey, sha(newKey), address]) expect(JSON.stringify(status.body)).not.toContain(secret);
+      expect(status.body).toMatchObject({ exists: true, stopped: false, rejectedCount: 0 });
+      expect((await pushStatus(member)).status).toBe(403);
+      // A connection of another org, or one that does not exist, is not found whichever of the two calls asks: the same 404 and code, so an id of another org learns nothing from either.
+      for (const id of [otherConnectionId, randomUUID()]) {
+        expect(await pushSet(owner, id)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
+        expect(await pushStatus(owner, id)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
+      }
+      expect(await pushStatus(outsider)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
+    });
+
+    it('replaces the address: the old key stops at once, waiting pushes go, and a hook stopped by refused pushes takes pushes again', async () => {
+      const [first] = await rows<{ id: string; key_sha256: string }>('SELECT id, key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      const hookOfPush = first?.id ?? '';
+      const oldHash = first?.key_sha256 ?? '';
+      expect(await put(hookOfPush, oldHash, sha('before-rotation'))).toBe('accepted');
+      for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: false }]);
+      expect(await asWorker<{ r: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: true }]);
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: true, rejectedCount: 10 });
+      const rotated = await pushSet(adminUser);
+      expect(rotated.status).toBe(200);
+      expect(rotated.body).toMatchObject({ adapter: 'tiktok_shop', created: false });
+      const newHash = sha(keyOf(String(rotated.body.address)));
+      expect(newHash).not.toBe(oldHash);
+      expect(await lookupTiktok(oldHash)).toEqual([]);
+      expect(await lookupTiktok(newHash)).toEqual([{ hook_id: hookOfPush, standing: 'ok' }]);
+      // The push that waited for the old key is gone, and a request that passed the lookup with the old key stores nothing.
+      expect((await waiting()).filter((n) => n.hook_id === hookOfPush)).toEqual([]);
+      expect(await put(hookOfPush, oldHash, sha('after-rotation'))).toBe('gone');
+      expect(await put(hookOfPush, newHash, sha('with-new-key'))).toBe('accepted');
+      expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0 });
+      await rows('DELETE FROM crove_finance.marketplace_hook_notice WHERE hook_id = $1', [hookOfPush]);
+    });
+
+    it('refuses an adapter that takes no push, and a call that carries an idempotency key (the key would be replayed from the stored answer)', async () => {
+      // An offline adapter's connection: the command and the status answer, the first one refuses with MARKETPLACE_PUSH_UNSUPPORTED (422) and makes no hook.
+      const channel = randomUUID();
+      const offline = randomUUID();
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_sandbox', $3, 'Sàn ngoại tuyến', $4)", [orgId, channel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+      await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_sandbox', 'shopee')", [orgId, offline, channel]);
+      expect(await pushSet(owner, offline)).toMatchObject({ status: 422, body: { code: 'MARKETPLACE_PUSH_UNSUPPORTED' } });
+      expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [offline])).toHaveLength(0);
+      expect(await pushStatus(owner, offline)).toMatchObject({ status: 200, body: { exists: false } });
+      // The command itself, below the HTTP layer, refuses a member (access is owner and admin), and makes no hook.
+      await expect(runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: member.userId, aal: 'aal1', sessionId: member.session }, orgId })).rejects.toMatchObject({ status: 403 });
+      // The runtime refuses an idempotency key on this command (its answer holds the key), and makes no hook for it either.
+      const before = await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      await expect(
+        runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: owner.userId, aal: 'aal1', sessionId: owner.session }, orgId, idempotencyKey: randomUUID() }),
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
+      expect(await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toEqual(before);
+    });
+
+    it('refuses a connection whose channel connection is not active, and a connection that does not exist', async () => {
+      await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
+      expect((await pushSet(owner)).body).toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
+      await rows("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
+      expect((await pushSet(owner, randomUUID())).body).toMatchObject({ code: 'MARKETPLACE_CONNECTION_NOT_FOUND' });
+    });
   });
 
   it('finds a hook only for its own adapter and a real key: an unknown key, another adapter, the offline adapter and a malformed hash all find nothing', async () => {

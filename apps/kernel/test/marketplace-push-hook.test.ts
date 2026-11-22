@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The API's half of a marketplace push (#4346, S2 of #4315), without a database: the address a seller pastes and Shopee signs, the dedupe key, and the order of the checks in acceptMarketplacePush with a runtime whose
 // `orgless` answers what the two definers would (the lookup, then the put). The route and the stored row are in marketplace-hook.db.test.ts, which needs a PostgreSQL.
+import { MARKETPLACE_HOOK_KEY_LENGTH, marketplaceHookAddress } from '@ludy/kernel-contract';
 import type { Runtime } from '@ludy/kernel-runtime';
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_HOOK_KEY_LENGTH, acceptMarketplacePush, isMarketplaceHookKey, marketplaceHookAddress, marketplaceHookKeyHash, marketplacePushDedupeKey } from '../src/marketplace-push-hook.ts';
+import { acceptMarketplacePush, isMarketplaceHookKey, marketplaceHookKeyHash, marketplacePushDedupeKey } from '../src/marketplace-push-hook.ts';
 
 const KEY = 'AbCdEfGhIjKlMnOpQrStUv';
 const BODY = new TextEncoder().encode('{"shop_id":"1"}');

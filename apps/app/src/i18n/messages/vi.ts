@@ -6131,6 +6131,37 @@ export const vi = {
     oneRateNote: 'Mỗi công ty một thuế suất. Hàng có thuế suất khác nhau chưa được tách ở đây; hãy trao đổi với kế toán.',
   },
   marketplaceConnections: {
+    pushHook: {
+      title: 'Nhận thông báo đẩy từ sàn',
+      intro:
+        'Sàn báo cho Ludy ngay khi có đơn hoặc trả hàng mới qua một địa chỉ thông báo. Dán địa chỉ dưới đây vào phần cài đặt thông báo (webhook hoặc push) của ứng dụng bạn đã tạo trên sàn. Không dán cũng không sao: Ludy vẫn tự kiểm tra định kỳ.',
+      none: 'Chưa có địa chỉ thông báo.',
+      create: 'Tạo địa chỉ',
+      rotate: 'Đổi địa chỉ mới',
+      createdAt: 'Địa chỉ tạo lúc {when}',
+      rotatedAt: 'Đổi lúc {when}',
+      lastSeen: 'Thông báo gần nhất từ sàn: {when}',
+      noNotice: 'Thông báo gần nhất từ sàn: chưa có',
+      rejected: '{count, plural, other {Thông báo bị từ chối trong giờ này: #}}',
+      stopped:
+        'Địa chỉ này đã ngừng nhận thông báo vì có quá nhiều thông báo bị từ chối (10 trong một giờ). Hãy đổi địa chỉ mới rồi dán lại vào ứng dụng trên sàn.',
+      shownOnce: 'Hãy sao chép địa chỉ này ngay. Địa chỉ chỉ hiện một lần; sau khi đóng, chỉ có thể tạo địa chỉ mới.',
+      addressLabel: 'Địa chỉ nhận thông báo',
+      noteExact:
+        'Dán đúng nguyên địa chỉ, không thêm hay bớt ký tự nào (kể cả dấu gạch chéo ở cuối). Với Shopee, chữ ký gồm cả địa chỉ nên chỉ cần sai một ký tự là thông báo bị từ chối và địa chỉ bị ngừng.',
+      noteShared:
+        'Một ứng dụng dùng cho nhiều gian hàng chỉ có một ô địa chỉ chung: chỉ gian hàng có khóa nằm trong địa chỉ đó nhận được thông báo, các gian hàng còn lại vẫn được kiểm tra định kỳ.',
+      copy: 'Sao chép địa chỉ',
+      copied: 'Đã sao chép',
+      copyFailed: 'Không sao chép được. Hãy chọn địa chỉ và sao chép bằng tay.',
+      close: 'Tôi đã dán xong, ẩn địa chỉ',
+      warnRotate:
+        'Đổi địa chỉ sẽ làm địa chỉ cũ ngừng hoạt động ngay. Sàn vẫn gửi đến địa chỉ cũ cho đến khi bạn dán địa chỉ mới vào ứng dụng trên sàn; trong lúc đó Ludy vẫn kiểm tra định kỳ.',
+      confirmRotate: 'Đúng, đổi địa chỉ ngay',
+      replacedExisting: 'Địa chỉ này đã thay một địa chỉ có sẵn; địa chỉ cũ không còn hoạt động. Hãy dán địa chỉ mới này vào ứng dụng trên sàn.',
+      rotateFailed: 'Địa chỉ cũ có thể đã ngừng hoạt động. Hãy xem trạng thái ở trên, hoặc đổi địa chỉ mới lần nữa.',
+      cancel: 'Giữ địa chỉ hiện tại',
+    },
     title: 'Sàn thương mại điện tử: lấy đơn từ tài khoản người bán',
     intro:
       'Kết nối tài khoản người bán trên sàn để lấy đơn hàng về Hộp thư. Hệ thống chỉ đọc đơn hàng: không đổi gì trên sàn. Đơn lấy về vẫn chờ một người xác nhận ở Hộp thư, giống như khi tải file báo cáo lên; chưa xác nhận thì chưa có đơn hay hàng tồn nào được ghi.',
@@ -14966,6 +14997,7 @@ export const vi = {
       MARKETPLACE_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối với sàn này.',
       MARKETPLACE_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối sàn này.',
       MARKETPLACE_CONNECTION_LIVE: 'Hãy ngắt kết nối với sàn trước khi xóa dòng này.',
+      MARKETPLACE_PUSH_UNSUPPORTED: 'Sàn này chưa gửi được thông báo đẩy về hệ thống này.',
       MISA_AMIS_DISABLED: 'Bộ kết nối MISA (AMIS Kế toán hoặc ASP) này chưa được bật trên hệ thống này.',
       MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA (AMIS Kế toán hoặc ASP); hãy ngắt kết nối cũ trước khi kết nối lại.',
       MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
@@ -15953,6 +15985,8 @@ export const vi = {
         ingest_page: 'Nhận một trang đơn hàng từ sàn vào hộp thư và ghi liên kết với kết nối',
         list: 'Xem các kết nối sàn thương mại điện tử',
         poll_target: 'Xem kết nối sàn cần lấy đơn',
+        push_hook: 'Xem địa chỉ nhận thông báo đẩy của kết nối sàn đã đặt chưa và thông báo có đến không',
+        push_hook_set: 'Tạo hoặc đổi địa chỉ để sàn đẩy thông báo đơn hàng về',
         record_poll: 'Ghi kết quả lấy đơn từ sàn',
         record_test: 'Ghi kết quả kiểm tra kết nối sàn',
         request_poll: 'Yêu cầu lấy đơn từ sàn ngay',
