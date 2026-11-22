@@ -4,7 +4,7 @@
 // callback uses; the counts the confirmation names; what it keeps (another channel, another org, the identities still named); the image rows
 // and their blob keys; an erase that is run again; and a notice in flight at the same time as the disconnect.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -219,6 +219,76 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 0, messages: 0, identities: 0 });
       await expect(eraseAs(other, o.connectionId, asMfa(other.owner))).rejects.toMatchObject({ status: 404 });
       expect(await threads(o, two.connectionId)).toEqual(before.twoThreads);
+    });
+
+    it('skips an identity another transaction holds (an intake of another channel reusing the customer) and still sweeps the rest, and the held one goes at the next run (#3480)', async () => {
+      const o = await org();
+      await thread(o, 'c-1', 'Của kênh bị xóa', 'u-gone');
+      // An identity with no thread, held by another transaction as an intake's upsert holds it until it commits.
+      const held = randomUUID();
+      await rows("INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', 'u-held', 'Khách đang được nhận')", [o.orgId, held]);
+      const holder = new pg.Client({ connectionString: adminUrl });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, held]);
+        // The erase does not wait for it and leaves it: one identity swept (the channel's own customer).
+        expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 1, messages: 1, identities: 1 });
+        expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-held']);
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+      }
+      // Released and still without a thread: a later erase (a retry) takes it.
+      expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 0, messages: 0, identities: 1 });
+    });
+
+    it('refuses an MCP grant, an extension token, a stale second factor and an agent in a live run, whatever the rule that does it, and changes nothing (#3480)', async () => {
+      const o = await org();
+      await thread(o, 'g-1', 'Bình luận cần giữ', 'u-g');
+      const untouched = async () => {
+        expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
+        expect(await threads(o, o.connectionId)).toEqual(['g-1']);
+      };
+      const nowS = Math.floor(Date.now() / 1000);
+      // An MCP grant of the consenting owner (company and member-bound), with a fresh second factor: a grant runs no command that does not declare its scope, and this one declares none. The grant rows are real
+      // ones (the runtime re-checks a grant in the transaction, and a grant that does not exist is refused earlier, by the session check, with a 401 that proves nothing about this command).
+      for (const kind of ['company', 'member'] as const) {
+        const grantId = randomUUID();
+        const clientId = `client-${kind}-${grantId}`;
+        // A member-bound grant holds read scopes only (its CHECK), a company grant may hold a write scope.
+        const scopes = kind === 'company' ? ['ludy.read', 'ludy.engage.write'] : ['ludy.read'];
+        await rows(
+          `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+           VALUES ($1, $2, $3, $4, 'Dy thử', 'client.example.com', $5::text[], $6, clock_timestamp(), now() + interval '30 days', $3, $7, $8)`,
+          [o.orgId, grantId, o.owner, clientId, scopes, `oauth-${grantId}`, kind, kind === 'member' ? o.owner : null],
+        );
+        await expect(eraseAs(o, o.connectionId, { type: 'user', userId: o.owner, aal: 'aal2', mfaAt: nowS, mcp: { grantId, clientId, clientName: 'Dy thử', scopes, kind } })).rejects.toMatchObject({ status: 403 });
+      }
+      // An extension token of an owner (a real row): a token reaches only the commands that declare one of its scopes, and never an R3 command.
+      const tokenId = randomUUID();
+      await rows(
+        `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Thiết bị thử', ARRAY['agenda'], now(), now() + interval '30 days', $3)`,
+        [o.orgId, tokenId, o.owner, createHash('sha256').update(randomBytes(32)).digest()],
+      );
+      await expect(eraseAs(o, o.connectionId, { type: 'user', userId: o.owner, aal: 'aal2', mfaAt: nowS, extension: { tokenId, scopes: ['agenda'] } })).rejects.toMatchObject({ status: 403 });
+      // A second factor older than five minutes is asked for again, for an owner and an admin; a future timestamp is no fresher.
+      for (const who of [o.owner, o.admin]) {
+        await expect(eraseAs(o, o.connectionId, { type: 'user', userId: who, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowS - 3600 })).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
+      }
+      await expect(eraseAs(o, o.connectionId, { type: 'user', userId: o.owner, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowS + 3600 })).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
+      // An agent in a run that is live: the run is not what refuses it (the earlier case used a run that never existed, so the database refused the context first). The refusal is the runtime's own (an agent runs no command that declares no agent access, and never an R3 one), not the database's.
+      // The agent and its running run are written as the database holds them (the install command needs the template's module in the org, which this kernel-only suite has not got).
+      const agentId = randomUUID();
+      const runId = randomUUID();
+      await rows(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, created_by) VALUES ($1, $2, 'finance.chief_accountant', 'Kế toán thử xóa kênh', $3)`, [o.orgId, agentId, o.owner]);
+      await rows(`INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_agent_id, job_description) SELECT $1, t.title, t.module, t.role_key, $2, t.job_description FROM crove_kernel.agent_template t WHERE t.key = 'finance.chief_accountant'`, [o.orgId, agentId]);
+      await rows(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, expires_at) VALUES ($1, $2, $3, 'finance', 'running', now() + interval '10 minutes')`, [o.orgId, runId, agentId]);
+      await expect(
+        worker.execute('kernel.conversation.erase_channel', { connectionId: o.connectionId, confirm: true }, { actor: { type: 'agent', agentId, runId }, orgId: o.orgId, idempotencyKey: randomUUID() }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403, message: 'Tác tử AI không được thực hiện việc này' });
+      await untouched();
     });
 
     it('is safe to run again: the same key returns the first answer, a new key finds nothing, and a notice that arrives afterwards is ignored', async () => {
