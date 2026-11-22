@@ -106,7 +106,7 @@ export function buildDbIdentifiers(presentSchemasIterable: Iterable<string>, pre
   const activeRoles = new Map<DbRoleName, string>();
   const transitionedRoles: string[] = [];
   for (const r of DB_ROLE_NAMES) {
-    if (presentRoles.has(`ludy_${r}`)) {
+    if (isKernelLudy && presentRoles.has(`ludy_${r}`)) {
       activeRoles.set(r, `ludy_${r}`);
       transitionedRoles.push(r);
     } else {

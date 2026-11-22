@@ -100,7 +100,7 @@ export function buildDbIdentifiers(presentSchemasIterable: Iterable<string>, pre
   const activeRoles = new Map<DbRoleName, string>();
   const transitionedRoles: string[] = [];
   for (const r of DB_ROLE_NAMES) {
-    if (presentRoles.has(`ludy_${r}`)) {
+    if (isKernelLudy && presentRoles.has(`ludy_${r}`)) {
       activeRoles.set(r, `ludy_${r}`);
       transitionedRoles.push(r);
     } else {
@@ -264,26 +264,37 @@ export async function auditRoleFunctionExecute(
   ids: DbIdentifiers | undefined,
   fn: string,
   checkedLegacyRoles: readonly string[],
-): Promise<Array<{ rolname: string; canonicalRole: string; canExecute: boolean }>> {
+  allowedLegacyRoles: readonly string[],
+): Promise<{ rows: Array<{ rolname: string; ok: boolean; expected: boolean }>; activeChecked: string[] }> {
   const activeFn = ids ? ids.rewriteSql(fn) : fn;
-  const canonicalRoles = [...checkedLegacyRoles];
-  const ludyTwinRoles = canonicalRoles.map((r) => (r.startsWith('crove_') ? `ludy_${r.slice('crove_'.length)}` : r));
-  const res = await rawQuery<{ rolname: string; canonical_role: string; can_execute: boolean }>(
+  const activeChecked = checkedLegacyRoles.map((r) => (ids ? ids.roleName(r) : r));
+  const activeAllowed = allowedLegacyRoles.map((r) => (ids ? ids.roleName(r) : r));
+  const checkedPairs = [
+    ...new Set([
+      ...checkedLegacyRoles,
+      ...checkedLegacyRoles.map((r) => (r.startsWith('crove_') ? `ludy_${r.slice('crove_'.length)}` : r)),
+    ]),
+  ];
+  const res = await rawQuery<{ rolname: string; ok: boolean; expected: boolean }>(
     client,
     `SELECT r.rolname,
-            ($2::text[])[i] AS canonical_role,
-            pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS can_execute
-     FROM pg_catalog.generate_subscripts($2::text[], 1) AS i
-     JOIN pg_catalog.pg_roles r
-       ON r.rolname IN (($2::text[])[i], ($3::text[])[i])
-     ORDER BY i, r.rolname`,
-    [activeFn, canonicalRoles, ludyTwinRoles],
+            pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS ok,
+            (
+              r.rolname = ANY($2::text[])
+              OR EXISTS (
+                SELECT 1
+                FROM pg_catalog.generate_subscripts($2::text[], 1) AS i
+                WHERE r.rolname = ($3::text[])[i]
+                  AND pg_catalog.pg_has_role(r.oid, ($2::text[])[i], 'MEMBER')
+              )
+            ) AS expected
+     FROM pg_catalog.pg_roles r
+     WHERE r.rolname = ANY($4::text[])
+       AND NOT r.rolsuper
+     ORDER BY r.rolname`,
+    [activeFn, activeAllowed, [...allowedLegacyRoles], checkedPairs],
   );
-  return res.rows.map((row) => ({
-    rolname: row.rolname,
-    canonicalRole: row.canonical_role,
-    canExecute: row.can_execute,
-  }));
+  return { rows: res.rows, activeChecked };
 }
 
 export function wrapClient<T extends object>(client: T, ids: DbIdentifiers): T {

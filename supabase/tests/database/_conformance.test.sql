@@ -6,17 +6,30 @@
 SELECT plan(6);
 
 SELECT is((
-  SELECT pg_catalog.count(*)
-  FROM pg_catalog.unnest(
-    CASE
-      WHEN pg_catalog.to_regnamespace('ludy_kernel') IS NOT NULL
-        THEN ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_auth_reader']
-      ELSE ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader']
-    END
-  ) AS expected(name)
-  JOIN pg_catalog.pg_roles r ON r.rolname = expected.name
-  WHERE NOT r.rolsuper AND NOT r.rolbypassrls
-), 5::bigint, 'the five runtime roles exist, none a superuser or with BYPASSRLS');
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_roles r
+      WHERE r.rolname IN (
+        'crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader',
+        'ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_auth_reader'
+      )
+        AND (r.rolsuper OR r.rolbypassrls)
+    ) THEN 0::bigint
+    ELSE (
+      SELECT pg_catalog.count(*)
+      FROM pg_catalog.unnest(
+        CASE
+          WHEN pg_catalog.to_regnamespace('ludy_kernel') IS NOT NULL
+            THEN ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_auth_reader']
+          ELSE ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader']
+        END
+      ) AS expected(name)
+      JOIN pg_catalog.pg_roles r ON r.rolname = expected.name
+      WHERE NOT r.rolsuper AND NOT r.rolbypassrls
+    )
+  END
+), 5::bigint, 'the five runtime roles exist, none a superuser or with BYPASSRLS across either prefix');
 
 SELECT is_empty($$
   SELECT pg_catalog.format('%I.%I', n.nspname, c.relname)

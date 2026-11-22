@@ -253,4 +253,19 @@ describe('apps/kernel invariant db-identifiers helper (#3969)', () => {
     expect(tblRecorded[0]?.text).toContain("r.rolname !~ '^pg_'");
     expect(tblAudit).toEqual([{ rolname: 'crove_worker', privilege: 'INSERT', ok: false }]);
   });
+
+  it('ignores cluster-wide ludy_* roles when the database itself is still pre-#3970 (crove_kernel)', () => {
+    const clusterPolluted = buildDbIdentifiers(
+      ALL_SCHEMAS.map((s) => `crove_${s}`),
+      [...ALL_ROLES.map((r) => `crove_${r}`), ...ALL_ROLES.map((r) => `ludy_${r}`)],
+    );
+    expect(clusterPolluted.isKernelLudy).toBe(false);
+    expect(clusterPolluted.hasTransitions).toBe(false);
+    for (const r of ALL_ROLES) {
+      expect(clusterPolluted.role(r)).toBe(`crove_${r}`);
+    }
+    expect(clusterPolluted.rewriteSql('SET LOCAL ROLE crove_app; SELECT crove_kernel.ctx_org_id();')).toBe(
+      'SET LOCAL ROLE crove_app; SELECT crove_kernel.ctx_org_id();',
+    );
+  });
 });

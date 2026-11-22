@@ -77,4 +77,18 @@ describe('db-identifiers resolution helper (#3969)', () => {
       expect(post.rewriteSql(sql)).toBe(sql);
     }
   });
+
+  it('ignores cluster-wide ludy_* roles when the database itself is still pre-#3970 (crove_kernel)', () => {
+    const clusterPolluted = buildDbIdentifiers(
+      DB_SCHEMA_DOMAINS.map((d) => `crove_${d}`),
+      [...DB_ROLE_NAMES.map((r) => `crove_${r}`), ...DB_ROLE_NAMES.map((r) => `ludy_${r}`)],
+    );
+    expect(clusterPolluted.isKernelLudy).toBe(false);
+    expect(clusterPolluted.role('app')).toBe('crove_app');
+    expect(clusterPolluted.role('worker')).toBe('crove_worker');
+    expect(clusterPolluted.roleName('crove_app')).toBe('crove_app');
+    expect(clusterPolluted.rewriteSql('SET LOCAL ROLE crove_app; SELECT crove_kernel.ctx_org_id();')).toBe(
+      'SET LOCAL ROLE crove_app; SELECT crove_kernel.ctx_org_id();',
+    );
+  });
 });

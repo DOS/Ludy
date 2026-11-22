@@ -169,7 +169,7 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
       'crove_sign.is_meeting_minutes_reader(uuid,uuid)',
       'crove_sign.has_shared_meeting_minutes(uuid,uuid)',
     ]);
-    const expectedCallers = new Set(['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker']);
+    const expectedCallers = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'] as const;
     const checkedCanonicalRoles = [
       'crove_app',
       'crove_worker',
@@ -187,15 +187,20 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
     }
 
     for (const fn of fnSignatures) {
-      const roleRows = await auditRoleFunctionExecute(adminPool!, ids, fn, checkedCanonicalRoles);
-      const resolvedCanonical = new Set(roleRows.map((r) => r.canonicalRole));
-      for (const canonicalRole of checkedCanonicalRoles) {
-        expect(resolvedCanonical.has(canonicalRole), `${fn} resolved ${canonicalRole}`).toBe(true);
+      const allowedLegacyRoles = internalOnlyFns.has(fn) ? ([] as const) : expectedCallers;
+      const { rows: roleRows, activeChecked } = await auditRoleFunctionExecute(
+        adminPool!,
+        ids,
+        fn,
+        checkedCanonicalRoles,
+        allowedLegacyRoles,
+      );
+      const presentChecked = new Set(roleRows.map((r) => r.rolname));
+      for (const activeRole of activeChecked) {
+        expect(presentChecked.has(activeRole), `${fn} resolved ${activeRole}`).toBe(true);
       }
-      const isInternalOnly = internalOnlyFns.has(fn);
       for (const roleRow of roleRows) {
-        const expected = !isInternalOnly && expectedCallers.has(roleRow.canonicalRole);
-        expect(roleRow.canExecute, `${roleRow.rolname} (${roleRow.canonicalRole}) execute ${fn}`).toBe(expected);
+        expect(roleRow.ok, `${roleRow.rolname} execute ${fn}`).toBe(roleRow.expected);
       }
     }
   });
