@@ -232,6 +232,39 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await expect(pool.query('SELECT * FROM crove_kernel.conversation_purge_due(10)')).rejects.toMatchObject({ code: '42501' });
     });
 
+    it('visits an org that keeps threads forever when an identity nobody names has sat for a day, and sweeps it (#4381)', async () => {
+      const keep = await org();
+      const fresh = await org();
+      const named = await org();
+      for (const o of [keep, fresh, named]) await rt.execute('kernel.conversation.retention_set', { retentionMonths: null }, { actor: asUser(o.owner), orgId: o.orgId });
+      // Keep: a thread (its customer is named) and an identity no thread or message names, a day and more old. Fresh: such an identity made just now. Named: only the customer of a thread, however old.
+      await thread(keep, 'k-1', 'Tin của khách giữ', 'u-kept');
+      const orphan = randomUUID();
+      const identity = (o: Org, id: string, who: string) => rows("INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', $3, 'Khách mồ côi')", [o.orgId, id, who]);
+      await identity(keep, orphan, 'u-orphan');
+      await identity(fresh, randomUUID(), 'u-fresh');
+      await thread(named, 'n-1', 'Tin của khách có luồng', 'u-named');
+      await rows("UPDATE crove_kernel.conversation_identity SET created_at = now() - interval '3 days', updated_at = now() - interval '3 days' WHERE org_id = ANY ($1::uuid[])", [[keep.orgId, named.orgId]]);
+      const due = async () => (await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.conversation_purge_due($1)', [1000])).rows.map((r) => r.org_id);
+      const before = await due();
+      expect(before).toContain(keep.orgId);
+      // Not listed: an identity made a moment ago (an intake about to give it a thread), and one a thread names.
+      expect(before).not.toContain(fresh.orgId);
+      expect(before).not.toContain(named.orgId);
+      // The purge visits the org and sweeps the identity, whatever the retention; the thread and its customer stay.
+      expect(await purgeExpiredConversations({ runtime: worker, workerDb })).toBe(0);
+      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1', [keep.orgId])).map((r) => r.external_user_id)).toEqual(['u-kept']);
+      expect(await threads(keep)).toEqual(['k-1']);
+      expect(await count('conversation_identity', fresh)).toBe(1);
+      expect(await due()).not.toContain(keep.orgId);
+      // A person who only replied in a thread is named by that message, so their identity is not an orphan either.
+      const replier = randomUUID();
+      await identity(named, replier, 'u-replier');
+      await rows("UPDATE crove_kernel.conversation_message SET author_identity_id = $2 WHERE org_id = $1 AND direction = 'in'", [named.orgId, replier]);
+      await rows("UPDATE crove_kernel.conversation_identity SET updated_at = now() - interval '3 days' WHERE org_id = $1 AND id = $2", [named.orgId, replier]);
+      expect(await due()).not.toContain(named.orgId);
+    });
+
     it('purges after the retention is shortened, and not before it', async () => {
       const o = await org();
       await thread(o, 'short-1', 'Cũ 8 tháng', 'u-s1', 8);
