@@ -238,7 +238,8 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const named = await org();
       for (const o of [keep, fresh, named]) await rt.execute('kernel.conversation.retention_set', { retentionMonths: null }, { actor: asUser(o.owner), orgId: o.orgId });
       // Keep: a thread (its customer is named) and an identity no thread or message names, a day and more old. Fresh: such an identity made just now. Named: only the customer of a thread, however old.
-      await thread(keep, 'k-1', 'Tin của khách giữ', 'u-kept');
+      // The kept thread is 30 months old: the visit through the new branch must leave an old thread of a keep-forever org alone.
+      await thread(keep, 'k-1', 'Tin của khách giữ', 'u-kept', 30);
       const orphan = randomUUID();
       const identity = (o: Org, id: string, who: string) => rows("INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', $3, 'Khách mồ côi')", [o.orgId, id, who]);
       await identity(keep, orphan, 'u-orphan');
