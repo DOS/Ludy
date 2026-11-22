@@ -9,6 +9,7 @@
 // proposal too: code keeps it only when the label is one the transcript has, the name is exactly one of the attendees (and is then written as the attendee's own
 // spelling), and the line it cites is spoken by that label. The recorder accepts a suggestion with a click of their own; nothing is renamed by this run.
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
+import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
 
@@ -54,6 +55,9 @@ export interface MeetingSummaryInput {
   // The display names of the people in the meeting (the recorder and the attendees), as the caller read them for the recorder. Not trusted: speakerNames cleans them. Absent or
   // empty: the run is what it was, with no speaker suggestion.
   attendees?: readonly string[];
+  // The organization's glossary (#4043), as the caller read it for the recorder: terms people typed, cleaned by glossaryTerms. They travel as data beside the transcript, and the answer is
+  // spelled their way by code afterwards. Absent or empty: the run is what it was.
+  glossary?: readonly string[];
 }
 export interface SummaryItem {
   title: string;
@@ -243,12 +247,22 @@ function checkSpeakers(raw: unknown, segments: readonly SummarySegment[], attend
  * figure the transcript does not hold, or carries a way to reach someone, is removed; an item's "who" or "when" with a foreign figure is blanked; an
  * item's second that points into no segment is dropped. An answer that is not an object throws SUMMARY_UNPARSABLE, and one with nothing left SUMMARY_EMPTY.
  */
-export function checkSummary(raw: string, segments: readonly SummarySegment[], template: SummaryTemplate = { code: 'general', sections: [] }, attendees: readonly string[] = []): MeetingSummaryBody {
+export function checkSummary(
+  raw: string,
+  segments: readonly SummarySegment[],
+  template: SummaryTemplate = { code: 'general', sections: [] },
+  attendees: readonly string[] = [],
+  glossary: readonly string[] = [],
+): MeetingSummaryBody {
   const parsed = jsonObject(raw);
   if (!isRecord(parsed)) throw new SummaryError('SUMMARY_UNPARSABLE');
   const known = new Set(segments.flatMap((s) => numbersIn(s.text)));
   const foreign = (text: string): boolean => numbersIn(text).some((n) => !known.has(n));
   const bad = (text: string): boolean => foreign(text) || hasContact(text);
+  const clean = (rawText: string, max: number): string => {
+    const clipped = oneLine(rawText, max);
+    return glossary.length === 0 ? clipped : oneLine(spellGlossary(clipped, glossary), max);
+  };
   let dropped = 0;
 
   const useSections = template.sections.length > 0;
@@ -269,7 +283,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
       for (const rawLine of entry.text.split('\n')) {
         const pieces: string[] = [];
         for (const piece of rawLine.split(/(?<=[.!?])\s+/)) {
-          const sentence = oneLine(piece, SUMMARY_LIMITS.sectionChars);
+          const sentence = clean(piece, SUMMARY_LIMITS.sectionChars);
           if (sentence === '') continue;
           if (bad(sentence)) dropped += 1;
           else pieces.push(sentence);
@@ -294,7 +308,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
   const sentences: string[] = [];
   if (!useSections && typeof parsed.summary === 'string') {
     for (const piece of parsed.summary.split(/(?<=[.!?])\s+|\n+/)) {
-      const line = oneLine(piece, SUMMARY_LIMITS.summaryChars);
+      const line = clean(piece, SUMMARY_LIMITS.summaryChars);
       if (line === '') continue;
       if (bad(line)) dropped += 1;
       else sentences.push(line);
@@ -306,7 +320,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
   if (Array.isArray(parsed.decisions)) {
     for (const entry of parsed.decisions) {
       if (typeof entry !== 'string') continue;
-      const line = oneLine(entry, SUMMARY_LIMITS.decisionChars);
+      const line = clean(entry, SUMMARY_LIMITS.decisionChars);
       if (line === '') continue;
       if (bad(line)) dropped += 1;
       else if (decisions.length < SUMMARY_LIMITS.decisions) decisions.push(line);
@@ -317,7 +331,7 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
   if (Array.isArray(parsed.items)) {
     for (const entry of parsed.items) {
       if (!isRecord(entry) || typeof entry.title !== 'string') continue;
-      const title = oneLine(entry.title, SUMMARY_LIMITS.titleChars);
+      const title = clean(entry.title, SUMMARY_LIMITS.titleChars);
       // A foreign figure in the title refuses the item; a contact detail does not (it stays, flagged by the module's own check, for a person to read).
       if (title === '' || foreign(title)) {
         dropped += 1;
@@ -373,7 +387,7 @@ export function sectionData(template: SummaryTemplate): string {
   return `SECTIONS:\n${template.sections.map((d) => `- key ${JSON.stringify(d.key)}: {"title": ${orgText(d.title, 60)}, "hint": ${orgText(d.hint, 200)}}`).join('\n')}\n\n`;
 }
 
-const INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate, attendees: readonly string[] = []): string =>
+const INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate, attendees: readonly string[] = [], glossary: readonly string[] = []): string =>
   [
     'You summarize one meeting from its transcript for the person who recorded it.',
     `Write in ${language === 'vi' ? 'Vietnamese' : 'English'}.`,
@@ -390,6 +404,7 @@ const INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate, attendees
     '"decisions" are things the meeting decided. "items" are things someone said they would do:',
     '"title" is what to do, "who" and "when" are exactly as said in the transcript (empty when not said), and "seconds" is the second of the transcript line the item comes from.',
     'Use only numbers, names and dates that appear in the transcript. Never write a link, an email address or a phone number. Add nothing the transcript does not say.',
+    ...(glossary.length === 0 ? [] : [GLOSSARY_LINE]),
     ...(attendees.length === 0
       ? []
       : [
@@ -415,16 +430,17 @@ export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundP
   if (new TextEncoder().encode(text).length > SUMMARY_LIMITS.transcriptBytes) throw new SummaryError('SUMMARY_TOO_LONG');
   // The attendees go in as data ahead of the transcript, only when there are some to suggest from: without them the call is exactly what it was.
   const attendees = speakerNames(input.attendees);
+  const glossary = glossaryTerms(input.glossary);
   const roster = attendees.length === 0 ? '' : `ATTENDEES:\n${attendees.map((name) => `- ${name}`).join('\n')}\n\nTRANSCRIPT:\n`;
-  // The organization's section labels (none for a built-in template) go in the data block as well, ahead of the attendees and the transcript.
-  const labels = sectionData(template);
-  // With the labels and no attendees the transcript still gets its header, so the model always sees where the organization's labels end and the transcript begins.
+  // The organization's section labels (none for a built-in template) go in the data block as well, ahead of the glossary, the attendees and the transcript.
+  const labels = sectionData(template) + glossaryData(glossary);
+  // With the labels or the glossary and no attendees the transcript still gets its header, so the model always sees where the organization's text ends and the transcript begins.
   const header = roster === '' && labels !== '' ? 'TRANSCRIPT:\n' : '';
   const out = await runFeature(
-    { instruction: INSTRUCTION(input.language, template, attendees), subject: privateText(labels + roster + header + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length + header.length },
+    { instruction: INSTRUCTION(input.language, template, attendees, glossary), subject: privateText(labels + roster + header + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length + header.length },
     ports,
   );
-  const parsed = checkSummary(revealPrivateText(out.text), input.segments, template, attendees);
+  const parsed = checkSummary(revealPrivateText(out.text), input.segments, template, attendees, glossary);
   return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
 }
 

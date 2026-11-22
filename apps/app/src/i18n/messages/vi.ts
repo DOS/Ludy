@@ -16801,6 +16801,7 @@ export const vi = {
       },
       glossary: {
         add: 'Thêm một thuật ngữ vào từ điển của tổ chức',
+        for_meeting: 'Đọc từ điển thuật ngữ của tổ chức cho lượt chạy Vy của cuộc họp',
         list: 'Xem từ điển thuật ngữ của tổ chức',
         remove: 'Xóa một thuật ngữ khỏi từ điển của tổ chức',
         update: 'Sửa một thuật ngữ trong từ điển của tổ chức',

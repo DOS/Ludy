@@ -6,6 +6,7 @@
 // the model's text, so it stays private to the recorder and tainted until the recorder's own command copies it into a draft and a person reviews and publishes it. Nothing here reads a
 // database, names a table or command, or persists anything (the boundary test pins that).
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
+import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
 import { hasContact, numbersIn, SUMMARY_LIMITS, transcriptLines, type SummarySegment } from './meeting-summary.ts';
@@ -31,6 +32,8 @@ export class ChaptersError extends Error {
 export interface MeetingChaptersInput {
   segments: readonly SummarySegment[];
   language: 'vi' | 'en';
+  // The organization's glossary (#4043), as the caller read it for the recorder: data beside the transcript, and the titles are spelled its way by code. Absent or empty: the run is what it was.
+  glossary?: readonly string[];
 }
 export interface ChapterProposal {
   title: string;
@@ -100,7 +103,7 @@ export function anchorSeconds(segments: readonly SummarySegment[]): Set<number> 
  * integer equal to the whole second of a real line, its title is empty after cleaning, it carries a way to reach someone off the page, a run of 8 or more digits, or a figure the transcript does not write.
  * No chapter left is CHAPTERS_EMPTY.
  */
-export function checkChapters(raw: string, segments: readonly SummarySegment[]): MeetingChaptersBody {
+export function checkChapters(raw: string, segments: readonly SummarySegment[], glossary: readonly string[] = []): MeetingChaptersBody {
   const root = jsonObject(raw);
   if (!isRecord(root) || !Array.isArray(root.chapters)) throw new ChaptersError('CHAPTERS_UNPARSABLE');
   const anchors = anchorSeconds(segments);
@@ -114,7 +117,8 @@ export function checkChapters(raw: string, segments: readonly SummarySegment[]):
       continue;
     }
     const second = entry.startSecond;
-    const title = cleanChapterTitle(entry.title);
+    const baseTitle = cleanChapterTitle(entry.title);
+    const title = glossary.length === 0 ? baseTitle : cleanChapterTitle(spellGlossary(baseTitle, glossary));
     const figures = numbersIn(title);
     const digits = title.normalize('NFKC').replace(/[^\p{Nd}]/gu, '').length;
     if (
@@ -139,7 +143,7 @@ export function checkChapters(raw: string, segments: readonly SummarySegment[]):
   return { chapters, dropped };
 }
 
-const INSTRUCTION = (language: 'vi' | 'en'): string =>
+const INSTRUCTION = (language: 'vi' | 'en', glossary: readonly string[] = []): string =>
   [
     'You write the table of contents of one meeting from its transcript, for the person who recorded it.',
     `Write the titles in ${language === 'vi' ? 'Vietnamese' : 'English'}.`,
@@ -147,6 +151,7 @@ const INSTRUCTION = (language: 'vi' | 'en'): string =>
     'A chapter is one topic of the meeting. "title" is a short plain phrase of at most 60 characters on one line. "startSecond" is the whole second written in the brackets of the first transcript line of that topic, as a number (for [1:05] it is 65).',
     'Write 3 to 12 chapters, in order of time, the first at the start of the meeting. Never write two chapters at the same second.',
     'Use only numbers, names and dates that appear in the transcript. Never write a link, an email address or a phone number. Add nothing the transcript does not say.',
+    ...(glossary.length === 0 ? [] : [GLOSSARY_LINE]),
   ].join('\n');
 
 /** One run of the recorder's Vy over a transcript: the model is asked once, the checks above decide what is kept. */
@@ -155,10 +160,12 @@ export async function chapterMeeting(input: MeetingChaptersInput, ports: BoundPo
   // Refused before any call, never cut.
   if (input.segments.length === 0) throw new ChaptersError('CHAPTERS_NO_TRANSCRIPT');
   if (new TextEncoder().encode(text).length > CHAPTER_LIMITS.transcriptBytes) throw new ChaptersError('CHAPTERS_TOO_LONG');
+  const glossary = glossaryTerms(input.glossary);
+  const block = glossary.length === 0 ? '' : `${glossaryData(glossary)}TRANSCRIPT:\n`;
   const out = await runFeature(
-    { instruction: INSTRUCTION(input.language), subject: privateText(text), maxSubjectChars: CHAPTER_LIMITS.transcriptBytes, feature: 'meetings.chapters' },
+    { instruction: INSTRUCTION(input.language, glossary), subject: privateText(block + text), maxSubjectChars: CHAPTER_LIMITS.transcriptBytes + block.length, feature: 'meetings.chapters' },
     ports,
   );
-  const parsed = checkChapters(revealPrivateText(out.text), input.segments);
+  const parsed = checkChapters(revealPrivateText(out.text), input.segments, glossary);
   return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
 }

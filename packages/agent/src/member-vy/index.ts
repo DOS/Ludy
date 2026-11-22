@@ -4,6 +4,7 @@
 // this path.
 export * from '../private-text.ts';
 export * from './features.ts';
+export * from './glossary.ts';
 export * from './meeting-summary.ts';
 export * from './meeting-translation.ts';
 export * from './meeting-ask.ts';

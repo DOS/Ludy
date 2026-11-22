@@ -195,6 +195,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.series.open_items',
       'meetings.template.list',
       'meetings.glossary.list',
+      'meetings.glossary.for_meeting',
       'meetings.summary.status',
       'meetings.translation.source',
       'meetings.translation.status',
