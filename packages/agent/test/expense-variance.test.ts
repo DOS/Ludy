@@ -132,6 +132,31 @@ describe('a note that is refused', () => {
     refused('Có thể năm hóa đơn nhỏ.', 1, facts('vi'));
   });
 
+  it('refuses English ordinals, scale words joined to others, and Vietnamese number pieces written together', () => {
+    // Ordinals: "first" is an ordinary word and stays allowed; the rest are counts.
+    expect(stands(1, 'Possibly the first invoice explains it.')).toBe(true);
+    for (const ordinal of ['second', 'third', 'fourth', 'tenth', 'eleventh', 'twelfth', 'nineteenth', 'twentieth', 'thirtieth', 'fortieth', 'ninetieth', 'hundredth', 'thousandth', 'millionth']) {
+      refused(`Possibly the ${ordinal} invoice explains it.`);
+    }
+    // Scale and tens words joined to others, with no boundary for a word list to find.
+    refused('Possibly fivehundred of them explain it.');
+    refused('Possibly twentyfive invoices explain it.');
+    refused('Possibly a threethousand invoice explains it.');
+    refused('Possibly a onemillion cost explains it.');
+    refused('Possibly sixtyfold of that explains it.');
+    // Vietnamese pieces written together, and the misspelling "muời".
+    refused('Có thể mườihai hóa đơn nhỏ.', 1, facts('vi'));
+    refused('Có thể haimươi hóa đơn nhỏ.', 1, facts('vi'));
+    refused('Có thể muời hóa đơn nhỏ.', 1, facts('vi'));
+    refused('Có thể haitrăm hóa đơn nhỏ.', 1, facts('vi'));
+    refused('Có thể haichục hóa đơn nhỏ.', 1, facts('vi'));
+    refused('Có thể bảyngàn hóa đơn nhỏ.', 1, facts('vi'));
+    refused('Có thể batriệu đồng từ hóa đơn.', 1, facts('vi'));
+    refused('Có thể mộtnghìn hóa đơn nhỏ.', 1, facts('vi'));
+    // An ordinary word is not caught by them: "ngân hàng" (bank) and "phải trả" still pass.
+    expect(stands(1, 'Có thể khoản phải trả qua ngân hàng lớn hơn.', facts('vi'))).toBe(true);
+  });
+
   it('refuses a date, a month, a weekday, a week, a quarter and a year', () => {
     refused('Possibly an invoice explains it in November.');
     refused('Possibly an invoice explains it on Monday.');

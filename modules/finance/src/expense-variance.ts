@@ -79,6 +79,8 @@ interface ContributorRow {
 
 // The suppliers (by party) or vouchers (no party) behind the flagged lines: per line the top ones by their own change in the line's direction, measured against the basis that flagged the line.
 // Ranked and limited in SQL (row_number per line), so the answer is bounded whatever the month holds.
+// A pair that cancels is not a contributor: an entry whose reversal is dated inside the window, and the reversal itself when the entry it reverses is dated inside it, both leave the contributors and both
+// voucher counts. When only one side is inside the window it stays as booked, because it moved that month's balance (the line's own figure nets the pair either way).
 async function contributorRows(ctx: QueryContext, entity: string, month: string, lines: readonly VarianceLine[], regime: 'tt133' | 'tt99'): Promise<ContributorRow[]> {
   if (lines.length === 0) return [];
   const { previous, average } = basisMonths(month);
@@ -99,6 +101,8 @@ async function contributorRows(ctx: QueryContext, entity: string, month: string,
         AND j.entry_date >= ${windowFrom}::date AND j.entry_date <= ${mTo}::date
         AND l.account_code ~ ${EXPENSE_PATTERN}
         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_line c WHERE c.org_id = j.org_id AND c.entry_id = j.id AND c.account_code LIKE ${`${CLOSING_ACCOUNT}%`})
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry rv WHERE rv.org_id = j.org_id AND rv.reverses_entry_id = j.id AND rv.entry_date >= ${windowFrom}::date AND rv.entry_date <= ${mTo}::date)
+        AND NOT (j.reverses_entry_id IS NOT NULL AND EXISTS (SELECT 1 FROM crove_finance.journal_entry og WHERE og.org_id = j.org_id AND og.id = j.reverses_entry_id AND og.entry_date >= ${windowFrom}::date AND og.entry_date <= ${mTo}::date))
     ),
     agg AS (
       SELECT s.line_code, s.party_id, CASE WHEN s.party_id IS NULL THEN s.entry_id END AS entry_id,

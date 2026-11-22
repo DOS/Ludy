@@ -141,9 +141,14 @@ const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/u;
 const MARK = /\p{M}/u;
 // Numbers and sizes in English, plural and scaled forms included. "one", "single" and "several" are allowed: they are how the facts say a count.
 const NUMBER_WORDS_EN =
-  /\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|tens|dozens?|couple|pair|both|hundreds?|thousands?|millions?|billions?|trillions?|twice|thrice|doubl\w*|tripl\w*|halv\w*|half|thirds?|quarters?|percent|percentage|per\s*cent|\w+fold)\b/;
+  /\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|tens|dozens?|couple|pair|both|hundreds?|thousands?|millions?|billions?|trillions?|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth|billionth|twice|thrice|doubl\w*|tripl\w*|halv\w*|half|thirds?|quarters?|percent|percentage|per\s*cent|\w+fold)\b/;
 // Numbers and sizes in Vietnamese: the words that are only ever numbers are refused anywhere; "năm" (five or year) and "tư" only before a thing counted; "một" (one, a single) is allowed.
 const NUMBER_WORDS_VI = /(?<![\p{L}])(?:hai|ba|bốn|sáu|bảy|tám|chín|mười|mươi|lăm|mấy|vài|tá|chục|trăm|nghìn|ngàn|triệu|tỷ|tỉ|vạn|gấp|nhân đôi|nhân ba|nửa|rưỡi|phần trăm|phần tư|phần ba)(?![\p{L}])/iu;
+// Number words joined to others ("fivehundred", "twentyfive", "mườihai", "haimươi", the misspelling "muời") have no word boundary for the lists above to find, so these long, unambiguous pieces are refused anywhere in
+// the text. English on the folded text; Vietnamese on the text as written (folded, "ngàn" would be the "ngan" of "ngân hàng"). Checked against ordinary words: none of these pieces is inside a word a cost note
+// needs ("triệu" is also the start of "triệu chứng", a symptom, which a note on costs does not use; such a note is refused, which is the safe side).
+const NUMBER_FRAGMENTS_EN = /hundred|thousand|million|billion|trillion|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|eleven|twelve/;
+const NUMBER_FRAGMENTS_VI = /mười|mươi|muời|triệu|nghìn|ngàn|trăm|chục/iu;
 const NUMBER_UNIT_VI = /(?<![\p{L}])(?:năm|tư)\s+(?:chứng từ|hóa đơn|phiếu|khoản|lần|nhà cung cấp|giao dịch|đợt|ngày|tuần|tháng)(?![\p{L}])/iu;
 // A date, by name or by position in the calendar: refused (the note is given none). Accented words are tested on the text as written, because folding turns "năm" (year) into the "nam" of "nằm" and "quý"
 // (quarter) into the "quy" of "quy định".
@@ -203,13 +208,13 @@ export function checkExpenseVarianceNotes(facts: ExpenseVarianceNoteFacts, outpu
     if (INVISIBLE.test(text) || MARK.test(read)) continue;
     // No number of any kind: ANY digit refuses the text, and so does a number or a size in words, a symbol that is a number or a link.
     if (/\p{N}/u.test(read) || NUMERIC_SYMBOL.test(text) || draftLinksOutside(text, []).length > 0) continue;
-    if (NUMBER_WORDS_VI.test(read) || NUMBER_UNIT_VI.test(read)) continue;
+    if (NUMBER_WORDS_VI.test(read) || NUMBER_UNIT_VI.test(read) || NUMBER_FRAGMENTS_VI.test(read)) continue;
     if (PICTOGRAPH.test(text) || MARKUP.test(text)) continue;
     // Only the Latin script (Vietnamese is Latin): a Cyrillic or Greek look-alike inside a word could hide one of the words checked here.
     if (/[^\p{Script=Latin}\p{P}\p{Z}\p{S}]/u.test(read)) continue;
     const folded = fold(read);
     // English numbers and sizes are tested on the folded text: the word boundary \b of JavaScript is ASCII, and a Vietnamese letter next to a lone English letter would fake one.
-    if (NUMBER_WORDS_EN.test(folded)) continue;
+    if (NUMBER_WORDS_EN.test(folded) || NUMBER_FRAGMENTS_EN.test(folded)) continue;
     // The sentence opens with the hedge and holds no capitalised word after it: no name is given, so none can be right.
     if (!OPENS_HEDGE.test(folded) || hasUnknownName(read)) continue;
     if (CLAIMED_EXTRA.test(folded) || marketplaceLineClaimsDone(read)) continue;

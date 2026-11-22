@@ -46,9 +46,10 @@ every note refused, the table is the same, without sentences and without a notic
 not there: the comparison that needs it (the month before, or the average of three) is not made, and the card says
 where the books begin.
 
-**Known limit (P3).** A voucher that was later reversed can still show as a top contributor of a line, because the
-contributors are summed per supplier or voucher from the entries as posted. The line's own figure is correct (a reversal
-nets out). Not built.
+**Known limits (P3, not built).** A voucher and its reversal that are both dated inside the 4 months read are left out of
+the contributors and the voucher counts; when only one of them is inside, it stays as booked, because it moved that
+month's balance (the line's own figure nets a pair either way). The note check works on words: letters spaced apart
+("f i v e") are not caught; no user text reaches the model, so there is no adversarial input path.
 
 **Where.** `finance.expense_variance` and `financeExpenseVariance.explain` (contract in
 `packages/kernel-contract/src/finance-expense-variance.ts`), the rules in `modules/finance/src/domain/expense-variance.ts`,

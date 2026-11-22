@@ -36,6 +36,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
   let main = '';
   let branch = '';
   let empty = '';
+  let reversals = '';
   let supplierA = '';
   let supplierB = '';
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
@@ -86,6 +87,22 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
             { line_no: 1, account_code: a.account, debit: a.amount, credit: '0', ...(a.party ? { party_id: a.party } : {}) },
             { line_no: 2, account_code: '331', debit: '0', credit: a.amount },
           ]),
+          a.entity,
+        ])
+        .then((r) => r.rows[0]?.id as string),
+    );
+  // The reversal of an entry made by spend(): a new entry that names the original and mirrors its lines with the sides swapped (same line numbers, accounts and party), as the ledger demands.
+  const reverse = (a: { entity: string; original: string; date: string; account: string; amount: string; party?: string }) =>
+    asApp(owner, (c) =>
+      c
+        .query<{ id: string }>(`SELECT crove_finance.post_journal_entry($1::date, 'Đảo chi phí thử', 'test.variance', $2::uuid, $3::jsonb, $4::uuid, 1, $5::uuid) AS id`, [
+          a.date,
+          randomUUID(),
+          JSON.stringify([
+            { line_no: 1, account_code: a.account, debit: '0', credit: a.amount, ...(a.party ? { party_id: a.party } : {}) },
+            { line_no: 2, account_code: '331', debit: a.amount, credit: '0' },
+          ]),
+          a.original,
           a.entity,
         ])
         .then((r) => r.rows[0]?.id as string),
@@ -151,6 +168,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
         (await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'company', $3) RETURNING id`, [orgId, name, owner])).rows[0]?.id as string;
       branch = await entity('Công ty con TT99');
       empty = await entity('Pháp nhân chưa có sổ');
+      reversals = await entity('Pháp nhân có bút toán đảo');
       await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, member, viewer]);
       // The member reads the branch only.
       await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, branch, owner]);
@@ -185,6 +203,15 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     }
     await spend({ entity: branch, date: '2026-07-10', account: '6417', amount: '14000000', description: 'Dịch vụ mua ngoài' });
     await spend({ entity: branch, date: '2026-07-10', account: '6421', amount: '5000000' });
+
+    // The entity of the reversals (TT133). Its books begin on 2026-04-01 with a small cost, so every month compared with is there. In July: a voucher of 8,000,000 on 6422; a voucher V1 of 50,000,000 on 6422
+    // and its reversal R1 on 15 July (a pair that cancels inside the window); a voucher V2 of 6,000,000 on 811 on 25 July whose reversal R2 is dated 5 August (outside the window of July).
+    await spend({ entity: reversals, date: '2026-04-01', account: '6421', amount: '1000' });
+    await spend({ entity: reversals, date: '2026-07-08', account: '6422', amount: '8000000', description: 'Chi phí còn lại' });
+    const v1 = await spend({ entity: reversals, date: '2026-07-10', account: '6422', amount: '50000000', description: 'Chi phí nhập nhầm' });
+    await reverse({ entity: reversals, original: v1, date: '2026-07-15', account: '6422', amount: '50000000' });
+    const v2 = await spend({ entity: reversals, date: '2026-07-25', account: '811', amount: '6000000', description: 'Chi phí khác sau đó đảo' });
+    await reverse({ entity: reversals, original: v2, date: '2026-08-05', account: '811', amount: '6000000' });
   }, 180_000);
 
   afterAll(async () => {
@@ -254,6 +281,24 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     expect(april).toMatchObject({ missing: { previous: true, average: true }, lines: [] });
     // A month a long time before the books: nothing at all to compare, and no entry in the window.
     expect(await variance({ month: '2026-01' })).toMatchObject({ empty: true, lines: [] });
+  });
+
+  it('leaves a pair that cancels out of the contributors and the voucher counts, and keeps a voucher whose reversal is in another month', async () => {
+    const v = await variance({ legalEntityId: reversals });
+    // 6422: V1 and its reversal net to 0 and are both inside the window, so the line is the one voucher of 8,000,000; 811: V2 stands, its reversal is dated in August.
+    expect(v.lines.map((l) => l.code)).toEqual(['6422', '811']);
+    const [admin6422, other811] = v.lines;
+    expect(admin6422).toMatchObject({ amount: '8000000', vouchers: 1 });
+    expect(admin6422?.contributors).toHaveLength(1);
+    expect(admin6422?.contributors[0]).toMatchObject({ kind: 'voucher', description: 'Chi phí còn lại', amount: '8000000', vouchers: 1 });
+    expect(other811).toMatchObject({ amount: '6000000', vouchers: 1, isNew: true });
+    expect(other811?.contributors).toHaveLength(1);
+    expect(other811?.contributors[0]).toMatchObject({ kind: 'voucher', description: 'Chi phí khác sau đó đảo', amount: '6000000' });
+    // For August the entry (July) and its reversal (August) are both inside the window: the line falls by the reversal, and neither is a contributor nor counted.
+    const august = await variance({ month: '2026-08', legalEntityId: reversals });
+    const line811 = august.lines.find((l) => l.code === '811');
+    expect(line811).toMatchObject({ amount: '-6000000', direction: 'down', vouchers: 0 });
+    expect(line811?.contributors).toEqual([]);
   });
 
   it('reads an entity with no entry in the four months as empty, with no flagged line', async () => {

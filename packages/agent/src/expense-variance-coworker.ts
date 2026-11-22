@@ -9,7 +9,7 @@ import { metered } from './meter.ts';
 
 const zExpenseVarianceOut = z.object({
   notes: z
-    .array(z.object({ row: z.number().int().min(1).describe('The number of the row, as given'), text: z.string().describe('One plain sentence suggesting what may explain why that cost moved, using no number and only a supplier name the row gives') }))
+    .array(z.object({ row: z.number().int().min(1).describe('The number of the row, as given'), text: z.string().describe('One plain sentence suggesting what may explain why that cost moved, using no number and no name at all (say a supplier)') }))
     .describe('One note for each row, under its row number'),
 });
 export type ExpenseVarianceGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zExpenseVarianceOut> | null; usage?: AiUsage }>;
