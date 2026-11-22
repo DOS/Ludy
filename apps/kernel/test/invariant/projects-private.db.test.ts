@@ -554,6 +554,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
            FROM pg_catalog.pg_proc p
            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
           WHERE (n.nspname = 'crove_projects' AND p.proname IN (
+                   'actor_bypasses_private_projects',
                    'project_row_visible',
                    'project_visible',
                    'task_visible',
@@ -563,7 +564,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
              OR (n.nspname = 'crove_sign' AND p.proname = 'check_project_acceptance_source')
           ORDER BY 1`,
       );
-      expect(fns).toHaveLength(6);
+      expect(fns).toHaveLength(7);
       for (const fn of fns) {
         expect(fn.prosecdef, `${fn.sig} SECURITY DEFINER`).toBe(true);
         if (fn.sig.includes('check_project_acceptance_source')) {

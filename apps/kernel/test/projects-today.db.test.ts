@@ -666,4 +666,111 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       href: '/projects',
     });
   });
+
+  it('filters private project tasks at scale (506+ tasks + private project) for non-members, members, and owners', async () => {
+    const owner = await person('priv-scale-owner');
+    const privOwner = await person('priv-scale-powner');
+    const outsider = await person('priv-scale-outsider');
+    const org = await createOrg(rt, asUser(owner.userId), 'Private Scale Org');
+    await inviteAndJoin(org.orgId, owner.userId, privOwner, 'member');
+    await inviteAndJoin(org.orgId, owner.userId, outsider, 'member');
+
+    const { positionId: privSeat } = await execMfa<{ positionId: string }>(org.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Kỹ thuật riêng',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(org.orgId, owner.userId, 'kernel.position.assign', {
+      id: privSeat,
+      holder: { type: 'user', userId: privOwner.userId },
+    });
+    const { positionId: outSeat } = await execMfa<{ positionId: string }>(org.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Kinh doanh',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(org.orgId, owner.userId, 'kernel.position.assign', {
+      id: outSeat,
+      holder: { type: 'user', userId: outsider.userId },
+    });
+
+    const { projectId: orgProjId } = await exec<{ projectId: string }>(org.orgId, owner.userId, 'projects.project.create', {
+      name: 'Dự án chung',
+      ownerUserId: owner.userId,
+    });
+    const { projectId: privProjId } = await exec<{ projectId: string }>(org.orgId, privOwner.userId, 'projects.project.create', {
+      name: 'Dự án mật',
+      visibility: 'private',
+      ownerUserId: privOwner.userId,
+    });
+
+    const overdueAt = new Date(NOW_MS - DAY_MS);
+    const dueLaterToday = new Date(NOW_MS + 2 * 3_600_000);
+    let privOverdueId = '';
+    let privUnassignedId = '';
+    let outOverdueId = '';
+    await withAdmin(async (c) => {
+      await c.query(
+        `WITH batch AS (
+           INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           SELECT $1, 'Org later #' || gs, $2, 'todo', $3, 'human', 'user'
+           FROM generate_series(1, 510) AS gs
+           RETURNING org_id, id
+         )
+         INSERT INTO crove_projects.project_task (org_id, project_id, task_id)
+         SELECT org_id, $4, id FROM batch`,
+        [org.orgId, privSeat, dueLaterToday, orgProjId],
+      );
+      privOverdueId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           VALUES ($1, 'Private overdue', $2, 'todo', $3, 'human', 'user') RETURNING id`,
+          [org.orgId, privSeat, overdueAt],
+        )
+      ).rows[0]?.id as string;
+      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+        org.orgId,
+        privProjId,
+        privOverdueId,
+      ]);
+      privUnassignedId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           VALUES ($1, 'Private unassigned overdue', NULL, 'todo', $2, 'human', 'user') RETURNING id`,
+          [org.orgId, overdueAt],
+        )
+      ).rows[0]?.id as string;
+      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+        org.orgId,
+        privProjId,
+        privUnassignedId,
+      ]);
+      // Overdue org task on outsider's seat stays visible while private project tasks stay hidden from non-members.
+      outOverdueId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           VALUES ($1, 'Outsider org overdue', $2, 'todo', $3, 'human', 'user') RETURNING id`,
+          [org.orgId, outSeat, overdueAt],
+        )
+      ).rows[0]?.id as string;
+      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+        org.orgId,
+        orgProjId,
+        outOverdueId,
+      ]);
+    });
+
+    const outsiderItems = zTodayItems.parse(await todayAt(org.orgId, outsider.userId));
+    expect(outsiderItems.map((i) => i.id)).toEqual([`overdue:${outOverdueId}`]);
+
+    const privOwnerItems = zTodayItems.parse(await todayAt(org.orgId, privOwner.userId));
+    expect(privOwnerItems).toHaveLength(TODAY_ITEMS_MAX);
+    expect(privOwnerItems.slice(0, 2).map((i) => i.id).sort()).toEqual(
+      [`overdue:${privOverdueId}`, `overdue:${privUnassignedId}`].sort(),
+    );
+    expect(privOwnerItems.at(-1)).toMatchObject({ id: 'more', count: 512 - (TODAY_ITEMS_MAX - 1) });
+
+    const ownerItems = zTodayItems.parse(await todayAt(org.orgId, owner.userId));
+    expect(ownerItems.map((i) => i.id).sort()).toEqual([`overdue:${privUnassignedId}`, `overdue:${outOverdueId}`].sort());
+  });
 });

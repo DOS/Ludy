@@ -21,43 +21,89 @@ CREATE INDEX IF NOT EXISTS project_visibility_idx
 -- Evaluates visibility from row attributes passed as arguments (safe in INSERT WITH CHECK and UPDATE NEW
 -- checks without querying crove_projects.project recursively). Left owned by the migration runner so RLS on
 -- project_member and tenant_member stays bypassed inside the helper; REVOKE/GRANT limits callers to crove_tenant.
+-- Fast once-per-statement InitPlan predicate: true when the org has no private projects at all, or when
+-- the caller is system / org owner / org admin (who see every private project under ADR-0056).
+CREATE OR REPLACE FUNCTION crove_projects.actor_bypasses_private_projects() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT COALESCE(
+    ctx.org_id IS NOT NULL
+    AND ctx.actor IS NOT NULL
+    AND (
+      ctx.actor = 'system'
+      OR (
+        ctx.uid IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM crove_kernel.tenant_member tm
+          WHERE tm.org_id = ctx.org_id
+            AND tm.user_id = ctx.uid
+            AND tm.role IN ('owner', 'admin')
+        )
+      )
+      OR NOT EXISTS (
+        SELECT 1
+        FROM crove_projects.project p
+        WHERE p.org_id = ctx.org_id
+          AND p.visibility = 'private'
+      )
+    ),
+    false
+  )
+  FROM (
+    SELECT crove_kernel.ctx_org_id() AS org_id,
+           crove_kernel.ctx_actor_type() AS actor,
+           crove_kernel.ctx_user_id() AS uid
+  ) ctx
+$$;
+REVOKE ALL ON FUNCTION crove_projects.actor_bypasses_private_projects()
+  FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_projects.actor_bypasses_private_projects() TO crove_tenant;
+
 CREATE OR REPLACE FUNCTION crove_projects.project_row_visible(
   p_org_id uuid,
   p_id uuid,
   p_visibility text,
   p_owner_user_id uuid
 ) RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-  v_actor text := crove_kernel.ctx_actor_type();
-  v_uid uuid;
-BEGIN
-  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR v_actor IS NULL THEN
-    RETURN false;
-  END IF;
-  IF p_visibility = 'org' OR v_actor = 'system' THEN
-    RETURN true;
-  END IF;
-  -- Private projects admit only direct human org sessions (owner/admin/project_member/project owner).
-  -- Background/delegated agent contexts return NULL from ctx_user_id() and fail closed.
-  v_uid := crove_kernel.ctx_user_id();
-  IF v_uid IS NULL THEN
-    RETURN false;
-  END IF;
-  IF v_uid = p_owner_user_id THEN
-    RETURN true;
-  END IF;
-  RETURN EXISTS (
-    SELECT 1
-    FROM crove_projects.project_member pm
-    WHERE pm.org_id = v_org AND pm.project_id = p_id AND pm.user_id = v_uid
-  ) OR EXISTS (
-    SELECT 1
-    FROM crove_kernel.tenant_member tm
-    WHERE tm.org_id = v_org AND tm.user_id = v_uid AND tm.role IN ('owner', 'admin')
-  );
-END $$;
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT COALESCE(
+    ctx.org_id IS NOT NULL
+    AND p_org_id IS NOT NULL
+    AND p_org_id = ctx.org_id
+    AND ctx.actor IS NOT NULL
+    AND (
+      p_visibility = 'org'
+      OR ctx.actor = 'system'
+      OR EXISTS (
+        SELECT 1
+        FROM (SELECT crove_kernel.ctx_user_id() AS uid) u
+        WHERE u.uid IS NOT NULL
+          AND (
+            p_owner_user_id = u.uid
+            OR EXISTS (
+              SELECT 1
+              FROM crove_projects.project_member pm
+              WHERE pm.org_id = p_org_id
+                AND pm.project_id = p_id
+                AND pm.user_id = u.uid
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM crove_kernel.tenant_member tm
+              WHERE tm.org_id = p_org_id
+                AND tm.user_id = u.uid
+                AND tm.role IN ('owner', 'admin')
+            )
+          )
+      )
+    ),
+    false
+  )
+  FROM (
+    SELECT crove_kernel.ctx_org_id() AS org_id,
+           crove_kernel.ctx_actor_type() AS actor
+  ) ctx
+$$;
 REVOKE ALL ON FUNCTION crove_projects.project_row_visible(uuid, uuid, text, uuid)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_projects.project_row_visible(uuid, uuid, text, uuid) TO crove_tenant;
@@ -68,28 +114,54 @@ CREATE OR REPLACE FUNCTION crove_projects.project_visible(
   p_org_id uuid,
   p_project_id uuid
 ) RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-  v_actor text := crove_kernel.ctx_actor_type();
-  v_visibility text;
-  v_owner uuid;
-BEGIN
-  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_project_id IS NULL OR v_actor IS NULL THEN
-    RETURN false;
-  END IF;
-  IF v_actor = 'system' THEN
-    RETURN true;
-  END IF;
-  SELECT p.visibility, p.owner_user_id
-    INTO v_visibility, v_owner
-  FROM crove_projects.project p
-  WHERE p.org_id = v_org AND p.id = p_project_id;
-  IF NOT FOUND THEN
-    RETURN false;
-  END IF;
-  RETURN crove_projects.project_row_visible(v_org, p_project_id, v_visibility, v_owner);
-END $$;
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT COALESCE(
+    ctx.org_id IS NOT NULL
+    AND p_org_id IS NOT NULL
+    AND p_project_id IS NOT NULL
+    AND p_org_id = ctx.org_id
+    AND ctx.actor IS NOT NULL
+    AND (
+      ctx.actor = 'system'
+      OR EXISTS (
+        SELECT 1
+        FROM crove_projects.project p
+        WHERE p.org_id = p_org_id
+          AND p.id = p_project_id
+          AND (
+            p.visibility = 'org'
+            OR EXISTS (
+              SELECT 1
+              FROM (SELECT crove_kernel.ctx_user_id() AS uid) u
+              WHERE u.uid IS NOT NULL
+                AND (
+                  p.owner_user_id = u.uid
+                  OR EXISTS (
+                    SELECT 1
+                    FROM crove_projects.project_member pm
+                    WHERE pm.org_id = p_org_id
+                      AND pm.project_id = p.id
+                      AND pm.user_id = u.uid
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM crove_kernel.tenant_member tm
+                    WHERE tm.org_id = p_org_id
+                      AND tm.user_id = u.uid
+                      AND tm.role IN ('owner', 'admin')
+                  )
+                )
+            )
+          )
+      )
+    ),
+    false
+  )
+  FROM (
+    SELECT crove_kernel.ctx_org_id() AS org_id,
+           crove_kernel.ctx_actor_type() AS actor
+  ) ctx
+$$;
 REVOKE ALL ON FUNCTION crove_projects.project_visible(uuid, uuid)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_projects.project_visible(uuid, uuid) TO crove_tenant;
@@ -102,60 +174,106 @@ CREATE OR REPLACE FUNCTION crove_projects.task_visible(
   p_task_id uuid,
   p_assignee_position_id uuid
 ) RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-  v_actor text := crove_kernel.ctx_actor_type();
-  v_project_id uuid;
-  v_visibility text;
-  v_owner uuid;
-BEGIN
-  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_task_id IS NULL OR v_actor IS NULL THEN
-    RETURN false;
-  END IF;
-  IF v_actor = 'system' THEN
-    RETURN true;
-  END IF;
-  SELECT pt.project_id, p.visibility, p.owner_user_id
-    INTO v_project_id, v_visibility, v_owner
-  FROM crove_projects.project_task pt
-  JOIN crove_projects.project p
-    ON p.org_id = pt.org_id AND p.id = pt.project_id
-  WHERE pt.org_id = v_org AND pt.task_id = p_task_id;
-  IF NOT FOUND OR v_visibility = 'org' THEN
-    RETURN true;
-  END IF;
-  IF v_actor = 'agent'
-     AND crove_kernel.ctx_position_id() IS NOT NULL
-     AND p_assignee_position_id = crove_kernel.ctx_position_id() THEN
-    RETURN true;
-  END IF;
-  RETURN crove_projects.project_row_visible(v_org, v_project_id, v_visibility, v_owner);
-END $$;
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT COALESCE(
+    ctx.org_id IS NOT NULL
+    AND p_org_id IS NOT NULL
+    AND p_task_id IS NOT NULL
+    AND p_org_id = ctx.org_id
+    AND ctx.actor IS NOT NULL
+    AND (
+      ctx.actor = 'system'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM crove_projects.project_task pt
+        JOIN crove_projects.project p
+          ON p.org_id = pt.org_id AND p.id = pt.project_id
+        WHERE pt.org_id = p_org_id
+          AND pt.task_id = p_task_id
+          AND p.visibility <> 'org'
+          AND (
+            ctx.actor IS DISTINCT FROM 'agent'
+            OR crove_kernel.ctx_position_id() IS NULL
+            OR p_assignee_position_id IS DISTINCT FROM crove_kernel.ctx_position_id()
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM (SELECT crove_kernel.ctx_user_id() AS uid) u
+            WHERE u.uid IS NOT NULL
+              AND (
+                p.owner_user_id = u.uid
+                OR EXISTS (
+                  SELECT 1
+                  FROM crove_projects.project_member pm
+                  WHERE pm.org_id = p_org_id
+                    AND pm.project_id = p.id
+                    AND pm.user_id = u.uid
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM crove_kernel.tenant_member tm
+                  WHERE tm.org_id = p_org_id
+                    AND tm.user_id = u.uid
+                    AND tm.role IN ('owner', 'admin')
+                )
+              )
+          )
+      )
+    ),
+    false
+  )
+  FROM (
+    SELECT crove_kernel.ctx_org_id() AS org_id,
+           crove_kernel.ctx_actor_type() AS actor
+  ) ctx
+$$;
 REVOKE ALL ON FUNCTION crove_projects.task_visible(uuid, uuid, uuid)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_projects.task_visible(uuid, uuid, uuid) TO crove_tenant;
 
 DROP POLICY IF EXISTS project_visibility ON crove_projects.project;
 CREATE POLICY project_visibility ON crove_projects.project AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING (crove_projects.project_row_visible(org_id, id, visibility, owner_user_id))
+  USING (
+    (visibility = 'org' AND (SELECT crove_kernel.ctx_actor_type()) IS NOT NULL)
+    OR (SELECT crove_projects.actor_bypasses_private_projects())
+    OR crove_projects.project_row_visible(org_id, id, visibility, owner_user_id)
+  )
   WITH CHECK (crove_projects.project_row_visible(org_id, id, visibility, owner_user_id));
 
 DROP POLICY IF EXISTS project_visibility ON crove_projects.project_member;
 CREATE POLICY project_visibility ON crove_projects.project_member AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING (crove_projects.project_visible(org_id, project_id))
+  USING (
+    (SELECT crove_projects.actor_bypasses_private_projects())
+    OR crove_projects.project_visible(org_id, project_id)
+  )
   WITH CHECK (crove_projects.project_visible(org_id, project_id));
 
 DROP POLICY IF EXISTS project_visibility ON crove_projects.project_task;
 CREATE POLICY project_visibility ON crove_projects.project_task AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING (crove_projects.project_visible(org_id, project_id))
+  USING (
+    (SELECT crove_projects.actor_bypasses_private_projects())
+    OR EXISTS (
+      SELECT 1
+      FROM crove_projects.project p
+      WHERE p.org_id = project_task.org_id
+        AND p.id = project_task.project_id
+    )
+  )
   WITH CHECK (crove_projects.project_visible(org_id, project_id));
 
 -- migration-lint: cross-module Owner decision A2 (ADR-0056, #2604): isolate tasks linked to private projects
 DROP POLICY IF EXISTS private_project_scope ON crove_kernel.task;
 -- migration-lint: cross-module Owner decision A2 (ADR-0056, #2604): isolate tasks linked to private projects
 CREATE POLICY private_project_scope ON crove_kernel.task AS RESTRICTIVE FOR ALL TO crove_tenant
-  USING (crove_projects.task_visible(org_id, id, assignee_position_id))
+  USING (
+    (SELECT crove_projects.actor_bypasses_private_projects())
+    OR (
+      (SELECT crove_kernel.ctx_actor_type()) = 'agent'
+      AND (SELECT crove_kernel.ctx_position_id()) IS NOT NULL
+      AND assignee_position_id = (SELECT crove_kernel.ctx_position_id())
+    )
+    OR crove_projects.task_visible(org_id, id, assignee_position_id)
+  )
   WITH CHECK (crove_projects.task_visible(org_id, id, assignee_position_id));
 
 -- migration-lint: cross-module ADR-0056 section 1 (#2604): hide crove_notes.link rows pointing to private projects or private project tasks from non-members
@@ -165,6 +283,7 @@ CREATE POLICY link_private_project_scope ON crove_notes.link AS RESTRICTIVE FOR 
   USING (
     (SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR target_type NOT IN ('projects.project', 'kernel.task')
+    OR (SELECT crove_projects.actor_bypasses_private_projects())
     OR (target_type = 'projects.project' AND crove_projects.project_visible(org_id, target_id))
     OR (target_type = 'kernel.task' AND EXISTS (
       SELECT 1 FROM crove_kernel.task t

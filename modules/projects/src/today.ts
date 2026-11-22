@@ -264,8 +264,29 @@ export const projectsToday = defineQuery({
       .innerJoin('crove_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pt.org_id').onRef('p.id', '=', 'pt.project_id'),
       )
-      .innerJoin('crove_kernel.task as t', (join) =>
-        join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
+      // Enforce unique task_pkey (org_id, id) lookup per project_task row under RLS security barriers
+      // so stale stats after bulk writes never fall back to a quadratic Nested Loop between pt and task.
+      .innerJoinLateral(
+        (eb) =>
+          eb
+            .selectFrom('crove_kernel.task as tk')
+            .select([
+              'tk.org_id',
+              'tk.id',
+              'tk.status',
+              'tk.due',
+              'tk.updated_at',
+              'tk.created_at',
+              'tk.assignee_position_id',
+            ])
+            .whereRef('tk.org_id', '=', 'pt.org_id')
+            .whereRef('tk.id', '=', 'pt.task_id')
+            .where('tk.status', 'not in', ['done', 'cancelled'])
+            .orderBy('tk.org_id', 'asc')
+            .orderBy('tk.id', 'asc')
+            .limit(1)
+            .as('t'),
+        (join) => join.onTrue(),
       )
       .leftJoin('crove_kernel.position as pos', (join) =>
         join.onRef('pos.org_id', '=', 't.org_id').onRef('pos.id', '=', 't.assignee_position_id'),
@@ -284,9 +305,9 @@ export const projectsToday = defineQuery({
         (join) => join.onTrue(),
       )
       .where('pt.org_id', '=', ctx.orgId)
+      .where('p.org_id', '=', ctx.orgId)
       .where('p.is_template', '=', false)
       .where('p.status', '=', 'active')
-      .where('t.status', 'not in', ['done', 'cancelled'])
       .where(sql<boolean>`((${isOverdueExpr}) OR (${isBottleneckExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`);
 
     const rows = await base
