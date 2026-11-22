@@ -178,31 +178,90 @@ const staleError = () => new DomainError('REDACTION_STALE', 409, 'This draft cha
 const publishedError = () => new DomainError('REDACTION_PUBLISHED_IMMUTABLE', 409, 'Published meeting text cannot be redacted');
 const mismatchError = () => new DomainError('REDACTION_SPAN_MISMATCH', 422, 'Selected item no longer matches detected personal data');
 
-async function redactField(trx: Trx, text: string, selections: ReadonlyArray<RedactionSelection>, maxLen: number): Promise<string> {
-  const { rows: detected } = await sql<{ kind: string; start_pos: number }>`
-    SELECT kind, start_pos FROM crove_kernel.text_detect(${text}::text) ORDER BY start_pos`.execute(trx);
-  const byStart = new Map(detected.map((d) => [d.start_pos, d.kind]));
-  for (const sel of selections) {
-    if (byStart.get(sel.startPos) !== sel.kind) throw mismatchError();
+interface FieldRedactionTask {
+  key: string;
+  text: string;
+  maxLen: number;
+  selections: ReadonlyArray<RedactionSelection>;
+}
+
+async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTask>): Promise<Map<string, string>> {
+  if (tasks.length === 0) return new Map();
+  const payload = tasks.map((task, idx) => ({
+    idx,
+    text: task.text,
+    max_len: task.maxLen,
+    starts: task.selections.map((s) => s.startPos),
+    kinds: task.selections.map((s) => s.kind),
+    marks: task.selections.map((s) => REDACTION_MARK_BY_KIND[s.kind]),
+  }));
+  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null }>`
+    WITH req AS (
+      SELECT
+        r.idx,
+        r.text,
+        r.max_len,
+        (SELECT pg_catalog.array_agg(e.val::integer ORDER BY e.ord)
+         FROM pg_catalog.jsonb_array_elements_text(r.starts) WITH ORDINALITY AS e(val, ord)) AS starts,
+        (SELECT pg_catalog.array_agg(e.val ORDER BY e.ord)
+         FROM pg_catalog.jsonb_array_elements_text(r.kinds) WITH ORDINALITY AS e(val, ord)) AS kinds,
+        (SELECT pg_catalog.array_agg(e.val ORDER BY e.ord)
+         FROM pg_catalog.jsonb_array_elements_text(r.marks) WITH ORDINALITY AS e(val, ord)) AS marks
+      FROM pg_catalog.jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS r(
+        idx integer,
+        text text,
+        max_len integer,
+        starts jsonb,
+        kinds jsonb,
+        marks jsonb
+      )
+    ),
+    detected AS (
+      SELECT req.idx, d.start_pos, d.kind
+      FROM req
+      CROSS JOIN LATERAL crove_kernel.text_detect(req.text) AS d
+    ),
+    checked AS (
+      SELECT
+        req.idx,
+        req.text,
+        req.max_len,
+        req.starts,
+        req.kinds,
+        req.marks,
+        EXISTS (
+          SELECT 1
+          FROM ROWS FROM (pg_catalog.unnest(req.starts), pg_catalog.unnest(req.kinds)) AS sel(start_pos, kind)
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM detected d
+            WHERE d.idx = req.idx AND d.start_pos = sel.start_pos AND d.kind = sel.kind
+          )
+        ) AS has_mismatch
+      FROM req
+    )
+    SELECT
+      idx,
+      has_mismatch,
+      CASE
+        WHEN has_mismatch THEN NULL::text
+        ELSE pg_catalog.left(crove_kernel.text_redact_spans(text, starts, kinds, marks), max_len)
+      END AS redacted
+    FROM checked
+    ORDER BY idx`.execute(trx);
+
+  if (rows.length !== tasks.length) throw mismatchError();
+  const redactedByKey = new Map<string, string>();
+  for (let i = 0; i < tasks.length; i += 1) {
+    const task = tasks[i]!;
+    const row = rows[i]!;
+    const redacted = row.redacted;
+    if (row.idx !== i || row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
+      throw mismatchError();
+    }
+    redactedByKey.set(task.key, redacted);
   }
-  const starts = selections.map((s) => s.startPos);
-  const kinds = selections.map((s) => s.kind);
-  const marks = selections.map((s) => REDACTION_MARK_BY_KIND[s.kind]);
-  const { rows: outRows } = await sql<{ redacted: string | null }>`
-    SELECT pg_catalog.left(
-      crove_kernel.text_redact_spans(
-        ${text}::text,
-        ${sql.val(starts)}::integer[],
-        ${sql.val(kinds)}::text[],
-        ${sql.val(marks)}::text[]
-      ),
-      ${maxLen}::integer
-    ) AS redacted`.execute(trx);
-  const redacted = outRows[0]?.redacted;
-  if (redacted === null || redacted === undefined || redacted === text || redacted.length === 0) {
-    throw mismatchError();
-  }
-  return redacted;
+  return redactedByKey;
 }
 
 function groupBy<T>(items: readonly T[], keyOf: (item: T) => string): Map<string, T[]> {
@@ -487,73 +546,170 @@ export const transcriptRedact = defineCommand({
       }
     }
 
-    // Re-detect and prepare every redacted value atomically before mutating any row or dropping derived state.
-    let nextMeetingTitle: string | null = null;
+    // Collect every target field and re-detect + compute redacted values in one batched SQL query before mutating any row.
+    const fieldTasks: FieldRedactionTask[] = [];
     const titleSelections = input.items.filter((i) => i.surface === 'meeting.title');
     if (titleSelections.length > 0) {
-      nextMeetingTitle = await redactField(ctx.trx, lockedMeeting.title, titleSelections, MAX_LENGTH_BY_SURFACE['meeting.title']);
-    }
-
-    const segmentUpdates = new Map<string, { text: string; speakerLabel: string }>();
-    for (const [segId, list] of groupBy(
-      input.items.filter((i) => i.surface === 'transcript_segment.text' || i.surface === 'transcript_segment.speaker_label'),
-      (i) => i.targetId,
-    )) {
-      const row = segMap.get(segId) as LockedSegment;
-      const textSel = list.filter((i) => i.surface === 'transcript_segment.text');
-      const speakerSel = list.filter((i) => i.surface === 'transcript_segment.speaker_label');
-      segmentUpdates.set(segId, {
-        text: textSel.length > 0 ? await redactField(ctx.trx, row.text, textSel, MAX_LENGTH_BY_SURFACE['transcript_segment.text']) : row.text,
-        speakerLabel:
-          speakerSel.length > 0 ? await redactField(ctx.trx, row.speaker_label, speakerSel, MAX_LENGTH_BY_SURFACE['transcript_segment.speaker_label']) : row.speaker_label,
+      fieldTasks.push({
+        key: 'meeting.title',
+        text: lockedMeeting.title,
+        maxLen: MAX_LENGTH_BY_SURFACE['meeting.title'],
+        selections: titleSelections,
       });
     }
 
-    const resultUpdates = new Map<string, { summary: string; decisions: string[] }>();
-    for (const [resId, list] of groupBy(
+    const segmentGroups = groupBy(
+      input.items.filter((i) => i.surface === 'transcript_segment.text' || i.surface === 'transcript_segment.speaker_label'),
+      (i) => i.targetId,
+    );
+    for (const [segId, list] of segmentGroups) {
+      const row = segMap.get(segId) as LockedSegment;
+      const textSel = list.filter((i) => i.surface === 'transcript_segment.text');
+      const speakerSel = list.filter((i) => i.surface === 'transcript_segment.speaker_label');
+      if (textSel.length > 0) {
+        fieldTasks.push({
+          key: `seg.text:${segId}`,
+          text: row.text,
+          maxLen: MAX_LENGTH_BY_SURFACE['transcript_segment.text'],
+          selections: textSel,
+        });
+      }
+      if (speakerSel.length > 0) {
+        fieldTasks.push({
+          key: `seg.speaker:${segId}`,
+          text: row.speaker_label,
+          maxLen: MAX_LENGTH_BY_SURFACE['transcript_segment.speaker_label'],
+          selections: speakerSel,
+        });
+      }
+    }
+
+    const resultGroups = groupBy(
       input.items.filter((i) => i.surface === 'meeting_result.summary' || i.surface === 'meeting_result.decision'),
       (i) => i.targetId,
-    )) {
+    );
+    for (const [resId, list] of resultGroups) {
       const row = resMap.get(resId) as LockedResult;
       const sumSel = list.filter((i) => i.surface === 'meeting_result.summary');
-      const nextSummary = sumSel.length > 0 ? await redactField(ctx.trx, row.summary, sumSel, MAX_LENGTH_BY_SURFACE['meeting_result.summary']) : row.summary;
-      const nextDecisions = decisionStrings(row.decisions) ?? [];
+      if (sumSel.length > 0) {
+        fieldTasks.push({
+          key: `res.summary:${resId}`,
+          text: row.summary,
+          maxLen: MAX_LENGTH_BY_SURFACE['meeting_result.summary'],
+          selections: sumSel,
+        });
+      }
+      const decisions = decisionStrings(row.decisions) ?? [];
       for (const [idxKey, decSel] of groupBy(
         list.filter((i) => i.surface === 'meeting_result.decision'),
         (i) => String(i.decisionIndex),
       )) {
         const idx = Number(idxKey);
-        nextDecisions[idx] = await redactField(ctx.trx, nextDecisions[idx] as string, decSel, MAX_LENGTH_BY_SURFACE['meeting_result.decision']);
+        fieldTasks.push({
+          key: `res.decision:${resId}:${idx}`,
+          text: decisions[idx] as string,
+          maxLen: MAX_LENGTH_BY_SURFACE['meeting_result.decision'],
+          selections: decSel,
+        });
       }
-      resultUpdates.set(resId, { summary: nextSummary, decisions: nextDecisions });
     }
 
-    const actionUpdates = new Map<string, { title: string; whoDrafted: string; whenDrafted: string; flags: ItemFlag[] }>();
-    for (const [itemId, list] of groupBy(
+    const actionGroups = groupBy(
       input.items.filter((i) => i.surface === 'action_item.title' || i.surface === 'action_item.who_drafted' || i.surface === 'action_item.when_drafted'),
       (i) => i.targetId,
-    )) {
+    );
+    for (const [itemId, list] of actionGroups) {
       const row = itemMap.get(itemId) as LockedActionItem;
       const titleSel = list.filter((i) => i.surface === 'action_item.title');
       const whoSel = list.filter((i) => i.surface === 'action_item.who_drafted');
       const whenSel = list.filter((i) => i.surface === 'action_item.when_drafted');
-      const nextTitle = titleSel.length > 0 ? await redactField(ctx.trx, row.title, titleSel, MAX_LENGTH_BY_SURFACE['action_item.title']) : row.title;
+      if (titleSel.length > 0) {
+        fieldTasks.push({
+          key: `item.title:${itemId}`,
+          text: row.title,
+          maxLen: MAX_LENGTH_BY_SURFACE['action_item.title'],
+          selections: titleSel,
+        });
+      }
+      if (whoSel.length > 0) {
+        fieldTasks.push({
+          key: `item.who:${itemId}`,
+          text: row.who_drafted,
+          maxLen: MAX_LENGTH_BY_SURFACE['action_item.who_drafted'],
+          selections: whoSel,
+        });
+      }
+      if (whenSel.length > 0) {
+        fieldTasks.push({
+          key: `item.when:${itemId}`,
+          text: row.when_drafted,
+          maxLen: MAX_LENGTH_BY_SURFACE['action_item.when_drafted'],
+          selections: whenSel,
+        });
+      }
+    }
+
+    const chapterGroups = groupBy(
+      input.items.filter((i) => i.surface === 'meeting_chapter.title'),
+      (i) => i.targetId,
+    );
+    for (const [chapId, list] of chapterGroups) {
+      const row = chapMap.get(chapId) as LockedChapter;
+      fieldTasks.push({
+        key: `chap.title:${chapId}`,
+        text: row.title,
+        maxLen: MAX_LENGTH_BY_SURFACE['meeting_chapter.title'],
+        selections: list,
+      });
+    }
+
+    const redactedByKey = await redactFieldsBatch(ctx.trx, fieldTasks);
+
+    const nextMeetingTitle = titleSelections.length > 0 ? redactedByKey.get('meeting.title')! : null;
+
+    const segmentUpdates = new Map<string, { text: string; speakerLabel: string }>();
+    for (const [segId] of segmentGroups) {
+      const row = segMap.get(segId) as LockedSegment;
+      segmentUpdates.set(segId, {
+        text: redactedByKey.get(`seg.text:${segId}`) ?? row.text,
+        speakerLabel: redactedByKey.get(`seg.speaker:${segId}`) ?? row.speaker_label,
+      });
+    }
+
+    const resultUpdates = new Map<string, { summary: string; decisions: string[] }>();
+    for (const [resId, list] of resultGroups) {
+      const row = resMap.get(resId) as LockedResult;
+      const nextDecisions = decisionStrings(row.decisions) ?? [];
+      for (const [idxKey] of groupBy(
+        list.filter((i) => i.surface === 'meeting_result.decision'),
+        (i) => String(i.decisionIndex),
+      )) {
+        const idx = Number(idxKey);
+        nextDecisions[idx] = redactedByKey.get(`res.decision:${resId}:${idx}`)!;
+      }
+      resultUpdates.set(resId, {
+        summary: redactedByKey.get(`res.summary:${resId}`) ?? row.summary,
+        decisions: nextDecisions,
+      });
+    }
+
+    const actionUpdates = new Map<string, { title: string; whoDrafted: string; whenDrafted: string; flags: ItemFlag[] }>();
+    for (const [itemId] of actionGroups) {
+      const row = itemMap.get(itemId) as LockedActionItem;
+      const redactedTitle = redactedByKey.get(`item.title:${itemId}`);
+      const nextTitle = redactedTitle ?? row.title;
       const existingFlags = Array.isArray(row.flags) ? (row.flags as ItemFlag[]) : [];
       actionUpdates.set(itemId, {
         title: nextTitle,
-        whoDrafted: whoSel.length > 0 ? await redactField(ctx.trx, row.who_drafted, whoSel, MAX_LENGTH_BY_SURFACE['action_item.who_drafted']) : row.who_drafted,
-        whenDrafted: whenSel.length > 0 ? await redactField(ctx.trx, row.when_drafted, whenSel, MAX_LENGTH_BY_SURFACE['action_item.when_drafted']) : row.when_drafted,
-        flags: titleSel.length > 0 ? itemFlags(nextTitle) : existingFlags,
+        whoDrafted: redactedByKey.get(`item.who:${itemId}`) ?? row.who_drafted,
+        whenDrafted: redactedByKey.get(`item.when:${itemId}`) ?? row.when_drafted,
+        flags: redactedTitle !== undefined ? itemFlags(nextTitle) : existingFlags,
       });
     }
 
     const chapterUpdates = new Map<string, string>();
-    for (const [chapId, list] of groupBy(
-      input.items.filter((i) => i.surface === 'meeting_chapter.title'),
-      (i) => i.targetId,
-    )) {
-      const row = chapMap.get(chapId) as LockedChapter;
-      chapterUpdates.set(chapId, await redactField(ctx.trx, row.title, list, MAX_LENGTH_BY_SURFACE['meeting_chapter.title']));
+    for (const [chapId] of chapterGroups) {
+      chapterUpdates.set(chapId, redactedByKey.get(`chap.title:${chapId}`)!);
     }
 
     // D5: Drop the recorder's own draft translations before row updates (so count includes draft summary translations
@@ -580,53 +736,94 @@ export const transcriptRedact = defineCommand({
         .where('id', '=', input.meetingId)
         .execute();
     }
-    for (const [segId, u] of segmentUpdates) {
-      await ctx.trx
-        .updateTable('crove_meetings.transcript_segment')
-        .set({ text: u.text, speaker_label: u.speakerLabel, updated_at: sql<Date>`pg_catalog.now()` })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', segId)
-        .execute();
+    if (segmentUpdates.size > 0) {
+      const ids = [...segmentUpdates.keys()];
+      const texts = ids.map((id) => segmentUpdates.get(id)!.text);
+      const speakers = ids.map((id) => segmentUpdates.get(id)!.speakerLabel);
+      await sql`
+        UPDATE crove_meetings.transcript_segment AS s
+        SET text = u.text,
+            speaker_label = u.speaker_label,
+            updated_at = pg_catalog.now()
+        FROM ROWS FROM (
+          pg_catalog.unnest(${sql.val(ids)}::uuid[]),
+          pg_catalog.unnest(${sql.val(texts)}::text[]),
+          pg_catalog.unnest(${sql.val(speakers)}::text[])
+        ) AS u(id, text, speaker_label)
+        WHERE s.org_id = ${ctx.orgId}::uuid
+          AND s.meeting_id = ${input.meetingId}::uuid
+          AND s.id = u.id`.execute(ctx.trx);
     }
-    for (const [resId, u] of resultUpdates) {
-      await ctx.trx
-        .updateTable('crove_meetings.meeting_result')
-        .set({ summary: u.summary, decisions: sql`${JSON.stringify(u.decisions)}::jsonb`, updated_at: sql<Date>`pg_catalog.now()` })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', resId)
-        .execute();
+    if (resultUpdates.size > 0) {
+      const ids = [...resultUpdates.keys()];
+      const summaries = ids.map((id) => resultUpdates.get(id)!.summary);
+      const decisionsJson = ids.map((id) => JSON.stringify(resultUpdates.get(id)!.decisions));
+      await sql`
+        UPDATE crove_meetings.meeting_result AS r
+        SET summary = u.summary,
+            decisions = u.decisions::jsonb,
+            updated_at = pg_catalog.now()
+        FROM ROWS FROM (
+          pg_catalog.unnest(${sql.val(ids)}::uuid[]),
+          pg_catalog.unnest(${sql.val(summaries)}::text[]),
+          pg_catalog.unnest(${sql.val(decisionsJson)}::text[])
+        ) AS u(id, summary, decisions)
+        WHERE r.org_id = ${ctx.orgId}::uuid
+          AND r.meeting_id = ${input.meetingId}::uuid
+          AND r.id = u.id`.execute(ctx.trx);
     }
-    for (const [itemId, u] of actionUpdates) {
-      await ctx.trx
-        .updateTable('crove_meetings.action_item')
-        .set({
-          title: u.title,
-          who_drafted: u.whoDrafted,
-          when_drafted: u.whenDrafted,
-          flags: sql`${JSON.stringify(u.flags)}::jsonb`,
-          updated_at: sql<Date>`pg_catalog.now()`,
-        })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', itemId)
-        .execute();
+    if (actionUpdates.size > 0) {
+      const ids = [...actionUpdates.keys()];
+      const titles = ids.map((id) => actionUpdates.get(id)!.title);
+      const whoList = ids.map((id) => actionUpdates.get(id)!.whoDrafted);
+      const whenList = ids.map((id) => actionUpdates.get(id)!.whenDrafted);
+      const flagsJson = ids.map((id) => JSON.stringify(actionUpdates.get(id)!.flags));
+      await sql`
+        UPDATE crove_meetings.action_item AS i
+        SET title = u.title,
+            who_drafted = u.who_drafted,
+            when_drafted = u.when_drafted,
+            flags = u.flags::jsonb,
+            updated_at = pg_catalog.now()
+        FROM ROWS FROM (
+          pg_catalog.unnest(${sql.val(ids)}::uuid[]),
+          pg_catalog.unnest(${sql.val(titles)}::text[]),
+          pg_catalog.unnest(${sql.val(whoList)}::text[]),
+          pg_catalog.unnest(${sql.val(whenList)}::text[]),
+          pg_catalog.unnest(${sql.val(flagsJson)}::text[])
+        ) AS u(id, title, who_drafted, when_drafted, flags)
+        WHERE i.org_id = ${ctx.orgId}::uuid
+          AND i.meeting_id = ${input.meetingId}::uuid
+          AND i.id = u.id`.execute(ctx.trx);
     }
-    for (const [chapId, title] of chapterUpdates) {
-      await ctx.trx
-        .updateTable('crove_meetings.meeting_chapter')
-        .set({ title, updated_at: sql<Date>`pg_catalog.now()` })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', chapId)
-        .execute();
+    if (chapterUpdates.size > 0) {
+      const ids = [...chapterUpdates.keys()];
+      const titles = ids.map((id) => chapterUpdates.get(id)!);
+      await sql`
+        UPDATE crove_meetings.meeting_chapter AS c
+        SET title = u.title,
+            updated_at = pg_catalog.now()
+        FROM ROWS FROM (
+          pg_catalog.unnest(${sql.val(ids)}::uuid[]),
+          pg_catalog.unnest(${sql.val(titles)}::text[])
+        ) AS u(id, title)
+        WHERE c.org_id = ${ctx.orgId}::uuid
+          AND c.meeting_id = ${input.meetingId}::uuid
+          AND c.id = u.id`.execute(ctx.trx);
     }
 
-    const countsByKind: RedactionCountsByKind = {
-      email: 0,
-      phone: 0,
-      national_id: 0,
-      tax_code: 0,
-      bank_account: 0,
-    };
-    for (const item of input.items) countsByKind[item.kind] += 1;
+    let emailCount = 0;
+    let phoneCount = 0;
+    let nationalIdCount = 0;
+    let taxCodeCount = 0;
+    let bankAccountCount = 0;
+    for (const item of input.items) {
+      if (item.kind === 'email') emailCount += 1;
+      else if (item.kind === 'phone') phoneCount += 1;
+      else if (item.kind === 'national_id') nationalIdCount += 1;
+      else if (item.kind === 'tax_code') taxCodeCount += 1;
+      else bankAccountCount += 1;
+    }
     const redactedCount = input.items.length;
     const targetIds = [...new Set(input.items.map((i) => i.targetId))].sort();
 
@@ -635,11 +832,23 @@ export const transcriptRedact = defineCommand({
       meetingId: input.meetingId,
       targetIds,
       redactedCount,
-      countsByKind,
+      emailCount,
+      phoneCount,
+      nationalIdCount,
+      taxCodeCount,
+      bankAccountCount,
       droppedVyResults: droppedVy.removed,
       cancelledVyRuns: droppedVy.cancelled,
       droppedTranslations,
     });
+
+    const countsByKind: RedactionCountsByKind = {
+      email: emailCount,
+      phone: phoneCount,
+      national_id: nationalIdCount,
+      tax_code: taxCodeCount,
+      bank_account: bankAccountCount,
+    };
 
     return zTranscriptRedacted.parse({
       meetingId: input.meetingId,

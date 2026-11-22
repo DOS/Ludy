@@ -869,7 +869,7 @@ const SUBJECT_DROP_WRITES = [
 export const memberVySubjectResultsDrop = defineCommand({
   name: 'kernel.member_vy.subject_results.drop',
   input: z.strictObject({
-    subjectType: z.string().trim().min(1).max(100),
+    subjectType: z.string().regex(/^[a-z][a-z0-9_.-]{0,99}$/),
     subjectId: zId,
   }),
   risk: 'R1',
@@ -881,13 +881,20 @@ export const memberVySubjectResultsDrop = defineCommand({
     let cancelled = 0;
     let removed = 0;
     const runById = new Map<string, { id: string; status: string }>();
+    let maxLockedRunId: string | null = null;
     for (let pass = 0; pass < 5; pass += 1) {
       const seenRunIds = [...runById.keys()];
       const { rows: runs } = await sql<{ id: string; status: string }>`
         SELECT r.id, r.status
         FROM crove_kernel.ai_run r
+        JOIN crove_kernel.agent a
+          ON a.org_id = r.org_id
+         AND a.id = r.agent_id
+         AND a.kind = 'member_vy'
+         AND a.member_user_id = ${userId}::uuid
         WHERE r.org_id = ${ctx.orgId}::uuid
           ${seenRunIds.length > 0 ? sql`AND NOT (r.id = ANY(${sql.val(seenRunIds)}::uuid[]))` : sql``}
+          ${maxLockedRunId !== null ? sql`AND r.id > ${maxLockedRunId}::uuid` : sql``}
           AND r.id IN (
             SELECT v.run_id
             FROM crove_kernel.member_vy_result v
@@ -898,7 +905,13 @@ export const memberVySubjectResultsDrop = defineCommand({
           )
         ORDER BY r.id
         FOR UPDATE OF r`.execute(ctx.trx);
-      for (const r of runs) runById.set(r.id, r);
+      for (const r of runs) {
+        const normalizedId = r.id.toLowerCase();
+        runById.set(normalizedId, { id: normalizedId, status: r.status });
+        if (maxLockedRunId === null || normalizedId > maxLockedRunId) {
+          maxLockedRunId = normalizedId;
+        }
+      }
 
       const { rows: results } = await sql<{ id: string; run_id: string; status: string; private_read: boolean }>`
         SELECT v.id, v.run_id, v.status, v.private_read
@@ -909,10 +922,15 @@ export const memberVySubjectResultsDrop = defineCommand({
           AND v.subject_id = ${input.subjectId}::uuid
         ORDER BY v.id`.execute(ctx.trx);
 
-      const missingRunLock = results.some((v) => !runById.has(v.run_id));
-      if (missingRunLock && pass < 4) continue;
+      const missingRunIds = [...new Set(results.filter((v) => !runById.has(v.run_id.toLowerCase())).map((v) => v.run_id.toLowerCase()))];
+      if (missingRunIds.length > 0) {
+        if ((maxLockedRunId !== null && missingRunIds.some((id) => id <= maxLockedRunId!)) || pass === 4) {
+          throw new DomainError('VY_RUN_BUSY', 409, 'A private Vy run for this item just started; try again');
+        }
+        continue;
+      }
 
-      const eligible = results.filter((v) => runById.has(v.run_id));
+      const eligible = results.filter((v) => runById.has(v.run_id.toLowerCase()));
       if (eligible.length > 0) {
         const resultIds = eligible.map((r) => r.id);
         await sql`
@@ -923,7 +941,7 @@ export const memberVySubjectResultsDrop = defineCommand({
           FOR UPDATE OF v`.execute(ctx.trx);
 
         for (const v of eligible) {
-          const run = runById.get(v.run_id);
+          const run = runById.get(v.run_id.toLowerCase());
           if (!run || run.status !== 'running') continue;
           if (v.status === 'ready') {
             await sql`

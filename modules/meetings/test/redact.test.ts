@@ -7,6 +7,7 @@ import {
   REDACTION_MARK_BY_KIND,
   REDACTION_SELECTIONS_MAX,
   REDACTION_SURFACES,
+  zRedactionCandidate,
   zRedactionSelection,
   zTranscriptRedact,
   zTranscriptRedactCandidates,
@@ -136,11 +137,56 @@ describe('meetings redaction contracts and definitions (#4001 Slice 2)', () => {
     expect(redactCmd?.access).toEqual(['owner', 'admin', 'member']);
     expect('agent' in (redactCmd ?? {})).toBe(false);
 
+    expect(
+      zRedactionCandidate.safeParse({
+        surface: 'transcript_segment.text',
+        targetId: UUID_A,
+        decisionIndex: null,
+        kind: 'phone',
+        startPos: 1_000_000,
+        endPos: 1_000_010,
+        matchText: '0912345678',
+        mark: REDACTION_MARK_BY_KIND.phone,
+        version: '2026-11-22T00:00:00.000000Z',
+        startSeconds: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      zRedactionCandidate.safeParse({
+        surface: 'transcript_segment.text',
+        targetId: UUID_A,
+        decisionIndex: null,
+        kind: 'phone',
+        startPos: 1_000_001,
+        endPos: 1_000_011,
+        matchText: '0912345678',
+        mark: REDACTION_MARK_BY_KIND.phone,
+        version: '2026-11-22T00:00:00.000000Z',
+        startSeconds: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      zRedactionSelection.safeParse({
+        surface: 'transcript_segment.text',
+        targetId: UUID_A,
+        decisionIndex: null,
+        kind: 'phone',
+        startPos: 1_000_001,
+        version: '2026-11-22T00:00:00.000000Z',
+      }).success,
+    ).toBe(false);
+
     const dropCmd = kernelCommands.find((c) => c.name === 'kernel.member_vy.subject_results.drop');
     expect(dropCmd).toBeDefined();
     expect(dropCmd?.risk).toBe('R1');
     expect(dropCmd?.sideEffect).toBe('internal');
     expect(dropCmd?.access).toEqual(['owner', 'admin', 'member', 'viewer']);
     expect('memberVy' in (dropCmd ?? {})).toBe(false);
+    expect(dropCmd?.input.safeParse({ subjectType: 'meeting', subjectId: UUID_A }).success).toBe(true);
+    expect(dropCmd?.input.safeParse({ subjectType: 'meetings.meeting_1-a', subjectId: UUID_A }).success).toBe(true);
+    expect(dropCmd?.input.safeParse({ subjectType: 'Meeting', subjectId: UUID_A }).success).toBe(false);
+    expect(dropCmd?.input.safeParse({ subjectType: 'meeting free text', subjectId: UUID_A }).success).toBe(false);
+    expect(dropCmd?.input.safeParse({ subjectType: '.meeting', subjectId: UUID_A }).success).toBe(false);
+    expect(dropCmd?.input.safeParse({ subjectType: 'a'.repeat(101), subjectId: UUID_A }).success).toBe(false);
   });
 });

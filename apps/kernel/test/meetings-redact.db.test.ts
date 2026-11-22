@@ -474,7 +474,19 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     }
     const redactAudit = auditRows.filter((r) => r.command === 'meetings.transcript.redact');
     expect(redactAudit.length).toBeGreaterThanOrEqual(2);
-    expect(redactAudit.some((r) => r.detail.meetingId === meetingId && r.detail.redactedCount === 10)).toBe(true);
+    expect(
+      redactAudit.some(
+        (r) =>
+          r.detail.meetingId === meetingId &&
+          r.detail.redactedCount === 10 &&
+          r.detail.emailCount === 3 &&
+          r.detail.phoneCount === 4 &&
+          r.detail.nationalIdCount === 1 &&
+          r.detail.taxCodeCount === 1 &&
+          r.detail.bankAccountCount === 1 &&
+          r.detail.countsByKind === undefined,
+      ),
+    ).toBe(true);
 
     // Check D2 across DB tables for this meeting.
     const dbDump = await sqlAdmin(
@@ -783,5 +795,105 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     );
     expect(Number(vyOtherStill[0]?.c)).toBe(1);
     expect(await refuses(runtime.execute('kernel.member_vy.subject_results.drop', { subjectType: 'meeting', subjectId: secondMeetingId }, { actor: SYSTEM_ACTOR, orgId }))).toBe('FORBIDDEN');
+    expect(await refuses(exec('recorder', 'kernel.member_vy.subject_results.drop', { subjectType: 'Meeting free text', subjectId: secondMeetingId }))).toBe(
+      'VALIDATION',
+    );
+  });
+
+  it('fails closed with VY_RUN_BUSY on out-of-order concurrent Vy run creation and retries ascending new runs cleanly', async () => {
+    const mRace = await seedMeeting({ readers: ['attendee'], title: 'Họp B2 concurrency' });
+    const r1 = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', {
+      feature: 'meetings.summary',
+      subjectType: 'meeting',
+      subjectId: mRace,
+    });
+    await exec('recorder', 'kernel.member_vy.result.store', {
+      runId: r1.runId,
+      outcome: { status: 'ready', body: '{}' },
+    });
+    const vyAgentId = (
+      await sqlAdmin<{ id: string }>(
+        `SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
+        [orgId, users.recorder],
+      )
+    )[0]!.id;
+
+    const r0Id = '00000000-0000-7000-8000-000000000001';
+
+    const seedLowUuidRun = async (runId: string) => {
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query(`SET LOCAL session_replication_role = replica`);
+        await c.query(
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, finished_at, expires_at)
+           VALUES ($1, $2, $3, 'meetings', 'meetings.title', 'succeeded', true, now(), now(), now() + interval '30 minutes')`,
+          [orgId, runId, vyAgentId],
+        );
+        await c.query(
+          `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, status, body, private_read, expires_at, created_at)
+           VALUES ($1, $2, $3, 'meetings.title', 'meeting', $4, 'ready', '{}', true, now() + interval '30 days', now())`,
+          [orgId, users.recorder, runId, mRace],
+        );
+        await c.query('COMMIT');
+      });
+    };
+
+    const waitForBlockedOnPid = async (holdPid: number) => {
+      for (let i = 0; i < 200; i += 1) {
+        const blocked = await sqlAdmin<{ pid: number }>(
+          `SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`,
+          [holdPid],
+        );
+        if (blocked.length > 0) return;
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      throw new Error('Timed out waiting for drop transaction to block on ai_run lock');
+    };
+
+    const cHold = new pg.Client({ connectionString: adminUrl });
+    await cHold.connect();
+    try {
+      const holdPid = (await cHold.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+
+      // Case A: a newly committed run whose UUID <= maxLockedRunId must fail closed with 409 VY_RUN_BUSY (zero silent skip).
+      await cHold.query('BEGIN');
+      await cHold.query(`SELECT id FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, r1.runId]);
+      const pBusy = exec('recorder', 'kernel.member_vy.subject_results.drop', { subjectType: 'meeting', subjectId: mRace });
+      await waitForBlockedOnPid(holdPid);
+      await seedLowUuidRun(r0Id);
+      await cHold.query('COMMIT');
+      expect(await refuses(pBusy)).toBe('VY_RUN_BUSY');
+
+      const stillTwo = await sqlAdmin<{ c: string }>(
+        `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+        [orgId, mRace],
+      );
+      expect(Number(stillTwo[0]?.c)).toBe(2);
+
+      // Case B: a newly committed run whose UUID > maxLockedRunId retries in ascending order and drops all 3 cleanly.
+      await cHold.query('BEGIN');
+      await cHold.query(`SELECT id FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, r1.runId]);
+      const pRetry = exec<{ cancelled: number; removed: number }>('recorder', 'kernel.member_vy.subject_results.drop', {
+        subjectType: 'meeting',
+        subjectId: mRace,
+      });
+      await waitForBlockedOnPid(holdPid);
+      await exec('recorder', 'kernel.member_vy.run.start', {
+        feature: 'meetings.live_notes',
+        subjectType: 'meeting',
+        subjectId: mRace,
+      });
+      await cHold.query('COMMIT');
+
+      expect(await pRetry).toEqual({ subjectType: 'meeting', subjectId: mRace, cancelled: 1, removed: 3 });
+      const zeroLeft = await sqlAdmin<{ c: string }>(
+        `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+        [orgId, mRace],
+      );
+      expect(Number(zeroLeft[0]?.c)).toBe(0);
+    } finally {
+      await cHold.query('ROLLBACK').catch(() => {});
+      await cHold.end();
+    }
   });
 });

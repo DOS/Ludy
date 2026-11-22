@@ -611,7 +611,7 @@ export const zRedactionCandidate = z.strictObject({
   targetId: zId,
   decisionIndex: z.number().int().min(0).max(50 - 1).nullable(),
   kind: zRedactionKind,
-  startPos: z.number().int().min(1),
+  startPos: z.number().int().min(1).max(1_000_000),
   endPos: z.number().int().min(2),
   matchText: z.string().min(1),
   mark: z.string().min(1),
@@ -634,7 +634,7 @@ export const zRedactionSelection = z
     targetId: zId,
     decisionIndex: z.number().int().min(0).max(50 - 1).nullable().default(null),
     kind: zRedactionKind,
-    startPos: z.number().int().min(1),
+    startPos: z.number().int().min(1).max(1_000_000),
     version: z.string().trim().min(1).max(64),
   })
   .refine((v) => (v.surface === 'meeting_result.decision' ? v.decisionIndex !== null : v.decisionIndex === null), {
