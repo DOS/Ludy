@@ -1,21 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Google Calendar free/busy against recorded answers (shapes from Google's Calendar API and OAuth docs); no live call.
-import { describe, expect, it } from 'vitest';
-import { ConnectorError, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, agendaEventOf, googleCalendarSecretOf, joinUrlOf, titleOf, type Fetch } from '../src/index.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ConnectorError, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, agendaEventOf, googleCalendarSecretOf, joinUrlOf, titleOf, withCallSignal, type Fetch } from '../src/index.ts';
 
 const APP = { clientId: '123456789-testclientid0001.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const SECRET = JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' });
 const REDIRECT = 'https://ludy.example/calendar/oauth/google_calendar/callback';
 
-function google(routes: Record<string, { status?: number; body: unknown }[]>) {
-  const calls: { route: string; body: unknown; auth: string | null }[] = [];
+type RouteReply = { status?: number; body?: unknown; raw?: Response } | 'network' | ((init?: RequestInit) => Promise<Response>);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function google(routes: Record<string, RouteReply[]>) {
+  const calls: { route: string; body: unknown; auth: string | null; contentType: string | null; signal: AbortSignal | null }[] = [];
   const fetchImpl: Fetch = async (input, init) => {
     const url = new URL(input);
     const route = `${init?.method ?? 'GET'} ${url.host}${url.pathname}`;
     const raw = init?.body;
     const headers = new Headers(init?.headers);
-    calls.push({ route, auth: headers.get('authorization'), body: typeof raw === 'string' ? (headers.get('content-type')?.includes('json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw))) : raw });
+    calls.push({
+      route,
+      auth: headers.get('authorization'),
+      contentType: headers.get('content-type'),
+      signal: init?.signal ?? null,
+      body: typeof raw === 'string' ? (headers.get('content-type')?.includes('json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw))) : raw,
+    });
     const answer = routes[route]?.shift() ?? { status: 500, body: { error: { code: 500, message: `no answer for ${route}`, status: 'INTERNAL' } } };
+    if (answer === 'network') throw new Error(`network failure on ${route}`);
+    if (typeof answer === 'function') return answer(init);
+    if (answer.raw) return answer.raw;
     return new Response(JSON.stringify(answer.body), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } });
   };
   return { calls, fetchImpl };
@@ -61,6 +76,121 @@ describe('GoogleCalendarAdapter', () => {
     await expect(exchange({ access_token: 'a', refresh_token: 'r', scope: 'openid email' })).rejects.toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
     await expect(exchange({ access_token: 'a', scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` })).rejects.toBeInstanceOf(ConnectorError);
     await expect(exchange({ access_token: 'a', refresh_token: 'r', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, { email: 'a@b.test', email_verified: false })).rejects.toMatchObject({ kind: 'denied', code: 'NO_EMAIL' });
+  });
+
+  it('takes the grant away at Google when the connect refuses after Google issued tokens, and only then', async () => {
+    const attempt = async (token: object, info: RouteReply = { body: { email: 'a@b.test', email_verified: true } }, revoke: RouteReply = { body: {} }) => {
+      const fake = google({ 'POST oauth2.googleapis.com/token': [{ body: token }], 'GET www.googleapis.com/oauth2/v3/userinfo': [info], 'POST oauth2.googleapis.com/revoke': [revoke] });
+      const failure = await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch((e: unknown) => e);
+      const revokes = fake.calls.filter((c) => c.route === 'POST oauth2.googleapis.com/revoke');
+      return { failure, routes: fake.calls.map((c) => c.route), revokes, revoked: revokes.map((c) => c.body) };
+    };
+    // The member unticked the calendar permission: userinfo is never called and the refresh token is revoked alone in the form.
+    const noScope = await attempt({ access_token: 'a1', refresh_token: 'r1', scope: 'openid email' });
+    expect(noScope.failure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+    expect(noScope.routes).toEqual(['POST oauth2.googleapis.com/token', 'POST oauth2.googleapis.com/revoke']);
+    expect(noScope.revoked).toEqual([{ token: 'r1' }]);
+    expect(noScope.revokes[0]?.contentType).toBe('application/x-www-form-urlencoded');
+    expect(noScope.revokes[0]?.signal).toBeInstanceOf(AbortSignal);
+    // No refresh token came (absent or empty): the access token is what there is to revoke.
+    for (const refresh of [undefined, '']) {
+      const noRefresh = await attempt({ access_token: 'a2', ...(refresh === undefined ? {} : { refresh_token: refresh }), scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` });
+      expect(noRefresh.failure).toBeInstanceOf(ConnectorError);
+      expect(noRefresh.revoked).toEqual([{ token: 'a2' }]);
+    }
+    // Missing or unverified email revokes the refresh token.
+    for (const info of [{ email: 'a@b.test', email_verified: false }, { email: '', email_verified: true }, {}]) {
+      const badEmail = await attempt({ access_token: 'a3', refresh_token: 'r3', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, { body: info });
+      expect(badEmail.failure).toMatchObject({ kind: 'denied', code: 'NO_EMAIL' });
+      expect(badEmail.revoked).toEqual([{ token: 'r3' }]);
+    }
+    // A userinfo failure (403, 500, network) revokes the refresh token and keeps the original refusal.
+    for (const info of [{ status: 403, body: { error: { code: 403, message: 'denied' } } }, { status: 500, body: { error: { code: 500, message: 'server' } } }, 'network' as const]) {
+      const profileFail = await attempt({ access_token: 'a4', refresh_token: 'r4', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, info);
+      expect(profileFail.failure).toBeInstanceOf(ConnectorError);
+      expect(profileFail.revoked).toEqual([{ token: 'r4' }]);
+    }
+    // A connect that works, and calls where Google issued no grant, revoke nothing.
+    const worked = await attempt({ access_token: 'a5', refresh_token: 'r5', expires_in: 3599, scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` });
+    expect(worked.failure).toMatchObject({ externalAccount: 'a@b.test' });
+    expect(worked.revoked).toEqual([]);
+    for (const tokenReply of [
+      { status: 400, body: { error: 'invalid_grant' } },
+      { status: 503, body: { error: { code: 503, message: 'unavailable' } } },
+      { body: { refresh_token: 'r6', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE } },
+      { body: { access_token: '', refresh_token: 'r6', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE } },
+      'network' as const,
+    ]) {
+      const fake = google({ 'POST oauth2.googleapis.com/token': [tokenReply] });
+      await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch(() => undefined);
+      expect(fake.calls.map((c) => c.route)).toEqual(['POST oauth2.googleapis.com/token']);
+    }
+  });
+
+  it('keeps the original refusal, never parses the revoke body, uses a 5 s timeout, and leaks nothing when revoke fails', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const unparsed = new Response('google-revoke-body-leak-r4', { status: 502 });
+    const jsonSpy = vi.spyOn(unparsed, 'json');
+    const textSpy = vi.spyOn(unparsed, 'text');
+    const arrayBufferSpy = vi.spyOn(unparsed, 'arrayBuffer');
+    const cancelSpy = vi.spyOn(unparsed.body!, 'cancel');
+    const failures: RouteReply[] = [
+      { status: 500, body: { error: 'server', leak: 'r4' } },
+      { status: 400, body: { error: 'invalid_token' } },
+      { raw: unparsed },
+      'network',
+      async () => Promise.reject(new DOMException('timed out', 'TimeoutError')),
+    ];
+    for (const revoke of failures) {
+      const fake = google({
+        'POST oauth2.googleapis.com/token': [{ body: { access_token: 'a4', refresh_token: 'r4', scope: 'openid email' } }],
+        'POST oauth2.googleapis.com/revoke': [revoke],
+      });
+      const failure = await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch((e: unknown) => e);
+      expect(failure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+      const msg = (failure as Error).message;
+      for (const secret of ['secret-code', 'a4', 'r4', APP.clientSecret, 'google-revoke-body-leak']) expect(msg).not.toContain(secret);
+      expect(fake.calls.filter((c) => c.route === 'POST oauth2.googleapis.com/revoke').map((c) => c.body)).toEqual([{ token: 'r4' }]);
+    }
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(jsonSpy).not.toHaveBeenCalled();
+    expect(textSpy).not.toHaveBeenCalled();
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
+    expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+  });
+
+  it('skips revoke when the call signal is already aborted, and aborts an in-flight revoke cleanly', async () => {
+    const abortDuringProfile = new AbortController();
+    const skipped = google({
+      'POST oauth2.googleapis.com/token': [{ body: { access_token: 'a1', refresh_token: 'r1', scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` } }],
+      'GET www.googleapis.com/oauth2/v3/userinfo': [async () => {
+        abortDuringProfile.abort();
+        throw new DOMException('Aborted', 'AbortError');
+      }],
+    });
+    const profileFailure = await withCallSignal(abortDuringProfile.signal, () =>
+      new GoogleCalendarAdapter(APP, skipped.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null }),
+    ).catch((e: unknown) => e);
+    expect(profileFailure).toBeInstanceOf(ConnectorError);
+    expect(skipped.calls.map((c) => c.route)).toEqual(['POST oauth2.googleapis.com/token', 'GET www.googleapis.com/oauth2/v3/userinfo']);
+
+    const abortDuringRevoke = new AbortController();
+    let seenSignal: AbortSignal | undefined;
+    const hanging = google({
+      'POST oauth2.googleapis.com/token': [{ body: { access_token: 'a2', refresh_token: 'r2', scope: 'openid email' } }],
+      'POST oauth2.googleapis.com/revoke': [async (init) => {
+        seenSignal = init?.signal ?? undefined;
+        queueMicrotask(() => abortDuringRevoke.abort());
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+      }],
+    });
+    const revokeFailure = await withCallSignal(abortDuringRevoke.signal, () =>
+      new GoogleCalendarAdapter(APP, hanging.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null }),
+    ).catch((e: unknown) => e);
+    expect(revokeFailure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+    expect(seenSignal?.aborted).toBe(true);
   });
 
   it('maps a refused code to invalid_grant without putting the code or a token in the error', async () => {
@@ -125,12 +255,14 @@ describe('GoogleCalendarAdapter', () => {
   });
 
   it('revokes the whole grant with the refresh token, and counts a grant Google no longer knows as revoked', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     const { fetchImpl, calls } = google({
       'POST oauth2.googleapis.com/revoke': [{ body: {} }, { status: 400, body: { error: 'invalid_token', error_description: 'Token expired or revoked' } }, { status: 503, body: { error: 'backendError' } }, { status: 400, body: { error: 'invalid_request' } }],
     });
     const adapter = new GoogleCalendarAdapter(APP, fetchImpl);
     expect(await adapter.revoke(SECRET)).toEqual({ revoked: true });
     expect(calls[0]?.body).toEqual({ token: '1//refresh-1' });
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     expect(await adapter.revoke(SECRET)).toEqual({ revoked: true });
     expect(await adapter.revoke(SECRET)).toEqual({ failed: 'backendError' });
     expect(await adapter.revoke(SECRET)).toEqual({ failed: 'invalid_request' });
