@@ -299,7 +299,7 @@ export function ProjectColumnsDialogBody({
                               id={`col-edit-status-${col.id}`}
                               value={editStatus}
                               onChange={(e) => setEditStatus(e.target.value as BoardTaskStatus)}
-                              className="min-h-11 w-full text-xs"
+                              className="w-full [&_select]:min-h-11 [&_select]:text-xs"
                             >
                               {BOARD_TASK_STATUSES.map((st) => (
                                 <NativeSelectOption key={st} value={st}>
@@ -316,7 +316,7 @@ export function ProjectColumnsDialogBody({
                               id={`col-edit-color-${col.id}`}
                               value={editColor}
                               onChange={(e) => setEditColor(e.target.value as ProjectColumnColor)}
-                              className="min-h-11 w-full text-xs"
+                              className="w-full [&_select]:min-h-11 [&_select]:text-xs"
                             >
                               {PROJECT_COLUMN_COLORS.map((c) => (
                                 <NativeSelectOption key={c} value={c}>
@@ -364,7 +364,7 @@ export function ProjectColumnsDialogBody({
                             id={`col-fallback-${col.id}`}
                             value={fallbackId}
                             onChange={(e) => setFallbackId(e.target.value)}
-                            className="min-h-11 w-full text-xs"
+                            className="w-full [&_select]:min-h-11 [&_select]:text-xs"
                           >
                             {columns
                               .filter((candidate) => candidate.id !== col.id)
@@ -529,7 +529,7 @@ export function ProjectColumnsDialogBody({
                         id="new-column-status"
                         value={newStatus}
                         onChange={(e) => setNewStatus(e.target.value as BoardTaskStatus)}
-                        className="min-h-11 w-full text-xs"
+                        className="w-full [&_select]:min-h-11 [&_select]:text-xs"
                       >
                         {BOARD_TASK_STATUSES.map((st) => (
                           <NativeSelectOption key={st} value={st}>
@@ -546,7 +546,7 @@ export function ProjectColumnsDialogBody({
                         id="new-column-color"
                         value={newColor}
                         onChange={(e) => setNewColor(e.target.value as ProjectColumnColor)}
-                        className="min-h-11 w-full text-xs"
+                        className="w-full [&_select]:min-h-11 [&_select]:text-xs"
                       >
                         {PROJECT_COLUMN_COLORS.map((c) => (
                           <NativeSelectOption key={c} value={c}>

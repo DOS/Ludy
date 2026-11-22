@@ -286,6 +286,7 @@ export const projectColumnInitDefaults = defineCommand({
 
     const existing = await loadProjectColumns(ctx.trx, ctx.orgId, project.id, true);
     if (existing.length > 0) {
+      ctx.audit({ projectId: project.id, initialized: false, count: existing.length });
       return { projectId: project.id, columns: existing, initialized: false };
     }
 
@@ -325,7 +326,7 @@ export const projectColumnInitDefaults = defineCommand({
         AND t.org_id = pt.org_id
         AND t.id = pt.task_id`.execute(ctx.trx);
 
-    ctx.audit({ projectId: project.id, count: columns.length, columnIds });
+    ctx.audit({ projectId: project.id, initialized: true, count: columns.length, columnIds });
     await ctx.emit('projects.column.initialized', { projectId: project.id, count: columns.length });
     await ctx.activity('projects.project', project.id, 'projects.column.initialized', 'Khởi tạo cột tùy chỉnh cho bảng dự án');
     return { projectId: project.id, columns, initialized: true };

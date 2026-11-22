@@ -231,7 +231,7 @@ describe('projects custom board columns helpers & UI (#2605)', () => {
     expect(boardHtml).toContain('1/5');
     expect(boardHtml).toContain(`quick-add-column-${cDev.id}`);
     expect(boardHtml).toContain('card-column-switcher');
-    expect(boardHtml).toContain('min-h-11');
+    expect(boardHtml).toContain('[&amp;_select]:min-h-11');
     expect(boardHtml).toContain('Chuyển Thiết kế bảng sang cột');
     expect(boardHtml).toContain('disabled=""');
 
@@ -256,7 +256,7 @@ describe('projects custom board columns helpers & UI (#2605)', () => {
       ),
     );
     expect(listHtml).toContain('Move Thiết kế bảng to column');
-    expect(listHtml).toContain('min-h-11');
+    expect(listHtml).toContain('[&amp;_select]:min-h-11');
   });
 
   it('renders ProjectColumnsDialogBody opt-in, editing, delete guard, and max-12 states plus ProjectDetailPage button and WeeklyStatus breakdown', () => {
@@ -277,6 +277,7 @@ describe('projects custom board columns helpers & UI (#2605)', () => {
     expect(configuredEn).toContain('WIP 3');
     expect(configuredEn).toContain('add-column-form');
     expect(configuredEn).toContain('create-column-button');
+    expect(configuredEn).toContain('[&amp;_select]:min-h-11');
     expect(configuredEn).toContain('Keep at least one To do column and one Done column.');
 
     // When 12 columns exist, hides add form and renders max-12 notice.

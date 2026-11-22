@@ -200,7 +200,7 @@ function QuickAddTask({
           />
           <TaskChecklistEditor
             key={resetCount}
-            idPrefix={`quick-add-${status}`}
+            idPrefix={columnId ? `quick-add-${columnId}` : `quick-add-${status}`}
             label={t('modals.taskChecklistLabel')}
             value={checklist}
             stepError={stepError}
@@ -486,7 +486,7 @@ function TaskBoardCard({
                 const target = customColumns.find((col) => col.id === next);
                 if (target) onMoveColumn(task.id, target);
               }}
-              className="min-h-11 w-full text-xs"
+              className="w-full [&_select]:min-h-11 [&_select]:text-xs"
             >
               {resolvedColumnId === null && task.status !== 'cancelled' && (
                 <NativeSelectOption value={`__unmapped__:${task.status}`} disabled>
