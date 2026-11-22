@@ -123,6 +123,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.attendance_log',
+  'crove_hr.attendance_qr_config',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -181,6 +183,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
       `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
   ],
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_hr.attendance_log', () => 'false'], // HR is for owners and admins or linked self employees in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.attendance_qr_config', () => 'false'], // HR, as above.
   ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.department', () => 'false'], // HR, as above.
   ['crove_hr.job_opening', () => 'false'], // HR, as above.
@@ -295,7 +299,9 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
-  // Departments and lightweight recruiting (#3403): owners and admins alone, as every crove_hr table.
+  // Departments and lightweight recruiting (#3403) and Stage 5C attendance (#4447): owners/admins (and linked employee on attendance_log) in a user context alone.
+  ['crove_hr.attendance_log', 'false'],
+  ['crove_hr.attendance_qr_config', 'false'],
   ['crove_hr.candidate', 'false'],
   ['crove_hr.department', 'false'],
   ['crove_hr.job_opening', 'false'],
@@ -2202,6 +2208,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, party_id: party, debit_account: '6422' },
       };
     },
+  },
+  // #4447 (Stage 5C): employee daily attendance log (owner/admin or owning non-viewer employee in user context; system and agent contexts read and write none).
+  'crove_hr.attendance_log': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          work_date: '2026-11-22',
+          checked_in_at: '2026-11-22T01:30:00Z',
+          checked_out_at: '2026-11-22T10:30:00Z',
+          check_in_method: 'web',
+          worked_minutes: 480,
+          status: 'present',
+        },
+      };
+    },
+  },
+  // #4447 (Stage 5C): office attendance QR config per legal entity (owners and admins only, AUTHOR_ONLY). active='false' avoids partial active unique index collisions across multiple matrix rows.
+  'crove_hr.attendance_qr_config': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        qr_secret_hash: hex64(),
+        active: 'false',
+      },
+    }),
   },
   // #3403 (Phase 7 Stage 3): recruiting candidates, departments and job openings (owners and admins only, AUTHOR_ONLY).
   'crove_hr.candidate': {
