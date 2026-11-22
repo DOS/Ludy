@@ -103,7 +103,28 @@ describe('nextWorkingDay', () => {
     expect(nextWorkingDay('2026-11-06')).toBe('2026-11-09'); // Friday
     expect(nextWorkingDay('2026-11-07')).toBe('2026-11-09'); // Saturday
     expect(nextWorkingDay('2026-11-08')).toBe('2026-11-09'); // Sunday
-    expect(nextWorkingDay('2026-12-31')).toBe('2027-01-01');
+    expect(nextWorkingDay('2026-12-30')).toBe('2026-12-31');
+  });
+
+  it('skips a fixed-date public holiday', () => {
+    expect(nextWorkingDay('2026-12-31')).toBe('2027-01-04'); // 1 January 2027 is a Friday, then the weekend
+    expect(nextWorkingDay('2026-04-29')).toBe('2026-05-04'); // 30 April and 1 May are Thursday and Friday, then the weekend
+    expect(nextWorkingDay('2026-09-01')).toBe('2026-09-03'); // 2 September 2026 is a Wednesday
+  });
+
+  it('skips the lunar holidays of a year in the table: Tết and the Hùng Kings day', () => {
+    expect(nextWorkingDay('2026-02-13')).toBe('2026-02-23'); // Friday before 16 to 20 February, then the weekend
+    expect(nextWorkingDay('2026-04-24')).toBe('2026-04-27'); // Friday, then the weekend and Hùng Kings on Sunday 26 April
+    expect(nextWorkingDay('2027-02-04')).toBe('2027-02-10'); // Tết 5 to 9 February 2027, a Friday to a Tuesday
+  });
+
+  it('skips a holiday that falls next to a weekend', () => {
+    expect(nextWorkingDay('2027-04-15')).toBe('2027-04-19'); // Thursday; Hùng Kings Friday 16 April, then the weekend
+  });
+
+  it('knows only the fixed holidays and weekends in a year beyond the lunar table', () => {
+    expect(nextWorkingDay('2030-01-31')).toBe('2030-02-01'); // Tết 2030 is not in the table: a Friday is a working day
+    expect(nextWorkingDay('2029-12-31')).toBe('2030-01-02'); // 1 January 2030 is fixed
   });
 });
 
@@ -114,6 +135,14 @@ describe('isLateSale', () => {
     expect(isLateSale('2026-11-06', '2026-11-09')).toBe(false); // Friday's sale, invoiced Monday
     expect(isLateSale('2026-11-06', '2026-11-10')).toBe(true);
     expect(isLateSale('2026-10-30', '2026-11-03')).toBe(true); // a sale of the month before, a missed invoice
+  });
+
+  it('does not flag an invoice issued on the next real working day after a holiday, and flags the day after', () => {
+    expect(isLateSale('2027-02-04', '2027-02-10')).toBe(false); // the working day before Tết, invoiced on the first working day after it
+    expect(isLateSale('2027-02-04', '2027-02-11')).toBe(true);
+    expect(isLateSale('2027-02-04', '2027-02-05')).toBe(false); // invoiced earlier, in the holiday
+    expect(isLateSale('2026-12-31', '2027-01-04')).toBe(false); // a New Year's sale, invoiced after the holiday weekend
+    expect(isLateSale('2026-12-31', '2027-01-05')).toBe(true);
   });
 
   it('is not late with no sale date, the same day, a later sale or a date that is not one', () => {
