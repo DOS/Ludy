@@ -10,7 +10,7 @@ import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page-has-heading-one', 'heading-order'];
 
-// Synthetic values shaped so crove_kernel.text_detect catches every kind while tools/ci/pii-scan.mjs recognizes them as synthetic.
+// Synthetic values shaped so ludy_kernel.text_detect catches every kind while tools/ci/pii-scan.mjs recognizes them as synthetic.
 const PHONE = '0912 345 678';
 const EMAIL = 'khach@example.com';
 const CCCD = '001200000001';
@@ -58,8 +58,8 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
     await reader.goto('/');
   await signInNewUser(reader, readerEmail);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: readerEmail },
   );
@@ -69,16 +69,16 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
     exec(
       `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        SELECT t.org_id, gen_random_uuid(), :'title', 'vi', now(), now() + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365
-         FROM crove_kernel.tenant t, crove_kernel.user_account u
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email: recorderEmail, title: `Họp chốt ${PHONE} năm 2026` },
     );
-    meetingId = (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
+    meetingId = (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
 
     exec(
       `INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id)
        SELECT m.org_id, gen_random_uuid(), m.id, u.id
-         FROM crove_meetings.meeting m, crove_kernel.user_account u
+         FROM crove_meetings.meeting m, ludy_kernel.user_account u
         WHERE m.id = :'id'::uuid AND lower(u.email) = lower(:'email')`,
       { id: meetingId, email: readerEmail },
     );
@@ -115,7 +115,7 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
     exec(
       `INSERT INTO crove_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
        SELECT m.org_id, m.id, u.id, 'summary', 'en', 'published', repeat('b', 64), '[]'::jsonb
-         FROM crove_meetings.meeting m, crove_kernel.user_account u
+         FROM crove_meetings.meeting m, ludy_kernel.user_account u
         WHERE m.id = :'id'::uuid AND lower(u.email) = lower(:'email')`,
       { id: meetingId, email: readerEmail },
     );

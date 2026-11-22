@@ -712,7 +712,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     await withAdmin(async (c) => {
       await c.query(
         `WITH batch AS (
-           INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
            SELECT $1, 'Org later #' || gs, $2, 'todo', $3, 'human', 'user'
            FROM generate_series(1, 510) AS gs
            RETURNING org_id, id
@@ -723,7 +723,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       );
       privOverdueId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
            VALUES ($1, 'Private overdue', $2, 'todo', $3, 'human', 'user') RETURNING id`,
           [org.orgId, privSeat, overdueAt],
         )
@@ -735,7 +735,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       ]);
       privUnassignedId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
            VALUES ($1, 'Private unassigned overdue', NULL, 'todo', $2, 'human', 'user') RETURNING id`,
           [org.orgId, overdueAt],
         )
@@ -748,7 +748,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       // Overdue org task on outsider's seat stays visible while private project tasks stay hidden from non-members.
       outOverdueId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
            VALUES ($1, 'Outsider org overdue', $2, 'todo', $3, 'human', 'user') RETURNING id`,
           [org.orgId, outSeat, overdueAt],
         )
