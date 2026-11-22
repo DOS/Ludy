@@ -28,7 +28,7 @@ const NAMES = CONTROL_PLANE.join('|');
 // folds unquoted names) and across line breaks; or the bare name as a whole string literal, optionally aliased
 // (withSchema('crove_kernel').selectFrom('user_account as u'), sql.id(...)). auth_session_org is tenant data and
 // does not match.
-const REFERENCE = new RegExp(`\\bcrove_kernel"?\\s*\\.\\s*"?(${NAMES})\\b|(['"\`])(${NAMES})(\\s+as\\s+\\w+)?\\2`, 'gi');
+const REFERENCE = new RegExp(`\\b(?:crove|ludy)_kernel"?\\s*\\.\\s*"?(${NAMES})\\b|(['"\`])(${NAMES})(\\s+as\\s+\\w+)?\\2`, 'gi');
 
 // Comments may name the tables; code may not. Block comments and whole-line // comments are blanked, keeping line
 // breaks so offenders report their line (a trailing // comment stays, so a URL in a string never hides code).
@@ -66,15 +66,19 @@ describe('tenant code reaches control-plane tables only through definers', () =>
   it('the scan recognizes direct reads', () => {
     for (const text of [
       "await trx.selectFrom('crove_kernel.user_account').select('email')",
+      "await trx.selectFrom('ludy_kernel.user_account').select('email')",
       ".innerJoin('crove_kernel.user_account as u', 'u.id', 'm.user_id')",
       ".leftJoin('crove_kernel.user_account as u', 'u.id', 'i.invited_by')",
       'sql`SELECT email FROM crove_kernel.user_account WHERE id = ${id}`',
       'SELECT 1 FROM crove_kernel."user_account" u',
       'SELECT 1 FROM CROVE_KERNEL.USER_ACCOUNT u',
+      'SELECT 1 FROM LUDY_KERNEL.USER_ACCOUNT u',
       'sql`SELECT email FROM crove_kernel.\n  user_account WHERE id = ${id}`',
       "trx.withSchema('crove_kernel').selectFrom('user_account')",
+      "trx.withSchema('ludy_kernel').selectFrom('user_account')",
       "trx.withSchema('crove_kernel').selectFrom('user_account as u')",
       "sql.table('crove_kernel.auth_session')",
+      "sql.table('ludy_kernel.auth_session')",
       'JOIN crove_kernel.inbound_address a ON a.token = t.inbound_token',
       "deleteFrom('crove_kernel.inbound_pending')",
       'INSERT INTO crove_kernel.auth_email_send (client_key) VALUES ($1)',
@@ -85,7 +89,9 @@ describe('tenant code reaches control-plane tables only through definers', () =>
     for (const text of [
       // Definers, tenant tables and look-alike names are fine.
       'SELECT user_id, email FROM crove_kernel.member_profiles(${ids}::uuid[])',
+      'SELECT user_id, email FROM ludy_kernel.member_profiles(${ids}::uuid[])',
       "selectFrom('crove_kernel.auth_session_org')",
+      "selectFrom('ludy_kernel.auth_session_org')",
       "selectFrom('crove_kernel.tenant_member')",
       'SELECT crove_kernel.stream_ticket_issue($1, $2::uuid) AS ok',
       'SELECT user_id FROM crove_kernel.stream_ticket_redeem($1)',
@@ -98,5 +104,6 @@ describe('tenant code reaches control-plane tables only through definers', () =>
     }
     // Offenders report their line.
     expect(references('// header\nconst a = 1;\nsql`FROM crove_kernel.user_account`')).toEqual(['3: crove_kernel.user_account']);
+    expect(references('// header\nconst a = 1;\nsql`FROM ludy_kernel.user_account`')).toEqual(['3: ludy_kernel.user_account']);
   });
 });

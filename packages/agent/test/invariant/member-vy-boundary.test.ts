@@ -1306,9 +1306,9 @@ function collectMemberVyTokenPass(
     if (tok.kind === 'string' || tok.kind === 'template') {
       const m = commandRe.exec(tok.value);
       if (m?.[1]) out.add(`names the command or path ${m[1]}`);
-      if (/\bcrove_[a-z]+\./.test(tok.value)) out.add('names a crove_ table');
+      if (/\b(?:crove|ludy)_[a-z]+\./.test(tok.value)) out.add('names a crove_ table');
     } else if (tok.kind === 'ident') {
-      if (/^crove_[a-z]+$/.test(tok.value)) out.add('names a crove_ table');
+      if (/^(?:crove|ludy)_[a-z]+$/.test(tok.value)) out.add('names a crove_ table');
       if (tok.value === 'XMLHttpRequest' || tok.value === 'WebSocket') out.add('calls the network directly');
       if (tok.value === 'execute' && tokens[i + 1]?.kind === 'punct' && tokens[i + 1]?.value === '(') {
         out.add('calls execute()');
@@ -1333,7 +1333,7 @@ export function memberVyViolations(text: string): string[] {
   for (const m of text.matchAll(/['"`]((?:kernel|notes|meetings|finance|crm|hr|social|projects|calendar|desk)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)['"`]/g)) {
     out.add(`names the command or path ${m[1]}`);
   }
-  if (/\bcrove_[a-z]+\./.test(text)) out.add('names a crove_ table');
+  if (/\b(?:crove|ludy)_[a-z]+\./.test(text)) out.add('names a crove_ table');
   if (/\bexecute\s*\(/.test(text)) out.add('calls execute()');
   if (/\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b/.test(text)) out.add('calls the network directly');
   return [...out];
@@ -2646,6 +2646,8 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(memberVyViolations('await runtime.execute(cmd, input, ctx);')).toEqual(['calls execute()']);
     expect(memberVyViolations(`const t = 'crove_kernel.member_vy_result';`)).toContain('names a crove_ table');
     expect(memberVyViolations('const q = `\nINSERT INTO crove_kernel.member_vy_memory\n`;')).toContain('names a crove_ table');
+    expect(memberVyViolations(`const t = 'ludy_kernel.member_vy_result';`)).toContain('names a crove_ table');
+    expect(memberVyViolations('const q = `\nINSERT INTO ludy_kernel.member_vy_memory\n`;')).toContain('names a crove_ table');
     expect(memberVyViolations('const { execute } = rt; await execute(c);')).toContain('calls execute()');
     expect(memberVyViolations(`await fetch('https://x.test');`)).toEqual(['calls the network directly']);
     expect(memberVyViolations(`import https from 'node:https';`)).toEqual(['imports node:https']);

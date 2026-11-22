@@ -9,7 +9,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { auditRoleFunctionExecute, createDbClient, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -23,9 +24,10 @@ const WAKE_ENTRY = 'crove_kernel.enter_mcp_wake_company_context(uuid, uuid)';
 suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', () => {
   const dbName = `crove_test_mcp_company_context_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -35,9 +37,9 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
   }
   const asLogin = async (login: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = login;
+    url.username = dbIds ? dbIds.roleName(login) : login;
     url.password = password;
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     return c;
   };
@@ -52,7 +54,8 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
   }, 120_000);
 
   afterAll(async () => {
@@ -67,10 +70,11 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
     const exists = await admin((c) => c.query(`SELECT to_regprocedure('${ENTRY}') IS NOT NULL AS ok`).then((r) => r.rows[0].ok as boolean));
     if (!exists) return;
     await admin(async (c) => {
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${ENTRY}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute enter_mcp_company_context`).toBe(rolname === 'crove_app');
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, ENTRY, ['crove_app'], 'brand');
+      expect(logins.length).toBeGreaterThan(0);
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute enter_mcp_company_context`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute enter_mcp_company_context`).toBe(expected);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${ENTRY}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       const cfg = (await c.query(`SELECT proconfig FROM pg_proc WHERE oid = '${ENTRY}'::regprocedure`)).rows[0].proconfig as string[] | null;
@@ -103,10 +107,10 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
     const exists = await admin((c) => c.query(`SELECT to_regprocedure('${CORE}') IS NOT NULL AS ok`).then((r) => r.rows[0].ok as boolean));
     if (!exists) return;
     await admin(async (c) => {
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${CORE}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute seal_mcp_company_context`).toBe(false);
+      const { rows: logins } = await auditRoleFunctionExecute(c, dbIds, CORE, [], 'brand');
+      expect(logins.length).toBeGreaterThan(0);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute seal_mcp_company_context`).toBe(expected);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${CORE}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       const cfg = (await c.query(`SELECT proconfig FROM pg_proc WHERE oid = '${CORE}'::regprocedure`)).rows[0].proconfig as string[] | null;
@@ -116,7 +120,7 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
          WHERE s.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prokind IN ('f', 'p') AND p.oid <> '${CORE}'::regprocedure
            AND pg_get_functiondef(p.oid) ~ 'seal_mcp_company_context' ORDER BY 1`,
       );
-      expect(callers.rows.map((r) => r.n)).toEqual(['crove_kernel.enter_mcp_company_context(uuid,uuid)', 'crove_kernel.enter_mcp_wake_company_context(uuid,uuid)']);
+      expect(callers.rows.map((r) => r.n).sort()).toEqual(['crove_kernel.enter_mcp_company_context(uuid,uuid)', 'crove_kernel.enter_mcp_wake_company_context(uuid,uuid)'].sort());
       // The entries only call the core: neither writes the context itself.
       const writers = await c.query<{ n: string }>(
         `SELECT p.oid::regprocedure::text AS n FROM pg_proc p WHERE p.oid IN ('${ENTRY}'::regprocedure, '${WAKE_ENTRY}'::regprocedure) AND pg_get_functiondef(p.oid) ~* 'ctx_write\\s*\\('`,
@@ -129,10 +133,11 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
     const exists = await admin((c) => c.query(`SELECT to_regprocedure('${WAKE_ENTRY}') IS NOT NULL AS ok`).then((r) => r.rows[0].ok as boolean));
     if (!exists) return;
     await admin(async (c) => {
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${WAKE_ENTRY}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute enter_mcp_wake_company_context`).toBe(rolname === 'crove_worker');
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, WAKE_ENTRY, ['crove_worker'], 'brand');
+      expect(logins.length).toBeGreaterThan(0);
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute enter_mcp_wake_company_context`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute enter_mcp_wake_company_context`).toBe(expected);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${WAKE_ENTRY}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       // The API's entry stays the API login's alone (the case above), and the worker holds no way into it.

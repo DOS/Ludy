@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -20,6 +21,7 @@ const TABLE = 'crove_finance.misa_amis_callback_pending';
 suite('the MISA AMIS callback definers (#3903)', () => {
   const dbName = `crove_test_misa_callback_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -30,6 +32,7 @@ suite('the MISA AMIS callback definers (#3903)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
   }, 120_000);
 
   afterAll(async () => {
@@ -41,7 +44,7 @@ suite('the MISA AMIS callback definers (#3903)', () => {
   });
 
   async function one<T extends pg.QueryResultRow>(text: string, values: unknown[] = []): Promise<T | undefined> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return (await client.query<T>(text, values)).rows[0];

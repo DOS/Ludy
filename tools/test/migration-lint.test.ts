@@ -494,3 +494,57 @@ describe('migration lint: loop and cursor queries, PREPARE, EXPLAIN and COPY (#1
     expect(rules("DO $$ BEGIN\n  EXECUTE 'SELECT 1';\nEND $$;")).toEqual([]);
   });
 });
+
+describe('migration lint: ludy_* identifiers, ALTER SET SCHEMA and ALTER SCHEMA RENAME TO (#3969)', () => {
+  const LUDY_SOCIAL = 'supabase/migrations/20270210000000_ludy_social_sample.sql';
+  const LUDY_FINANCE = 'supabase/migrations/20270210010000_ludy_finance_rename.sql';
+  const lintAs = (file: string, sql: string, waivers: { file: string; line: number; schemas: string[]; reason: string }[] = []) =>
+    lintMigration(file, sql, { breakingRules: false, waivers });
+
+  it('recognizes _ludy_ filenames, ludy_* schemas, and ludy_definer_* owners', () => {
+    expect(moduleOf(LUDY_SOCIAL)).toBe('social');
+    const sql = [
+      'CREATE TABLE IF NOT EXISTS ludy_social.sample (org_id uuid, id uuid, PRIMARY KEY (org_id, id));',
+      'CREATE OR REPLACE FUNCTION ludy_social.fn() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$;',
+      'REVOKE ALL ON FUNCTION ludy_social.fn() FROM PUBLIC;',
+      'ALTER FUNCTION ludy_social.fn() OWNER TO ludy_definer_tenant;',
+      'GRANT EXECUTE ON FUNCTION ludy_social.fn() TO ludy_worker;',
+    ].join('\n');
+    expect(lintAs(LUDY_SOCIAL, sql)).toEqual([]);
+  });
+
+  it('allows same-module crove_<m> and ludy_<m> inside a _ludy_<m> migration while still guarding cross-module schemas', () => {
+    expect(lintAs(LUDY_FINANCE, 'ALTER SCHEMA crove_finance RENAME TO ludy_finance;')).toEqual([]);
+    expect(lintAs(LUDY_SOCIAL, 'ALTER TABLE ludy_finance.voucher ADD COLUMN x int;').map((f: Finding) => `${f.line} ${f.rule}`)).toEqual(['1 module-schema']);
+    const waivers: { file: string; line: number; schemas: string[]; reason: string }[] = [];
+    expect(
+      lintAs(LUDY_SOCIAL, '-- migration-lint: cross-module sync voucher\nALTER TABLE ludy_finance.voucher ADD COLUMN x int;', waivers),
+    ).toEqual([]);
+    expect(waivers.map((w) => w.schemas)).toEqual([['ludy_finance']]);
+  });
+
+  it('catches SET SCHEMA and ALTER SCHEMA RENAME TO destinations including public and extensions', () => {
+    expect(
+      lintAs(LUDY_SOCIAL, 'ALTER TABLE ludy_social.sample SET SCHEMA public;').map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['1 module-schema']);
+    // Even a cross-module waiver never covers moving objects into public or extensions.
+    expect(
+      lintAs(LUDY_SOCIAL, '-- migration-lint: cross-module expose\nALTER TABLE ludy_social.sample SET SCHEMA public;').map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['2 module-schema']);
+    expect(
+      lintAs(LUDY_SOCIAL, 'ALTER TABLE ludy_social.sample SET SCHEMA ludy_finance;').map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['1 module-schema']);
+    expect(
+      lintAs(LUDY_SOCIAL, '-- migration-lint: cross-module move table\nALTER TABLE ludy_social.sample SET SCHEMA ludy_finance;'),
+    ).toEqual([]);
+    expect(
+      lintAs(LUDY_SOCIAL, 'ALTER EXTENSION pgcrypto SET SCHEMA public;').map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['1 module-schema']);
+    expect(
+      lintAs(LUDY_SOCIAL, 'ALTER OPERATOR CLASS crove_social.oc USING btree SET SCHEMA public;').map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['1 module-schema']);
+    expect(
+      lintAs(LUDY_FINANCE, '-- migration-lint: cross-module bad rename\nALTER SCHEMA crove_finance RENAME TO public;').map((f: Finding) => `${f.line} ${f.rule}`),
+    ).toEqual(['2 module-schema']);
+  });
+});

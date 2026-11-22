@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
@@ -19,6 +19,7 @@ import { createHttpApp } from '../../src/http.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -37,6 +38,7 @@ interface Account {
 suite('own session revoke without an org (issue #184)', () => {
   const dbName = `crove_test_orgless_revoke_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let pool: pg.Pool;
   let db: Db;
@@ -49,7 +51,7 @@ suite('own session revoke without an org (issue #184)', () => {
   const member = account('member');
 
   async function sql(text: string, params: unknown[] = [], url = adminUrl) {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     try {
       return await client.query(text, params);
@@ -111,12 +113,13 @@ suite('own session revoke without an org (issue #184)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    pool = createPool({ connectionString: appUrl, max: 4 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     db = createDb(pool);
     const config = loadConfig({
       DATABASE_URL: appUrl,
@@ -299,7 +302,7 @@ suite('own session revoke without an org (issue #184)', () => {
     expect(await sessionRow(owner.userId, owner.session)).toMatchObject({ status: 'active' });
 
     // Never inside an org context.
-    const client = new pg.Client({ connectionString: appUrl });
+    const client = createDbClient({ connectionString: appUrl }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');

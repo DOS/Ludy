@@ -11,11 +11,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -28,13 +29,14 @@ const HASH = `'sha256:${'a'.repeat(64)}'`;
 suite('the write context of the MCP draft command (#3227)', () => {
   const dbName = `crove_test_mcp_draft_context_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let orgId = '';
   let otherOrg = '';
   const pools: pg.Pool[] = [];
   const users = { owner: '', admin: '', member: '', other: '' };
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -44,9 +46,9 @@ suite('the write context of the MCP draft command (#3227)', () => {
   }
   const asApp = async () => {
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     return c;
   };
@@ -99,11 +101,12 @@ suite('the write context of the MCP draft command (#3227)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    const pool = createPool({ connectionString: url.toString(), max: 4 });
+    const pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
@@ -126,12 +129,11 @@ suite('the write context of the MCP draft command (#3227)', () => {
 
   it('gives the entry to the API login alone, with a pinned search path, and lets only it name the kind of the seal', async () => {
     await admin(async (c) => {
-      // Every role that is not a superuser or a built-in one: the `crove_` logins, and any other a platform adds (`authenticated`, `anon`, `service_role`).
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
-      expect(logins.map((r) => r.rolname)).toContain('crove_app');
-      for (const { rolname } of logins) {
-        const ok = (await c.query(`SELECT has_function_privilege($1, '${ENTRY}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
-        expect(ok, `${rolname} execute the draft entry`).toBe(rolname === 'crove_app');
+      // Every role that is not a superuser or a built-in one: the `crove_`/`ludy_` logins, and any other a platform adds (`authenticated`, `anon`, `service_role`).
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, ENTRY, ['crove_app'], 'non_system');
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the draft entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the draft entry`).toBe(expected);
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${ENTRY}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       const cfg = (await c.query(`SELECT proconfig FROM pg_proc WHERE oid = '${ENTRY}'::regprocedure`)).rows[0].proconfig as string[] | null;
@@ -346,7 +348,7 @@ suite('the write context of the MCP draft command (#3227)', () => {
 
   it('does not deadlock when a draft enters while a demotion of its grantor commits: it waits, then is refused', async () => {
     const g = await grant(orgId, users.admin);
-    const demote = new pg.Client({ connectionString: adminUrl });
+    const demote = createDbClient({ connectionString: adminUrl }, dbIds);
     await demote.connect();
     const c = await asApp();
     try {

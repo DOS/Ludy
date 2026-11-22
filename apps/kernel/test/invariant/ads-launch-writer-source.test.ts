@@ -110,7 +110,7 @@ describe('what the job does with the token (#2296, W2-3)', () => {
     expect(file).not.toMatch(/new (Error|AdPlatformError)\([^)]*secret/);
     // It reads the credential through the kernel's query (which refuses a connection that is not active or whose connector may not use it), not the database.
     expect(file).toContain("'kernel.channel.credential'");
-    expect(file).not.toMatch(/token_seal|credential_get|FROM crove_kernel\.credential/);
+    expect(file).not.toMatch(/token_seal|credential_get|FROM (?:crove|ludy)_kernel\.credential/);
   });
 });
 

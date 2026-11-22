@@ -13,12 +13,20 @@ describe('SPDX header check', () => {
         'tools/ci/new.mjs',
         'supabase/migrations/20261107000000_crove_kernel_x.sql',
         'supabase/migrations/20261107010000_crove_jobs_pgboss_v47.sql',
+        'supabase/migrations/20261107020000_ludy_kernel_x.sql',
+        'supabase/migrations/20261107030000_ludy_jobs_pgboss_v48.sql',
         'packages/db/test/invariant/pgtap/pgtap.sql',
         'docs/plan/new.md',
         'apps/app/src/styles.css',
         'packages/agent/test/fixtures/extraction/new.json',
       ]),
-    ).toEqual(['packages/kernel/src/new.ts', 'apps/app/src/routes/new.tsx', 'tools/ci/new.mjs', 'supabase/migrations/20261107000000_crove_kernel_x.sql']);
+    ).toEqual([
+      'packages/kernel/src/new.ts',
+      'apps/app/src/routes/new.tsx',
+      'tools/ci/new.mjs',
+      'supabase/migrations/20261107000000_crove_kernel_x.sql',
+      'supabase/migrations/20261107020000_ludy_kernel_x.sql',
+    ]);
   });
 
   it('accepts the AGPL-3.0-only line near the top, in the file kind\'s comment', () => {

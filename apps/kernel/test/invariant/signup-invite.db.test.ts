@@ -8,11 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -24,6 +25,7 @@ type Created = { inviteId: string; acceptPath: string };
 suite('invite-only sign-up check (#350)', () => {
   const dbName = `crove_test_signupinv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let db: Db;
   let runtime: Runtime;
@@ -37,7 +39,7 @@ suite('invite-only sign-up check (#350)', () => {
   });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -69,11 +71,12 @@ suite('invite-only sign-up check (#350)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 4 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 4 }, dbIds);
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   });
@@ -90,22 +93,25 @@ suite('invite-only sign-up check (#350)', () => {
   it('is a definer with the pinned search_path that only crove_app may execute', async () => {
     const rows = await admin(async (c) => {
       const def = await c.query<{ prosecdef: boolean; proconfig: string[] }>(`SELECT prosecdef, proconfig FROM pg_proc WHERE oid = $1::regprocedure`, [FN]);
-      const roles = await c.query<{ role: string; can: boolean }>(
-        `SELECT r.rolname AS role, has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS can
-         FROM pg_roles r WHERE r.rolname LIKE 'crove\\_%' ORDER BY 1`,
-        [FN],
-      );
+      const roles = await auditRoleFunctionExecute(c, dbIds, FN, ['crove_app'], 'brand');
       const pub = await c.query<{ acl: string[] | null }>(`SELECT proacl::text[] AS acl FROM pg_proc WHERE oid = $1::regprocedure`, [FN]);
-      return { def: def.rows[0], roles: roles.rows, acl: pub.rows[0]?.acl ?? [] };
+      return { def: def.rows[0], roles, acl: pub.rows[0]?.acl ?? [] };
     });
     expect(rows.def).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'] });
-    expect(rows.roles.filter((r) => r.can).map((r) => r.role)).toEqual(['crove_app']);
+    expect(rows.roles.rows.length).toBeGreaterThan(0);
+    expect(
+      rows.roles.rows.some((r) => r.rolname === rows.roles.activeAllowed[0] && r.ok),
+      `active role ${rows.roles.activeAllowed[0]} execute ${FN}`,
+    ).toBe(true);
+    for (const { rolname, ok, expected } of rows.roles.rows) {
+      expect(ok, `${rolname} execute ${FN}`).toBe(expected);
+    }
     // No grant to PUBLIC (an ACL entry with an empty grantee).
     expect(rows.acl.some((entry) => entry.startsWith('='))).toBe(false);
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     workerUrl.password = 'test-worker-pw';
-    const worker = new pg.Client({ connectionString: workerUrl.toString() });
+    const worker = createDbClient({ connectionString: workerUrl.toString() }, dbIds);
     await worker.connect();
     try {
       await expect(worker.query(`SELECT crove_kernel.signup_invite_valid('a@b.test')`)).rejects.toMatchObject({ code: '42501' });
