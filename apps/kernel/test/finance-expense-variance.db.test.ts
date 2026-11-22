@@ -266,7 +266,10 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     next.setUTCMonth(next.getUTCMonth() + 1);
     const future = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
     expect(await refusal(variance({ month: future }))).toMatchObject({ code: 'MONTH_NOT_ENDED', status: 422 });
-    expect(await refusal(variance({ month: '2999-01' }))).toMatchObject({ code: 'MONTH_NOT_ENDED', status: 422 });
+    expect(await refusal(variance({ month: '2099-12' }))).toMatchObject({ code: 'MONTH_NOT_ENDED', status: 422 });
+    // A month outside this century is not a month of any book: the input is refused before the read.
+    expect(await refusal(variance({ month: '2999-01' }))).toMatchObject({ code: 'VALIDATION', status: 422 });
+    expect(await refusal(variance({ month: '1999-12' }))).toMatchObject({ code: 'VALIDATION', status: 422 });
   });
 
   it('gives a member scoped to another entity the same refusal as the overview, and reads what the member may', async () => {
