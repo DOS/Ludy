@@ -281,7 +281,11 @@ export function SignerPanel({
                     </div>
                   ) : null}
 
-                  {canLinkOrRemind || canCorrect ? (
+                  {(canLinkOrRemind &&
+                    ((onStartInPerson && signer.signerRole !== 'cc') ||
+                      (onCopyZaloLink && signer.signerRole !== 'cc') ||
+                      (onRemindSigner && signer.deliveryMode === 'email' && signer.email))) ||
+                  (canCorrect && onCorrectSigner) ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       {canLinkOrRemind && onStartInPerson && signer.signerRole !== 'cc' ? (
                         <Button
