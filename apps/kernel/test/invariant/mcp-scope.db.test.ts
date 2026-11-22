@@ -125,7 +125,7 @@ const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 // The R1 write twins of the Engage coworkers (epic #3857, E2, issue #3861; ADR-0051 decisions 10 and 11, owner decision 2026-11-19): each runs the same steps a person's click runs for the app's own
 // command (assign, resolve, reopen, note, link a contact, new contact, new deal, move a deal, save or revise a draft quote, mark a next step done or snoozed, save an ads draft), under
 // `ludy.engage.write` (the ads draft under `ludy.ads.draft`), each in its own sealed write context (test/invariant/mcp-engage-write.db.test.ts pins the database side). This list is exact: all thirteen
-// carry `mcp`, none else does, and each with the scope named here. (`kernel.conversation.follow_up` has no twin: its task is an event and wakes an agent, which the sealed context does not allow.)
+// carry `mcp`, none else does, and each with the scope named here. (`kernel.conversation.follow_up` has no R1 twin: its task is an event and wakes an agent, which the sealed context does not allow; a coworker asks for it as a proposal, #4148.)
 const ENGAGE_WRITES: readonly string[] = [
   'kernel.mcp.conversation_assign:ludy.engage.write',
   'kernel.mcp.conversation_resolve:ludy.engage.write',
@@ -184,6 +184,8 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
     'ads.schedule.shorten_approved': 'ludy.ads.draft',
     // Step 1 of 2 for #4181: the twin that cancels a queued raise of a running ad; the change that adds it is the next PR.
     'ads.manage.cancel_approved': 'ludy.ads.draft',
+    // Step 1 of 2 for #4148: the twin that creates a team task linked to a thread, run as the approver; the change that adds it is the next PR.
+    'kernel.conversation.follow_up_approved': 'ludy.engage.write',
   };
   it('has only the proposal-only twins of the Engage commands (E4) as commands a grant reaches as a proposal, each R2, access proposal, under its scope', () => {
     const proposing = commands.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
