@@ -15934,6 +15934,7 @@ export const en = {
         preview: 'Preview opening balances',
       },
       overview: 'View the accounting overview: cash, profit, receivables, payables',
+      cash_forecast: 'View the 30, 60 and 90-day cash forecast',
       payroll: {
         settlement: 'See where the posting and the payments of an approved pay month stand',
       },

@@ -15934,6 +15934,7 @@ export const vi = {
         preview: 'Xem trước số dư đầu kỳ',
       },
       overview: 'Xem tổng quan kế toán: tiền, lợi nhuận, phải thu, phải trả',
+      cash_forecast: 'Xem dự báo dòng tiền 30, 60 và 90 ngày',
       payroll: {
         settlement: 'Xem bút toán và các khoản chi của tháng lương đã duyệt đang ở bước nào',
       },
