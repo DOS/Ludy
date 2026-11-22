@@ -9338,7 +9338,7 @@ export const en = {
     voucherNumberLater: 'The voucher number is given on approval.',
     voucherNumberGiven: 'Voucher number:',
     proposalNoteTitle: '{finance} note on this entry',
-    proposalNoteAi: '{finance} worded this from the figures the system computed. Check it against the entry.',
+    proposalNoteAi: '{finance} wrote this in words, with no figures. Compare it with the figures and entry lines shown.',
     proposalUncertainTitle: 'Points not yet settled',
     proposalUncertainHint: 'These points are chosen by the system from the account map, not by AI. The accountant settles them.',
     viewVouchers: 'View cash and bank vouchers',

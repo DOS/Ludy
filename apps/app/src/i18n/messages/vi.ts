@@ -9334,7 +9334,7 @@ export const vi = {
     voucherNumberLater: 'Số chứng từ được cấp khi duyệt.',
     voucherNumberGiven: 'Số chứng từ:',
     proposalNoteTitle: '{finance} ghi chú về bút toán này',
-    proposalNoteAi: '{finance} diễn đạt từ các con số hệ thống đã tính sẵn. Hãy đối chiếu với bút toán.',
+    proposalNoteAi: '{finance} viết bằng lời, không kèm con số. Hãy đối chiếu với các con số và dòng bút toán đang hiển thị.',
     proposalUncertainTitle: 'Điểm còn chưa chắc',
     proposalUncertainHint: 'Các điểm này do hệ thống chọn từ bảng tài khoản, không phải do AI. Kế toán sẽ chốt.',
     viewVouchers: 'Xem danh sách thu chi',

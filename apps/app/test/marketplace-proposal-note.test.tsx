@@ -42,7 +42,8 @@ const PROPOSAL = '00000000-0000-4000-8000-0000000000d1';
 const NOTE = (over: Partial<Note> = {}): Note => ({
   ai: 'used',
   kind: 'payout',
-  note: 'Sàn giữ lại phí 28.000 đồng (331) và thuế 3.000 đồng; bút toán ghi 304.000 đồng tiền nhận về.',
+  figures: 'Sàn đã trả: 304.000 đồng; phí sàn giữ lại (331): 28.000 đồng. Bút toán ghi tiền nhận về và bù trừ khoản phải thu từ sàn.',
+  note: 'Sàn giữ lại phí và thuế trước khi chuyển tiền; xem các con số và dòng bút toán bên cạnh.',
   uncertain: [
     { key: 'receivable', text: 'Khoản phải thu từ sàn ghi vào 131.' },
     { key: 'fee_netting', text: 'Phí sàn bù trừ khi nhận tiền.' },
@@ -74,24 +75,26 @@ describe('the note on a marketplace proposal in the Inbox card (#4389)', () => {
 
   it('shows the note, the Uncertain points chosen by code and the AI wording mark, in Vietnamese and in English', () => {
     const vi = render(NOTE());
-    for (const text of ['data-testid="marketplace-proposal-note"', 'Ly ghi chú về bút toán này', 'Sàn giữ lại phí 28.000 đồng (331)', 'Ly diễn đạt từ các con số', 'Điểm còn chưa chắc', 'Khoản phải thu từ sàn ghi vào 131.', 'Phí sàn bù trừ khi nhận tiền.', 'không phải do AI']) expect(vi).toContain(text);
-    const en = render(NOTE({ note: 'The platform kept 28,000 dong in fees (331).', uncertain: [{ key: 'receivable', text: 'Receivable on 131.' }] }), 'en');
-    for (const text of ['note on this entry', 'The platform kept 28,000 dong in fees (331).', 'Ly worded this from the figures', 'Points not yet settled', 'Receivable on 131.', 'not by AI']) expect(en).toContain(text);
+    for (const text of ['data-testid="marketplace-proposal-note"', 'Ly ghi chú về bút toán này', 'Sàn đã trả: 304.000 đồng', 'Sàn giữ lại phí và thuế trước khi chuyển tiền', 'viết bằng lời, không kèm con số', 'Điểm còn chưa chắc', 'Khoản phải thu từ sàn ghi vào 131.', 'Phí sàn bù trừ khi nhận tiền.', 'không phải do AI']) expect(vi).toContain(text);
+    const en = render(NOTE({ figures: 'The platform paid: 304,000 dong.', note: 'The platform kept fees and tax before paying out.', uncertain: [{ key: 'receivable', text: 'Receivable on 131.' }] }), 'en');
+    for (const text of ['note on this entry', 'The platform paid: 304,000 dong.', 'The platform kept fees and tax before paying out.', 'wrote this in words, with no figures', 'Points not yet settled', 'Receivable on 131.', 'not by AI']) expect(en).toContain(text);
   });
 
-  it('shows the fixed template with the Uncertain list and no AI mark when the model did not write the note', () => {
+  it('shows the figures text and the Uncertain list, with no model words and no AI mark, when the model did not write the note', () => {
     for (const ai of ['off', 'busy', 'budget', 'failed'] as const) {
-      const html = render(NOTE({ ai, note: 'Sàn đã trả: 304.000 đồng.' }));
-      expect(html, ai).toContain('Sàn đã trả: 304.000 đồng.');
-      expect(html, ai).not.toContain('Ly diễn đạt từ các con số');
+      const html = render(NOTE({ ai, note: '' }));
+      expect(html, ai).toContain('Sàn đã trả: 304.000 đồng');
+      expect(html, ai).not.toContain('marketplace-proposal-note-text');
+      expect(html, ai).not.toContain('viết bằng lời');
       expect(html, ai).toContain('Khoản phải thu từ sàn ghi vào 131.');
     }
   });
 
   it('offers no button or link, shows no empty text block, and asks the server for nothing but the read', () => {
-    const html = render(NOTE({ ai: 'off', note: '', uncertain: [] }));
+    const html = render(NOTE({ ai: 'off', figures: '', note: '', uncertain: [] }));
     expect(html).not.toContain('<button');
     expect(html).not.toContain('<a ');
+    expect(html).not.toContain('marketplace-proposal-figures');
     expect(html).not.toContain('marketplace-proposal-note-text');
     expect(html).not.toContain('marketplace-proposal-uncertain');
     expect(cache.calls).toEqual([]);

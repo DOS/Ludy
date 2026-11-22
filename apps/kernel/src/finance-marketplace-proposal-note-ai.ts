@@ -2,11 +2,12 @@
 // The finance coworker's note on a pending marketplace settlement or payout proposal, on the API side (#4389, plan docs/plan/stock-and-marketplaces.md 8.6). The stored proposal is read in the caller's
 // own context (finance.marketplace.proposal_facts: the Inbox's visibility, so another org or an entity outside the caller's scope is not found), code has already computed every figure in whole dong
 // and chosen the Uncertain (#2520) points from a closed table, and the model call then runs here, outside any transaction, through the AI budget meter (the request's AI scope names the org and the
-// member). The model is told whole-dong figures, the kinds of classified lines and the entry's account codes, and no platform, party, order, buyer or date; it words them in at most three sentences
-// and the text is checked as a whole (packages/agent marketplace-proposal-note.ts).
+// member). The model is told only WHICH things the proposal has (fees kept, tax withheld, the kinds of classified lines), never an amount or an account code, and no platform, party, order, buyer or
+// date; it says in at most three sentences with no digit what drives the proposal, and the text is checked as a whole (packages/agent marketplace-proposal-note.ts). The figures are shown by the card in a
+// fixed text built here in code from the stored proposal (`figures`), so a figure cannot be swapped by a model.
 //
 // The note is read, never written: nothing here posts, changes the proposal or approves anything, and it is not a command. With no model, no budget, calls too frequent, a failed call or a refused text,
-// the answer names the state (`ai`) and carries the fixed template built in code from the same figures. The Uncertain list is the same whatever `ai` says. An answer is kept for a while by org,
+// the answer names the state (`ai`) and carries no model words (`note` empty); the fixed `figures` text and the Uncertain list always come. The Uncertain list is the same whatever `ai` says. An answer is kept for a while by org,
 // language and facts, so reopening the card does not pay for the same note twice. A failure is named, never quoted: neither the facts nor the model's answer is logged.
 import { AiBudgetExhaustedError, marketplaceProposalNoteFactsText, marketplaceProposalNoteHasNews, marketplaceProposalNoteTemplate, type InboxReader, type MarketplaceProposalNoteFacts } from '@ludy/agent';
 import type { MarketplaceProposalNote } from '@ludy/kernel-contract';
@@ -36,12 +37,13 @@ export async function explainMarketplaceProposal(
   language: 'vi' | 'en',
   now: () => number = Date.now,
 ): Promise<MarketplaceProposalNote> {
-  const told: MarketplaceProposalNoteFacts = { language, kind: proposal.kind, figures: proposal.figures, lineKinds: proposal.lineKinds, accounts: proposal.accounts };
+  const told: MarketplaceProposalNoteFacts = { language, kind: proposal.kind, figures: proposal.figures, lineKinds: proposal.lineKinds };
   const uncertain = proposal.uncertain.map((p) => ({ key: p.key, text: language === 'vi' ? p.vi : p.en }));
-  const template = marketplaceProposalNoteTemplate(told);
-  const answer = (state: MarketplaceProposalNote['ai'], text: string = template): MarketplaceProposalNote => ({ ai: state, kind: proposal.kind, note: text, uncertain });
-  // Nothing above zero: nothing to word, and the template would be empty too.
-  if (!marketplaceProposalNoteHasNews(told)) return answer('off', '');
+  // The figures are fixed wording built in code and always shown; the model's words (no figure in them) come only with `used`.
+  const figures = marketplaceProposalNoteTemplate(told);
+  const answer = (state: MarketplaceProposalNote['ai'], text = ''): MarketplaceProposalNote => ({ ai: state, kind: proposal.kind, figures: marketplaceProposalNoteHasNews(told) ? figures : '', note: text, uncertain });
+  // Nothing above zero: nothing to word.
+  if (!marketplaceProposalNoteHasNews(told)) return answer('off');
   if (!ai.reader) return answer('off');
   const key = `${orgId}\n${language}\n${marketplaceProposalNoteFactsText(told)}`;
   const hit = ai.kept.get(key);
