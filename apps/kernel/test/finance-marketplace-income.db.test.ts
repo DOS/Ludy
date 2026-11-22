@@ -101,7 +101,7 @@ suite('marketplace income reports (#2516)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Bán sàn ${randomUUID().slice(0, 6)}`);
     const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
     const o = { orgId, owner, member, viewer, a: `2611A${randomUUID().slice(0, 6).toUpperCase()}`, b: `2611B${randomUUID().slice(0, 6).toUpperCase()}` };
     if (known) await addOrders(o, o.a, o.b);
     return o;
@@ -156,16 +156,16 @@ suite('marketplace income reports (#2516)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) => new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     rt = register(db);
     worker = register(createDb(workerPool));
@@ -206,7 +206,7 @@ suite('marketplace income reports (#2516)', () => {
     });
     expect(await preview(o, fileId)).toMatchObject({ reportNet: '125750', fileStatesNet: true, linesNet: '125750', unknownOrders: 0, overlap: null, repeatedLines: 0, blockers: [] });
     // Everything kept with the read is free of the buyer's values and of their columns' headers.
-    const kept = JSON.stringify(await rows('SELECT result FROM crove_kernel.extraction WHERE org_id = $1', [o.orgId]));
+    const kept = JSON.stringify(await rows('SELECT result FROM ludy_kernel.extraction WHERE org_id = $1', [o.orgId]));
     for (const value of Object.values(BUYER)) expect(kept).not.toContain(value);
     for (const header of ['Người Mua', 'Số điện thoại']) expect(kept).not.toContain(header);
   });
@@ -233,7 +233,7 @@ suite('marketplace income reports (#2516)', () => {
     await expect(confirm(o, fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_NOT_STAGED' });
     await expect(execute(o, 'finance.marketplace_income.reject', { fileId }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_NOT_STAGED' });
     // The audit names the platform and counts, never an order number or an amount of the file.
-    const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_income.confirm' AND outcome = 'ok'", [o.orgId]));
+    const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_income.confirm' AND outcome = 'ok'", [o.orgId]));
     expect(audit).toContain('shopee');
     for (const secret of [o.a, o.b, '80500', '125750', BUYER.name]) expect(audit).not.toContain(secret);
     // No stored row of the settlement tables holds a buyer value.
@@ -358,7 +358,7 @@ suite('marketplace income reports (#2516)', () => {
     });
     for (const [read, rowNo] of [[negative, 4], [decimals, 3], [mismatch, 3]] as const) {
       expect(read.handled).toBe(true);
-      const [run] = await rows<{ status: string; error: string | null; result: unknown }>('SELECT status, error, result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, read.fileId]);
+      const [run] = await rows<{ status: string; error: string | null; result: unknown }>('SELECT status, error, result FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, read.fileId]);
       expect(run?.status).toBe('failed');
       expect(run?.error).toContain('1 dòng có số tiền không hợp lệ');
       expect(run?.error).toContain(`dòng ${rowNo} của tệp`);
@@ -390,8 +390,8 @@ suite('marketplace income reports (#2516)', () => {
     await expect(confirm(o, fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_UNKNOWN_ORDERS' });
     await addOrders(o, o.b);
     await confirm(o, fileId);
-    const audit = JSON.stringify(await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]));
-    const activity = JSON.stringify(await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [o.orgId]));
+    const audit = JSON.stringify(await rows('SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId]));
+    const activity = JSON.stringify(await rows('SELECT * FROM ludy_kernel.activity WHERE org_id = $1', [o.orgId]));
     for (const secret of [o.b, '80500', '45250', '125750', BUYER.name, BUYER.phone, BUYER.email]) {
       expect(audit, `audit holds ${secret}`).not.toContain(secret);
       expect(activity, `activity holds ${secret}`).not.toContain(secret);
@@ -447,7 +447,7 @@ suite('marketplace income reports (#2516)', () => {
     // A row with an amount that reads as no number stops the file, naming the row.
     const broken = await read(o, workbook([row(o.a, '2026-11-03', 100000, 10000, 5000, 2000, 1500, 500, 500, 80500), ['2611X1', '', '', '', '2026-11-04', 'không phải số', '', '', '', '', '', '', 100]]));
     expect(broken.handled).toBe(true);
-    const failed = await rows<{ status: string; error: string | null }>('SELECT status, error FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, broken.fileId]);
+    const failed = await rows<{ status: string; error: string | null }>('SELECT status, error FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, broken.fileId]);
     expect(failed[0]?.status).toBe('failed');
     expect(failed[0]?.error).toContain('không đọc được');
     expect(await query<unknown[]>(o, 'finance.marketplace_income.staged', {})).toEqual([]);

@@ -45,16 +45,16 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [member, limited] = [await identity('member'), await identity('limited')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [orgId, member, limited]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [orgId, member, limited]);
     const channel = async (): Promise<string> =>
-      (await rows<{ id: string }>("INSERT INTO crove_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by) VALUES ($1, 'sandbox', $2, 'Kênh thử', $3) RETURNING id", [orgId, `acct-${randomUUID().slice(0, 8)}`, owner]))[0]?.id as string;
+      (await rows<{ id: string }>("INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, connected_by) VALUES ($1, 'sandbox', $2, 'Kênh thử', $3) RETURNING id", [orgId, `acct-${randomUUID().slice(0, 8)}`, owner]))[0]?.id as string;
     const open = await channel();
     const closed = await channel();
     // `limited` may use only the closed channel; `member` is limited to none, so uses every one.
-    await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, closed, owner]);
+    await rows('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, closed, owner]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const home = async (user: string) => (await rt.query<{ items: TodayItem[]; failed: number }>('kernel.today', {}, { actor: asUser(user), orgId })).items;
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const stage = async (name: string) => ((await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {})).find((s) => s.name === name) as PipelineStage);
     const openDeal = (partyId: string) => exec<Deal>(owner, 'crm.deal.create', { partyId, title: 'Hợp đồng bí mật', amount: '15000000', expectedClose: null });
     async function closedDeal(partyId: string, stageName: string): Promise<void> {
@@ -69,7 +69,7 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, party_id, status, last_seq, resolved_at, last_inbound_at, last_message_at)
+          `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, party_id, status, last_seq, resolved_at, last_inbound_at, last_message_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${status === 'resolved' ? 'now()' : 'NULL'}, now(), now())`,
           [orgId, id, over.channelId ?? open, over.kind ?? 'comment_thread', `t-${id}`, partyId, status, messages.length],
         );
@@ -77,7 +77,7 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
           const at = `now() - make_interval(secs => ${Math.round(hours * 3600)})`;
           const arrived = `now() - make_interval(secs => ${Math.round((receivedHours ?? hours) * 3600)})`;
           await c.query(
-            `INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, author_user_id, body, send_state, hidden_at, platform_removed_at)
+            `INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, author_user_id, body, send_state, hidden_at, platform_removed_at)
              VALUES ($1, $2, $3, $4, $5, $6, ${at}, ${arrived}, $7, NULL, $8, $9, ${over.hidden && direction === 'in' ? 'now()' : 'NULL'}, ${over.removed && direction === 'in' ? 'now()' : 'NULL'})`,
             [orgId, id, over.channelId ?? open, over.kind ?? 'comment_thread', i + 1, direction, direction === 'in' ? 'contact' : 'system', direction === 'in' ? SECRET : 'Dạ em gửi báo giá ạ', direction === 'in' ? null : 'sent'],
           );
@@ -98,9 +98,9 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);

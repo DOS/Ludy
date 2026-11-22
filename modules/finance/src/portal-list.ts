@@ -77,7 +77,7 @@ export const portalListImport = defineCommand({
     vatPeriod(input.period);
     const direction: PortalListDirection = input.direction ?? 'purchase';
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'size_bytes', 'source'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -90,7 +90,7 @@ export const portalListImport = defineCommand({
     }
     if (Number(file.size_bytes) > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, 'Tệp danh sách vượt quá 10 MB');
     // A purchase list is told apart from another company's or the sales list by the org's tax code (checkPortalList).
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!tenant?.tax_code) {
       throw new DomainError('TAX_CODE_REQUIRED', 409, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi nhập danh sách hóa đơn từ cổng thuế');
     }
@@ -167,8 +167,8 @@ export const portalListSource = defineQuery({
   handler: async (ctx, input) => {
     const row = await ctx.trx
       .selectFrom('crove_finance.portal_invoice_list as l')
-      .innerJoin('crove_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
-      .innerJoin('crove_kernel.tenant as t', 't.org_id', 'l.org_id')
+      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
+      .innerJoin('ludy_kernel.tenant as t', 't.org_id', 'l.org_id')
       .select(['l.id', 'l.status', 'l.period', 'l.direction', 'f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 't.tax_code'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.listId)
@@ -399,8 +399,8 @@ async function ludyInvoices(
   const sale = direction === 'sale';
   const documents = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .leftJoin('crove_kernel.proposal as q', (join) => join.onRef('q.org_id', '=', 'd.org_id').onRef('q.id', '=', 'd.proposal_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .leftJoin('ludy_kernel.proposal as q', (join) => join.onRef('q.org_id', '=', 'd.org_id').onRef('q.id', '=', 'd.proposal_id'))
     .leftJoin('crove_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
@@ -434,7 +434,7 @@ async function ludyInvoices(
     .execute();
   const isDefault = legalEntityId === (await defaultLegalEntityId(ctx));
   const proposals = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select(['id', 'payload', 'source_file_id'])
     .where('org_id', '=', ctx.orgId)
     .where(isDefault ? sql<boolean>`coalesce(payload ->> 'legalEntityId', ${legalEntityId}) = ${legalEntityId}` : sql<boolean>`payload ->> 'legalEntityId' = ${legalEntityId}`)

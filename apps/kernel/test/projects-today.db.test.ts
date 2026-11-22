@@ -96,9 +96,9 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -382,14 +382,14 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     await withAdmin(async (c) => {
       stuckWaitingId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, source, created_by_type, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, source, created_by_type, updated_at)
            VALUES ($1, 'Việc chờ 4 ngày', $2, 'waiting', 'human', 'user', $3) RETURNING id`,
           [org.orgId, coworkerSeat, new Date(NOW_MS - 4 * DAY_MS)],
         )
       ).rows[0]?.id as string;
       freshWaitingId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, source, created_by_type, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, source, created_by_type, updated_at)
            VALUES ($1, 'Việc mới chờ 2 ngày', $2, 'waiting', 'human', 'user', $3) RETURNING id`,
           [org.orgId, coworkerSeat, new Date(NOW_MS - 2 * DAY_MS)],
         )
@@ -478,16 +478,16 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     let branchEntityId = '';
     await withAdmin(async (c) => {
       defaultEntityId = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
       ).rows[0]?.id as string;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Hà Nội', 'branch', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Hà Nội', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, scopedMember.userId, branchEntityId, owner.userId],
       );
@@ -526,21 +526,21 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     await withAdmin(async (c) => {
       hiddenTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
            VALUES ($1, 'Việc trụ sở chính bị ẩn', $2, 'waiting', $3, 'human', 'user', $4, $5) RETURNING id`,
           [org.orgId, ownerSeat, new Date(NOW_MS - DAY_MS), defaultEntityId, new Date(NOW_MS - 4 * DAY_MS)],
         )
       ).rows[0]?.id as string;
       visibleBranchTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
            VALUES ($1, 'Việc chi nhánh được xem', $2, 'todo', $3, 'human', 'user', $4, $5) RETURNING id`,
           [org.orgId, scopedSeat, new Date(NOW_MS - 2 * DAY_MS), branchEntityId, new Date(NOW_MS - 2 * DAY_MS)],
         )
       ).rows[0]?.id as string;
       orgWideTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
            VALUES ($1, 'Việc chung toàn tổ chức', $2, 'todo', $3, 'human', 'user', NULL, $4) RETURNING id`,
           [org.orgId, scopedSeat, new Date(NOW_MS - DAY_MS), new Date(NOW_MS - DAY_MS)],
         )
@@ -552,8 +552,8 @@ suite('projects.today on PostgreSQL (#2596)', () => {
 
     // Record audit and outbox counts before read queries.
     const countsBefore = await withAdmin(async (c) => {
-      const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]);
-      const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
+      const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [org.orgId]);
+      const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
       return { audit: Number(audit.rows[0]?.n ?? 0), outbox: Number(outbox.rows[0]?.n ?? 0) };
     });
 
@@ -565,8 +565,8 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     expect(scopedItems.map((i) => i.id)).toEqual([`overdue:${visibleBranchTaskId}`, `overdue:${orgWideTaskId}`]);
 
     const countsAfterReads = await withAdmin(async (c) => {
-      const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]);
-      const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
+      const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [org.orgId]);
+      const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
       return { audit: Number(audit.rows[0]?.n ?? 0), outbox: Number(outbox.rows[0]?.n ?? 0) };
     });
     expect(countsAfterReads).toEqual(countsBefore);
@@ -604,7 +604,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     await withAdmin(async (c) => {
       const inserted = await c.query<{ id: string }>(
         `WITH batch AS (
-           INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
            SELECT $1, 'Việc đồng nghiệp hôm nay #' || gs, $2, 'todo', $3, 'human', 'user'
            FROM generate_series(1, 505) AS gs
            RETURNING org_id, id
@@ -616,7 +616,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       void inserted;
       stuckWaitingId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, updated_at)
            VALUES ($1, 'Việc kẹt không hạn', $2, 'waiting', NULL, 'human', 'user', $3) RETURNING id`,
           [org.orgId, coworkerSeat, stuckUpdatedAt],
         )
@@ -649,7 +649,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     // Turn the 505 non-overdue coworker tasks overdue (506 actionable tasks total > LIMIT 500)
     // and verify projects.more counts all 506 tasks rather than truncating to 500 - 199.
     await withAdmin((c) =>
-      c.query(`UPDATE crove_kernel.task SET due = $2 WHERE org_id = $1 AND status = 'todo'`, [
+      c.query(`UPDATE ludy_kernel.task SET due = $2 WHERE org_id = $1 AND status = 'todo'`, [
         org.orgId,
         new Date(NOW_MS - DAY_MS),
       ]),

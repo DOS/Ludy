@@ -82,7 +82,7 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   expect(`${variant?.body} ${variant?.parts[0]}`.replace(/\s+/g, ' ')).toBe(text.replace(/\s+/g, ' '));
   expect([...(variant?.body ?? '')].length).toBeLessThanOrEqual(1000);
   await expect
-    .poll(() => sql<{ step: string; state: string }>(`SELECT step, state FROM crove_kernel.external_call WHERE key LIKE :'prefix' ORDER BY started_at`, { prefix: `%${variant?.id}%:part_%` }), { timeout: 45_000 })
+    .poll(() => sql<{ step: string; state: string }>(`SELECT step, state FROM ludy_kernel.external_call WHERE key LIKE :'prefix' ORDER BY started_at`, { prefix: `%${variant?.id}%:part_%` }), { timeout: 45_000 })
     .toEqual([{ step: 'part_2', state: 'succeeded' }]);
   await page.reload();
   await expect(page.getByText('Chuỗi bài: đã đăng đủ 2 phần')).toBeVisible();

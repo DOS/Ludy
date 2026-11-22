@@ -124,7 +124,7 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
   if (doc.currency !== 'VND') throw notUsable('CURRENCY');
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['m.platform', 'p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.legal_entity_id', '=', doc.legal_entity_id)

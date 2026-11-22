@@ -171,7 +171,7 @@ export const departmentSetManager = defineCommand({
     if (existing.archived_at !== null) throw archivedError();
     if (input.managerUserId !== null) {
       const member = await ctx.trx
-        .selectFrom('crove_kernel.tenant_member')
+        .selectFrom('ludy_kernel.tenant_member')
         .select('role')
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', input.managerUserId)

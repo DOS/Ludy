@@ -151,14 +151,14 @@ suite('learned bank line rules (#2402)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
@@ -178,7 +178,7 @@ suite('learned bank line rules (#2402)', () => {
     other = { slug: String(second.body?.slug), orgId: String(second.body?.orgId) };
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Alpha Trade', NULL), ($1, $3, 'Công ty Beta Trade', NULL), ($1, $4, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`,
+        `INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Alpha Trade', NULL), ($1, $3, 'Công ty Beta Trade', NULL), ($1, $4, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`,
         [org.orgId, alpha, beta, hoaBinh],
       );
     });
@@ -204,7 +204,7 @@ suite('learned bank line rules (#2402)', () => {
     // Provenance, and a keyed hash instead of text: nothing of the line is readable in the row.
     expect(rule.key_hash).toMatch(/^k1:[0-9a-f]{64}$/);
     expect(JSON.stringify(rule).toLowerCase()).not.toContain('nguyen');
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.voucher.record' AND outcome = 'ok'`, [org.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.voucher.record' AND outcome = 'ok'`, [org.orgId])).rows);
     expect(audit.some((a) => a.detail.learned_bank_rule === rule.id)).toBe(true);
     // The same words are another line's key: the next statement's line is suggested to Alpha with its own reason.
     expect((await importLines(org.slug, member, [row('05/12/2026', '2.000.000', 'RP2', 'IBFT NGUYEN VAN LAN THANH TOAN TIEN HANG THANG 12 REF 7788')], 'sao-ke-12.xlsx')).status).toBe(200);
@@ -224,7 +224,7 @@ suite('learned bank line rules (#2402)', () => {
 
   it('keeps the learned rule inside its org: the same words in another org suggest nobody', async () => {
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Alpha Trade')`, [other.orgId, randomUUID()]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Alpha Trade')`, [other.orgId, randomUUID()]);
     });
     expect((await importLines(other.slug, outsider, [row('05/12/2026', '2.000.000', 'XO1', 'IBFT NGUYEN VAN LAN THANH TOAN TIEN HANG THANG 12 REF 7788')], 'sao-ke-khac.xlsx')).status).toBe(200);
     await refresh();
@@ -262,7 +262,7 @@ suite('learned bank line rules (#2402)', () => {
     expect((await rpc('bankPartyRules/remove', await tokenFor(owner, { mfa: true }), { id: alphaRule.id })).status).toBe(200);
     expect((await rpc('bankPartyRules/remove', await tokenFor(owner, { mfa: true }), { id: alphaRule.id })).body).toMatchObject({ code: 'RULE_NOT_FOUND' });
     expect((await suggestion('RP2')).suggested).toMatchObject({ party: { id: beta }, reason: 'learned' });
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank_party_rule.remove' AND outcome = 'ok'`, [org.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank_party_rule.remove' AND outcome = 'ok'`, [org.orgId])).rows);
     expect(audit).toHaveLength(1);
     expect(audit[0]?.detail).toMatchObject({ ruleId: alphaRule.id, partyId: alpha });
     expect(JSON.stringify(audit[0]?.detail)).not.toMatch(/k1:/);
@@ -271,7 +271,7 @@ suite('learned bank line rules (#2402)', () => {
   it('holds every writer to the table\'s rules: no update by a login role, the key kind, no direct call of the hash function', async () => {
     const [rule] = await rules();
     const asTenant = async (sql: string, params: unknown[] = []) => {
-      const client = new pg.Client({ connectionString: new URL(adminUrl).toString().replace(/\/\/[^@]*@/, '//crove_app:test-app-pw@') });
+      const client = new pg.Client({ connectionString: new URL(adminUrl).toString().replace(/\/\/[^@]*@/, '//ludy_app:test-app-pw@') });
       await client.connect();
       try {
         return await client.query(sql, params);
@@ -290,7 +290,7 @@ suite('learned bank line rules (#2402)', () => {
   it('removes the rules of a party whose personal data is erased, though the books keep the party', async () => {
     const gamma = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name, email) VALUES ($1, $2, 'Trần Thị Lan', 'gamma@example.test')`, [org.orgId, gamma]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, email) VALUES ($1, $2, 'Trần Thị Lan', 'gamma@example.test')`, [org.orgId, gamma]);
     });
     expect((await importLines(org.slug, member, [row('20/11/2026', '400.000', 'RP6', 'CK TRAN THI LAN TT HOP DONG')], 'sao-ke-gamma.xlsx')).status).toBe(200);
     await refresh();
@@ -307,7 +307,7 @@ suite('learned bank line rules (#2402)', () => {
   it('stops suggesting a party once the voucher that taught the rule is reversed', async () => {
     const delta = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Delta Trade')`, [org.orgId, delta]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Delta Trade')`, [org.orgId, delta]);
     });
     expect((await importLines(org.slug, member, [row('22/11/2026', '600.000', 'RP7', 'CK PHAM VAN LONG TT GIAO HANG'), row('02/12/2026', '600.000', 'RP8', 'CK PHAM VAN LONG TT GIAO HANG 2')], 'sao-ke-delta.xlsx')).status).toBe(200);
     await refresh();
@@ -333,7 +333,7 @@ suite('learned bank line rules (#2402)', () => {
   it('learns a counterparty account number too: the next line with the same account is suggested with the reason `account`', async () => {
     const epsilon = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Epsilon Trade')`, [org.orgId, epsilon]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Epsilon Trade')`, [org.orgId, epsilon]);
     });
     // The words of these lines say nothing (no key); only the account number is the same.
     expect(
@@ -362,7 +362,7 @@ suite('learned bank line rules (#2402)', () => {
     expect(JSON.stringify(item)).not.toContain('001122334455');
     // Another org with the same account number suggests nobody: the hash is bound to the org.
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Epsilon Trade')`, [other.orgId, randomUUID()]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Epsilon Trade')`, [other.orgId, randomUUID()]);
     });
     expect((await importLines(other.slug, outsider, [row('03/12/2026', '700.000', 'XA1', 'GD 112233', '001122334455')], 'sao-ke-khac-2.xlsx')).status).toBe(200);
     await refresh();
@@ -377,7 +377,7 @@ suite('learned bank line rules (#2402)', () => {
     const eta = randomUUID();
     const theta = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Zeta Trade'), ($1, $3, 'Công ty Eta Trade'), ($1, $4, 'Công ty Theta Trade')`, [org.orgId, zeta, eta, theta]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Zeta Trade'), ($1, $3, 'Công ty Eta Trade'), ($1, $4, 'Công ty Theta Trade')`, [org.orgId, zeta, eta, theta]);
       // The org's own number, as a bank statement may print it in the counterparty column for fees and interest.
       await c.query(`INSERT INTO crove_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '4455667788')`, [org.orgId]);
     });
@@ -412,7 +412,7 @@ suite('learned bank line rules (#2402)', () => {
   it('stops suggesting by an account once the voucher that taught it is reversed, and keeps the number checked by the database', async () => {
     const iota = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Iota Trade')`, [org.orgId, iota]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Iota Trade')`, [org.orgId, iota]);
     });
     expect((await importLines(org.slug, member, [row('28/11/2026', '900.000', 'RV1', 'GD 21', '7788990011'), row('07/12/2026', '900.000', 'RV2', 'GD 22', '7788990011')], 'sao-ke-iota.xlsx')).status).toBe(200);
     await refresh();
@@ -436,9 +436,9 @@ suite('learned bank line rules (#2402)', () => {
     const connection = randomUUID();
     const lambda = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'bank_sandbox', $3, 'Ngân hàng', $4)`, [org.orgId, connection, `feed-${connection}`, ownerId]);
+      await c.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'bank_sandbox', $3, 'Ngân hàng', $4)`, [org.orgId, connection, `feed-${connection}`, ownerId]);
       await c.query(`INSERT INTO crove_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-3344556677', '1121')`, [org.orgId, connection]);
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Lambda Trade')`, [org.orgId, lambda]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Lambda Trade')`, [org.orgId, lambda]);
     });
     expect((await importLines(org.slug, member, [row('29/11/2026', '950.000', 'RF9', 'GD 31', '3344 5566 77')], 'sao-ke-lambda.xlsx')).status).toBe(200);
     await refresh();

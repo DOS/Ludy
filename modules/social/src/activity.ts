@@ -36,7 +36,7 @@ type PinInput = z.infer<typeof zSocialCommentPin>;
 export async function mentionedMembers(ctx: CommandContext, body: string, author: string): Promise<string[]> {
   const ids = mentionsOf(body).filter((id) => id !== author);
   if (ids.length === 0) return [];
-  const rows = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
   const members = new Set(rows.map((r) => r.user_id));
   return ids.filter((id) => members.has(id));
 }
@@ -47,7 +47,7 @@ async function checkPin(ctx: CommandContext, postId: string, channelMedia: unkno
   const notInPost = () => new DomainError('PIN_FILE_NOT_IN_POST', 422, 'Ảnh hoặc video được ghim không thuộc bài đăng hay kênh này');
   const inPost = await ctx.trx.selectFrom('crove_social.post_media').select('file_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).where('file_id', '=', pin.fileId).executeTakeFirst();
   if (!inPost && !(mediaOf(channelMedia) ?? []).some((m) => m.fileId === pin.fileId)) throw notInPost();
-  const file = await ctx.trx.selectFrom('crove_kernel.file').select('content_type').where('org_id', '=', ctx.orgId).where('id', '=', pin.fileId).executeTakeFirst();
+  const file = await ctx.trx.selectFrom('ludy_kernel.file').select('content_type').where('org_id', '=', ctx.orgId).where('id', '=', pin.fileId).executeTakeFirst();
   if (!file) throw notInPost();
   if ('atSeconds' in pin ? !file.content_type.startsWith('video/') : !file.content_type.startsWith('image/')) {
     throw new DomainError('PIN_KIND_MISMATCH', 422, 'Ghim một vị trí trên ảnh, hoặc một thời điểm trên video');
@@ -141,7 +141,7 @@ export const commentEdit = defineCommand({
       // Only members this comment never mentioned are told: not the ones in the text before, nor anyone told by an
       // earlier fix, so taking a mention out and back in tells nobody twice.
       const told = await sql<{ id: string }>`
-        SELECT DISTINCT pg_catalog.jsonb_array_elements_text(payload -> 'user_ids') AS id FROM crove_kernel.outbox_event
+        SELECT DISTINCT pg_catalog.jsonb_array_elements_text(payload -> 'user_ids') AS id FROM ludy_kernel.outbox_event
         WHERE org_id = ${ctx.orgId} AND type = 'social.post.mentioned' AND created_at >= ${c.created_at} AND payload ->> 'comment_id' = ${c.id}`.execute(ctx.trx);
       const before = new Set([...mentionsOf(c.body), ...told.rows.map((r) => r.id)]);
       const added = (await mentionedMembers(ctx, input.body, userId)).filter((id) => !before.has(id));
@@ -406,7 +406,7 @@ export const postActivity = defineQuery({
         .execute(),
       // From the post's creation on, so the scan stays on the org's audit rows of that time (audit_event_time_idx).
       sql<{ id: string; command: string; actor_id: string | null; actor_type: string; occurred_at: Date; target_type: string; target_id: string }>`
-        SELECT id, command, actor_id, actor_type, occurred_at, target_type, target_id FROM crove_kernel.audit_event
+        SELECT id, command, actor_id, actor_type, occurred_at, target_type, target_id FROM ludy_kernel.audit_event
         WHERE org_id = ${ctx.orgId}::uuid AND occurred_at >= ${post.created_at} AND outcome = 'ok'
           AND command = ANY(${Object.keys(AUDITED)}::text[])
           -- An archive or restore that found the post already so (#1299) names no post in its facts: nothing happened.
@@ -416,7 +416,7 @@ export const postActivity = defineQuery({
         ORDER BY occurred_at DESC LIMIT ${ACTIVITY_LIMIT}`.execute(ctx.trx),
       // A queue reorder (#1020) is audited once for its channel, naming every post it moved.
       sql<{ id: string; command: string; actor_id: string | null; actor_type: string; occurred_at: Date; detail: { variant_ids?: unknown; target_variant_id?: unknown } }>`
-        SELECT id, command, actor_id, actor_type, occurred_at, detail FROM crove_kernel.audit_event
+        SELECT id, command, actor_id, actor_type, occurred_at, detail FROM ludy_kernel.audit_event
         WHERE org_id = ${ctx.orgId}::uuid AND occurred_at >= ${post.created_at} AND outcome = 'ok'
           AND command = ANY(${QUEUE_ORDER_COMMANDS}::text[])
           AND detail -> 'post_ids' @> pg_catalog.jsonb_build_array(${post.id}::text)
@@ -427,7 +427,7 @@ export const postActivity = defineQuery({
     const pinFiles = new Map<string, { mime: string; filename: string }>();
     const current = new Set<string>();
     if (pinned.length > 0) {
-      const files = await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'content_type', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', pinned).execute();
+      const files = await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'content_type', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', pinned).execute();
       for (const f of files) pinFiles.set(f.id, { mime: f.content_type, filename: f.filename });
       const used = await ctx.trx.selectFrom('crove_social.post_media').select('file_id').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).execute();
       for (const m of used) current.add(m.file_id);
@@ -540,12 +540,12 @@ export const postActivity = defineQuery({
     const kept = scope === null ? items : items.filter((i) => i.variantId === null || visible.has(i.variantId));
     kept.sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
     const shown = kept.slice(0, ACTIVITY_LIMIT);
-    // Names of the people, while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names of the people, while they are members (ludy_kernel.member_profiles answers only members of the org).
     const ids = [...new Set(shown.flatMap((i) => [i.userId, i.resolvedBy]).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
     if (ids.length > 0) {
       const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
       for (const r of rows) names.set(r.user_id, r.display_name ?? r.email);
     }
     return {

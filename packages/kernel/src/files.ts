@@ -69,11 +69,11 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
   // An entity the writer sees (read under its own policies): one that does not exist and one hidden from it answer the
   // same. The database checks it again (file_upload_entity).
   if (input.legalEntityId !== undefined) {
-    const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst();
+    const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst();
     if (!entity) throw new DomainError('LEGAL_ENTITY_NOT_ALLOWED', 403, 'Bạn không có quyền với sổ sách của pháp nhân này');
   }
   const inserted = await ctx.trx
-    .insertInto('crove_kernel.file')
+    .insertInto('ludy_kernel.file')
     .values({
       org_id: ctx.orgId,
       sha256: input.sha256,
@@ -99,7 +99,7 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     // the meeting's readers (#2874), so this read cannot see one. That is harmless: meeting media is ciphertext sealed in the browser, so a user's bytes never share
     // a sha256 with it, and this path is the generic ingest, which refuses those sources.
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('sha256', '=', input.sha256)
@@ -107,7 +107,7 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
       .executeTakeFirstOrThrow();
     // The original of a marketplace report deleted after 90 days (#2516, ADR-0045 point 8): the same bytes arriving again were stored under the same content-addressed key, so the original
     // is back. The marker is cleared so the file reads and downloads again, and the nightly run deletes this copy again; left set, the copy would be kept for ever.
-    if (existing.original_deleted_at) await sql`SELECT crove_kernel.file_original_restore(${existing.id}::uuid)`.execute(ctx.trx);
+    if (existing.original_deleted_at) await sql`SELECT ludy_kernel.file_original_restore(${existing.id}::uuid)`.execute(ctx.trx);
     // Files are deduplicated by content, so the same bytes can arrive as a document and as an image for a Social
     // post (#372). A document is never offered for publishing: an image upload of a document's bytes is refused.
     if (input.source === 'social' && existing.source !== 'social') {
@@ -135,7 +135,7 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     }
     // A document whose bytes were first uploaded as a post image is still read as a document, once.
     if (isDocumentSource(input.source) && existing.source === 'social') {
-      const read = await ctx.trx.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', existing.id).limit(1).executeTakeFirst();
+      const read = await ctx.trx.selectFrom('ludy_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', existing.id).limit(1).executeTakeFirst();
       if (!read) {
         await ctx.activity('kernel.file', existing.id, 'file.received', 'Nhận chứng từ');
         await ctx.emit('kernel.file.ingested', { fileId: existing.id });

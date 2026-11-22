@@ -83,8 +83,8 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
   }
   const line = async (meetingId: string, text: string, stage: 'draft' | 'published', start = 0) =>
     (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Hà', $4, $5) RETURNING id`, [orgId, meetingId, start, text, stage])).rows[0]?.id as string;
-  const resultRows = async () => (await sqlAdmin<{ status: string; feature: string; subject_type: string; body: string | null; error_code: string | null }>(`SELECT status, feature, subject_type, body, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.ask' ORDER BY created_at`, [orgId])).rows;
-  const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
+  const resultRows = async () => (await sqlAdmin<{ status: string; feature: string; subject_type: string; body: string | null; error_code: string | null }>(`SELECT status, feature, subject_type, body, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.ask' ORDER BY created_at`, [orgId])).rows;
+  const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -95,9 +95,9 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
@@ -105,7 +105,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'outsider', 'viewer']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'ask', subject: key, email: `${key}@ask.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Hỏi')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [orgId, users.admin, users.recorder, users.attendee, users.outsider, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [orgId, users.admin, users.recorder, users.attendee, users.outsider, users.viewer]);
   }, 300_000);
 
   afterAll(async () => {
@@ -252,7 +252,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     expect(JSON.parse(rows[rows.length - 1]?.body ?? '{}')).toEqual({ v: 1, lines: 1, sentences: 1, sources: 1, dropped: 0 });
     // Nowhere in the kernel's tables does the question or the answer appear: not the runs, the results, the audit log, the outbox, the activity or the mail. (The transcript line itself, in the
     // meetings module's own table, is the member's own text and is not copied.)
-    const tables = await sqlAdmin<{ table_schema: string; table_name: string }>(`SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema = 'crove_kernel' AND table_type = 'BASE TABLE' ORDER BY 1, 2`);
+    const tables = await sqlAdmin<{ table_schema: string; table_name: string }>(`SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema = 'ludy_kernel' AND table_type = 'BASE TABLE' ORDER BY 1, 2`);
     for (const t of tables.rows) {
       const found = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ${t.table_schema}.${t.table_name} x WHERE x::text LIKE '%Zorbaxx%'`);
       expect(Number(found.rows[0]?.n), `${t.table_schema}.${t.table_name}`).toBe(0);
@@ -261,7 +261,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     expect(Number(copies.rows[0]?.n)).toBe(0);
     expect(logged.join('\n')).not.toContain('Zorbaxx');
     // The read of the lines left an audit row naming the query (this test's runtime has no audit key, so the row carries no hash here; the question text is in none of the kernel's tables, audit included).
-    const audit = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND audit_event::text LIKE '%meetings.ask.lines%'`, [orgId]);
+    const audit = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND audit_event::text LIKE '%meetings.ask.lines%'`, [orgId]);
     expect(Number(audit.rows[0]?.n)).toBeGreaterThan(0);
   });
 
@@ -279,14 +279,14 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     expect(await refuses(ask('attendee', question, { model: null }))).toBe('ASK_OFF');
     // A kill switch of the org or of the meetings module stops it before a line is read or a call made.
     const engage = async (scope: string, target: string) =>
-      (await sqlAdmin<{ id: string }>('INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, scope, target, users.owner])).rows[0]?.id as string;
+      (await sqlAdmin<{ id: string }>('INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, scope, target, users.owner])).rows[0]?.id as string;
     for (const [scope, target] of [['org', '*'], ['module', 'meetings']] as const) {
       const id = await engage(scope, target);
       try {
         expect(await status('attendee')).toMatchObject({ enabled: false, reason: 'paused' });
         expect(await refuses(ask('attendee', question))).toBe('AI_BUDGET_EXHAUSTED');
       } finally {
-        await sqlAdmin('UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
+        await sqlAdmin('UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
       }
     }
     // A member whose vy.use was taken away is refused with the precise answer.
@@ -300,13 +300,13 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     const m = await meeting('recorder', 'Họp hết ngân sách', 'attendees', ['attendee']);
     await line(m, 'Budgetspent chiết khấu 8% phần trăm', 'published', 5);
     const status = () => askStatusOf({ runtime, price: undefined, model: deps().model, meter: () => meter }, orgId, asUser('attendee'));
-    await sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', crove_kernel.ai_budget_spent($1::uuid, 'module', 'meetings'), true, $2)`, [orgId, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'meetings'), true, $2)`, [orgId, users.owner]);
     try {
       expect(await status()).toEqual({ enabled: false, reason: 'budget', estimate: null });
       expect(await refuses(ask('attendee', 'Budgetspent là gì?'))).toBe('AI_BUDGET_EXHAUSTED');
       expect(modelCalls).toBe(0);
     } finally {
-      await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+      await sqlAdmin('DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1', [orgId]);
     }
     expect(await status()).toMatchObject({ enabled: true, reason: null });
   });
@@ -317,8 +317,8 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     const question = 'Agentstop là gì?';
     // A first question makes the member's own Vy; then a kill switch for that agent alone.
     expect((await ask('attendee', question)).state).toBe('answered');
-    const agent = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.attendee])).rows[0]?.id as string;
-    const id = (await sqlAdmin<{ id: string }>('INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, 'agent', agent, users.owner])).rows[0]?.id as string;
+    const agent = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.attendee])).rows[0]?.id as string;
+    const id = (await sqlAdmin<{ id: string }>('INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, 'agent', agent, users.owner])).rows[0]?.id as string;
     try {
       const calls = modelCalls;
       const out = await ask('attendee', question);
@@ -326,7 +326,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
       expect(out.hits.map((h) => h.text)).toEqual(['Agentstop chiết khấu 8% phần trăm']);
       expect(modelCalls).toBe(calls);
     } finally {
-      await sqlAdmin('UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
+      await sqlAdmin('UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
     }
   });
 

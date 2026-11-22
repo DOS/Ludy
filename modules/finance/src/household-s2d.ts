@@ -105,7 +105,7 @@ export const householdS2d = defineQuery({
     const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
     if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2d ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });
 
-    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
+    const entityRow = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
     return zHouseholdS2d.parse({
       period: { month: input.month, from: w.ledger.period.from, to: w.ledger.period.to },
       household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },

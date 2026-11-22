@@ -142,7 +142,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const { orgId, slug } = await createOrg(rt, asUser(owner), `Lương ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
     const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
     const hire = (extra: Record<string, unknown> = {}, wage = WAGES[0], name = NAMES[0]) =>
@@ -155,7 +155,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const open = (month = MONTH, extra: Record<string, unknown> = {}) => exec<HrRunWritten>(owner, 'hr.payroll.run.open', { month, ...extra });
     const sheet = (runId: string, who = owner) => query<HrRunSheet>(who, 'hr.payroll.run.sheet', { runId });
     const approve = (runId: string, fingerprint: string, extra: Record<string, unknown> = {}) => exec<HrRunWritten>(owner, 'hr.payroll.run.approve', { runId, fingerprint, ...extra }, asMfa(owner));
-    const audits = (command: string) => withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
+    const audits = (command: string) => withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
     return { orgId, slug, owner, admin, member, viewer, exec, query, hire, team, open, sheet, approve, audits };
   }
 
@@ -168,11 +168,11 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = new URL(url.toString());
-    login.username = 'crove_worker';
+    login.username = 'ludy_worker';
     login.password = 'test-worker-pw';
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -488,7 +488,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const run = await o.open();
     const s = await o.sheet(run.runId);
     await o.approve(run.runId, s.fingerprint);
-    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
+    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
     for (const needle of [...NAMES, '15000000', '9000000', '30000000', '54000000']) expect(all, needle).not.toContain(needle);
     const [approval] = await o.audits('hr.payroll.run.approve');
     expect(approval?.detail).toMatchObject({ runId: run.runId, month: MONTH, lines: 3, approval: { redacted: 'sensitive' } });
@@ -774,7 +774,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     for (const who of [o.member, o.viewer]) await expect(get(who, 'kk', '2026-Q3')).rejects.toMatchObject({ status: 403 });
     await expect(rt.query('hr.payroll.declaration.get', { kind: 'kk', period: '2026-Q3' }, { actor: { type: 'agent', agentId: randomUUID(), runId: randomUUID() } as never, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(get(o.owner, 'kk', '2026-13')).rejects.toBeDefined();
-    const rows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.get' ORDER BY id`, [o.orgId])).rows);
+    const rows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.get' ORDER BY id`, [o.orgId])).rows);
     expect(rows.length).toBeGreaterThanOrEqual(2);
     expect(JSON.parse(rows[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read', kind: 'kk' });
     expect(JSON.parse(rows[1]?.detail ?? '{}')).toMatchObject({ kind: 'd02lt' });
@@ -822,7 +822,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       }
     }
     // A download leaves an audit row with counts only.
-    const exported = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    const exported = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
     expect(exported.length).toBe(8);
     const details = exported.map((r) => JSON.parse(r.detail) as { kind: string; period: string; months: string[]; authorizedYear?: number; authorizedPeople?: number });
     expect(details.find((d) => d.kind === 'kk')).toMatchObject({ period: '2026-Q3', months: ['2026-07', '2026-08'] });
@@ -839,7 +839,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(stale.status).toBe(403);
     expect(await stale.json()).toMatchObject({ code: 'STEP_UP_REQUIRED' });
     expect((await get('kk.xlsx', 'period=2026-Q3', 'other-owner')).status).toBe(403);
-    const foreignEntity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [elsewhere.o.orgId])).rows[0]?.id as string);
+    const foreignEntity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [elsewhere.o.orgId])).rows[0]?.id as string);
     expect((await get('kk.xlsx', `period=2026-Q3&legalEntityId=${foreignEntity}`, o.owner)).status).toBe(422);
     expect(exports.inUse).toBe(0);
     // HEAD is refused before any read, so it leaves no row for a download that never happened.
@@ -850,7 +850,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(view.status).toBe(200);
     expect(view.headers.get('cache-control')).toBe('private, no-store');
     expect(((await view.json()) as HrDeclarationDocument).layout.version).toBe('ludy-hr-05kk/1');
-    const after = await withAdmin(async (c) => (await c.query<{ detail: string }>(`SELECT detail::text AS detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    const after = await withAdmin(async (c) => (await c.query<{ detail: string }>(`SELECT detail::text AS detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
     expect(after.map((r) => (JSON.parse(r.detail) as { via: string }).via).slice(-2)).toEqual(['xlsx', 'view']);
     expect(after.length, 'only successful reads leave a download row').toBe(9);
     // A name that starts with "=" is a string cell in the file, never a formula.
@@ -954,7 +954,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const text = JSON.stringify([employees, employments, dependents, runs, lines, leaveEntries]);
     for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
-      async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
+      async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
     expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
     // Each row names the table read (not personal data) and says the read was started.
@@ -984,7 +984,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     });
     expect([...tables].filter((t) => t.startsWith('hr.'))).toEqual([]);
     // Refused reads leave no audit row of a read: only the owner's attempt on the active org, which passed access and was refused after its row, has one.
-    const rows = await withAdmin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people'`, [o.orgId])).rowCount);
+    const rows = await withAdmin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people'`, [o.orgId])).rowCount);
     expect(rows).toBe(1);
   });
 
@@ -1099,7 +1099,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
         const lineId = (s.lines[0] as HrRunSheet['lines'][number]).id;
 
         await approver.query('BEGIN');
-        await approver.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await approver.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
         await approver.query(
           `UPDATE crove_hr.payroll_run
               SET status = 'approved', approved_by = $2, approved_at = now(), approval = '{}'::jsonb, updated_at = now()
@@ -1108,7 +1108,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
         );
 
         await writer.query('BEGIN');
-        await writer.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await writer.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
         let settled = false;
         const pending = attempt(writer, opened.runId, lineId).finally(() => {
           settled = true;
@@ -1153,7 +1153,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
         async (c) =>
           (
             await c.query<{ id: string }>(
-              `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh H5b', 'branch', $2) RETURNING id`,
+              `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh H5b', 'branch', $2) RETURNING id`,
               [o.orgId, o.owner],
             )
           ).rows[0]?.id as string,
@@ -1170,7 +1170,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       await client.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
 
         // H5b (employment): assigning another employee's employment_id on UPDATE or INSERT is refused with 23503.
         await client.query('SAVEPOINT s1');
@@ -1247,7 +1247,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       await client.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
         await client.query('SAVEPOINT before_adj_del');
         await expect(
           client.query('DELETE FROM crove_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, adjusted.lineId]),
@@ -1272,10 +1272,10 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       await withAdmin(async (c) => {
         await c.query('BEGIN');
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+        await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
         await c.query('COMMIT');
         await c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
            VALUES ($1, now() - interval '40 days', 'user', $2, 'kernel.org.offboard', $3, 'ok', $5, '{}'::jsonb),
                   ($1, now() - interval '31 days', 'system', NULL, 'kernel.org.export.record', $4, 'ok', $5, $6)`,
           [o.orgId, o.owner, randomUUID(), randomUUID(), '0'.repeat(64), JSON.stringify({ format: 'crove.org-export.v2', file_count: 2 })],
@@ -1310,7 +1310,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       payroll_line: ['DELETE', 'INSERT', 'SELECT'],
       payroll_run: ['INSERT', 'SELECT'],
     };
-    const TENANT_ROLES = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'];
+    const TENANT_ROLES = ['ludy_app', 'ludy_definer_tenant', 'ludy_tenant', 'ludy_worker'];
     const ALL_OPS = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];
 
     const { tables, grants } = await withAdmin(async (c) => ({
@@ -1341,14 +1341,14 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
               AND NOT c.relispartition
               AND r.rolname = ANY($1::text[])
             ORDER BY 1, 2`,
-          [[...TENANT_ROLES, 'crove_auth_reader'], ALL_OPS],
+          [[...TENANT_ROLES, 'ludy_auth_reader'], ALL_OPS],
         )
       ).rows,
     }));
 
     expect(tables).toEqual(Object.keys(EXPECTED_HR_TABLE_GRANTS).sort());
     for (const row of grants) {
-      if (row.role === 'crove_auth_reader') {
+      if (row.role === 'ludy_auth_reader') {
         expect(row.ops, `${row.role} on crove_hr.${row.relname}`).toEqual([]);
       } else {
         expect(row.ops, `${row.role} on crove_hr.${row.relname}`).toEqual(EXPECTED_HR_TABLE_GRANTS[row.relname]);

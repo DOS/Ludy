@@ -219,7 +219,7 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
   const year = await yearToDateBlock(ctx, { to: w.to, trades, rates, answer: w.profile.vatCutEligible, pitApplies: book === 'S2a', deductionTrade, revenue: await yearRevenue(ctx, w, trades) });
   unconfirmed.push(...year.unconfirmed);
 
-  const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
+  const entityRow = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
   return {
     period: { period: w.ledger.period.period, from: w.from, to: w.to },
     household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },

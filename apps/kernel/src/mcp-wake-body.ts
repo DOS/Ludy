@@ -2,7 +2,7 @@
 // The only builder of a wake-up's body (ADR-0051 decision 4, issue #3024): ids, an event type, instants, dates, a day count and decimal-string amounts, and
 // nothing else. A body is checked against a strict schema, key by key and value by value, so a name, a note, a message or a bank account cannot ride in any
 // field whatever it is called: an unknown key is refused, and every value must be an id, a date, a number or one of a few fixed words. The delivery sends what
-// this function returns, the sweep stores what it checks, and the database holds the same shapes (crove_kernel.mcp_wake_body_ok). The invariant suite
+// this function returns, the sweep stores what it checks, and the database holds the same shapes (ludy_kernel.mcp_wake_body_ok). The invariant suite
 // (test/invariant/mcp-wake.test.ts) feeds this function hostile input.
 import { z } from 'zod';
 import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@ludy/kernel';
@@ -48,7 +48,7 @@ const zEvent = z.discriminatedUnion('type', [
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // Line events (#3858 slice e, ADR-0051 decision 13): a line (Engage, Ads, Social) registers an event type for the wake-up of a grant that holds one of its write scopes: a name in the line's own namespace
 // (`engage.conversation_unanswered`) and the fields of its `data`, each an id, a date, an amount or one of a fixed list of words, every field present and no other key. Nothing else can ride in it: no name, note,
-// message or free text, whatever a field is called. The registry is code the line ships (a test pins it equal to the database's crove_kernel.mcp_wake_event_type, which holds the same list and the scope), a grant
+// message or free text, whatever a field is called. The registry is code the line ships (a test pins it equal to the database's ludy_kernel.mcp_wake_event_type, which holds the same list and the scope), a grant
 // cannot register a type, and a body with an unregistered type or an unlisted field is not built, so it is not stored (the delivery table's CHECK) and not sent. Engage's, Social's and Ads' wake rules register theirs below (#3862).
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // An `amount` field is a bare decimal string with no unit: a line that needs one registers an enum field for it (a currency code as a word, for example `vnd`, `usd`).

@@ -36,7 +36,7 @@ async function lockDraftRequests(ctx: CommandContext, draftId: string): Promise<
 }
 async function refuseOpenRequest(ctx: CommandContext, draftId: string, contentHash: string): Promise<void> {
   const open = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', EINVOICE_ISSUE_COMMAND)
@@ -119,7 +119,7 @@ export const einvoiceIssue = defineCommand({
     if (!draft) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
     if (draft.state !== 'draft') throw new DomainError('EINVOICE_NOT_DRAFT', 409, 'Hóa đơn này đã gửi đi, không phát hành lại được');
     // The proposal belongs to the entity the draft was in when it was asked for; the total and the currency it showed are the draft's now.
-    const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+    const proposal = await ctx.trx.selectFrom('ludy_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
     if (proposal?.legal_entity_id !== draft.legal_entity_id || !money(payload.amount).equals(money(draft.total)) || payload.currency !== draft.currency) throw changed();
     try {
       await sql`SELECT crove_finance.einvoice_submit(${draftId}::uuid, ${payload.contentHash})`.execute(ctx.trx);
@@ -152,7 +152,7 @@ export const einvoiceIssueRequest = defineQuery({
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input): Promise<EInvoiceIssueView> => {
     const proposal = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('payload')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.proposalId.toLowerCase())

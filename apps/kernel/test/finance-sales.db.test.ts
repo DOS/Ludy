@@ -156,17 +156,17 @@ suite('sales e-invoices (#313)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -223,11 +223,11 @@ suite('sales e-invoices (#313)', () => {
     expect((await rpc('org/get', await tokenFor(viewer), undefined)).body).toMatchObject({ taxCode: SELLER_TAX_CODE });
     const audits = await admin(
       async (c) =>
-        (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_tax_code' AND outcome = 'ok'`, [org.orgId])).rows,
+        (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_tax_code' AND outcome = 'ok'`, [org.orgId])).rows,
     );
     expect(audits.map((a) => a.detail)).toContainEqual({ previous: null, taxCode: { redacted: 'national_id_if_individual' }, changed: true });
     // The database holds the same shape for every writer.
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.tenant SET tax_code = 'MST-1' WHERE org_id = $1`, [org.orgId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.tenant SET tax_code = 'MST-1' WHERE org_id = $1`, [org.orgId]))).rejects.toMatchObject({ code: '23514' });
   });
 
   let saleProposal = '';
@@ -259,7 +259,7 @@ suite('sales e-invoices (#313)', () => {
       async (c) =>
         (
           await c.query(
-            `SELECT d.direction, p.name, p.tax_code FROM crove_finance.purchase_document d JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id WHERE d.id = $1`,
+            `SELECT d.direction, p.name, p.tax_code FROM crove_finance.purchase_document d JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id WHERE d.id = $1`,
             [saleDocument],
           )
         ).rows,
@@ -295,7 +295,7 @@ suite('sales e-invoices (#313)', () => {
     );
     const [run] = await admin(
       async (c) =>
-        (await c.query(`SELECT r.checks FROM crove_kernel.extraction r JOIN crove_kernel.proposal p ON p.org_id = r.org_id AND p.source_file_id = r.file_id WHERE p.id = $1`, [copy])).rows,
+        (await c.query(`SELECT r.checks FROM ludy_kernel.extraction r JOIN ludy_kernel.proposal p ON p.org_id = r.org_id AND p.source_file_id = r.file_id WHERE p.id = $1`, [copy])).rows,
     );
     expect(run?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'duplicate.found' })]));
     await expect(approve(copy, { acceptFailedChecks: true })).rejects.toMatchObject({ code: 'DUPLICATE_INVOICE', status: 409 });
@@ -361,7 +361,7 @@ suite('sales e-invoices (#313)', () => {
     expect(String.fromCharCode(bytes[0] ?? 0, bytes[1] ?? 0)).toBe('PK');
     const audits = await admin(
       async (c) =>
-        (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
+        (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
     );
     expect(audits.map((a) => a.detail)).toContainEqual({ entries: 1, format: 'misa_sme_sales', from: null, to: null });
   });
@@ -426,12 +426,12 @@ suite('sales e-invoices (#313)', () => {
 
   it('credits a sale line only to a revenue account and never debits a purchase line to one, for every writer (#430)', async () => {
     const insertLine = `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account, credit_account) VALUES ($1, $2, 99, 'x', 1, $3, $4)`;
-    // Each statement in its own transaction, rolled back: as the superuser, and as crove_app in the owner's context of
-    // the org (crove_tenant, row security on), which writes the accepted rows too, so a refusal is the trigger's.
+    // Each statement in its own transaction, rolled back: as the superuser, and as ludy_app in the owner's context of
+    // the org (ludy_tenant, row security on), which writes the accepted rows too, so a refusal is the trigger's.
     const outcome = async (c: pg.Client, enter: boolean, params: unknown[]) => {
       await c.query('BEGIN');
       try {
-        if (enter) await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        if (enter) await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         await c.query(insertLine, params);
         return null;
       } catch (error) {
@@ -447,12 +447,12 @@ suite('sales e-invoices (#313)', () => {
       const c = new pg.Client({ connectionString: url });
       await c.connect();
       try {
-        const where = enter ? 'as crove_tenant' : 'as the superuser';
+        const where = enter ? 'as ludy_tenant' : 'as the superuser';
         for (const account of ['511', '5113', '515', '711', '3387']) expect(await outcome(c, enter, [org.orgId, saleDocument, null, account]), `${where}: sale on ${account}`).toBeNull();
         for (const account of ['6422', '131', '3331', '338']) expect(await outcome(c, enter, [org.orgId, saleDocument, null, account]), `${where}: sale on ${account}`).toBe('23514');
         for (const account of ['511', '5113', '711', '3387']) expect(await outcome(c, enter, [org.orgId, purchaseDocument, account, null]), `${where}: purchase on ${account}`).toBe('23514');
         expect(await outcome(c, enter, [org.orgId, purchaseDocument, '6422', null]), `${where}: purchase on 6422`).toBeNull();
-        // One account per line, the one of the document's direction, holds for crove_tenant as for the superuser.
+        // One account per line, the one of the document's direction, holds for ludy_tenant as for the superuser.
         expect(await outcome(c, enter, [org.orgId, saleDocument, '6422', null]), `${where}: sale with a debit account`).toBe('23514');
         expect(await outcome(c, enter, [org.orgId, purchaseDocument, null, '511']), `${where}: purchase with a credit account`).toBe('23514');
         expect(await outcome(c, enter, [org.orgId, saleDocument, '6422', '511']), `${where}: both accounts`).toBe('23514');
@@ -472,7 +472,7 @@ suite('sales e-invoices (#313)', () => {
     expect(await edit(purchase, '5113.DV')).toMatchObject({ status: 422, body: { code: 'REVENUE_ACCOUNT_ON_PURCHASE' } });
     expect(await edit(sale, '5113')).toMatchObject({ status: 200 });
     // A stored revision with a wrong account (written past the edit, here by the superuser) is refused when approved.
-    await admin((c) => c.query(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,debitAccount}', '"511"') WHERE org_id = $1 AND id = $2`, [org.orgId, purchase]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{lines,0,debitAccount}', '"511"') WHERE org_id = $1 AND id = $2`, [org.orgId, purchase]));
     await expect(approve(purchase)).rejects.toMatchObject({ code: 'REVENUE_ACCOUNT_ON_PURCHASE', status: 422 });
     for (const id of [sale, purchase]) await runtime.execute('kernel.proposal.reject', { id }, { actor: asUser(owner.userId), orgId: org.orgId });
   });
@@ -534,9 +534,9 @@ suite('sales e-invoices (#313)', () => {
     const prefix = '030123456';
     const entityCode = `${prefix}${enterpriseCheckDigit(prefix)}`;
     const entityId = String(
-      (await admin((c) => c.query(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, tax_code, created_by) VALUES ($1, 'Công ty con', 'company', $2, $3) RETURNING id`, [org.orgId, entityCode, owner.userId]))).rows[0]?.id,
+      (await admin((c) => c.query(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, tax_code, created_by) VALUES ($1, 'Công ty con', 'company', $2, $3) RETURNING id`, [org.orgId, entityCode, owner.userId]))).rows[0]?.id,
     );
-    const defaultId = String((await admin((c) => c.query(`SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`, [org.orgId]))).rows[0]?.id);
+    const defaultId = String((await admin((c) => c.query(`SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [org.orgId]))).rows[0]?.id);
     const saleOf = (number: string, salt = '') => new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`).replace(`<MST>${SELLER_TAX_CODE}</MST>`, `<MST>${entityCode}</MST>`) + salt);
     // The upload names the entity its document is booked in: the file is read in that entity.
     const readIn = async (bytes: Uint8Array, legalEntityId: string) => {
@@ -582,7 +582,7 @@ suite('sales e-invoices (#313)', () => {
     expect(await documentOf((await approve(purchase)).documentId)).toEqual({ direction: 'purchase', legal_entity_id: entityId });
 
     // Without the entity's code the same seller is a stranger again: a purchase, never a sale of anyone's.
-    await admin((c) => c.query('UPDATE crove_kernel.legal_entity SET tax_code = NULL WHERE org_id = $1 AND id = $2', [org.orgId, entityId]));
+    await admin((c) => c.query('UPDATE ludy_kernel.legal_entity SET tax_code = NULL WHERE org_id = $1 AND id = $2', [org.orgId, entityId]));
     expect(await detail(await readIn(saleOf('6105'), entityId))).toMatchObject({ direction: 'purchase' });
   });
 

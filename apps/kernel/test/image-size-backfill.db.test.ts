@@ -46,7 +46,7 @@ suite('image size backfill on PostgreSQL (#668)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer };
   }
 
@@ -59,15 +59,15 @@ suite('image size backfill on PostgreSQL (#668)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] });
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -102,11 +102,11 @@ suite('image size backfill on PostgreSQL (#668)', () => {
     const key = fileKey(orgId, sha);
     blobs.set(key, bytes);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.png', $6, $7, $8, $9)", [orgId, id, sha, key, `content:${sha}`, type, bytes.byteLength, source, owner]),
+      c.query("INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.png', $6, $7, $8, $9)", [orgId, id, sha, key, `content:${sha}`, type, bytes.byteLength, source, owner]),
     );
     return id;
   }
-  const sizeOf = (id: string) => admin(async (c) => (await c.query<{ image_width: number | null; image_height: number | null }>('SELECT image_width, image_height FROM crove_kernel.file WHERE id = $1', [id])).rows[0]);
+  const sizeOf = (id: string) => admin(async (c) => (await c.query<{ image_width: number | null; image_height: number | null }>('SELECT image_width, image_height FROM ludy_kernel.file WHERE id = $1', [id])).rows[0]);
 
   it('records the size of Social images that have none, once, and leaves the rest', async () => {
     const o = await org();
@@ -128,12 +128,12 @@ suite('image size backfill on PostgreSQL (#668)', () => {
 
   it('is not open to the app role', async () => {
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const c = new pg.Client({ connectionString: app.toString() });
     await c.connect();
     try {
-      await expect(c.query('SELECT * FROM crove_kernel.image_size_due(NULL, 10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(c.query('SELECT * FROM ludy_kernel.image_size_due(NULL, 10)')).rejects.toMatchObject({ code: '42501' });
     } finally {
       await c.end();
     }

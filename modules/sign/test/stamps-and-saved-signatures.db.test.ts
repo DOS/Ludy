@@ -141,7 +141,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 's4a-app-pw', crove_worker: 's4a-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 's4a-app-pw', ludy_worker: 's4a-worker-pw' });
 
     const loginUrl = (user: string, pw: string) => {
       const u = new URL(adminUrl);
@@ -151,8 +151,8 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     };
 
     adminPool = createPool({ connectionString: adminUrl, max: 2 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 's4a-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 's4a-worker-pw'), max: 3 });
+    appPool = createPool({ connectionString: loginUrl('ludy_app', 's4a-app-pw'), max: 6 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 's4a-worker-pw'), max: 3 });
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);
@@ -177,7 +177,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     orgB = (await createOrg(runtime, asUser(ownerB), 'Cong ty Dau B')).orgId;
 
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1::uuid, $2::uuid, 'admin'),
               ($1::uuid, $3::uuid, 'member'),
               ($1::uuid, $4::uuid, 'member'),
@@ -237,7 +237,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     const client = await appPool!.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
         mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
@@ -273,7 +273,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
       { kind: 'signature', signatureKind: 'draw', signaturePngBase64: VALID_SIG_PNG },
       { actor: asUser(tempMemberA), orgId: orgA },
     );
-    await adminPool!.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1::uuid AND user_id = $2::uuid', [
+    await adminPool!.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1::uuid AND user_id = $2::uuid', [
       orgA,
       tempMemberA,
     ]);

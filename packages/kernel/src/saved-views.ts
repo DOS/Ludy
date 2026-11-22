@@ -67,7 +67,7 @@ function checkViewBody(scope: string, filters: FilterAst, sort: SavedViewSort | 
 // would hide a shared view from a member who may only read it, and they are told why instead.
 async function changeable(ctx: CommandContext, me: string, viewId: string, verb: 'sửa' | 'xoá') {
   const of = () =>
-    ctx.trx.selectFrom('crove_kernel.saved_view').select(['id', 'user_id', 'scope', 'shared']).where('org_id', '=', ctx.orgId).where('id', '=', viewId);
+    ctx.trx.selectFrom('ludy_kernel.saved_view').select(['id', 'user_id', 'scope', 'shared']).where('org_id', '=', ctx.orgId).where('id', '=', viewId);
   const seen = await of().executeTakeFirst();
   if (!seen) throw new DomainError('SAVED_VIEW_NOT_FOUND', 404, 'Không tìm thấy chế độ xem này');
   if (seen.user_id !== me && !(seen.shared && (ctx.role === 'owner' || ctx.role === 'admin'))) {
@@ -80,7 +80,7 @@ async function changeable(ctx: CommandContext, me: string, viewId: string, verb:
 
 // One name per owner and scope, the view's owner whoever renames it.
 async function nameTaken(ctx: CommandContext, owner: string, scope: string, name: string, exceptId?: string): Promise<boolean> {
-  let q = ctx.trx.selectFrom('crove_kernel.saved_view').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', owner).where('scope', '=', scope).where('name', '=', name);
+  let q = ctx.trx.selectFrom('ludy_kernel.saved_view').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', owner).where('scope', '=', scope).where('name', '=', name);
   if (exceptId) q = q.where('id', '<>', exceptId);
   return (await q.executeTakeFirst()) !== undefined;
 }
@@ -102,7 +102,7 @@ export const savedViewSave = defineCommand({
       checkViewBody(view.scope, filters, sort);
       // A sort left out keeps the view's own; null clears it.
       await ctx.trx
-        .updateTable('crove_kernel.saved_view')
+        .updateTable('ludy_kernel.saved_view')
         .set({
           filters: storedFilters(view.scope, filters),
           ...(input.sort === undefined ? {} : { sort: sort === null ? null : JSON.stringify(sort) }),
@@ -121,9 +121,9 @@ export const savedViewSave = defineCommand({
     if (input.shared && ctx.role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người chỉ xem không chia sẻ được chế độ xem');
     const stored = storedFilters(input.scope, filters);
     // One save at a time per member and scope, so the count below holds until the commit.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.saved_view:${ctx.orgId}:${me}:${input.scope}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_kernel.saved_view:${ctx.orgId}:${me}:${input.scope}`}, 0))`.execute(ctx.trx);
     const count = await ctx.trx
-      .selectFrom('crove_kernel.saved_view')
+      .selectFrom('ludy_kernel.saved_view')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', me)
@@ -134,7 +134,7 @@ export const savedViewSave = defineCommand({
     }
     if (await nameTaken(ctx, me, input.scope, name)) throw new DomainError('SAVED_VIEW_NAME_TAKEN', 409, 'Bạn đã có chế độ xem cùng tên', { name });
     const row = await ctx.trx
-      .insertInto('crove_kernel.saved_view')
+      .insertInto('ludy_kernel.saved_view')
       .values({
         org_id: ctx.orgId,
         user_id: me,
@@ -165,9 +165,9 @@ export const savedViewRename = defineCommand({
     const view = await changeable(ctx, me, input.viewId, 'sửa');
     // The lock a save takes for this owner and scope, so a rename racing a save or another rename to the same name is
     // answered SAVED_VIEW_NAME_TAKEN and not by the unique index.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.saved_view:${ctx.orgId}:${view.user_id}:${view.scope}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_kernel.saved_view:${ctx.orgId}:${view.user_id}:${view.scope}`}, 0))`.execute(ctx.trx);
     if (await nameTaken(ctx, view.user_id, view.scope, name, view.id)) throw new DomainError('SAVED_VIEW_NAME_TAKEN', 409, 'Đã có chế độ xem cùng tên', { name });
-    await ctx.trx.updateTable('crove_kernel.saved_view').set({ name, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.saved_view').set({ name, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
     ctx.audit({ view_id: view.id, scope: view.scope });
     return { viewId: view.id };
   },
@@ -186,7 +186,7 @@ export const savedViewSetShared = defineCommand({
     const view = await changeable(ctx, me, input.viewId, 'sửa');
     // Another's shared view stays shared: making it private would hide it from the admin who changes it.
     if (view.user_id !== me && !input.shared) throw new DomainError('FORBIDDEN', 403, 'Chỉ người tạo mới chuyển được chế độ xem này về riêng tư');
-    await ctx.trx.updateTable('crove_kernel.saved_view').set({ shared: input.shared, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.saved_view').set({ shared: input.shared, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
     ctx.audit({ view_id: view.id, scope: view.scope, shared: input.shared });
     return { viewId: view.id };
   },
@@ -201,7 +201,7 @@ export const savedViewDelete = defineCommand({
   handler: async (ctx, input): Promise<{ viewId: string }> => {
     const me = requireUser(ctx);
     const view = await changeable(ctx, me, input.viewId, 'xoá');
-    await ctx.trx.deleteFrom('crove_kernel.saved_view').where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
+    await ctx.trx.deleteFrom('ludy_kernel.saved_view').where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
     ctx.audit({ view_id: view.id, scope: view.scope });
     return { viewId: view.id };
   },
@@ -229,7 +229,7 @@ export const savedViewList = defineQuery({
     if (!isSavedViewScope(input.scope)) throw new DomainError('VALIDATION', 422, 'Danh sách không hợp lệ', { issues: [{ path: 'scope', code: 'unknown_scope' }] });
     const me = ctx.actor.userId;
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.saved_view')
+      .selectFrom('ludy_kernel.saved_view')
       .select(['id', 'user_id', 'scope', 'name', 'filters', 'sort', 'shared', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('scope', '=', input.scope)

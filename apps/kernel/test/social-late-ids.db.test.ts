@@ -105,8 +105,8 @@ suite('TikTok late post ids (#1475)', () => {
       );
       const row = rows[0] as { id: string; revision: number; attempt: number };
       const key = publishCallKey(row.id, row.revision, row.attempt, 'publish');
-      await c.query("INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'social', 'tiktok', 'publish', 'never')", [o.orgId, key]);
-      await c.query("UPDATE crove_kernel.external_call SET state = 'succeeded', external_ref = $3, finished_at = now() WHERE org_id = $1 AND key = $2", [o.orgId, key, publishId]);
+      await c.query("INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'social', 'tiktok', 'publish', 'never')", [o.orgId, key]);
+      await c.query("UPDATE ludy_kernel.external_call SET state = 'succeeded', external_ref = $3, finished_at = now() WHERE org_id = $1 AND key = $2", [o.orgId, key, publishId]);
       return row;
     });
     return { postId, id: v.id, publishId };
@@ -116,7 +116,7 @@ suite('TikTok late post ids (#1475)', () => {
     admin(async (c) => (await c.query<Row>('SELECT status, external_post_id, external_url, error_code, next_check_at FROM crove_social.post_variant WHERE id = $1', [id])).rows[0] as Row);
   const due = async (o: Org) => (await workerPool.query<{ variant_id: string }>('SELECT variant_id FROM crove_social.late_id_due(500) WHERE org_id = $1', [o.orgId])).rows.map((r) => r.variant_id);
   const checkNow = (id: string) => admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
-  const ledger = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.external_call WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const ledger = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.external_call WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const sweep = (t: ReturnType<typeof tiktok>) => sweepLateIds({ runtime: worker, broker: vault, workerDb, publishers: { tiktok: t.publisher } });
   const timeline = (o: Org, postId: string) => api.query<{ items: Array<{ kind: string; code: string | null; url: string | null }> }>('social.post.activity', { postId }, { actor: asUser(o.owner), orgId: o.orgId });
 
@@ -129,15 +129,15 @@ suite('TikTok late post ids (#1475)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -184,7 +184,7 @@ suite('TikTok late post ids (#1475)', () => {
     expect(await due(o)).toEqual([]);
     // Only reads went out: no new call on the ledger.
     expect(await ledger(o)).toBe(calls);
-    const events = await admin(async (c) => (await c.query<{ type: string }>("SELECT type FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'social.variant.%late%'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ type: string }>("SELECT type FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'social.variant.%late%'", [o.orgId])).rows);
     expect(events.map((e) => e.type)).toEqual(['social.variant.published_late']);
     expect((await timeline(o, postId)).items.find((i) => i.kind === 'published')).toMatchObject({ code: null, url: 'https://www.tiktok.com/@tiembanhb/video/7300000000000000001' });
 
@@ -277,7 +277,7 @@ suite('TikTok late post ids (#1475)', () => {
     const t = tiktok();
     t.answer(STATUS, { status: 401, body: { error: { code: 'access_token_invalid', message: 'The access token is invalid.' } } });
     expect(await sweep(t)).toMatchObject({ expired: 1 });
-    const connection = await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [conn])).rows[0]);
+    const connection = await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [conn])).rows[0]);
     expect(connection?.status).toBe('expired');
     const kept = await row(id);
     expect([kept.error_code, kept.next_check_at === null]).toEqual([null, false]);
@@ -292,7 +292,7 @@ suite('TikTok late post ids (#1475)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SET LOCAL ROLE ludy_tenant');
           return await c.query('SELECT * FROM crove_social.late_id_due(10)');
         } finally {
           await c.query('ROLLBACK');
@@ -303,14 +303,14 @@ suite('TikTok late post ids (#1475)', () => {
     const closing = await org();
     const a = await published(closing, await connect(closing), { privacy: 'PUBLIC_TO_EVERYONE' });
     expect(await due(closing)).toEqual([a.id]);
-    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [closing.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [closing.orgId]));
     expect(await due(closing)).toEqual([]);
 
     const o = await org();
     const conn = await connect(o);
     const b = await published(o, conn, { privacy: 'PUBLIC_TO_EVERYONE' });
     expect(await due(o)).toEqual([b.id]);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [conn]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [conn]));
     expect(await due(o)).toEqual([]);
   });
 });

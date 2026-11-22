@@ -79,8 +79,8 @@ test('a member organizes personal to-do lists, sections, priorities and #tags pr
     await other.goto('/');
     await signInNewUser(other, otherEmail);
     exec(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-       SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+       SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email: otherEmail },
     );

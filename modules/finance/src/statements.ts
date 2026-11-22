@@ -170,7 +170,7 @@ async function unmappedRows(ctx: QueryContext, unmapped: UnmappedBalance[]): Pro
   const partyIds = [...new Set(unmapped.flatMap((u) => (u.partyId ? [u.partyId] : [])))];
   const parties = new Map<string, string>();
   if (partyIds.length > 0) {
-    for (const p of await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) {
+    for (const p of await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) {
       parties.set(p.id, p.name);
     }
   }

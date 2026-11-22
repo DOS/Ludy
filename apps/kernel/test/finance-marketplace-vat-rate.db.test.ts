@@ -42,8 +42,8 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công Ty Bán Sàn ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
-    const entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
+    const entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
     return { orgId, owner, admin: adminUser, member, viewer, entity };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -73,9 +73,9 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -141,8 +141,8 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     await setRates(o, [{ effectiveFrom: '2026-07-01', method: 'deduction', vatPercent: '10' }]);
     expect((await list(o)).rows.map((r) => [r.effectiveFrom, r.vatPercent])).toEqual([['2026-03-01', '8.00'], ['2026-07-01', '10.00']]);
     // The database holds the same rule: the tenant role may not update or delete a row.
-    await expect(admin((c) => c.query("SET ROLE crove_tenant; UPDATE crove_finance.marketplace_vat_rate SET vat_percent = 5 WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
-    await expect(admin((c) => c.query("SET ROLE crove_tenant; DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
+    await expect(admin((c) => c.query("SET ROLE ludy_tenant; UPDATE crove_finance.marketplace_vat_rate SET vat_percent = 5 WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
+    await expect(admin((c) => c.query("SET ROLE ludy_tenant; DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
   });
 
   it('is all or none: a batch with a bad row stores nothing, and the dates must be ascending, in range and a real day', async () => {
@@ -177,7 +177,7 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     // Another org asking for this entity finds none of it.
     const other = await org();
     await expect(query(other, 'finance.marketplace_vat_rate.list', { legalEntityId: o.entity }, other.owner)).rejects.toBeDefined();
-    const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_vat_rate.set' AND outcome = 'ok'`, [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_vat_rate.set' AND outcome = 'ok'`, [o.orgId])).rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.detail).toMatchObject({ legalEntityId: o.entity, rows: [{ effectiveFrom: '2026-01-01', method: 'deduction', vatPercent: '8' }] });
   });

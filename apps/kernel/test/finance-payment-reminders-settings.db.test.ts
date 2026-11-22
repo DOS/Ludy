@@ -56,7 +56,7 @@ suite('payment reminder settings (#2488)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Cài Đặt ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -64,7 +64,7 @@ suite('payment reminder settings (#2488)', () => {
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
   const customer = async (o: Org, name: string) => (await execute<{ partyId: string }>(o, 'kernel.party.create', { kind: 'organization', name })).partyId;
   const auditOf = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at`, [o.orgId, command])).rows.map((r) => r.detail));
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at`, [o.orgId, command])).rows.map((r) => r.detail));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -75,9 +75,9 @@ suite('payment reminder settings (#2488)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -176,14 +176,14 @@ suite('payment reminder settings (#2488)', () => {
     const o = await org();
     const kept = await customer(o, 'Công ty Giữ Lại');
     const dup = await customer(o, 'Công ty Trùng');
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
     expect(await execute<Customer>(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 21, pausedUntil: null })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: dup })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rows)).toEqual([{ party_id: kept }]);
   });
 
-  // The runtime refuses a role before the database is asked; these go straight to SQL as crove_app, in the context of each role's user, so the row policies and the
+  // The runtime refuses a role before the database is asked; these go straight to SQL as ludy_app, in the context of each role's user, so the row policies and the
   // column grants of the migration are what answers.
   it('holds the row policies and the grants in SQL: a member and a viewer write nothing of the org\'s, a viewer nothing of a customer\'s, nobody deletes, no key changes', async () => {
     const o = await org();
@@ -246,7 +246,7 @@ suite('payment reminder settings (#2488)', () => {
     const p = await customer(o, 'Công ty Bị Xóa');
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 10, pausedUntil: null });
     await execute(o, 'finance.collection_setting.set', { termsDays: 40, weeklyItem: true });
-    await admin((c) => c.query('DELETE FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, p]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, p]));
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
   });
@@ -257,7 +257,7 @@ suite('payment reminder settings (#2488)', () => {
     const dup = await customer(o, 'Công ty Trùng Ba');
     const until = daysFromNow(15);
     await execute(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 40, pausedUntil: until });
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
     // The row stayed on the duplicate; the group still shows it, from either party.
     for (const who of [kept, dup]) expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: who })).toEqual({ partyId: kept, termsDays: 40, effectiveTermsDays: 40, pausedUntil: until });
     // A set through the duplicate writes the kept party's row, which then wins.
@@ -299,7 +299,7 @@ suite('payment reminder settings (#2488)', () => {
     const two = await customer(o, 'Công ty Trùng Bốn B');
     await execute(o, 'finance.customer_collection.set', { partyId: one, termsDays: 20, pausedUntil: null });
     await execute(o, 'finance.customer_collection.set', { partyId: two, termsDays: 40, pausedUntil: null });
-    for (const dup of [one, two]) await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
+    for (const dup of [one, two]) await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
     const expected = one < two ? 20 : 40;
     for (let i = 0; i < 3; i++) expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ partyId: kept, termsDays: expected });
     // A pause set on a duplicate is not hidden by a row of the kept party that holds only terms; the latest pause of the group stands.
@@ -308,7 +308,7 @@ suite('payment reminder settings (#2488)', () => {
     const pause = daysFromNow(20);
     await execute(o, 'finance.customer_collection.set', { partyId: keptTwo, termsDays: 45 });
     await execute(o, 'finance.customer_collection.set', { partyId: dupTwo, pausedUntil: pause });
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dupTwo, keptTwo]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dupTwo, keptTwo]));
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: keptTwo })).toEqual({ partyId: keptTwo, termsDays: 45, effectiveTermsDays: 45, pausedUntil: pause });
     // Lifting it through the kept party lifts the whole group's pause and keeps the terms (a field left out keeps its value), and a viewer cannot.
     await expect(execute(o, 'finance.customer_collection.set', { partyId: keptTwo, pausedUntil: null }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });

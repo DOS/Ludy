@@ -18,7 +18,7 @@ import { contextToken } from './context-token.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant'];
+const ROLES = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant'];
 
 // The read-only pre-deploy check of #1282: journal lines with more decimals than their org's book currency uses, and
 // purchase documents and lines with fractional VND amounts. Same query as in docs/runbooks/deploy.md ("Pre-deploy
@@ -26,8 +26,8 @@ const ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenan
 const BREAKING_ROWS = `
   SELECT 'journal_line' AS source, l.org_id, l.entry_id AS id, l.line_no, t.base_currency AS currency, l.debit, l.credit
   FROM crove_finance.journal_line l
-  JOIN crove_kernel.tenant t ON t.org_id = l.org_id
-  LEFT JOIN crove_kernel.currency c ON c.code = t.base_currency
+  JOIN ludy_kernel.tenant t ON t.org_id = l.org_id
+  LEFT JOIN ludy_kernel.currency c ON c.code = t.base_currency
   WHERE c.code IS NULL OR l.debit <> pg_catalog.round(l.debit, c.minor_units) OR l.credit <> pg_catalog.round(l.credit, c.minor_units)
   UNION ALL
   SELECT 'purchase_document', d.org_id, d.id, NULL, 'VND', d.subtotal, d.total
@@ -71,7 +71,7 @@ suite('currency amount scale (#1282)', () => {
     return withClient(appUrl, async (app) => {
       await app.query('BEGIN');
       try {
-        await app.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+        await app.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
         const { rows } = await app.query<{ id: string }>(
           `SELECT crove_finance.post_journal_entry('2026-10-01', 'scale', 'test', $1::uuid, $2::jsonb) AS id`,
           [randomUUID(), JSON.stringify(lines)],
@@ -97,9 +97,9 @@ suite('currency amount scale (#1282)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 1 });
@@ -112,8 +112,8 @@ suite('currency amount scale (#1282)', () => {
     orgs.unknown = (await createOrg(runtime, actor, 'Scale Unknown')).orgId;
     // No command sets a book currency yet; the database owner stands in for one.
     await withAdmin(async (c) => {
-      await c.query(`UPDATE crove_kernel.tenant SET base_currency = 'USD' WHERE org_id = $1`, [orgs.usd]);
-      await c.query(`UPDATE crove_kernel.tenant SET base_currency = 'XTS' WHERE org_id = $1`, [orgs.unknown]);
+      await c.query(`UPDATE ludy_kernel.tenant SET base_currency = 'USD' WHERE org_id = $1`, [orgs.usd]);
+      await c.query(`UPDATE ludy_kernel.tenant SET base_currency = 'XTS' WHERE org_id = $1`, [orgs.unknown]);
     });
   });
 
@@ -131,18 +131,18 @@ suite('currency amount scale (#1282)', () => {
   });
 
   it('holds the minor units the TypeScript money model uses, readable by every runtime role and written by none', async () => {
-    const rows = await withAdmin(async (c) => (await c.query<{ code: string; minor_units: number }>('SELECT code, minor_units FROM crove_kernel.currency ORDER BY code')).rows);
+    const rows = await withAdmin(async (c) => (await c.query<{ code: string; minor_units: number }>('SELECT code, minor_units FROM ludy_kernel.currency ORDER BY code')).rows);
     expect(Object.fromEntries(rows.map((r) => [r.code, r.minor_units]))).toEqual(CURRENCY_MINOR_UNITS);
 
     const grants = await withAdmin(async (c) =>
       (
         await c.query<{ role: string; sel: boolean; ins: boolean; upd: boolean; del: boolean; trunc: boolean }>(
           `SELECT r AS role,
-                  pg_catalog.has_table_privilege(r, 'crove_kernel.currency', 'SELECT') AS sel,
-                  pg_catalog.has_table_privilege(r, 'crove_kernel.currency', 'INSERT') AS ins,
-                  pg_catalog.has_table_privilege(r, 'crove_kernel.currency', 'UPDATE') AS upd,
-                  pg_catalog.has_table_privilege(r, 'crove_kernel.currency', 'DELETE') AS del,
-                  pg_catalog.has_table_privilege(r, 'crove_kernel.currency', 'TRUNCATE') AS trunc
+                  pg_catalog.has_table_privilege(r, 'ludy_kernel.currency', 'SELECT') AS sel,
+                  pg_catalog.has_table_privilege(r, 'ludy_kernel.currency', 'INSERT') AS ins,
+                  pg_catalog.has_table_privilege(r, 'ludy_kernel.currency', 'UPDATE') AS upd,
+                  pg_catalog.has_table_privilege(r, 'ludy_kernel.currency', 'DELETE') AS del,
+                  pg_catalog.has_table_privilege(r, 'ludy_kernel.currency', 'TRUNCATE') AS trunc
            FROM unnest($1::text[]) r ORDER BY r`,
           [ROLES],
         )
@@ -152,11 +152,11 @@ suite('currency amount scale (#1282)', () => {
 
     // Immutable once published: not even the owner changes or removes a currency.
     await withAdmin(async (c) => {
-      await expect(c.query(`UPDATE crove_kernel.currency SET minor_units = 2 WHERE code = 'VND'`)).rejects.toThrow();
-      await expect(c.query(`DELETE FROM crove_kernel.currency WHERE code = 'VND'`)).rejects.toThrow();
-      await expect(c.query('TRUNCATE crove_kernel.currency')).rejects.toThrow();
-      await expect(c.query(`INSERT INTO crove_kernel.currency (code, minor_units) VALUES ('XAU', 5)`)).rejects.toMatchObject({ code: '23514' });
-      await expect(c.query(`INSERT INTO crove_kernel.currency (code, minor_units) VALUES ('usd', 2)`)).rejects.toMatchObject({ code: '23514' });
+      await expect(c.query(`UPDATE ludy_kernel.currency SET minor_units = 2 WHERE code = 'VND'`)).rejects.toThrow();
+      await expect(c.query(`DELETE FROM ludy_kernel.currency WHERE code = 'VND'`)).rejects.toThrow();
+      await expect(c.query('TRUNCATE ludy_kernel.currency')).rejects.toThrow();
+      await expect(c.query(`INSERT INTO ludy_kernel.currency (code, minor_units) VALUES ('XAU', 5)`)).rejects.toMatchObject({ code: '23514' });
+      await expect(c.query(`INSERT INTO ludy_kernel.currency (code, minor_units) VALUES ('usd', 2)`)).rejects.toMatchObject({ code: '23514' });
     });
   });
 

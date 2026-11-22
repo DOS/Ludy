@@ -3,7 +3,7 @@
 // no agent connected. This file is the one place the numbers and the shapes of those rules live; the reads (kernel, CRM), the sweep that wakes a grant and Home all import it.
 //
 // What a rule gives is ids, dates, amounts and enum words and nothing else: never a customer's name, a message, a subject or a note. The row shapes below hold nothing more, and the wake body is checked again
-// by the builder and the database (apps/kernel/src/mcp-wake-body.ts, crove_kernel.mcp_wake_body_ok).
+// by the builder and the database (apps/kernel/src/mcp-wake-body.ts, ludy_kernel.mcp_wake_body_ok).
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 

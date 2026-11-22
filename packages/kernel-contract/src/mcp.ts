@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { zId } from './schemas.ts';
 
 // The scopes an MCP grant may hold. @ludy/kernel-runtime keeps the list the runtime enforces (MCP_SCOPES) and
-// crove_kernel.agent_grant's CHECK the same one; a test pins the two lists.
+// ludy_kernel.agent_grant's CHECK the same one; a test pins the two lists.
 // `ludy.member.read` is the private scope of a member grant (design note on #2975, slice 3): it ships dark. The database accepts it on a member grant, but the runtime's own
 // list (MCP_SCOPES) does not have it yet, so no query can declare it, and no screen asks for it; it joins that list with the first query that declares it (step 3d).
 // The write scopes are a company grant's alone and each comes with `ludy.read` (ADR-0051 decision 11, #3858): `ludy.social.draft` (#3227: the one command that creates a draft Social post for a person to

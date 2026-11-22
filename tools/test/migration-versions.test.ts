@@ -1,4 +1,4 @@
-// The migration runner records each file under its 14-digit version (crove_meta.schema_migrations, primary key), so
+// The migration runner records each file under its 14-digit version (ludy_meta.schema_migrations, primary key), so
 // two files with the same version stop every fresh install at the second one. AGENTS.md: keep a new migration's
 // timestamp greater than every file on main.
 import { readdirSync } from 'node:fs';

@@ -42,7 +42,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
   const D = (n: number) => addDays(today, n);
   beforeAll(async () => {
     h = await startHarness('engage_about');
-    slug = (await h.q<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [h.orgId])).rows[0]?.slug as string;
+    slug = (await h.q<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [h.orgId])).rows[0]?.slug as string;
     today = (await h.q<{ d: string }>("SELECT (now() AT TIME ZONE 'UTC')::date::text AS d")).rows[0]?.d as string;
     await exec('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) });
     await exec<EventType>('crm.event_type.create', {
@@ -59,11 +59,11 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
       locationValue: 'https://meet.example.test/x',
       hostUserId: h.owner,
     });
-    const party = (await h.q<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, 'Công ty Khách', 'organization', 'khach@example.test', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [h.orgId])).rows[0]?.id as string;
+    const party = (await h.q<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, 'Công ty Khách', 'organization', 'khach@example.test', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [h.orgId])).rows[0]?.id as string;
     await exec<PipelineStage[]>('crm.pipeline.setup', {});
     dealId = (await exec<Deal>('crm.deal.create', { partyId: party, title: 'Gói kế toán năm', amount: '15000000', expectedClose: '2026-12-31' })).id;
     connectionId = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
     await withoutGuard('crove_ads.ad_org_setting', 'switch_guard', async (c) => {
       await c.query('INSERT INTO crove_ads.ad_org_setting (org_id, write_enabled, launches_blocked) VALUES ($1, true, false) ON CONFLICT DO NOTHING', [h.orgId]);
       await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [h.orgId]);
@@ -152,7 +152,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
 
   it('post submit and variant schedule: the post\'s title (or the start of its text) and the channels of the variants the ask names, all of them when it names none', async () => {
     const second = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh hai', $4)", [h.orgId, second, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh hai', $4)", [h.orgId, second, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
     const body = `Khuyến mãi tháng 12 ${'x'.repeat(200)}`;
     const { postId } = await exec<{ postId: string }>('social.post.create', { body, channels: [{ connectionId }, { connectionId: second }] });
     const post = await h.runtime.query<PostView>('social.post.get', { postId }, { actor: h.person(h.owner), orgId: h.orgId });
@@ -175,7 +175,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
   async function rig(): Promise<string> {
     const connection = randomUUID();
     const account = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
     await h.q(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản Tiệm Bánh', '2025-10-01', 'VND', $5)`, [h.orgId, account, connection, `acct-${connection.slice(0, 8)}`, VN]);
     const draft = randomUUID();
     await h.q(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by) VALUES ($1, $2, $3, 'Khuyến mãi Tết', 'traffic', $4)`, [h.orgId, draft, account, h.owner]);
@@ -245,9 +245,9 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
       connectionId,
       events: [{ kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${threadId}`, direction: 'in', contact: { id: 'u-follow', name: 'Lê Thị Khách' }, text: 'Cho mình xin báo giá', at: new Date().toISOString() }],
     });
-    const conversation = (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [h.orgId, threadId])).rows[0]?.id as string;
+    const conversation = (await h.q<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [h.orgId, threadId])).rows[0]?.id as string;
     const seat = (await h.runtime.execute<{ positionId: string }>('kernel.agent.template.install', { templateKey: 'crm.scheduler' }, { actor: h.person(h.owner, true), orgId: h.orgId })).positionId;
-    const title = (await h.q<{ title: string }>('SELECT title FROM crove_kernel.position WHERE org_id = $1 AND id = $2', [h.orgId, seat])).rows[0]?.title as string;
+    const title = (await h.q<{ title: string }>('SELECT title FROM ludy_kernel.position WHERE org_id = $1 AND id = $2', [h.orgId, seat])).rows[0]?.title as string;
     const named = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: seat })).about as About;
     expect(named.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage', 'assignee']);
     expect(named.find((a) => a.label === 'contact')?.value).toBe('Lê Thị Khách');
@@ -256,12 +256,12 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     expect(none.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage']);
     // An active seat has no state line; a paused or archived one says so (approving an archived seat fails closed, #4370).
     for (const state of ['paused', 'archived'] as const) {
-      await h.q("UPDATE crove_kernel.position SET status = $3 WHERE org_id = $1 AND id = $2", [h.orgId, seat, state]);
+      await h.q("UPDATE ludy_kernel.position SET status = $3 WHERE org_id = $1 AND id = $2", [h.orgId, seat, state]);
       const off = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: seat })).about as About;
       expect(off.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage', 'assignee', 'assigneeState']);
       expect(off.find((a) => a.label === 'assigneeState')?.value).toBe(state);
     }
-    await h.q("UPDATE crove_kernel.position SET status = 'active' WHERE org_id = $1 AND id = $2", [h.orgId, seat]);
+    await h.q("UPDATE ludy_kernel.position SET status = 'active' WHERE org_id = $1 AND id = $2", [h.orgId, seat]);
   });
 
   it('shows the lines to owners and admins only: a member and a viewer get no card', async () => {
@@ -270,13 +270,13 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     const made = await h.propose(actor, 'crm.booking.cancel_approved', { bookingId });
     for (const role of ['member', 'viewer'] as const) {
       const id = await upsertIdentity(h.db, { issuer: 'engage-about', subject: `${role}-${randomUUID()}`, email: `${role}-${randomUUID().slice(0, 8)}@engage-about.test`, name: role });
-      await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
+      await h.q('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
       const asRole = await h.runtime.query<Detail>('kernel.inbox.get', { id: made.proposalId }, { actor: h.person(id), orgId: h.orgId });
       expect(asRole.engage, role).toBeNull();
       expect(JSON.stringify(asRole), role).not.toContain('Nguyễn Văn Khách');
     }
     const admin = await upsertIdentity(h.db, { issuer: 'engage-about', subject: `admin-${randomUUID()}`, email: `admin-${randomUUID().slice(0, 8)}@engage-about.test`, name: 'admin' });
-    await h.q("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [h.orgId, admin]);
+    await h.q("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [h.orgId, admin]);
     const asAdmin = await h.runtime.query<Detail>('kernel.inbox.get', { id: made.proposalId }, { actor: h.person(admin), orgId: h.orgId });
     expect(asAdmin.engage?.about.find((a) => a.label === 'guest')?.value).toBe('Nguyễn Văn Khách');
   });

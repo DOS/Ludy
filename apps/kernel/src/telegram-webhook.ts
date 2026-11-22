@@ -4,7 +4,7 @@
 // is the opaque id a connection holds (it names a connection's hook, never an org). The route checks `X-Telegram-Bot-Api-Secret-Token` against the
 // secret derived from that hook under the deployment's key, in constant time, before it reads the body or asks the database; a missing header, a
 // hook of the wrong shape, an unknown hook and a wrong secret are refused with the same answer. A verified update that carries a customer's message
-// is parked in crove_kernel.conversation_inbound_pending for the worker, which finds the org from the stored connection by the hook; the notice
+// is parked in ludy_kernel.conversation_inbound_pending for the worker, which finds the org from the stored connection by the hook; the notice
 // names no org, and neither does the path or any answer (ADR-0039). A body is personal data of a third party, so the route logs nothing of it and
 // the table deletes it the moment it is stored. A verified update with no customer message in it (an edit, a group) is answered 200 and not parked,
 // so Telegram stops sending it and the queue holds messages only.
@@ -109,7 +109,7 @@ export async function acceptTelegramWebhook(
   if (keys.length === 0) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
-      await sql`SELECT crove_kernel.conversation_inbound_enqueue(${TELEGRAM_INTAKE_PROVIDER}, ${wrapTelegramChatNotice(request.hook, body)}::bytea)`.execute(db);
+      await sql`SELECT ludy_kernel.conversation_inbound_enqueue(${TELEGRAM_INTAKE_PROVIDER}, ${wrapTelegramChatNotice(request.hook, body)}::bytea)`.execute(db);
     });
   } catch (error) {
     // The definer refuses past 10000 waiting notices (53400), which the runtime maps to OVERLOADED. Telegram retries a delivery that was not

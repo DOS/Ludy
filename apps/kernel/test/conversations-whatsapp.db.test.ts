@@ -103,7 +103,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       await c.query('COMMIT');
       return result.rows;
     });
-  const waiting = async () => (await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).length;
+  const waiting = async () => (await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).length;
   const post = (target: ReturnType<typeof createHttpApp>, body: string, headers: Record<string, string> = sign(body)) =>
     target.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
   const intake = () => runConversationIntake({ workerDb, runtime: worker, log: () => undefined });
@@ -115,7 +115,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [adm, member, viewer] = [await person('admin'), await person('member'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adm, member, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adm, member, viewer]);
     // The number's connection, made as the API makes it: the token and the WABA id sealed for the phone number id.
     const phoneId = `1040000000${String(1000 + phones++)}`;
     const sealed = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId, provider: 'whatsapp', externalAccountId: phoneId });
@@ -125,7 +125,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       { actor: asUser(owner), orgId },
     );
     // The connection began long ago: an event dated before it is the earlier holder's (see 'one number, one organization'), and the tests date messages minutes back.
-    await rows("UPDATE crove_kernel.channel_connection SET connected_at = now() - interval '30 days' WHERE org_id = $1 AND id = $2", [orgId, connected.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET connected_at = now() - interval '30 days' WHERE org_id = $1 AND id = $2", [orgId, connected.connectionId]);
     return { orgId, owner, admin: adm, member, viewer, phoneId, connectionId: connected.connectionId };
   }
 
@@ -137,7 +137,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: '204000000000001', changes: [{ field: 'messages', value: { messaging_product: 'whatsapp', metadata: { display_phone_number: '84900000099', phone_number_id: o.phoneId }, ...value } }] }] });
   const customerNotice = (o: Org, m: ReturnType<typeof message>, name = 'Lan Nguyễn') => noticeOf(o, { contacts: [{ profile: { name }, wa_id: m.from }], messages: [m] });
   const imageNotice = (o: Org, mediaId: string, wa = LAN) => customerNotice(o, message(wa, { type: 'image', text: undefined, image: { id: mediaId, mime_type: 'image/jpeg', sha256: 'x' } }));
-  const threadOf = async (o: Org, wa: string) => ((await rows<{ id: string; last_seq: number }>('SELECT id, last_seq FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, wa]))[0] as { id: string; last_seq: number });
+  const threadOf = async (o: Org, wa: string) => ((await rows<{ id: string; last_seq: number }>('SELECT id, last_seq FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, wa]))[0] as { id: string; last_seq: number });
   const detail = (o: Org, id: string, user = o.owner) => api.query<ConversationDetail>('kernel.conversation.get', { conversationId: id }, { actor: asUser(user), orgId: o.orgId });
   // A customer writes: the route parks the notice and the worker stores it.
   async function customerWrites(o: Org, wa = LAN, over: Record<string, unknown> = {}, name = 'Lan Nguyễn') {
@@ -165,7 +165,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
   const reply = (o: Org, thread: { id: string; last_seq: number }, text = 'Dạ shop gửi bảng giá ạ', extra: Record<string, unknown> = {}, user = o.owner) =>
     api.execute<{ messageId: string; seq: number }>('kernel.conversation.reply', { conversationId: thread.id, body: text, lastSeenSeq: thread.last_seq, ...extra }, { actor: asUser(user), orgId: o.orgId });
   const jobOf = (o: Org, messageId: string) => ({ orgId: o.orgId, messageId, connectionId: o.connectionId, action: 'reply' as const });
-  const messageRow = async (messageId: string) => (await rows<{ send_state: string; send_error_code: string | null; external_message_id: string | null }>('SELECT send_state, send_error_code, external_message_id FROM crove_kernel.conversation_message WHERE id = $1', [messageId]))[0];
+  const messageRow = async (messageId: string) => (await rows<{ send_state: string; send_error_code: string | null; external_message_id: string | null }>('SELECT send_state, send_error_code, external_message_id FROM ludy_kernel.conversation_message WHERE id = $1', [messageId]))[0];
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -176,18 +176,18 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     const pool = createPool({ connectionString: appUrl, max: 4 });
     pools.push(pool);
     db = createDb(pool);
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     pools.push(workerPool);
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
@@ -244,15 +244,15 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       };
       // A pasted token proves its holder may call the number, not that the number is theirs: the second organization is refused, and no connection row is made.
       await expect(connect(b, a.phoneId)).rejects.toMatchObject({ code: 'CHANNEL_ACCOUNT_TAKEN', status: 409 });
-      expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [b.orgId, a.phoneId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [b.orgId, a.phoneId])).toHaveLength(0);
       // The organization that holds it reconnects it (a new token) and keeps its row.
       await expect(connect(a, a.phoneId)).resolves.toMatchObject({ connectionId: a.connectionId });
       // A customer's message for the number is stored in the holder only.
       const m = message(LAN);
       expect((await post(app, customerNotice(a, m))).status).toBe(200);
       expect(await intake()).toMatchObject({ dropped: 0 });
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(1);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(0);
       // Once the holder disconnects, the number is free for the other organization.
       await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { actor: asUser(a.owner), orgId: a.orgId });
       const taken = await connect(b, a.phoneId);
@@ -275,12 +275,12 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const holder: Org = { ...b, phoneId: a.phoneId };
       expect(await intake()).toMatchObject({ dropped: 0 });
       // The old message reached nobody: not A (disconnected), not B (it began before B held the number).
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[a.orgId, b.orgId]])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[a.orgId, b.orgId]])).toHaveLength(0);
       // A customer who writes after B connected is B's.
       expect((await post(app, customerNotice(holder, message(MINH, { timestamp: secondsAgo(-5) })))).status).toBe(200);
       expect(await intake()).toMatchObject({ dropped: 0 });
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
     });
   });
 
@@ -328,7 +328,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       );
       for (const a of answers) expect(a).toEqual({ status: 401, body: '{"code":"WEBHOOK_SIGNATURE"}' });
       expect(await waiting()).toBe(0);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
     });
 
     it('refuses a body over its cap before reading it, even with a valid signature, and a verified body that is not a notice', async () => {
@@ -367,26 +367,26 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const response = await post(app, customerNotice(o, m));
       expect([response.status, await response.text()]).toEqual([200, '{"ok":true}']);
       expect(await waiting()).toBe(1);
-      expect(await rows('SELECT provider FROM crove_kernel.conversation_inbound_pending')).toEqual([{ provider: 'whatsapp' }]);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+      expect(await rows('SELECT provider FROM ludy_kernel.conversation_inbound_pending')).toEqual([{ provider: 'whatsapp' }]);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
       expect(await intake()).toEqual({ stored: 1, dropped: 0 });
       expect(await waiting()).toBe(0);
       expect(
         await rows(
           `SELECT m.body, m.direction, m.tainted, m.seq, c.kind, c.external_thread_id, c.status, i.external_user_id, i.display_name, i.provider
-           FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
-           JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE m.org_id = $1`,
+           FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
+           JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE m.org_id = $1`,
           [o.orgId],
         ),
       ).toEqual([{ body: BODY, direction: 'in', tainted: true, seq: 1, kind: 'direct', external_thread_id: LAN, status: 'new', external_user_id: LAN, display_name: 'Lan Nguyễn', provider: 'whatsapp' }]);
       // The free window runs 24 hours from the customer's message (the platform's own time), and the thread says so.
-      expect(Number((await rows<{ hours: string }>('SELECT extract(epoch FROM (reply_window_until - last_inbound_at)) / 3600 AS hours FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId]))[0]?.hours)).toBe(24);
+      expect(Number((await rows<{ hours: string }>('SELECT extract(epoch FROM (reply_window_until - last_inbound_at)) / 3600 AS hours FROM ludy_kernel.conversation WHERE org_id = $1', [o.orgId]))[0]?.hours)).toBe(24);
       const thread = await threadOf(o, LAN);
       expect((await detail(o, thread.id)).conversation).toMatchObject({ kind: 'direct', channel: { provider: 'whatsapp', displayName: 'Tiệm Bánh An Nhiên' }, contact: { displayName: 'Lan Nguyễn' } });
       expect((await detail(o, thread.id)).reply).toEqual({ allowed: true, reason: null });
       // Another org's phone number gets nothing of it: the notice named this number only.
       const other = await org();
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [other.orgId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [other.orgId])).toHaveLength(0);
     });
 
     it('is taken once whatever the order and however many times Meta sends it, and a number no org connected nowhere', async () => {
@@ -396,7 +396,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       for (const m of [later, first, later]) expect((await post(app, customerNotice(o, m))).status).toBe(200);
       expect(await intake()).toEqual({ stored: 2, dropped: 0 });
       // Each message once, in the order the worker took the notices (the thread's own order is the arrival's).
-      expect((await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 ORDER BY body', [o.orgId])).map((r) => r.body)).toEqual(['Tin đến sau', 'Tin đến trước']);
+      expect((await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1 ORDER BY body', [o.orgId])).map((r) => r.body)).toEqual(['Tin đến sau', 'Tin đến trước']);
       const stranger = { ...o, phoneId: '104999999999999' };
       expect((await post(app, customerNotice(stranger, message(MINH)))).status).toBe(200);
       expect(await intake()).toEqual({ stored: 0, dropped: 0 });
@@ -426,10 +426,10 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect((await post(app, missed)).status).toBe(200);
       expect(await waiting()).toBe(1);
       expect(await intake()).toEqual({ stored: 1, dropped: 0 });
-      await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'whatsapp', 'x'::bytea FROM generate_series(1, 10001)");
+      await rows("INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) SELECT 'whatsapp', 'x'::bytea FROM generate_series(1, 10001)");
       const fresh = customerNotice(o, message(MINH));
       expect([(await post(app, fresh)).status, await (await post(app, fresh)).text()]).toEqual([503, '{"code":"BACKLOG"}']);
-      await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+      await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
       expect((await post(app, fresh)).status).toBe(200);
       expect(await waiting()).toBe(1);
       await intake();
@@ -438,7 +438,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     it('offers the contact whose phone is the customer’s wa_id, first, with no model, and none for an id that is not a phone number', async () => {
       const o = await org();
       const { thread } = await customerWrites(o, LAN);
-      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Nguyễn Thị Lan', '0900 000 001'), ($1, 'person', 'Người khác', '0911 111 111')", [o.orgId]);
+      await rows("INSERT INTO ludy_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Nguyễn Thị Lan', '0900 000 001'), ($1, 'person', 'Người khác', '0911 111 111')", [o.orgId]);
       const matched = await api.query<{ phone: Array<{ name: string }>; names: Array<{ name: string }> }>('kernel.conversation.contact_candidates', { conversationId: thread.id }, { actor: asUser(o.owner), orgId: o.orgId });
       expect(matched.phone.map((c) => c.name)).toEqual(['Nguyễn Thị Lan']);
       // An identifier that is not a phone number (Meta may give another one) finds nothing by phone.
@@ -446,7 +446,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const none = await api.query<{ phone: unknown[] }>('kernel.conversation.contact_candidates', { conversationId: other.id }, { actor: asUser(o.owner), orgId: o.orgId });
       expect(none.phone).toEqual([]);
       // The party is never created or linked by the intake.
-      expect((await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND party_id IS NOT NULL', [o.orgId]))).toHaveLength(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND party_id IS NOT NULL', [o.orgId]))).toHaveLength(0);
     });
   });
 
@@ -495,14 +495,14 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     it('is refused past the window with its reason, and Meta is not asked; a draft is not made past it either', async () => {
       const o = await org();
       const { thread } = await customerWrites(o);
-      await aged("UPDATE crove_kernel.conversation SET reply_window_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, thread.id]);
+      await aged("UPDATE ludy_kernel.conversation SET reply_window_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, thread.id]);
       await expect(reply(o, thread)).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED', status: 409 });
       expect((await detail(o, thread.id)).reply).toEqual({ allowed: false, reason: 'window_closed' });
       await expect(api.execute('kernel.conversation.draft_request', { conversationId: thread.id }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED' });
       // A message queued inside the window whose job runs after it closed is refused by the adapter without a call.
       const open = await customerWrites(o, MINH);
       const { messageId } = await reply(o, open.thread);
-      await aged("UPDATE crove_kernel.conversation SET last_inbound_at = now() - interval '25 hours' WHERE org_id = $1 AND id = $2", [o.orgId, open.thread.id]);
+      await aged("UPDATE ludy_kernel.conversation SET last_inbound_at = now() - interval '25 hours' WHERE org_id = $1 AND id = $2", [o.orgId, open.thread.id]);
       const platform = graph();
       expect(await runConversationJob(jobDeps(platform.adapter), jobOf(o, messageId))).toBe('rejected');
       expect(platform.calls).toHaveLength(0);
@@ -518,13 +518,13 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const platform = graph([{ status: 400, body: { error: { message: 'Re-engagement message', code: 131047 } } }]);
       expect(await runConversationJob(jobDeps(platform.adapter), jobOf(o, messageId))).toBe('rejected');
       expect(await messageRow(messageId)).toMatchObject({ send_state: 'failed', send_error_code: 'WA_WINDOW_CLOSED' });
-      expect(await rows('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId])).toEqual([{ status: 'active' }]);
+      expect(await rows('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId])).toEqual([{ status: 'active' }]);
       const p = await org();
       const second = await customerWrites(p);
       const sent = await reply(p, second.thread);
       const refusing = graph([{ status: 401, body: { error: { message: 'Invalid OAuth access token', code: 190 } } }]);
       expect(await runConversationJob(jobDeps(refusing.adapter), jobOf(p, sent.messageId))).toBe('rejected');
-      expect(await rows('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [p.connectionId])).toEqual([{ status: 'expired' }]);
+      expect(await rows('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [p.connectionId])).toEqual([{ status: 'expired' }]);
     });
 
     it('shows a status failed on the message, once, and leaves a message Ludy did not send alone', async () => {
@@ -544,12 +544,12 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect((await post(app, failed(wamid, 131026))).status).toBe(200);
       expect(await intake()).toEqual({ stored: 0, dropped: 0 });
       expect(await messageRow(messageId)).toMatchObject({ send_error_code: 'WA_131047' });
-      const before = (await rows('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId])).length;
+      const before = (await rows('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1', [o.orgId])).length;
       const unknown = noticeOf(o, { statuses: [{ id: 'wamid.never-sent-by-ludy', status: 'failed', timestamp: secondsAgo(5), recipient_id: MINH, errors: [{ code: 131026 }] }] });
       expect((await post(app, unknown)).status).toBe(200);
       expect(await intake()).toEqual({ stored: 0, dropped: 0 });
-      expect((await rows('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId])).length).toBe(before);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = $2', [o.orgId, MINH])).toHaveLength(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1', [o.orgId])).length).toBe(before);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = $2', [o.orgId, MINH])).toHaveLength(0);
       // A person looked on WhatsApp and the message did arrive: marked sent, a late failed status of an earlier attempt would not undo what a person settled.
       await expect(api.execute('kernel.conversation.reply_settle', { messageId, action: 'mark_sent' }, { actor: asUser(o.admin), orgId: o.orgId })).resolves.toMatchObject({ state: 'sent' });
       // ...and a late failed status of the attempt it settled (Meta retries for a while, with a code the replay guard has not seen) does not undo it.
@@ -610,7 +610,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const second = await customerWrites(o, MINH);
       const lost = await reply(o, second.thread);
       await worker.execute('kernel.conversation.reply_begin', { messageId: lost.messageId }, { actor: SYSTEM, orgId: o.orgId });
-      await aged("UPDATE crove_kernel.external_call SET started_at = now() - interval '11 minutes' WHERE org_id = $1 AND step = 'reply' AND state = 'started'", [o.orgId]);
+      await aged("UPDATE ludy_kernel.external_call SET started_at = now() - interval '11 minutes' WHERE org_id = $1 AND step = 'reply' AND state = 'started'", [o.orgId]);
       expect(await sweepStaleReplies({ workerDb, runtime: worker, now: () => Date.now() + 240_000 })).toBeGreaterThanOrEqual(1);
       expect(await messageRow(lost.messageId)).toMatchObject({ send_state: 'unknown', send_error_code: 'WORKER_LOST' });
       await expect(api.execute('kernel.conversation.reply_settle', { messageId: lost.messageId, action: 'retry' }, { actor: asUser(o.admin), orgId: o.orgId })).rejects.toMatchObject({ code: 'SEND_UNKNOWN_NO_RESEND' });
@@ -660,7 +660,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const { thread } = await customerWrites(o, LAN, { timestamp: secondsAgo(600), text: { body: CUSTOMER_TEXT } });
       const platform = graph();
       expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBeGreaterThanOrEqual(1);
-      const [draft] = await rows<{ id: string; state: string; source: string }>('SELECT id, state, source FROM crove_kernel.conversation_draft WHERE org_id = $1', [o.orgId]);
+      const [draft] = await rows<{ id: string; state: string; source: string }>('SELECT id, state, source FROM ludy_kernel.conversation_draft WHERE org_id = $1', [o.orgId]);
       expect(draft).toMatchObject({ state: 'requested', source: 'auto' });
       const source = await worker.query<{ provider: string; maxChars: number; customerName: string | null }>('kernel.conversation.draft_source', { draftId: draft?.id }, { actor: SYSTEM, orgId: o.orgId });
       expect(source).toMatchObject({ provider: 'whatsapp', maxChars: 2000, customerName: 'Lan Nguyễn' });
@@ -673,12 +673,12 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect(seen.draft).toMatchObject({ state: 'live', source: 'auto', tainted: true });
       expect(seen.suggestions.map((s) => s.title)).toEqual(['Giá áo thun']);
       expect(platform.calls).toHaveLength(0);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND direction = $2', [o.orgId, 'out'])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND direction = $2', [o.orgId, 'out'])).toHaveLength(0);
       // A reply that still holds the placeholder is refused; the person fills it, presses Send, and the draft is marked used by its lengths.
       await expect(reply(o, thread, 'Chào {tên}, áo thun giá 150.000đ ạ')).rejects.toMatchObject({ code: 'REPLY_PLACEHOLDER' });
       const sentText = 'Chào Lan Nguyễn, áo thun cotton giá 150.000đ ạ';
       const { messageId } = await reply(o, thread, sentText, { draftId: draft?.id });
-      expect(await rows('SELECT state, body, final_length FROM crove_kernel.conversation_draft WHERE id = $1', [draft?.id])).toEqual([{ state: 'used', body: null, final_length: sentText.length }]);
+      expect(await rows('SELECT state, body, final_length FROM ludy_kernel.conversation_draft WHERE id = $1', [draft?.id])).toEqual([{ state: 'used', body: null, final_length: sentText.length }]);
       expect(await runConversationJob(jobDeps(platform.adapter), jobOf(o, messageId))).toBe('accepted');
       expect(platform.calls).toHaveLength(1);
       expect(platform.calls[0]?.body).toMatchObject({ text: { body: sentText } });
@@ -700,7 +700,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
   describe('an image by media id', () => {
     const pending = (o: Org) =>
       rows<{ id: string; state: string; source_url: string | null; source_ref: string | null; storage_key: string; fetch_attempts: number }>(
-        'SELECT id, state, source_url, source_ref, storage_key, fetch_attempts FROM crove_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id',
+        'SELECT id, state, source_url, source_ref, storage_key, fetch_attempts FROM ludy_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id',
         [o.orgId],
       );
     // The platform's media call, answered from memory: what the adapter was given and what it answers.
@@ -726,11 +726,11 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect(await intake()).toEqual({ stored: 1, dropped: 0 });
       const [row] = await pending(o);
       expect(row).toMatchObject({ state: 'pending', source_url: null, source_ref: '555111222333' });
-      expect((await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId]))[0]?.body).toBe('[Khách gửi ảnh]');
+      expect((await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1', [o.orgId]))[0]?.body).toBe('[Khách gửi ảnh]');
       // The relay hands out the pending row by ids only; the event holds no media id.
       expect(await dueConversationAttachments(workerDb)).toEqual(expect.arrayContaining([{ orgId: o.orgId, connectionId: o.connectionId, attachmentId: (row as { id: string }).id }]));
       expect(await requestConversationAttachments(worker, [{ orgId: o.orgId, attachmentId: (row as { id: string }).id }])).toBe(1);
-      const event = JSON.stringify(await rows("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.attachment_queued'", [o.orgId]));
+      const event = JSON.stringify(await rows("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.attachment_queued'", [o.orgId]));
       expect(event).not.toContain('555111222333');
       // The job reads the source (the reference, not an address), opens the credential, and asks the adapter; the bytes are stored and the reference is cleared.
       const source = await worker.query<{ provider: string; sourceUrl: string | null; mediaRef: string | null }>('kernel.conversation.attachment_source', { attachmentId: (row as { id: string }).id }, { actor: SYSTEM, orgId: o.orgId });
@@ -764,11 +764,11 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       const left = await pending(o);
       expect(left.map((r) => [r.source_ref, r.fetch_attempts])).toEqual([['555000000003', 1], ['555000000005', 1]]);
       // Dropped rows leave their messages with the placeholder; a row tried five times, or older than six days, is deleted with its reference.
-      await aged("UPDATE crove_kernel.conversation_attachment SET fetch_attempts = 5, requested_at = now() - interval '1 hour' WHERE org_id = $1 AND source_ref = '555000000003'", [o.orgId]);
-      await aged("UPDATE crove_kernel.conversation_attachment SET created_at = now() - interval '7 days' WHERE org_id = $1 AND source_ref = '555000000005'", [o.orgId]);
+      await aged("UPDATE ludy_kernel.conversation_attachment SET fetch_attempts = 5, requested_at = now() - interval '1 hour' WHERE org_id = $1 AND source_ref = '555000000003'", [o.orgId]);
+      await aged("UPDATE ludy_kernel.conversation_attachment SET created_at = now() - interval '7 days' WHERE org_id = $1 AND source_ref = '555000000005'", [o.orgId]);
       await dueConversationAttachments(workerDb);
       expect(await pending(o)).toEqual([]);
-      expect((await rows('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body = $2', [o.orgId, '[Khách gửi ảnh]'])).length).toBe(5);
+      expect((await rows('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body = $2', [o.orgId, '[Khách gửi ảnh]'])).length).toBe(5);
     });
 
     it('is refused by the database when a row names both an address and a reference, and the reference may hold no URL', async () => {
@@ -777,9 +777,9 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       await intake();
       const [row] = await pending(o);
       const id = (row as { id: string }).id;
-      await expect(rows("UPDATE crove_kernel.conversation_attachment SET source_url = 'https://lookaside.fbsbx.com/x' WHERE org_id = $1 AND id = $2", [o.orgId, id])).rejects.toMatchObject({ code: '23514' });
+      await expect(rows("UPDATE ludy_kernel.conversation_attachment SET source_url = 'https://lookaside.fbsbx.com/x' WHERE org_id = $1 AND id = $2", [o.orgId, id])).rejects.toMatchObject({ code: '23514' });
       for (const bad of ['https://evil.example/x', 'a/b', 'a?token=1', '', 'x'.repeat(301)]) {
-        await expect(rows('UPDATE crove_kernel.conversation_attachment SET source_ref = $3 WHERE org_id = $1 AND id = $2', [o.orgId, id, bad]), bad).rejects.toMatchObject({ code: '23514' });
+        await expect(rows('UPDATE ludy_kernel.conversation_attachment SET source_ref = $3 WHERE org_id = $1 AND id = $2', [o.orgId, id, bad]), bad).rejects.toMatchObject({ code: '23514' });
       }
       // A thread's own readers read the row; the reference is not in the export.
       expect(EXPORT_TABLES['kernel.conversation_attachment'].omit).toEqual(expect.arrayContaining(['source_url', 'source_ref']));
@@ -804,13 +804,13 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       await intake();
       await customerWrites(o, MINH);
       const thread = await threadOf(o, LAN);
-      const [pendingRow] = await rows<{ id: string; storage_key: string }>('SELECT id, storage_key FROM crove_kernel.conversation_attachment WHERE org_id = $1', [o.orgId]);
+      const [pendingRow] = await rows<{ id: string; storage_key: string }>('SELECT id, storage_key FROM ludy_kernel.conversation_attachment WHERE org_id = $1', [o.orgId]);
       expect(pendingRow).toBeDefined();
       const erased = await api.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: thread.id, confirm: true }, { actor: asMfa(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
       expect(erased).toEqual({ threads: 1, messages: 2 });
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_attachment WHERE org_id = $1', [o.orgId])).toHaveLength(0);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_blob_doomed WHERE storage_key = $1', [(pendingRow as { storage_key: string }).storage_key])).toHaveLength(1);
-      const people = await rows<{ external_user_id: string; display_name: string | null }>('SELECT external_user_id, display_name FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY external_user_id', [o.orgId]);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_attachment WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_blob_doomed WHERE storage_key = $1', [(pendingRow as { storage_key: string }).storage_key])).toHaveLength(1);
+      const people = await rows<{ external_user_id: string; display_name: string | null }>('SELECT external_user_id, display_name FROM ludy_kernel.conversation_identity WHERE org_id = $1 ORDER BY external_user_id', [o.orgId]);
       expect(people).toEqual([
         { external_user_id: MINH, display_name: 'Lan Nguyễn' },
         { external_user_id: expect.stringMatching(/^erased:k1:[0-9a-f]{64}$/), display_name: null },
@@ -821,8 +821,8 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect((await post(fresh, customerNotice(o, first))).status).toBe(200);
       expect(await waiting()).toBe(1);
       expect(await intake()).toMatchObject({ dropped: 0 });
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, LAN])).toHaveLength(0);
-      const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_contact'", [o.orgId]));
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, LAN])).toHaveLength(0);
+      const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_contact'", [o.orgId]));
       expect(audit).not.toContain(LAN);
     });
 
@@ -832,12 +832,12 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       await intake();
       const { thread } = await customerWrites(o, MINH);
       await api.execute('kernel.conversation.retention_set', { retentionMonths: 6 }, { actor: asUser(o.owner), orgId: o.orgId });
-      await aged("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '7 months' WHERE org_id = $1 AND external_thread_id = $2", [o.orgId, LAN]);
-      const [row] = await rows<{ storage_key: string }>('SELECT storage_key FROM crove_kernel.conversation_attachment WHERE org_id = $1', [o.orgId]);
+      await aged("UPDATE ludy_kernel.conversation SET last_message_at = now() - interval '7 months' WHERE org_id = $1 AND external_thread_id = $2", [o.orgId, LAN]);
+      const [row] = await rows<{ storage_key: string }>('SELECT storage_key FROM ludy_kernel.conversation_attachment WHERE org_id = $1', [o.orgId]);
       await purgeExpiredConversations({ runtime: worker, workerDb });
-      expect(await rows('SELECT external_thread_id FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toEqual([{ external_thread_id: MINH }]);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_attachment WHERE org_id = $1', [o.orgId])).toHaveLength(0);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_blob_doomed WHERE storage_key = $1', [(row as { storage_key: string }).storage_key])).toHaveLength(1);
+      expect(await rows('SELECT external_thread_id FROM ludy_kernel.conversation WHERE org_id = $1', [o.orgId])).toEqual([{ external_thread_id: MINH }]);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_attachment WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_blob_doomed WHERE storage_key = $1', [(row as { storage_key: string }).storage_key])).toHaveLength(1);
       await sweepConversationBlobs({ workerDb, store, force: true });
       expect(thread.id).toBeDefined();
     });
@@ -864,7 +864,7 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
         const wamid = (await messageRow(messageId))?.external_message_id as string;
         await post(app, noticeOf(o, { statuses: [{ id: wamid, status: 'failed', timestamp: secondsAgo(2), recipient_id: LAN, errors: [{ code: 131047 }] }] }));
         await intake();
-        const [pendingRow] = await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation_attachment WHERE org_id = $1', [o.orgId]);
+        const [pendingRow] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation_attachment WHERE org_id = $1', [o.orgId]);
         const attachment = { kind: 'ok' as const, bytes: PNG };
         await runConversationAttachment({ runtime: worker, store, broker: vault, adapter: () => ({ provider: 'whatsapp', reply: async () => ({ kind: 'unknown' }), media: async () => attachment }) }, { orgId: o.orgId, connectionId: o.connectionId, action: 'attachment', attachmentId: (pendingRow as { id: string }).id });
         await api.execute('kernel.conversation.draft_request', { conversationId: thread.id }, { actor: asUser(o.owner), orgId: o.orgId }).catch(() => undefined);
@@ -873,20 +873,20 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       }
       const secrets = [LAN, '900000001', BODY, 'xyzzy-bí-mật', 'xyzzy-trả-lời', '555111222555', ACCESS_TOKEN, APP_SECRET, 'wamid.'];
       const stores: Array<[string, string]> = [
-        ['audit', "SELECT detail::text AS t FROM crove_kernel.audit_event WHERE org_id = $1"],
-        ['events', 'SELECT payload::text AS t FROM crove_kernel.outbox_event WHERE org_id = $1'],
-        ['activity', 'SELECT summary AS t FROM crove_kernel.activity WHERE org_id = $1'],
+        ['audit', "SELECT detail::text AS t FROM ludy_kernel.audit_event WHERE org_id = $1"],
+        ['events', 'SELECT payload::text AS t FROM ludy_kernel.outbox_event WHERE org_id = $1'],
+        ['activity', 'SELECT summary AS t FROM ludy_kernel.activity WHERE org_id = $1'],
       ];
       for (const [name, query] of stores) {
         const text = (await rows<{ t: string }>(query, [o.orgId])).map((r) => r.t).join('\n');
         for (const secret of secrets) expect(text, `${name} holds ${secret}`).not.toContain(secret);
       }
-      const jobs = (await rows<{ t: string }>('SELECT to_jsonb(j)::text AS t FROM crove_jobs.job j').catch(() => [] as Array<{ t: string }>)).map((r) => r.t).join('\n');
+      const jobs = (await rows<{ t: string }>('SELECT to_jsonb(j)::text AS t FROM ludy_jobs.job j').catch(() => [] as Array<{ t: string }>)).map((r) => r.t).join('\n');
       for (const secret of secrets) expect(jobs, `jobs hold ${secret}`).not.toContain(secret);
       const logged = lines.join(' | ');
       for (const secret of secrets) expect(logged, `the log holds ${secret}`).not.toContain(secret);
       // The external call row names the provider and a key by message id, never the customer's number.
-      const calls = (await rows<{ t: string }>('SELECT to_jsonb(c)::text AS t FROM crove_kernel.external_call c WHERE org_id = $1', [o.orgId])).map((r) => r.t).join('\n');
+      const calls = (await rows<{ t: string }>('SELECT to_jsonb(c)::text AS t FROM ludy_kernel.external_call c WHERE org_id = $1', [o.orgId])).map((r) => r.t).join('\n');
       expect(calls).not.toContain(LAN);
     });
   });

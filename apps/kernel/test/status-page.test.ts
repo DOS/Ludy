@@ -107,7 +107,7 @@ describe('prober', () => {
     extraction_document_failures: 0,
   };
   const config = (overrides: Partial<ProberConfig> = {}): ProberConfig => ({
-    databaseUrl: 'postgres://crove_prober:pw@db:5432/postgres',
+    databaseUrl: 'postgres://ludy_prober:pw@db:5432/postgres',
     webhookUrl: undefined,
     webhookFormat: 'generic',
     telegramChatId: undefined,

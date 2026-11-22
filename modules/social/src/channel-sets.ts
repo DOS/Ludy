@@ -33,7 +33,7 @@ export const channelSetSave = defineCommand({
     const userId = requireUser(ctx);
     const ids = [...new Set(input.connectionIds)];
     const live = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', ids)
@@ -103,7 +103,7 @@ export const channelSetList = defineQuery({
     const live = new Set(
       all.length === 0
         ? []
-        : (await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', all).where('status', '<>', 'revoked').execute()).map((c) => c.id),
+        : (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', all).where('status', '<>', 'revoked').execute()).map((c) => c.id),
     );
     return rows.map((r) => ({ id: r.id, name: r.name, connectionIds: r.connection_ids.filter((id) => live.has(id)), updatedAt: r.updated_at.toISOString() }));
   },

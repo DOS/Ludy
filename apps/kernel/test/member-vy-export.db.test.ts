@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The org export carries each member's Vy as counts only (#2822, ADR-0049): per member the number of private results and memory entries, never a body, in the export table
-// kernel.member_vy_private_count, which the worker's system context reads through crove_kernel.member_vy_private_counts(). No other export table carries a Vy body either.
+// kernel.member_vy_private_count, which the worker's system context reads through ludy_kernel.member_vy_private_counts(). No other export table carries a Vy body either.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -42,17 +42,17 @@ suite('the org export carries Vy as counts only (#2822)', () => {
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       const agentId = randomUUID();
-      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, userId]);
+      await c.query(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, userId]);
       for (let i = 0; i < results; i += 1) {
         const runId = randomUUID();
-        await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() + interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
+        await c.query(`INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() + interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
         await c.query(
-          `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
+          `INSERT INTO ludy_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
            VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', $6, now(), now() + interval '30 days')`,
           [orgId, randomUUID(), userId, runId, randomUUID(), RESULT_BODY],
         );
       }
-      for (let i = 0; i < memories; i += 1) await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), userId, MEMORY_BODY]);
+      for (let i = 0; i < memories; i += 1) await c.query(`INSERT INTO ludy_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), userId, MEMORY_BODY]);
     });
   }
   async function exported(table: string): Promise<string[]> {
@@ -72,21 +72,21 @@ suite('the org export carries Vy as counts only (#2822)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const app = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
     for (const key of Object.keys(users) as Array<keyof typeof users>) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'member-vy-export', subject: key, email: `${key}@member-vy-export.test`, name: null });
     orgId = (await createOrg(app, { type: 'user', userId: users.owner, aal: 'aal1' }, 'Xuất Vy')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.alice, users.bob, users.carol]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.alice, users.bob, users.carol]));
     await seed(users.alice, 2, 1);
     await seed(users.bob, 1, 0);
     // A member with memory entries only.

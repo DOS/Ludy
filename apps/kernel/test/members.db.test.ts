@@ -64,7 +64,7 @@ suite('member management on PostgreSQL', () => {
   }
 
   const rows = (orgId: string, table: 'audit_event' | 'activity' | 'outbox_event', where: string) =>
-    admin(async (c) => (await c.query(`SELECT * FROM crove_kernel.${table} WHERE org_id = $1 AND ${where} ORDER BY id`, [orgId])).rows);
+    admin(async (c) => (await c.query(`SELECT * FROM ludy_kernel.${table} WHERE org_id = $1 AND ${where} ORDER BY id`, [orgId])).rows);
 
   beforeAll(async () => {
     const base = new URL(ADMIN as string);
@@ -75,9 +75,9 @@ suite('member management on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);

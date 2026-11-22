@@ -53,7 +53,7 @@ suite('the glossary an organization keeps (#4043)', () => {
     const client = await appPool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [users[who], org]);
+      await client.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [users[who], org]);
       await fn((statement, params = []) => client.query(statement, params));
     } finally {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -70,9 +70,9 @@ suite('the glossary an organization keeps (#4043)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = new URL(adminUrl);
-    login.username = 'crove_app';
+    login.username = 'ludy_app';
     login.password = 'test-app-pw';
     appPool = createPool({ connectionString: login.toString(), max: 4 });
     pools.push(appPool);
@@ -81,7 +81,7 @@ suite('the glossary an organization keeps (#4043)', () => {
     for (const key of ['owner', 'adm', 'rec', 'viewer', 'ownerB', 'ownerC']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'glossary', subject: key, email: `${key}@glossary.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Mẫu')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('ownerB'), 'Công ty Khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.adm, users.rec, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.adm, users.rec, users.viewer]);
   }, 300_000);
 
   afterAll(async () => {
@@ -105,7 +105,7 @@ suite('the glossary an organization keeps (#4043)', () => {
     }
     expect((await list('owner')).map((t) => t.term)).toEqual(['Crove', 'MISA AMIS']);
     expect((await list('adm')).map((t) => t.id)).toEqual([first.termId, second.termId]);
-    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.add' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.add' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]);
     expect(audit.rows.map((r) => r.detail)).toEqual([expect.objectContaining({ termId: first.termId, termCount: 1 }), expect.objectContaining({ termId: second.termId, termCount: 2 })]);
     expect(JSON.stringify(audit.rows)).not.toContain('MISA');
     expect(JSON.stringify(audit.rows)).not.toContain('Crove');

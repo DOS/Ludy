@@ -11,12 +11,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
+import { createDb } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -29,6 +30,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
   let adminUrl = '';
   let appUrl = '';
   let before = '';
+  let upgraded = false;
   let pool: pg.Pool;
   let orgId = '';
   let owner = '';
@@ -43,7 +45,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
   const rows: Record<string, string> = {};
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await client.connect();
     try {
       return await fn(client);
@@ -58,13 +60,13 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
     await admin(async (c) => {
       for (const [command, detail] of audited) {
         await c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
            VALUES ($1, $2, 'user', $3, $4, gen_random_uuid(), 'ok', repeat('0', 64), $5::jsonb)`,
           [orgId, at, owner, command, JSON.stringify(detail)],
         );
       }
       const { rows: inserted } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, occurred_at)
+        `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, occurred_at)
          VALUES ($1, $2, $3, $4, 'Dòng cũ', $5, $6) RETURNING id`,
         [orgId, recordType, recordId, kind, owner, at],
       );
@@ -78,7 +80,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.mail_message (org_id, stream, source, template_key, to_hash, payload, message_id_header)
+            `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, template_key, to_hash, payload, message_id_header)
              VALUES ($1, 'transactional', 'finance.missing_invoices.request', 'finance.missing_invoices', repeat('a', 64), $2::jsonb, $3) RETURNING id`,
             [orgId, JSON.stringify(payload), `<${randomUUID()}@backfill.test>`],
           )
@@ -86,7 +88,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
     );
 
   const entityOf = async (name: string) =>
-    (await admin((c) => c.query<{ e: string | null }>('SELECT legal_entity_id AS e FROM crove_kernel.activity WHERE org_id = $1 AND id = $2', [orgId, rows[name]]))).rows[0]?.e;
+    (await admin((c) => c.query<{ e: string | null }>('SELECT legal_entity_id AS e FROM ludy_kernel.activity WHERE org_id = $1 AND id = $2', [orgId, rows[name]]))).rows[0]?.e;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -107,7 +109,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
     app.username = 'crove_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
-    pool = createPool({ connectionString: appUrl, max: 2 });
+    pool = createPreCutoverPool({ connectionString: appUrl, max: 2 });
     const db = createDb(pool);
     // No context token key: the database starts at a version before enter_user_context (#1822).
     const rt = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -116,17 +118,17 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@activity-backfill.test', name: null });
     const { orgId: otherOrg } = await createOrg(rt, { type: 'user', userId: owner, aal: 'aal1' }, 'Tổ chức khác');
     const defaultOf = async (c: pg.Client, org: string) =>
-      (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org])).rows[0]?.id as string;
+      (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org])).rows[0]?.id as string;
     await admin(async (c) => {
       defaultEntity = await defaultOf(c, orgId);
       foreignEntity = await defaultOf(c, otherOrg);
       const add = async (name: string) =>
-        (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [orgId, name, owner]))
+        (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [orgId, name, owner]))
           .rows[0]?.id as string;
       branch = await add('Chi nhánh Huế');
       branch2 = await add('Chi nhánh Đà Nẵng');
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         member,
         branch,
@@ -162,6 +164,12 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
     await oldRow('orgLevel', 'kernel.tenant', orgId, 'org.address_changed', '2026-10-01T11:00:00Z', [['kernel.org.set_address', { legalEntityId: branch }]]);
 
     await migrate({ adminUrl, dir: MIGRATIONS });
+    upgraded = true;
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    const postApp = new URL(adminUrl);
+    postApp.username = 'ludy_app';
+    postApp.password = 'test-app-pw';
+    appUrl = postApp.toString();
   }, 300_000);
 
   afterAll(async () => {
@@ -196,7 +204,7 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
     try {
       await c.query('BEGIN');
       await enterUser(c, member, orgId);
-      const ids = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.activity WHERE id = ANY($1::uuid[])', [Object.values(rows)])).rows.map((r) => r.id);
+      const ids = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.activity WHERE id = ANY($1::uuid[])', [Object.values(rows)])).rows.map((r) => r.id);
       seen = Object.entries(rows)
         .filter(([, id]) => ids.includes(id))
         .map(([name]) => name)
@@ -211,14 +219,14 @@ suite('activity entity backfill on PostgreSQL (#1805)', () => {
   it('validates the constraint, so an old row can be updated and a new one must name its entity', async () => {
     const validated = await admin(
       async (c) =>
-        (await c.query<{ v: boolean }>(`SELECT convalidated AS v FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_kernel.activity'::regclass AND conname = 'activity_entity_named'`))
+        (await c.query<{ v: boolean }>(`SELECT convalidated AS v FROM pg_catalog.pg_constraint WHERE conrelid = 'ludy_kernel.activity'::regclass AND conname = 'activity_entity_named'`))
           .rows[0]?.v,
     );
     expect(validated).toBe(true);
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.activity SET summary = 'Đã xóa' WHERE org_id = $1 AND id = $2`, [orgId, rows.taxMark]))).resolves.toBeDefined();
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.activity SET summary = 'Đã xóa' WHERE org_id = $1 AND id = $2`, [orgId, rows.taxMark]))).resolves.toBeDefined();
     await expect(
       admin((c) =>
-        c.query(`INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id) VALUES ($1, 'kernel.party', $2, 'party.entity_unlinked', 'x', $3)`, [
+        c.query(`INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id) VALUES ($1, 'kernel.party', $2, 'party.entity_unlinked', 'x', $3)`, [
           orgId,
           randomUUID(),
           owner,

@@ -159,7 +159,7 @@ export const summaryCopyResult = defineCommand({
     if (body.enhanced && (summaryText === '' || summaryText.length > 8000)) throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
     const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const ids = [userId, ...readers.map((r) => r.user_id)];
-    const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+    const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
     const people = profiles.map((p) => ({ userId: p.user_id, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
 
     // One copy of a run: a run already copied (its rows carry its id, read or not) is not copied again, which would duplicate its items.

@@ -1,4 +1,4 @@
-// Activity summaries keep no classified value and no free text (#1634, #1825, after #1626): crove_kernel.activity.summary
+// Activity summaries keep no classified value and no free text (#1634, #1825, after #1626): ludy_kernel.activity.summary
 // is text a member reads in a record's timeline, kept with the record; the PDPL erasure only replaces an email, phone or
 // ID quoted in it (#1948), so it names what happened, never a person's or an org's name, tax code, address, email or
 // other classified value, nor a reason or note a member typed. The record's page shows its current values beside the
@@ -25,15 +25,15 @@ const FREE_TEXT = new Set(['body', 'comment', 'description', 'memo', 'message', 
 // written (`asset.name`, `name`) and covers it in its file.
 const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/agents.ts': {
-    'input.displayName': "an AI agent's display name (crove_kernel.agent.display_name, internal)",
-    'agent.display_name': "an AI agent's display name (crove_kernel.agent.display_name, internal)",
-    'input.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
-    'before.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
-    'position.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
-    'template.title': "an agent template's title (crove_kernel.agent_template.title, internal)",
+    'input.displayName': "an AI agent's display name (ludy_kernel.agent.display_name, internal)",
+    'agent.display_name': "an AI agent's display name (ludy_kernel.agent.display_name, internal)",
+    'input.title': 'the title of a position in the org chart (ludy_kernel.position.title, internal)',
+    'before.title': 'the title of a position in the org chart (ludy_kernel.position.title, internal)',
+    'position.title': 'the title of a position in the org chart (ludy_kernel.position.title, internal)',
+    'template.title': "an agent template's title (ludy_kernel.agent_template.title, internal)",
   },
   'packages/kernel/src/extraction.ts': {
-    'file.filename': 'the filename of an accounting source file (crove_kernel.file.filename, internal)',
+    'file.filename': 'the filename of an accounting source file (ludy_kernel.file.filename, internal)',
   },
   'modules/crm/src/bookings.ts': { 'type.title': "the title of a booking page's event type (crove_crm.event_type.title, internal)" },
   'modules/finance/src/accounts.ts': { name: "the name of an account of the org's chart (crove_finance.org_account.name, internal)" },

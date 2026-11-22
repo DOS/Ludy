@@ -50,7 +50,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
     try {
-      await client.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', body]);
+      await client.query('SELECT ludy_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', body]);
     } finally {
       await client.end();
     }
@@ -63,7 +63,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
     const [owner, adm, lan, viewer] = [await user('owner'), await user('admin'), await user('lan'), await user('viewer')];
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adm, lan, viewer]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adm, lan, viewer]);
     });
     const accountId = `sandbox-${randomUUID().slice(0, 8)}`;
     const sealed = vault.seal(JSON.stringify({ accessToken: `sbx_${randomBytes(24).toString('base64url')}` }), { orgId, provider: 'sandbox', externalAccountId: accountId });
@@ -80,7 +80,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
     const ev: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${randomUUID().slice(0, 8)}`, direction: 'in', contact: { id: customer, name: `Khách ${customer}` }, text, at: new Date().toISOString() };
     await park(sandboxNoticeBody({ accountId, events: [ev] }));
     await intake();
-    const [row] = await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, threadId]);
+    const [row] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, threadId]);
     return (row as { id: string }).id;
   }
   // A second channel of the org.
@@ -94,8 +94,8 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
     );
     return { connectionId, accountId };
   }
-  const threads = async (o: Org, connectionId?: string) => (await rows<{ external_thread_id: string }>('SELECT external_thread_id FROM crove_kernel.conversation WHERE org_id = $1 AND ($2::uuid IS NULL OR channel_connection_id = $2::uuid) ORDER BY external_thread_id', [o.orgId, connectionId ?? null])).map((r) => r.external_thread_id);
-  const count = async (table: string, o: Org) => Number((await rows<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table} WHERE org_id = $1`, [o.orgId]))[0]?.n);
+  const threads = async (o: Org, connectionId?: string) => (await rows<{ external_thread_id: string }>('SELECT external_thread_id FROM ludy_kernel.conversation WHERE org_id = $1 AND ($2::uuid IS NULL OR channel_connection_id = $2::uuid) ORDER BY external_thread_id', [o.orgId, connectionId ?? null])).map((r) => r.external_thread_id);
+  const count = async (table: string, o: Org) => Number((await rows<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.${table} WHERE org_id = $1`, [o.orgId]))[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -106,15 +106,15 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -160,7 +160,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       const o = await org();
       await thread(o, 'k-1', 'Giữ lại', 'u-k1');
       await disconnect(o, o.connectionId);
-      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('revoked');
+      expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('revoked');
       expect(await threads(o)).toEqual(['k-1']);
       expect(await count('conversation_message', o)).toBe(1);
       expect(await count('conversation_identity', o)).toBe(1);
@@ -178,14 +178,14 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       await thread(o, 'b-1', 'Của kênh khác', 'u-shared', two.accountId);
       await thread(other, 'x-1', 'Của org khác', 'u-x');
       // An image row on the first message and a mail's answer is not needed here: the image goes with its message and its blob is queued.
-      const [msg] = await rows<{ id: string; kind: string }>('SELECT id, kind FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 ORDER BY seq LIMIT 1', [o.orgId, first]);
+      const [msg] = await rows<{ id: string; kind: string }>('SELECT id, kind FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 ORDER BY seq LIMIT 1', [o.orgId, first]);
       const key = `conversation/${o.orgId}/${'c'.repeat(64)}`;
-      await rows("INSERT INTO crove_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, source_url, storage_key) VALUES ($1, $2, $3, $4, 'https://x.test/a.png', $5)", [o.orgId, msg?.id, o.connectionId, msg?.kind, key]);
+      await rows("INSERT INTO ludy_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, source_url, storage_key) VALUES ($1, $2, $3, $4, 'https://x.test/a.png', $5)", [o.orgId, msg?.id, o.connectionId, msg?.kind, key]);
       expect(await count('conversation_attachment', o)).toBe(1);
       const before = { otherThreads: await threads(other), twoThreads: await threads(o, two.connectionId), otherMessages: await count('conversation_message', other) };
       // A member, a viewer, an agent and the system are refused; an admin without a fresh second factor is asked for one before anything changes.
       const untouched = async () => {
-        expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
+        expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
         expect(await threads(o, o.connectionId)).toEqual(['a-1', 'a-2']);
       };
       for (const who of [o.lan, o.viewer]) await expect(eraseAs(o, o.connectionId, asMfa(who))).rejects.toMatchObject({ status: 403 });
@@ -197,19 +197,19 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       expect(await eraseAs(o, o.connectionId, asMfa(o.admin))).toEqual({ threads: 2, messages: 3, identities: 1 });
       expect(await threads(o, o.connectionId)).toEqual([]);
       // The same transaction disconnected the channel (its own command, its own audit row) and dropped its token.
-      expect((await rows<{ status: string; status_reason: string }>('SELECT status, status_reason FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]).toEqual({ status: 'revoked', status_reason: 'disconnected' });
-      expect(await rows("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.channel.disconnect' AND outcome = 'ok'", [o.orgId])).toHaveLength(1);
+      expect((await rows<{ status: string; status_reason: string }>('SELECT status, status_reason FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]).toEqual({ status: 'revoked', status_reason: 'disconnected' });
+      expect(await rows("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.channel.disconnect' AND outcome = 'ok'", [o.orgId])).toHaveLength(1);
       expect(await count('conversation_note', o)).toBe(0);
       expect(await count('conversation_attachment', o)).toBe(0);
       // The image's blob is queued for the worker to delete, in the same transaction as its row.
-      expect((await rows<{ storage_key: string }>('SELECT storage_key FROM crove_kernel.conversation_blob_doomed WHERE storage_key = $1', [key])).map((r) => r.storage_key)).toEqual([key]);
+      expect((await rows<{ storage_key: string }>('SELECT storage_key FROM ludy_kernel.conversation_blob_doomed WHERE storage_key = $1', [key])).map((r) => r.storage_key)).toEqual([key]);
       // The other channel, its customer and the other org are as they were.
       expect(await threads(o, two.connectionId)).toEqual(before.twoThreads);
       expect(await threads(other)).toEqual(before.otherThreads);
       expect(await count('conversation_message', other)).toBe(before.otherMessages);
-      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-shared']);
+      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-shared']);
       // The audit row holds the connection id and counts, no word a customer wrote, no name, no key.
-      const [audit] = await rows<{ detail: unknown; actor_type: string }>("SELECT detail, actor_type FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_channel' AND outcome = 'ok'", [o.orgId]);
+      const [audit] = await rows<{ detail: unknown; actor_type: string }>("SELECT detail, actor_type FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_channel' AND outcome = 'ok'", [o.orgId]);
       const text = JSON.stringify(audit?.detail);
       expect(text).toContain(o.connectionId);
       expect(text).toContain('"threads":2');
@@ -226,15 +226,15 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       await thread(o, 'c-1', 'Của kênh bị xóa', 'u-gone');
       // An identity with no thread, held by another transaction as an intake's upsert holds it until it commits.
       const held = randomUUID();
-      await rows("INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', 'u-held', 'Khách đang được nhận')", [o.orgId, held]);
+      await rows("INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', 'u-held', 'Khách đang được nhận')", [o.orgId, held]);
       const holder = new pg.Client({ connectionString: adminUrl });
       await holder.connect();
       try {
         await holder.query('BEGIN');
-        await holder.query('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, held]);
+        await holder.query('SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, held]);
         // The erase does not wait for it and leaves it: one identity swept (the channel's own customer).
         expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toEqual({ threads: 1, messages: 1, identities: 1 });
-        expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-held']);
+        expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-held']);
       } finally {
         await holder.query('ROLLBACK').catch(() => {});
         await holder.end();
@@ -247,7 +247,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       const o = await org();
       await thread(o, 'g-1', 'Bình luận cần giữ', 'u-g');
       const untouched = async () => {
-        expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
+        expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
         expect(await threads(o, o.connectionId)).toEqual(['g-1']);
       };
       const nowS = Math.floor(Date.now() / 1000);
@@ -259,7 +259,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
         // A member-bound grant holds read scopes only (its CHECK), a company grant may hold a write scope.
         const scopes = kind === 'company' ? ['ludy.read', 'ludy.engage.write'] : ['ludy.read'];
         await rows(
-          `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+          `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
            VALUES ($1, $2, $3, $4, 'Dy thử', 'client.example.com', $5::text[], $6, clock_timestamp(), now() + interval '30 days', $3, $7, $8)`,
           [o.orgId, grantId, o.owner, clientId, scopes, `oauth-${grantId}`, kind, kind === 'member' ? o.owner : null],
         );
@@ -268,7 +268,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       // An extension token of an owner (a real row): a token reaches only the commands that declare one of its scopes, and never an R3 command.
       const tokenId = randomUUID();
       await rows(
-        `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $4, 'Thiết bị thử', ARRAY['agenda'], now(), now() + interval '30 days', $3)`,
         [o.orgId, tokenId, o.owner, createHash('sha256').update(randomBytes(32)).digest()],
       );
@@ -282,9 +282,9 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       // The agent and its running run are written as the database holds them (the install command needs the template's module in the org, which this kernel-only suite has not got).
       const agentId = randomUUID();
       const runId = randomUUID();
-      await rows(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, created_by) VALUES ($1, $2, 'finance.chief_accountant', 'Kế toán thử xóa kênh', $3)`, [o.orgId, agentId, o.owner]);
-      await rows(`INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_agent_id, job_description) SELECT $1, t.title, t.module, t.role_key, $2, t.job_description FROM crove_kernel.agent_template t WHERE t.key = 'finance.chief_accountant'`, [o.orgId, agentId]);
-      await rows(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, expires_at) VALUES ($1, $2, $3, 'finance', 'running', now() + interval '10 minutes')`, [o.orgId, runId, agentId]);
+      await rows(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, created_by) VALUES ($1, $2, 'finance.chief_accountant', 'Kế toán thử xóa kênh', $3)`, [o.orgId, agentId, o.owner]);
+      await rows(`INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_agent_id, job_description) SELECT $1, t.title, t.module, t.role_key, $2, t.job_description FROM ludy_kernel.agent_template t WHERE t.key = 'finance.chief_accountant'`, [o.orgId, agentId]);
+      await rows(`INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, status, expires_at) VALUES ($1, $2, $3, 'finance', 'running', now() + interval '10 minutes')`, [o.orgId, runId, agentId]);
       await expect(
         worker.execute('kernel.conversation.erase_channel', { connectionId: o.connectionId, confirm: true }, { actor: { type: 'agent', agentId, runId }, orgId: o.orgId, idempotencyKey: randomUUID() }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403, message: 'Tác tử AI không được thực hiện việc này' });
@@ -313,8 +313,8 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       try {
         // The disconnect has taken the connection's row and not committed yet: the intake reads it under its share lock, so it waits.
         await holder.query('BEGIN');
-        await holder.query('SELECT id FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, o.connectionId]);
-        await holder.query("UPDATE crove_kernel.channel_connection SET status = 'revoked', status_reason = 'disconnected' WHERE org_id = $1 AND id = $2", [o.orgId, o.connectionId]);
+        await holder.query('SELECT id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, o.connectionId]);
+        await holder.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked', status_reason = 'disconnected' WHERE org_id = $1 AND id = $2", [o.orgId, o.connectionId]);
         const ev: ConversationEvent = { kind: 'comment_thread', threadId: 'wait-1', postId: 'post-1', messageId: `m-${randomUUID().slice(0, 8)}`, direction: 'in', contact: { id: 'u-wait', name: 'Khách chờ' }, text: 'Đến đúng lúc ngắt kết nối', at: new Date().toISOString() };
         await park(sandboxNoticeBody({ accountId: o.accountId, events: [ev] }));
         let done = false;
@@ -340,7 +340,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       try {
         // An intake in flight reads the connection under a key-share lock and keeps it until it commits.
         await holder.query('BEGIN');
-        await holder.query('SELECT id FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR KEY SHARE', [o.orgId, o.connectionId]);
+        await holder.query('SELECT id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR KEY SHARE', [o.orgId, o.connectionId]);
         let done = false;
         const pending = eraseAs(o, o.connectionId, asMfa(o.owner)).then((r) => {
           done = true;
@@ -349,10 +349,10 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
         await new Promise((r) => setTimeout(r, 600));
         expect(done).toBe(false);
         // The intake commits its thread, then the erase goes through and removes it.
-        await holder.query(`INSERT INTO crove_kernel.conversation_identity (org_id, provider, external_user_id, display_name) VALUES ($1, 'sandbox', 'u-late', 'Khách muộn')`, [o.orgId]);
+        await holder.query(`INSERT INTO ludy_kernel.conversation_identity (org_id, provider, external_user_id, display_name) VALUES ($1, 'sandbox', 'u-late', 'Khách muộn')`, [o.orgId]);
         await holder.query(
-          `INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, identity_id, status, opened_at, created_at, updated_at)
-           SELECT $1, $2, 'comment_thread', 'late-1', i.id, 'new', now(), now(), now() FROM crove_kernel.conversation_identity i WHERE i.org_id = $1 AND i.external_user_id = 'u-late'`,
+          `INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, identity_id, status, opened_at, created_at, updated_at)
+           SELECT $1, $2, 'comment_thread', 'late-1', i.id, 'new', now(), now(), now() FROM ludy_kernel.conversation_identity i WHERE i.org_id = $1 AND i.external_user_id = 'u-late'`,
           [o.orgId, o.connectionId],
         );
         await holder.query('COMMIT');
@@ -369,28 +369,28 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       // A connection of a provider the conversation core has no rules for, in the same org, active with a sealed token.
       const accountId = `ads-${randomUUID().slice(0, 8)}`;
       const [ads] = await rows<{ id: string }>(
-        `INSERT INTO crove_kernel.channel_connection (org_id, provider, external_account_id, display_name, status, connected_by, connected_at, updated_at)
+        `INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, status, connected_by, connected_at, updated_at)
          SELECT $1, 'meta_ads', $2, 'Tài khoản quảng cáo', 'active', $3, now(), now() RETURNING id`,
         [o.orgId, accountId, o.owner],
       );
       await expect(eraseAs(o, (ads as { id: string }).id, asMfa(o.owner))).rejects.toMatchObject({ status: 422, code: 'CHANNEL_NOT_CONVERSATIONAL' });
       // It was not disconnected, and the org's conversations are untouched.
-      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [(ads as { id: string }).id]))[0]?.status).toBe('active');
+      expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [(ads as { id: string }).id]))[0]?.status).toBe('active');
       expect(await threads(o)).toEqual(['n-1']);
-      expect(await rows("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.channel.disconnect' AND outcome = 'ok'", [o.orgId])).toHaveLength(0);
+      expect(await rows("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.channel.disconnect' AND outcome = 'ok'", [o.orgId])).toHaveLength(0);
     });
 
     it('changes nothing when the channel cannot be disconnected (a Telegram bot that still receives chats), and erases an expired channel', async () => {
       const o = await org();
       await thread(o, 'p-1', 'Một', 'u-p1');
-      await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_hook = repeat('a', 43) WHERE id = $1", [o.connectionId]);
+      await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = repeat('a', 43) WHERE id = $1", [o.connectionId]);
       await expect(eraseAs(o, o.connectionId, asMfa(o.owner))).rejects.toMatchObject({ status: 409, code: 'CHAT_IS_ON' });
       expect(await threads(o)).toEqual(['p-1']);
-      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
+      expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
       // A channel whose token was refused (expired) is disconnected and erased like any other.
-      await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'off', chat_hook = NULL, chat_hook_next = NULL, status = 'expired', status_reason = 'token_refused' WHERE id = $1", [o.connectionId]);
+      await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'off', chat_hook = NULL, chat_hook_next = NULL, status = 'expired', status_reason = 'token_refused' WHERE id = $1", [o.connectionId]);
       expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toMatchObject({ threads: 1 });
-      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('revoked');
+      expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('revoked');
     });
   });
 });

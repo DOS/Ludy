@@ -46,13 +46,13 @@ suite('social saved views on PostgreSQL (#1300)', () => {
       await client.end();
     }
   }
-  // A statement in a member's context as the API's login (crove_app), always rolled back: the policy, not a command.
+  // A statement in a member's context as the API's login (ludy_app), always rolled back: the policy, not a command.
   async function asApp<T>(orgId: string, user: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(client);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
@@ -68,7 +68,7 @@ suite('social saved views on PostgreSQL (#1300)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, owner, admin: await person('admin'), lan: await person('lan'), minh: await person('minh'), viewer: await person('viewer') };
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
         orgId,
         o.admin,
         o.lan,
@@ -81,7 +81,7 @@ suite('social saved views on PostgreSQL (#1300)', () => {
   async function connection(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -108,9 +108,9 @@ suite('social saved views on PostgreSQL (#1300)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: app.toString(), max: 4 });
@@ -206,7 +206,7 @@ suite('social saved views on PostgreSQL (#1300)', () => {
       admin((c) => c.query('INSERT INTO crove_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, $3, $4)', [o.orgId, o.minh, 'To', JSON.stringify({ q: 'x'.repeat(5000) })])),
     ).rejects.toThrow(/check constraint/);
     // A member who leaves takes their views along, shared ones too.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
     expect(await count(o.minh)).toBe('0');
     expect((await list(o, o.lan)).every((v) => v.ownerId === o.lan)).toBe(true);
   });
@@ -246,7 +246,7 @@ suite('social saved views on PostgreSQL (#1300)', () => {
   });
 
   it('is purged with the org: the purge function lists the table among the Social rows it deletes', async () => {
-    const { rows } = await admin((c) => c.query<{ src: string }>("SELECT prosrc AS src FROM pg_catalog.pg_proc WHERE oid = 'crove_kernel.org_purge(integer)'::regprocedure"));
+    const { rows } = await admin((c) => c.query<{ src: string }>("SELECT prosrc AS src FROM pg_catalog.pg_proc WHERE oid = 'ludy_kernel.org_purge(integer)'::regprocedure"));
     expect(rows[0]?.src).toContain("'crove_social.saved_view'");
   });
 });

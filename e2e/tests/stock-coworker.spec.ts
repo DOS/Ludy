@@ -78,8 +78,8 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
 });
 
 // The rows are written by the database owner with triggers off: the books insist that a document is posted with its entry, which this screen does not look at.
-const ORG = `(SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug')`;
-const ENTITY = `(SELECT l.id FROM crove_kernel.legal_entity l WHERE l.org_id = ${ORG} AND l.is_default)`;
+const ORG = `(SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`;
+const ENTITY = `(SELECT l.id FROM ludy_kernel.legal_entity l WHERE l.org_id = ${ORG} AND l.is_default)`;
 const ITEM = `(SELECT id FROM crove_finance.stock_item WHERE org_id = ${ORG} AND code = 'A1')`;
 
 test('an item that sells faster than it lasts shows as running low, with the supplier, and its reorder message is a template to edit when AI is off', async ({ page }) => {
@@ -100,8 +100,8 @@ test('an item that sells faster than it lasts shows as running low, with the sup
     await expect(page.getByTestId('stock-item')).toHaveCount(1);
     exec(
       `SET session_replication_role = replica;
-       INSERT INTO crove_kernel.party (org_id, id, name, email) VALUES (${ORG}, :'supplier'::uuid, 'Nhà cung cấp Phương Nam', 'ncc@example.com');
-       INSERT INTO crove_kernel.party (org_id, id, name) VALUES (${ORG}, :'customer'::uuid, 'Khách lẻ');
+       INSERT INTO ludy_kernel.party (org_id, id, name, email) VALUES (${ORG}, :'supplier'::uuid, 'Nhà cung cấp Phương Nam', 'ncc@example.com');
+       INSERT INTO ludy_kernel.party (org_id, id, name) VALUES (${ORG}, :'customer'::uuid, 'Khách lẻ');
        INSERT INTO crove_finance.purchase_document (org_id, id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction) VALUES
          (${ORG}, :'buy'::uuid, ${ENTITY}, :'supplier'::uuid, 'AA', '000001', current_date - 60, 100, 0, 100, 'purchase'),
          (${ORG}, :'sell'::uuid, ${ENTITY}, :'customer'::uuid, 'AA', '000002', current_date - 10, 100, 0, 100, 'sale');

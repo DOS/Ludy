@@ -53,7 +53,7 @@ export const bioSave = defineCommand({
     const userId = requireUser(ctx);
     if (input.avatarFileId) {
       const file = await ctx.trx
-        .selectFrom('crove_kernel.file')
+        .selectFrom('ludy_kernel.file')
         .select('content_type')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.avatarFileId)

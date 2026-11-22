@@ -76,7 +76,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     const created = await createOrg(rt, asUser(owner), `Cty Self Service ${tag}`);
     const orgId = created.orgId;
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'viewer')`,
       [orgId, manager, staffA, staffB, staffC, unlinked, viewer],
     );
@@ -109,11 +109,11 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     adminPool = createPool({ connectionString: adminUrl, max: 2, resetOnRelease: false });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     appPool = createPool({ connectionString: appUrl.toString(), max: 4 });
 
@@ -430,7 +430,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
 
     // Audit log carries no raw PII notes/reasons.
     const auditRows = await adminPool.query<{ command: string; detail: unknown }>(
-      `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('hr.self.leave.request_submit', 'hr.leave_request.approve_final')`,
+      `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('hr.self.leave.request_submit', 'hr.leave_request.approve_final')`,
       [o.orgId],
     );
     const serializedAudit = JSON.stringify(auditRows.rows);
@@ -574,7 +574,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       name: 'Đồng Sáng Lập',
     });
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'owner')`,
       [o.orgId, adminUser, secondOwner],
     );
@@ -639,7 +639,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     });
 
     const soleAudit = await adminPool.query<{ detail: Record<string, unknown> }>(
-      `SELECT detail FROM crove_kernel.audit_event
+      `SELECT detail FROM ludy_kernel.audit_event
         WHERE org_id = $1 AND command = 'hr.leave_request.approve_final'
         ORDER BY occurred_at DESC LIMIT 1`,
       [soleOrgId],

@@ -5,7 +5,7 @@
 // command moves each such open task to the entity-aware escalation target of #1788, else to the owners, with an
 // activity row that takes the task's entity, an event the notification dispatch turns into a notice for whoever has it
 // now, and the moves in the command's audit row. Org-level tasks and tasks the holder still reads stay. The database
-// moves them set-based (crove_kernel.task_reroute), for an owner's context only.
+// moves them set-based (ludy_kernel.task_reroute), for an owner's context only.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -53,9 +53,9 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const db = createDb(pools[0] as pg.Pool);
     const user = await upsertIdentity(db, { issuer: 't1799', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@t1799.test`, name: null });
     await admin(async (c) => {
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
       if (entity) {
-        await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
           orgId,
           user,
           entity,
@@ -82,7 +82,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type, status)
+            `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type, status)
              VALUES ($1, 'Việc cần làm', $2, 'human', $3, 'user', $4) RETURNING id`,
             [orgId, positionId, entity ? JSON.stringify({ type: 'kernel.legal_entity', id: entity }) : null, status],
           )
@@ -91,7 +91,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
 
   const appUrl = () => {
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     return url.toString();
   };
@@ -125,7 +125,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
   const taskRow = (id: string) =>
     admin(
       async (c) =>
-        (await c.query<{ assignee: string | null; status: string }>('SELECT assignee_position_id AS assignee, status FROM crove_kernel.task WHERE id = $1', [id])).rows[0],
+        (await c.query<{ assignee: string | null; status: string }>('SELECT assignee_position_id AS assignee, status FROM ludy_kernel.task WHERE id = $1', [id])).rows[0],
     );
 
   // The rows a move leaves: its activity row (with the entity it took), its event, and the notice the dispatch writes.
@@ -133,16 +133,16 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const { activity, events } = await admin(async (c) => ({
       activity: (
         await c.query<{ kind: string; entity: string | null }>(
-          `SELECT kind, legal_entity_id AS entity FROM crove_kernel.activity WHERE record_type = 'kernel.task' AND record_id = $1`,
+          `SELECT kind, legal_entity_id AS entity FROM ludy_kernel.activity WHERE record_type = 'kernel.task' AND record_id = $1`,
           [taskId],
         )
       ).rows,
-      events: (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE type = 'kernel.task.rerouted' AND payload -> 'taskIds' ? $1`, [taskId])).rows,
+      events: (await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE type = 'kernel.task.rerouted' AND payload -> 'taskIds' ? $1`, [taskId])).rows,
     }));
     for (const e of events) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
     const notified = await admin(
       async (c) =>
-        (await c.query<{ user_id: string }>(`SELECT user_id FROM crove_kernel.notification WHERE kind = 'kernel.task_rerouted' AND subject_id = $1 ORDER BY user_id`, [taskId])).rows.map(
+        (await c.query<{ user_id: string }>(`SELECT user_id FROM ludy_kernel.notification WHERE kind = 'kernel.task_rerouted' AND subject_id = $1 ORDER BY user_id`, [taskId])).rows.map(
           (r) => r.user_id,
         ),
     );
@@ -158,7 +158,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
@@ -170,14 +170,14 @@ suite('tasks a chart or role change would strand (#1799)', () => {
         queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
       });
     };
-    app = runtimeFor('crove_app', 'test-app-pw');
-    worker = runtimeFor('crove_worker', 'test-worker-pw');
+    app = runtimeFor('ludy_app', 'test-app-pw');
+    worker = runtimeFor('ludy_worker', 'test-worker-pw');
     owner = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 't1799', subject: randomUUID(), email: 'owner@t1799.test', name: null });
     ({ orgId } = await createOrg(app, asUser(owner), 'T1799'));
     await admin(async (c) => {
-      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
     });
   }, 300_000);
@@ -217,7 +217,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       async (c) =>
         (
           await c.query<{ detail: { rerouted?: unknown } }>(
-            `SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.position.assign' AND target_id = $1 ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+            `SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.position.assign' AND target_id = $1 ORDER BY occurred_at DESC, id DESC LIMIT 1`,
             [clerkSeat],
           )
         ).rows[0]?.detail,
@@ -232,11 +232,11 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       (await app.query<{ items: Array<{ subjectId: string | null; detail: Record<string, string> }> }>('kernel.notification.list', {}, { actor: asUser(lead), orgId })).items.find(
         (i) => i.subjectId === ofDefault,
       );
-    const titleOf = async () => (await admin((c) => c.query<{ title: string }>('SELECT title FROM crove_kernel.task WHERE id = $1', [ofDefault]))).rows[0]?.title;
+    const titleOf = async () => (await admin((c) => c.query<{ title: string }>('SELECT title FROM ludy_kernel.task WHERE id = $1', [ofDefault]))).rows[0]?.title;
     expect((await notice())?.detail).toEqual({ title: await titleOf() });
-    const stored = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.notification WHERE kind = 'kernel.task_rerouted' AND subject_id = $1`, [ofDefault]));
+    const stored = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.notification WHERE kind = 'kernel.task_rerouted' AND subject_id = $1`, [ofDefault]));
     expect(stored.rows).toEqual([{ detail: {} }]);
-    await admin((c) => c.query(`UPDATE crove_kernel.task SET title = 'Việc đã ẩn' WHERE id = $1`, [ofDefault]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.task SET title = 'Việc đã ẩn' WHERE id = $1`, [ofDefault]));
     expect((await notice())?.detail).toEqual({ title: 'Việc đã ẩn' });
     // Its activity row takes the task's entity: a member limited to the branch does not read it.
     const seen = async (user: string) => {
@@ -245,7 +245,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       try {
         await c.query('BEGIN');
         await enterUser(c, user, orgId);
-        return (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.activity WHERE record_type = 'kernel.task' AND record_id = $1`, [ofDefault])).rows[0]?.n;
+        return (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.activity WHERE record_type = 'kernel.task' AND record_id = $1`, [ofDefault])).rows[0]?.n;
       } finally {
         await c.query('ROLLBACK').catch(() => {});
         await c.end();
@@ -275,7 +275,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.accountant', NULL, $3) RETURNING id`,
+            `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.accountant', NULL, $3) RETURNING id`,
             [orgId, holder, owner],
           )
         ).rows[0]?.id as string,
@@ -308,7 +308,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
 
     expect(await taskRow(ofBranch)).toEqual({ assignee: null, status: 'todo' });
     const lease = await admin(
-      async (c) => (await c.query<{ run: string | null }>('SELECT checkout_run_id AS run FROM crove_kernel.task WHERE id = $1', [ofBranch])).rows[0]?.run,
+      async (c) => (await c.query<{ run: string | null }>('SELECT checkout_run_id AS run FROM ludy_kernel.task WHERE id = $1', [ofBranch])).rows[0]?.run,
     );
     expect(lease).toBeNull();
   });
@@ -317,7 +317,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const leaving = await member('leaving', 'member', null);
     const own = await seat('Thủ quỹ', leaving, null);
     const scope = await admin(
-      async (c) => (await c.query<{ le_scope: string[] }>('SELECT le_scope FROM crove_kernel.position WHERE id = $1', [own])).rows[0]?.le_scope ?? [],
+      async (c) => (await c.query<{ le_scope: string[] }>('SELECT le_scope FROM ludy_kernel.position WHERE id = $1', [own])).rows[0]?.le_scope ?? [],
     );
     const ofBranch = await task(branch, own);
 
@@ -340,7 +340,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
 
   it('moves them when an owner demotes themself while another owner stays', async () => {
     const coOwner = await member('co-owner', 'admin', defaultEntity);
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'owner' WHERE org_id = $1 AND user_id = $2`, [orgId, coOwner]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'owner' WHERE org_id = $1 AND user_id = $2`, [orgId, coOwner]));
     const own = await seat('Phó giám đốc', coOwner, null);
     const ofBranch = await task(branch, own);
 
@@ -359,7 +359,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const many = 2000;
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type)
+        `INSERT INTO ludy_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type)
          SELECT $1, 'Việc ' || g, $2, 'human', $3, 'user' FROM generate_series(1, $4::int) g`,
         [orgId, own, JSON.stringify({ type: 'kernel.legal_entity', id: branch }), many],
       ),
@@ -370,18 +370,18 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     expect(Date.now() - started).toBeLessThan(10_000);
 
     const counts = await admin(async (c) => ({
-      left: (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.task WHERE assignee_position_id = $1', [own])).rows[0]?.n,
-      moved: (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.task WHERE assignee_position_id = $1', [leadSeat])).rows[0]?.n,
+      left: (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.task WHERE assignee_position_id = $1', [own])).rows[0]?.n,
+      moved: (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.task WHERE assignee_position_id = $1', [leadSeat])).rows[0]?.n,
       activity: (
         await c.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM crove_kernel.activity a JOIN crove_kernel.task t ON t.org_id = a.org_id AND t.id = a.record_id
+          `SELECT count(*)::int AS n FROM ludy_kernel.activity a JOIN ludy_kernel.task t ON t.org_id = a.org_id AND t.id = a.record_id
            WHERE a.record_type = 'kernel.task' AND a.kind = 'task.rerouted' AND t.assignee_position_id = $1 AND a.legal_entity_id = $2`,
           [leadSeat, branch],
         )
       ).rows[0]?.n,
       events: (
         await c.query<{ id: string; count: number; ids: number }>(
-          `SELECT id, (payload ->> 'count')::int AS count, jsonb_array_length(payload -> 'taskIds') AS ids FROM crove_kernel.outbox_event
+          `SELECT id, (payload ->> 'count')::int AS count, jsonb_array_length(payload -> 'taskIds') AS ids FROM ludy_kernel.outbox_event
            WHERE type = 'kernel.task.rerouted' AND payload ->> 'toPositionId' = $1`,
           [leadSeat],
         )
@@ -392,7 +392,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     await worker.execute('kernel.notification.dispatch', { eventId: counts.events[0]?.id }, { actor: SYSTEM, orgId });
     const notice = await admin(
       async (c) =>
-        (await c.query<{ user_id: string; detail: Record<string, string> }>(`SELECT user_id, detail FROM crove_kernel.notification WHERE kind = 'kernel.task_rerouted' AND event_id = $1`, [counts.events[0]?.id])).rows,
+        (await c.query<{ user_id: string; detail: Record<string, string> }>(`SELECT user_id, detail FROM ludy_kernel.notification WHERE kind = 'kernel.task_rerouted' AND event_id = $1`, [counts.events[0]?.id])).rows,
     );
     expect(notice).toEqual([{ user_id: lead, detail: { count: String(many) } }]);
   });
@@ -429,12 +429,12 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       await chart.connect();
       try {
         await chart.query('BEGIN');
-        await chart.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))', [`crove_kernel.chart:${orgId}`]);
+        await chart.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))', [`ludy_kernel.chart:${orgId}`]);
         const changing = run();
-        await untilWaiting(name, { advisory: `crove_kernel.chart:${orgId}` });
+        await untilWaiting(name, { advisory: `ludy_kernel.chart:${orgId}` });
         // It waits before taking the seat's or the members' locks.
-        await admin((c) => c.query('SELECT 1 FROM crove_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [orgId, own]));
-        await admin((c) => c.query('SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id IN ($2, $3) FOR UPDATE NOWAIT', [orgId, owner, next]));
+        await admin((c) => c.query('SELECT 1 FROM ludy_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [orgId, own]));
+        await admin((c) => c.query('SELECT 1 FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id IN ($2, $3) FOR UPDATE NOWAIT', [orgId, owner, next]));
         await chart.query('ROLLBACK');
         await changing;
       } finally {
@@ -457,7 +457,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const ofBranch = await task(branch, own);
     // The holder's first entity assignment leaves the branch out; the re-route below is the one its command runs.
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         holder,
         defaultEntity,
@@ -471,21 +471,21 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     try {
       await other.query('BEGIN');
       await other.query(`SET LOCAL deadlock_timeout = '30s'`);
-      await other.query('SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [orgId, lead]);
+      await other.query('SELECT 1 FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [orgId, lead]);
       await seatFirst.query('BEGIN');
-      await seatFirst.query('SELECT 1 FROM crove_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, leadSeat]);
+      await seatFirst.query('SELECT 1 FROM ludy_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, leadSeat]);
 
       await rerouter.query('BEGIN');
       await enterUser(rerouter, owner, orgId);
       const pid = (await rerouter.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
       const otherPid = (await other.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
       const rerouted = rerouter.query<{ task_id: string; to_position_id: string | null }>(
-        'SELECT task_id, to_position_id FROM crove_kernel.task_reroute($1::uuid[])',
+        'SELECT task_id, to_position_id FROM ludy_kernel.task_reroute($1::uuid[])',
         [[own]],
       );
       await untilWaiting('the re-route', { pid });
       // The other session queues for the seat behind it.
-      const seatTaken = other.query('SELECT 1 FROM crove_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, leadSeat]);
+      const seatTaken = other.query('SELECT 1 FROM ludy_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, leadSeat]);
       await untilWaiting('the other session', { pid: otherPid });
       // The re-route takes the seat FOR SHARE and waits for the membership: the cycle is closed.
       await seatFirst.query('ROLLBACK');
@@ -515,7 +515,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const store = await admin(
       async (c) =>
         (
-          await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Kho', 'branch', $2) RETURNING id`, [
+          await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Kho', 'branch', $2) RETURNING id`, [
             orgId,
             owner,
           ])
@@ -530,27 +530,27 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     // Its holder reads neither entity: the default entity's task goes to the lead, the branch's to the owners.
     const ofDefault = await task(defaultEntity, own);
     const ofBranch = await task(branch, own);
-    const reportsTo = (to: string) => admin((c) => c.query('UPDATE crove_kernel.position SET reports_to = $1 WHERE org_id = $2 AND id = $3', [to, orgId, own]));
+    const reportsTo = (to: string) => admin((c) => c.query('UPDATE ludy_kernel.position SET reports_to = $1 WHERE org_id = $2 AND id = $3', [to, orgId, own]));
     const gate = new pg.Client({ connectionString: adminUrl });
     const rowLock = new pg.Client({ connectionString: adminUrl });
     const rerouter = new pg.Client({ connectionString: appUrl() });
     for (const c of [gate, rowLock, rerouter]) await c.connect();
     try {
       await gate.query('BEGIN');
-      await gate.query('LOCK TABLE crove_kernel.activity IN SHARE MODE');
+      await gate.query('LOCK TABLE ludy_kernel.activity IN SHARE MODE');
       await rowLock.query('BEGIN');
-      await rowLock.query('SELECT 1 FROM crove_kernel.task WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, ofDefault]);
+      await rowLock.query('SELECT 1 FROM ludy_kernel.task WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, ofDefault]);
 
       await rerouter.query('BEGIN');
       await enterUser(rerouter, owner, orgId);
       const pid = (await rerouter.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
       const rerouted = rerouter.query<{ task_id: string; to_position_id: string | null }>(
-        'SELECT task_id, to_position_id FROM crove_kernel.task_reroute($1::uuid[])',
+        'SELECT task_id, to_position_id FROM ludy_kernel.task_reroute($1::uuid[])',
         [[own]],
       );
       rerouted.catch(() => {});
       // The first round locked the lead's seat; its UPDATE waits for the activity table.
-      await untilWaiting('the round', { pid, table: 'crove_kernel.activity' });
+      await untilWaiting('the round', { pid, table: 'ludy_kernel.activity' });
       // The branch's task now goes to the seat between, which the round has not locked.
       await reportsTo(betweenSeat);
       await gate.query('ROLLBACK');
@@ -584,7 +584,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     const workshop = await admin(
       async (c) =>
         (
-          await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Xưởng', 'branch', $2) RETURNING id`, [
+          await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Xưởng', 'branch', $2) RETURNING id`, [
             orgId,
             owner,
           ])
@@ -598,7 +598,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4) RETURNING id`,
+            `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4) RETURNING id`,
             [orgId, middle, defaultEntity, owner],
           )
         ).rows[0]?.id as string,
@@ -613,20 +613,20 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     for (const c of [rowLock, rerouter]) await c.connect();
     try {
       await rowLock.query('BEGIN');
-      await rowLock.query('SELECT 1 FROM crove_kernel.task WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, second]);
+      await rowLock.query('SELECT 1 FROM ludy_kernel.task WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, second]);
 
       await rerouter.query('BEGIN');
       await enterUser(rerouter, owner, orgId);
       const pid = (await rerouter.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
       const rerouted = rerouter.query<{ task_id: string; from_position_id: string; to_position_id: string | null }>(
-        'SELECT task_id, from_position_id, to_position_id FROM crove_kernel.task_reroute($1::uuid[])',
+        'SELECT task_id, from_position_id, to_position_id FROM ludy_kernel.task_reroute($1::uuid[])',
         [[own, middleSeat]],
       );
       rerouted.catch(() => {});
       // The first round moves both tasks to the middle seat; its UPDATE waits for the locked one.
       await untilWaiting("the first round's UPDATE", { pid, row: true });
       // The middle seat's holder no longer reads the default entity: once there, the tasks are stranded again.
-      await admin((c) => c.query('DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND id = $2', [orgId, ofDefaultGrant]));
+      await admin((c) => c.query('DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND id = $2', [orgId, ofDefaultGrant]));
       await rowLock.query('ROLLBACK');
       const expected = [first, second]
         .sort((a, b) => (a < b ? -1 : 1))
@@ -654,7 +654,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
   it("never targets a seat that does not read the task's entity, nor the task's own seat (#1904 review)", async () => {
     const top = await seat('Giám đốc vùng', await member('pin-top', 'member', null), null);
     const paused = await seat('Phó giám đốc vùng', await member('pin-paused', 'member', null), top);
-    await admin((c) => c.query(`UPDATE crove_kernel.position SET status = 'paused' WHERE org_id = $1 AND id = $2`, [orgId, paused]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.position SET status = 'paused' WHERE org_id = $1 AND id = $2`, [orgId, paused]));
     const { positionId: vacant } = await app.execute<{ positionId: string }>(
       'kernel.position.create',
       { title: 'Vị trí trống', module: 'finance', roleKey: 'finance.accountant', reportsTo: paused },
@@ -668,15 +668,15 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       await c.query('BEGIN');
       await enterUser(c, owner, orgId);
       const { rows } = await c.query<{ seat: string; entity: string; target: string; reads: boolean }>(
-        `SELECT x.seat, x.entity, x.target, crove_kernel.position_reads_legal_entity($1, x.target, x.entity) AS reads
-         FROM (SELECT p.id AS seat, e.id AS entity, crove_kernel.task_escalation_target($1, p.id, e.id) AS target
-               FROM crove_kernel.position p CROSS JOIN crove_kernel.legal_entity e
+        `SELECT x.seat, x.entity, x.target, ludy_kernel.position_reads_legal_entity($1, x.target, x.entity) AS reads
+         FROM (SELECT p.id AS seat, e.id AS entity, ludy_kernel.task_escalation_target($1, p.id, e.id) AS target
+               FROM ludy_kernel.position p CROSS JOIN ludy_kernel.legal_entity e
                WHERE p.org_id = $1 AND e.org_id = $1) x
          WHERE x.target IS NOT NULL`,
         [orgId],
       );
       // Every seat of the chain below the top has a target for every entity: the top's holder reads them all.
-      const entities = (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.legal_entity WHERE org_id = $1', [orgId])).rows[0]?.n ?? 0;
+      const entities = (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.legal_entity WHERE org_id = $1', [orgId])).rows[0]?.n ?? 0;
       expect(rows.filter((r) => chain.includes(r.seat)).length).toBe(entities * (chain.length - 1));
       expect(rows.filter((r) => r.target === r.seat || !r.reads)).toEqual([]);
     } finally {
@@ -699,7 +699,7 @@ suite('tasks a chart or role change would strand (#1799)', () => {
       try {
         await c.query('BEGIN');
         await enter(c);
-        await c.query('SELECT * FROM crove_kernel.task_reroute(ARRAY[]::uuid[])');
+        await c.query('SELECT * FROM ludy_kernel.task_reroute(ARRAY[]::uuid[])');
         return 'answered';
       } catch (e) {
         return (e as Error).message;
@@ -708,11 +708,11 @@ suite('tasks a chart or role change would strand (#1799)', () => {
         await c.end();
       }
     };
-    await expect(ask('crove_app', 'test-app-pw', (c) => enterUser(c, owner, orgId))).resolves.toBe('answered');
-    await expect(ask('crove_app', 'test-app-pw', (c) => enterUser(c, someone, orgId))).resolves.toBe(
+    await expect(ask('ludy_app', 'test-app-pw', (c) => enterUser(c, owner, orgId))).resolves.toBe('answered');
+    await expect(ask('ludy_app', 'test-app-pw', (c) => enterUser(c, someone, orgId))).resolves.toBe(
       'TASK_REROUTE_OWNER_ONLY',
     );
-    await expect(ask('crove_worker', 'test-worker-pw', (c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]))).resolves.toMatch(
+    await expect(ask('ludy_worker', 'test-worker-pw', (c) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]))).resolves.toMatch(
       /permission denied for function task_reroute/,
     );
   });

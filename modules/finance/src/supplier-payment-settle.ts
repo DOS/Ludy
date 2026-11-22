@@ -68,7 +68,7 @@ async function loadPayment(ctx: QueryContext, paymentId: string): Promise<Paymen
       FROM crove_finance.supplier_payment p
       LEFT JOIN crove_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
       LEFT JOIN crove_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
-      LEFT JOIN crove_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
+      LEFT JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
      WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${paymentId}::uuid`.execute(ctx.trx);
   const row = rows[0];
   if (!row) throw new DomainError('SUPPLIER_PAYMENT_NOT_FOUND', 404, 'Không tìm thấy khoản chi này');
@@ -137,7 +137,7 @@ export const supplierPaymentSettlePrepare = defineCommand({
     const paymentId = input.paymentId.toLowerCase();
     await lockPayment(ctx, paymentId);
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', SUPPLIER_PAYMENT_SETTLE_COMMAND)
@@ -231,13 +231,13 @@ export const bankSupplierMatch = defineQuery({
         JOIN crove_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
           AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id
         LEFT JOIN crove_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
-        LEFT JOIN crove_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
+        LEFT JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${line.legalEntityId}::uuid AND p.status = 'approved' AND p.currency = 'VND'
          AND p.exported_at IS NOT NULL AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
          AND p.amount = ${wanted}::numeric
          AND (p.first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${line.date}::date AND p.amount = trunc(p.amount)
          AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
-         AND NOT EXISTS (SELECT 1 FROM crove_kernel.proposal q WHERE q.org_id = p.org_id AND q.command = ${SUPPLIER_PAYMENT_SETTLE_COMMAND} AND q.status = 'pending'
+         AND NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal q WHERE q.org_id = p.org_id AND q.command = ${SUPPLIER_PAYMENT_SETTLE_COMMAND} AND q.status = 'pending'
                            AND pg_catalog.lower(q.payload->'supplierPayment'->>'paymentId') = p.id::text)
        ORDER BY (d.invoice_number IS NOT NULL AND d.invoice_number <> '' AND pg_catalog.strpos(pg_catalog.lower(${line.description}), pg_catalog.lower(d.invoice_number)) > 0) DESC, p.exported_at DESC, p.id
        LIMIT 20`.execute(ctx.trx);

@@ -41,7 +41,7 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
   async function connection(orgId: string, owner: string, name: string, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -51,7 +51,7 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer, a: await connection(orgId, owner, 'Kênh A'), b: await connection(orgId, owner, 'Kênh B') };
   }
 
@@ -64,7 +64,7 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
   const add = (o: Org, user: string, postIds: string[], connectionId: string) => exec<BulkAddChannelResult>(o, user, 'social.post.bulk_add_channel', { postIds, connectionId });
   const versions = async (o: Org, postId: string) => (await rt.query<{ versions: VersionView[] }>('social.post.versions', { postId }, { actor: asUser(o.owner), orgId: o.orgId })).versions;
   const audits = (o: Org, command: string, outcome = 'ok') =>
-    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
+    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
   const setStatus = (o: Org, postId: string, status: string) =>
     admin(async (c) => {
       await c.query('UPDATE crove_social.post_variant SET status = $3 WHERE org_id = $1 AND post_id = $2', [o.orgId, postId, status]);
@@ -81,9 +81,9 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -218,7 +218,7 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
     const o = await org();
     const p = await post(o, [o.a], { body: 'Bài' });
     await expect(add(o, o.viewer, [p], o.b)).rejects.toMatchObject({ status: 403 });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [o.orgId, o.b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [o.orgId, o.b]));
     await expect(add(o, o.owner, [p], o.b)).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     const foreign = await org();
     await expect(add(o, o.owner, [p], foreign.a)).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });

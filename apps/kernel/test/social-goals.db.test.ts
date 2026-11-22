@@ -54,7 +54,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -62,7 +62,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
   async function connection(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -127,9 +127,9 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -175,7 +175,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     await expect(exec(o, o.admin, 'social.goal.remove', { connectionId: fb })).rejects.toMatchObject({ code: 'GOAL_NOT_FOUND' });
     await exec(o, o.owner, 'social.goal.remove', { connectionId: null });
     expect((await progress(o, o.member)).goals).toEqual([]);
-    const audit = await admin(async (c) => (await c.query<{ command: string }>("SELECT command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.goal.%' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ command: string }>("SELECT command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.goal.%' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
     expect(audit.map((a) => a.command)).toEqual(['social.goal.set', 'social.goal.set', 'social.goal.set', 'social.goal.set', 'social.goal.remove']);
   });
 
@@ -350,7 +350,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
       async (c) =>
         (
           await c.query<{ payload: { periodStart: string; goals?: { month: string; items: { channel: string | null; metric: string; target: number; status: string }[] } } }>(
-            "SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY created_at",
+            "SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY created_at",
             [o.orgId],
           )
         ).rows,

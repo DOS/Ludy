@@ -16,16 +16,17 @@ describe('module manifests declare their entities (#1656)', () => {
 
   it('marks an entity legalEntityScoped exactly when its manifest lists legal_entity_id on its table', () => {
     for (const { manifest, file } of Object.values(MODULE_MANIFESTS)) {
-      for (const e of manifest.entities) expect(e.legalEntityScoped, `${file}: ${e.type}`).toBe(Object.hasOwn(manifest.tables[`crove_${manifest.id}`]?.[e.table] ?? {}, 'legal_entity_id'));
+      const schema = Object.hasOwn(manifest.tables, `ludy_${manifest.id}`) ? `ludy_${manifest.id}` : `crove_${manifest.id}`;
+      for (const e of manifest.entities) expect(e.legalEntityScoped, `${file}: ${e.type}`).toBe(Object.hasOwn(manifest.tables[schema]?.[e.table] ?? {}, 'legal_entity_id'));
     }
   });
 });
 
 describe('numberingCalls()', () => {
   it('reads a literal doc type, a literal prefix with a column, and refuses any other shape', () => {
-    const body = `SELECT a.number INTO v FROM crove_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, 'finance.cash_voucher.' || NEW.voucher_type, NEW.voucher_date,
+    const body = `SELECT a.number INTO v FROM ludy_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, 'finance.cash_voucher.' || NEW.voucher_type, NEW.voucher_date,
                                     'finance.cash_voucher', NEW.id) a;
-      PERFORM crove_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, 'finance.journal_voucher', pg_catalog.date(NEW.created_at), 'finance.journal_voucher', NEW.id);`;
+      PERFORM ludy_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, 'finance.journal_voucher', pg_catalog.date(NEW.created_at), 'finance.journal_voucher', NEW.id);`;
     expect(numberingCalls('crove_finance.v', 'trigger t', body)).toEqual({
       calls: [
         { table: 'crove_finance.v', by: 'trigger t', docType: 'finance.cash_voucher.<voucher_type>', targetType: 'finance.cash_voucher' },
@@ -33,16 +34,16 @@ describe('numberingCalls()', () => {
       ],
       problems: [],
     });
-    const { calls, problems } = numberingCalls('crove_finance.v', 'trigger t', `crove_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, v_doc_type, NEW.d, 'x.y', NEW.id)`);
+    const { calls, problems } = numberingCalls('crove_finance.v', 'trigger t', `ludy_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, v_doc_type, NEW.d, 'x.y', NEW.id)`);
     expect(calls).toEqual([]);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(/^trigger t on crove_finance\.v: cannot read its call/);
   });
 
   it('ignores comments: a quote, comma or parenthesis in one, and a commented-out call', () => {
-    const body = `-- the voucher's number (PT, PC): crove_kernel.number_allocate(old, call)
-      /* was crove_kernel.number_allocate(NEW.org_id, 'x') */
-      PERFORM crove_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, -- it's the series
+    const body = `-- the voucher's number (PT, PC): ludy_kernel.number_allocate(old, call)
+      /* was ludy_kernel.number_allocate(NEW.org_id, 'x') */
+      PERFORM ludy_kernel.number_allocate(NEW.org_id, NEW.legal_entity_id, -- it's the series
         'finance.journal_voucher', NEW.d, /* target (the record) */ 'finance.journal_voucher', NEW.id);
       v := 'a -- b';`;
     expect(numberingCalls('crove_finance.v', 'trigger t', body)).toEqual({
@@ -102,11 +103,11 @@ describe('entityProblems() on planted mismatches', () => {
   it('fails when legalEntityScoped or audit differs from the table', () => {
     expect(entityProblems(manifests({ type: 'finance.rule', table: 'rule', legalEntityScoped: true, audit: 'append_only' }), facts({ numbering: [] }))).toEqual([
       'finance.ts: entity finance.rule has legalEntityScoped: true, but crove_finance.rule has no legal_entity_id column',
-      'finance.ts: entity finance.rule has audit: append_only, but crove_finance.rule is not append-only (crove_kernel.make_append_only)',
+      'finance.ts: entity finance.rule has audit: append_only, but crove_finance.rule is not append-only (ludy_kernel.make_append_only)',
     ]);
     expect(entityProblems(manifests({ ...unnumbered, legalEntityScoped: false, audit: 'command' }), facts({ numbering: [] }))).toEqual([
       'finance.ts: entity finance.voucher has legalEntityScoped: false, but crove_finance.voucher has legal_entity_id column',
-      'finance.ts: entity finance.voucher has audit: command, but crove_finance.voucher is append-only (crove_kernel.make_append_only)',
+      'finance.ts: entity finance.voucher has audit: command, but crove_finance.voucher is append-only (ludy_kernel.make_append_only)',
     ]);
   });
 

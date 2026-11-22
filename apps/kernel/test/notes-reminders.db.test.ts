@@ -56,10 +56,10 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     const limited = await user('limited');
     const { orgId } = await createOrg(app, asUser(owner), `Nhắc ${tag}`);
     const branch = await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, mine, other, limited]);
-      const id = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, mine, other, limited]);
+      const id = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
         .rows[0]?.id as string;
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, limited, id, owner]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, limited, id, owner]);
       return id;
     });
     const exec = <O>(userId: string, name: string, input: unknown = {}) => app.execute<O>(name, input, { actor: asUser(userId), orgId });
@@ -71,7 +71,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
         async (c) =>
           (
             await c.query<{ user_id: string; subject_id: string; detail: Record<string, unknown>; dedupe_key: string; legal_entity_id: string }>(
-              `SELECT user_id, subject_id, detail, dedupe_key, legal_entity_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'notes.todo_due' ORDER BY created_at, id`,
+              `SELECT user_id, subject_id, detail, dedupe_key, legal_entity_id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'notes.todo_due' ORDER BY created_at, id`,
               [orgId],
             )
           ).rows,
@@ -90,7 +90,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
@@ -100,8 +100,8 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
       const db = createDb(pool);
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] }) };
     };
-    app = runtimeFor('crove_app', 'test-app-pw').runtime;
-    const w = runtimeFor('crove_worker', 'test-worker-pw');
+    app = runtimeFor('ludy_app', 'test-app-pw').runtime;
+    const w = runtimeFor('ludy_worker', 'test-worker-pw');
     worker = w.runtime;
     workerDb = w.db;
   }, 300_000);
@@ -170,7 +170,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     await edit(todoId, 8, { dueOn: dayAhead(7) });
     const armed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [todoId]));
     expect(armed.rows[0]?.reminded_at).toBeNull();
-    const audit = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`, [o.orgId]));
+    const audit = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`, [o.orgId]));
     const text = JSON.stringify(audit.rows);
     expect(text).toContain('"reminder"');
     for (const secret of [TITLE, 'Thêm chi tiết']) expect(text).not.toContain(secret);
@@ -202,9 +202,9 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     for (const r of first) expect(r.detail).toEqual({});
     // Nothing of the to-do's text anywhere the reminder wrote: the notification, the audit row, the outbox.
     const written = await admin(async (c) => [
-      ...(await c.query(`SELECT * FROM crove_kernel.notification WHERE org_id = $1`, [o.orgId])).rows,
-      ...(await c.query(`SELECT * FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.remind'`, [o.orgId])).rows,
-      ...(await c.query(`SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1`, [o.orgId])).rows,
+      ...(await c.query(`SELECT * FROM ludy_kernel.notification WHERE org_id = $1`, [o.orgId])).rows,
+      ...(await c.query(`SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.remind'`, [o.orgId])).rows,
+      ...(await c.query(`SELECT * FROM ludy_kernel.outbox_event WHERE org_id = $1`, [o.orgId])).rows,
     ]);
     const text = JSON.stringify(written);
     for (const secret of [TITLE, DETAILS, 'Việc của người khác']) expect(text).not.toContain(secret);

@@ -42,11 +42,11 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Hộ Kinh Doanh ${randomUUID().slice(0, 6)}`);
     const viewer = await identity('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
-    const company = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    const company = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
     const household = randomUUID();
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [orgId, household, owner]),
+      c.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [orgId, household, owner]),
     );
     return { orgId, owner, viewer, company, household };
   }
@@ -74,10 +74,10 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     // The real law rows, as seeded: the threshold of 1 billion VND, the VAT cut of 20% and the PIT cut of 30% up to 10 billion, the rates and the layouts, all `confirmed`.
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -115,7 +115,7 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
       try {
         let document: string | null = null;
         if (over.sale) {
-          const party = (await a.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [o.orgId])).rows[0]?.id;
+          const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [o.orgId])).rows[0]?.id;
           const total = over.sale.reduce((acc, l) => acc + l.amount, 0);
           document = (
             await a.query<{ id: string }>(

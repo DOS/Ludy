@@ -262,7 +262,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'ret-app-pw', crove_worker: 'ret-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'ret-app-pw', ludy_worker: 'ret-worker-pw' });
 
     const loginUrl = (user: string, pw: string) => {
       const u = new URL(adminUrl);
@@ -272,8 +272,8 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     };
 
     adminPool = createPool({ connectionString: adminUrl, max: 3 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'ret-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'ret-worker-pw'), max: 3 });
+    appPool = createPool({ connectionString: loginUrl('ludy_app', 'ret-app-pw'), max: 6 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'ret-worker-pw'), max: 3 });
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);
@@ -359,7 +359,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     const workerClient = await workerPool!.connect();
     try {
       await workerClient.query('BEGIN');
-      await workerClient.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgA]);
+      await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgA]);
       const directStale = await workerClient.query<{ res: Record<string, number> }>(
         "SELECT crove_sign.cleanup_org_stale(now() - interval '1 day', now() - interval '30 days') AS res",
       );
@@ -702,7 +702,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       expect(m.handling).toBe(unsealedSignerIds.has(m.rowId!) ? 'erase' : 'keep_record');
     }
 
-    // 2) RBAC and direct SQL trigger protection: admin cannot erase, and crove_app cannot forge the internal GUC.
+    // 2) RBAC and direct SQL trigger protection: admin cannot erase, and ludy_app cannot forge the internal GUC.
     await expect(
       runtime.execute('kernel.personal_data.erase', { value: targetEmail }, { actor: asMfa(adminA), orgId: orgA }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -717,7 +717,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
         mfaAt: Math.floor(Date.now() / 1000),
       });
       await appClient.query('BEGIN');
-      await appClient.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA, adminToken]);
+      await appClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, adminToken]);
       await appClient.query('SAVEPOINT sp_non_owner');
       await expect(
         appClient.query("SELECT crove_sign.personal_erase_unsealed_signers('email', $1)", [targetEmail]),
@@ -733,7 +733,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
         mfaAt: Math.floor(Date.now() / 1000),
       });
       await appClient.query('BEGIN');
-      await appClient.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA, ownerToken]);
+      await appClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, ownerToken]);
       await appClient.query('SAVEPOINT sp_forged_guc');
       await appClient.query(`SET LOCAL crove.sign_personal_erase = '${orgA}'`);
       await expect(

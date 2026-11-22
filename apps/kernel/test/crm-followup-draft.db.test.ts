@@ -52,10 +52,10 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const [member, viewer] = [await person('member'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
-    const party = (name: string, email: string | null = null) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'organization', $3) RETURNING id", [orgId, name, email]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string, email: string | null = null) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'organization', $3) RETURNING id", [orgId, name, email]).then((r) => (r[0] as { id: string }).id);
     const newDeal = async (user: string, partyId: string, over: Record<string, unknown> = {}) => {
       await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
       return exec<Deal>(user, 'crm.deal.create', { partyId, title: 'Cơ hội nội bộ XYZZY', amount: '15000000', expectedClose: null, ...over });
@@ -91,8 +91,8 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
       );
     const links = () => rows<{ token_sha256: string }>('SELECT token_sha256 FROM crove_crm.quote_link WHERE org_id = $1', [orgId]);
     const sentCount = async () => ({
-      mail: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.mail_message WHERE org_id = $1', [orgId]))[0]?.n,
-      messages: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1', [orgId]))[0]?.n,
+      mail: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1', [orgId]))[0]?.n,
+      messages: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.conversation_message WHERE org_id = $1', [orgId]))[0]?.n,
     });
     return { orgId, owner, member, viewer, exec, query, party, newDeal, age, raise, stepOf, sentQuote, source, draft, links, sentCount };
   }
@@ -106,15 +106,15 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
@@ -248,7 +248,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     expect(await rows('SELECT updated_at, stage_id FROM crove_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id])).toEqual(before.deal);
     expect(await rows('SELECT status, version, sent_at FROM crove_crm.quote WHERE org_id = $1', [o.orgId])).toEqual(before.quote);
     // The one write is the link, by the member's own command, audited without a price or a word of the draft.
-    const audit = await rows<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.create_link'", [o.orgId]);
+    const audit = await rows<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.create_link'", [o.orgId]);
     expect(audit).toHaveLength(1);
     expect(audit[0]?.actor_id).toBe(o.member);
     expect(JSON.stringify(audit[0]?.detail)).not.toMatch(/Hoa Mai|đồng|Bên mình/);

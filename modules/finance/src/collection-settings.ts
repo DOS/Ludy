@@ -46,7 +46,7 @@ export async function readCollectionSetting(ctx: Pick<QueryContext, 'trx' | 'org
 // The kept party of a duplicate group: the settings sit on it, whichever party of the group a caller names. A party of another org, or none, is not found.
 async function keptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: string): Promise<string> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select(sql<string>`coalesce(duplicate_of, id)`.as('kept'))
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', partyId)
@@ -62,7 +62,7 @@ async function lockedKeptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId
   for (let attempt = 0; attempt < 4; attempt++) {
     const guess = await keptParty(ctx, partyId);
     await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', [partyId, guess])
@@ -79,7 +79,7 @@ async function lockedKeptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId
 async function groupRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, kept: string): Promise<{ terms_days: number | null; paused_until: string | null } | undefined> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.customer_collection as c')
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
     .select(['c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ${kept}`)
@@ -183,7 +183,7 @@ export const customerCollectionSet = defineCommand({
     await sql`
       UPDATE crove_finance.customer_collection c
       SET terms_days = NULL, paused_until = NULL, set_by = ${userId}, updated_at = ${ctx.now}
-      FROM crove_kernel.party x
+      FROM ludy_kernel.party x
       WHERE c.org_id = ${ctx.orgId} AND x.org_id = c.org_id AND x.id = c.party_id AND x.duplicate_of = ${kept} AND c.party_id <> ${kept}
         AND (c.terms_days IS NOT NULL OR c.paused_until IS NOT NULL)`.execute(ctx.trx);
     ctx.audit({ partyId: kept, termsDays, previousTermsDays: before.termsDays, pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });

@@ -150,9 +150,9 @@ async function requestSeatWakeup(
 ): Promise<string | null> {
   if (!positionId) return null;
   const holder = await ctx.trx
-    .selectFrom('crove_kernel.position as p')
-    .innerJoin('crove_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.holder_agent_id'))
-    .innerJoin('crove_kernel.agent_template as t', 't.key', 'a.template_key')
+    .selectFrom('ludy_kernel.position as p')
+    .innerJoin('ludy_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.holder_agent_id'))
+    .innerJoin('ludy_kernel.agent_template as t', 't.key', 'a.template_key')
     .select(['a.id', 't.module'])
     .where('p.org_id', '=', ctx.orgId)
     .where('p.id', '=', positionId)
@@ -162,7 +162,7 @@ async function requestSeatWakeup(
   if (!holder) return null;
   const reason = { taskId, why: 'assigned' };
   await sql`
-    INSERT INTO crove_kernel.agent_wakeup AS w (org_id, agent_id, reasons, tainted, request_depth)
+    INSERT INTO ludy_kernel.agent_wakeup AS w (org_id, agent_id, reasons, tainted, request_depth)
     VALUES (${ctx.orgId}::uuid, ${holder.id}::uuid, ${JSON.stringify([reason])}::jsonb, ${tainted}, 0)
     ON CONFLICT (org_id, agent_id) WHERE status = 'pending' DO UPDATE SET
       reasons = CASE
@@ -174,7 +174,7 @@ async function requestSeatWakeup(
       updated_at = pg_catalog.now()`.execute(ctx.trx);
   if (!ctx.installed(holder.module)) return null;
   const { rows: appRows } = await sql<{ enabled: boolean }>`
-    SELECT crove_kernel.org_app_on(${ctx.orgId}::uuid, ${holder.module}::text) AS enabled`.execute(ctx.trx);
+    SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, ${holder.module}::text) AS enabled`.execute(ctx.trx);
   return appRows[0]?.enabled ? holder.id : null;
 }
 
@@ -189,7 +189,7 @@ export const projectTaskRecurrenceGet = defineQuery({
       .innerJoin('crove_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pt.org_id').onRef('p.id', '=', 'pt.project_id'),
       )
-      .innerJoin('crove_kernel.task as t', (join) =>
+      .innerJoin('ludy_kernel.task as t', (join) =>
         join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
       )
       .select([
@@ -224,7 +224,7 @@ export const projectTaskRecurrenceSet = defineCommand({
     assertNotArchived(project);
 
     const visibleTask = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select(['id', 'due'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -336,7 +336,7 @@ export const projectTaskRecurrenceClear = defineCommand({
     assertNotArchived(project);
 
     const visibleTask = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -388,13 +388,13 @@ export const projectRecurringAdvance = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  // Writes across crove_kernel.task, crove_kernel.agent_wakeup, and crove_projects.project_task (system-only).
+  // Writes across ludy_kernel.task, ludy_kernel.agent_wakeup, and crove_projects.project_task (system-only).
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectRecurringAdvanceResult> => {
-    // 1. Pre-read the source task's seat without locks so we lock crove_kernel.position BEFORE
+    // 1. Pre-read the source task's seat without locks so we lock ludy_kernel.position BEFORE
     // crove_projects.project -> crove_projects.project_task (canonical position -> project -> project_task hierarchy).
     const previewTask = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select(['assignee_position_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -404,7 +404,7 @@ export const projectRecurringAdvance = defineCommand({
 
     if (preLockedPositionId !== null) {
       await ctx.trx
-        .selectFrom('crove_kernel.position')
+        .selectFrom('ludy_kernel.position')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', preLockedPositionId)
@@ -454,7 +454,7 @@ export const projectRecurringAdvance = defineCommand({
     }
 
     const srcTask = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select(['id', 'title', 'description', 'status', 'assignee_position_id', 'legal_entity_id', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.taskId)
@@ -470,7 +470,7 @@ export const projectRecurringAdvance = defineCommand({
 
     const openCopy = await ctx.trx
       .selectFrom('crove_projects.project_task as cpt')
-      .innerJoin('crove_kernel.task as ct', (join) =>
+      .innerJoin('ludy_kernel.task as ct', (join) =>
         join.onRef('ct.org_id', '=', 'cpt.org_id').onRef('ct.id', '=', 'cpt.task_id'),
       )
       .select('cpt.task_id')
@@ -513,7 +513,7 @@ export const projectRecurringAdvance = defineCommand({
     let assigneePositionId: string | null = srcTask.assignee_position_id;
     if (assigneePositionId !== null) {
       const seat = await ctx.trx
-        .selectFrom('crove_kernel.position')
+        .selectFrom('ludy_kernel.position')
         .select(['id', 'status'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', assigneePositionId)
@@ -522,14 +522,14 @@ export const projectRecurringAdvance = defineCommand({
         assigneePositionId = null;
       } else if (srcTask.legal_entity_id !== null) {
         const { rows } = await sql<{ allowed: boolean }>`
-          SELECT crove_kernel.position_reads_legal_entity(${ctx.orgId}::uuid, ${assigneePositionId}::uuid, ${srcTask.legal_entity_id}::uuid) AS allowed`.execute(ctx.trx);
+          SELECT ludy_kernel.position_reads_legal_entity(${ctx.orgId}::uuid, ${assigneePositionId}::uuid, ${srcTask.legal_entity_id}::uuid) AS allowed`.execute(ctx.trx);
         if (!rows[0]?.allowed) assigneePositionId = null;
       }
     }
 
     const dueInstant = new Date(todoDueInstant(dueDate, '23:59', rule.timeZone));
     const insertedTask = await ctx.trx
-      .insertInto('crove_kernel.task')
+      .insertInto('ludy_kernel.task')
       .values({
         org_id: ctx.orgId,
         title: srcTask.title,

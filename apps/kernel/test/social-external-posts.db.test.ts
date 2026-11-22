@@ -78,7 +78,7 @@ suite('social posts published outside Crove (#1054)', () => {
     const owner = await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@external.test`, name: null });
     const { orgId } = await createOrg(api, asUser(owner), `Cửa hàng ${randomUUID().slice(0, 6)}`);
     const viewer = await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `viewer-${randomUUID().slice(0, 8)}@external.test`, name: null });
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
     return { orgId, owner, viewer };
   }
 
@@ -129,15 +129,15 @@ suite('social posts published outside Crove (#1054)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -252,9 +252,9 @@ suite('social posts published outside Crove (#1054)', () => {
     platform.listings.set('acct-denied', { refused: 'permission' });
     const done = await sweep(platform);
     expect(done.expired).toBe(1);
-    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
+    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[dead, 'expired'], [denied, 'active'], [silent, 'active']]));
-    const events = await admin(async (c) => (await c.query("SELECT payload->>'connection_id' AS id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.expired'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query("SELECT payload->>'connection_id' AS id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.expired'", [o.orgId])).rows);
     expect(events).toEqual([{ id: dead }]);
     const runs = await admin(async (c) => (await c.query<{ channel_connection_id: string; error: string | null }>('SELECT channel_connection_id, error FROM crove_social.external_import WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(runs.map((r) => [r.channel_connection_id, r.error]))).toEqual(new Map([[dead, 'token_expired'], [denied, 'permission'], [silent, 'no_answer']]));
@@ -296,16 +296,16 @@ suite('social posts published outside Crove (#1054)', () => {
     }
     // Tenant roles change only the text, link and counts, and delete nothing.
     const grants = await admin(async (c) => ({
-      table: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'external_post' ORDER BY 1")).rows.map((r) => r.privilege_type),
-      update: (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'external_post' AND privilege_type = 'UPDATE' ORDER BY 1")).rows.map((r) => r.column_name),
-      importTable: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'external_import' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      table: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'external_post' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      update: (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'external_post' AND privilege_type = 'UPDATE' ORDER BY 1")).rows.map((r) => r.column_name),
+      importTable: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'external_import' ORDER BY 1")).rows.map((r) => r.privilege_type),
     }));
     expect(grants).toEqual({ table: ['INSERT', 'SELECT'], update: ['captured_at', 'checked_at', 'excerpt', 'gone', 'metrics', 'permalink', 'updated_at'], importTable: ['INSERT', 'SELECT'] });
     // The scans are the worker's alone.
     await expect(appPool.query("SELECT * FROM crove_social.external_import_due(10, ARRAY['sandbox'], 3600)")).rejects.toMatchObject({ code: '42501' });
     await expect(appPool.query("SELECT * FROM crove_social.external_metrics_due(10, ARRAY['sandbox'], 3600)")).rejects.toMatchObject({ code: '42501' });
     // The channel's removal takes its outside posts with it.
-    await admin((c) => c.query('DELETE FROM crove_kernel.channel_connection WHERE id = $1', [theirs]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.channel_connection WHERE id = $1', [theirs]));
     expect(await listed(stranger)).toEqual([]);
   });
 
@@ -466,7 +466,7 @@ suite('social posts published outside Crove (#1054)', () => {
     zaloExpired = true;
     await admin((c) => c.query("UPDATE crove_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
     expect((await sweepExternalPosts({ runtime: worker, broker: vault, workerDb, publishers })).expired).toBe(1);
-    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
+    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[yt, 'active'], [th, 'active'], [za, 'expired']]));
     expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_social.external_post WHERE channel_connection_id = $1', [za])).rows[0])).toEqual({ n: 2 });
   });
@@ -520,7 +520,7 @@ suite('social posts published outside Crove (#1054)', () => {
     expect(listedBy.sort()).toEqual(['Bearer act.dead', 'Bearer act.listed']);
     const runs = await admin(async (c) => (await c.query<{ channel_connection_id: string; found: number; error: string | null }>('SELECT channel_connection_id, found, error FROM crove_social.external_import WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(runs.map((r) => [r.channel_connection_id, [r.found, r.error]]))).toEqual(new Map([[tt, [4, null]], [noList, [0, 'permission']], [dead, [0, 'token_expired']]]));
-    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
+    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[tt, 'active'], [noList, 'active'], [dead, 'expired']]));
 
     // Off, the totals are Crove's alone; on, the outside video counts once.

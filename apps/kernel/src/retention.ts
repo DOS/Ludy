@@ -1,4 +1,4 @@
-// Retention purges (issue #38, plan §4.9): the worker runs crove_kernel.retention_purge() on a pg-boss schedule,
+// Retention purges (issue #38, plan §4.9): the worker runs ludy_kernel.retention_purge() on a pg-boss schedule,
 // one batch per call, until no store has expired rows left or the run's batch budget is spent.
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
@@ -41,7 +41,7 @@ export async function runRetention(workerDb: Db, batch = RETENTION_BATCH, log: P
   const deleted: Record<string, number> = {};
   let remaining: string[] = [];
   for (let i = 0; i < MAX_BATCHES_PER_RUN; i++) {
-    const { rows } = await sql<PurgeRow>`SELECT store, deleted, more FROM crove_kernel.retention_purge(${batch}::int)`.execute(workerDb);
+    const { rows } = await sql<PurgeRow>`SELECT store, deleted, more FROM ludy_kernel.retention_purge(${batch}::int)`.execute(workerDb);
     for (const row of rows) deleted[row.store] = (deleted[row.store] ?? 0) + row.deleted;
     remaining = rows.filter((r) => r.more).map((r) => r.store);
     const stuck = rows.filter((r) => r.more && r.deleted === 0).map((r) => r.store);
@@ -173,14 +173,14 @@ async function sweepPrefix(store: BlobStore, options: SweepOptions): Promise<Blo
 }
 
 /**
- * Of the given raw inbound blobs, the keys still waiting for the worker: a row in crove_kernel.inbound_pending (read
+ * Of the given raw inbound blobs, the keys still waiting for the worker: a row in ludy_kernel.inbound_pending (read
  * through the worker-only definer inbound_pending_blobs) or a live pg-boss job of the inbound queue. The pending rows
  * are read first: the relay sends the job before it commits the claim that deletes the row, so a blob is always in at
  * least one of the two places this order reads.
  */
-export async function referencedInboundBlobs(workerDb: Db, keys: readonly string[], jobSchema = 'crove_jobs'): Promise<Set<string>> {
+export async function referencedInboundBlobs(workerDb: Db, keys: readonly string[], jobSchema = 'ludy_jobs'): Promise<Set<string>> {
   const ids = keys.map((k) => k.slice('inbound/'.length));
-  const pending = await sql<{ blob_id: string }>`SELECT crove_kernel.inbound_pending_blobs(${ids}::text[]) AS blob_id`.execute(workerDb);
+  const pending = await sql<{ blob_id: string }>`SELECT ludy_kernel.inbound_pending_blobs(${ids}::text[]) AS blob_id`.execute(workerDb);
   const live = await sql<{ blob_id: string }>`
     SELECT j.data->>'blobId' AS blob_id FROM ${sql.table(`${jobSchema}.job`)} j
     WHERE j.name = ${INBOUND_QUEUE} AND j.state IN ('created', 'retry', 'active') AND j.data->>'blobId' = ANY (${ids}::text[])`.execute(workerDb);

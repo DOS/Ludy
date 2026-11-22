@@ -134,12 +134,12 @@ const summarySelect = (orgId: string) => sql`
   SELECT c.id, c.kind, c.status, c.channel_connection_id, ch.provider, ch.display_name AS channel_name, c.external_post_id,
          i.display_name AS identity_name, i.external_user_id, c.party_id, p.name AS party_name,
          c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent, c.subject, c.sender_unverified,
-         (SELECT pg_catalog.left(m.body, 2000) FROM crove_kernel.conversation_message m
+         (SELECT pg_catalog.left(m.body, 2000) FROM ludy_kernel.conversation_message m
           WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.platform_removed_at IS NULL ORDER BY m.seq DESC LIMIT 1) AS preview
-  FROM crove_kernel.conversation c
-  JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
-  LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
-  LEFT JOIN crove_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id
+  FROM ludy_kernel.conversation c
+  JOIN ludy_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
+  LEFT JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+  LEFT JOIN ludy_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id
   WHERE c.org_id = ${orgId}::uuid`;
 
 function toConversation(row: SummaryRow): McpConversation {
@@ -215,7 +215,7 @@ export const mcpConversation = defineQuery({
     // A thread the grant may not read is the same answer as one that does not exist.
     if (!row) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy cuộc trò chuyện');
     let q = ctx.trx
-      .selectFrom('crove_kernel.conversation_message')
+      .selectFrom('ludy_kernel.conversation_message')
       .select(['id', 'seq', 'direction', 'author_kind', 'author_identity_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'platform_removed_at', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId);
@@ -225,7 +225,7 @@ export const mcpConversation = defineQuery({
     const authorIds = [...new Set(page.map((m) => m.author_identity_id).filter((id): id is string => id !== null))];
     const names = new Map<string, string | null>();
     if (authorIds.length > 0) {
-      const authors = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
+      const authors = await ctx.trx.selectFrom('ludy_kernel.conversation_identity').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
       for (const a of authors) names.set(a.id, a.display_name);
     }
     const messages = page.reverse().map((m): McpMessage => {

@@ -126,14 +126,14 @@ suite('unusual payment amounts (#2419)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
@@ -152,7 +152,7 @@ suite('unusual payment amounts (#2419)', () => {
       expect((await rpc('invites/accept', await tokenFor(who), { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
     }
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Cung Cấp Đều', '0312345675'), ($1, $3, 'Công ty Thỉnh Thoảng', NULL)`, [org.orgId, often, rarely]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Cung Cấp Đều', '0312345675'), ($1, $3, 'Công ty Thỉnh Thoảng', NULL)`, [org.orgId, often, rarely]);
     });
   }, 300_000);
 
@@ -246,7 +246,7 @@ suite('unusual payment amounts (#2419)', () => {
     // A party paid twice a month: five bank debits of 500 000 and a receipt of 80 million from it.
     const twice = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Chuyển Khoản')`, [org.orgId, twice]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Chuyển Khoản')`, [org.orgId, twice]);
     });
     for (let n = 0; n < 5; n++) {
       const id = await ask({ type: 'bank_debit', date: '2026-09-22', cashAccount: '1121', partyId: twice, description: 'Chuyển khoản tháng', lines: [{ account: '331', amount: '500000' }] });

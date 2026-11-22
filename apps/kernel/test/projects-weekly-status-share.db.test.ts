@@ -161,13 +161,13 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -333,7 +333,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     const auditRows = await admin(async (c) =>
       (
         await c.query<{ command: string; detail: unknown }>(
-          `SELECT command, detail FROM crove_kernel.audit_event
+          `SELECT command, detail FROM ludy_kernel.audit_event
            WHERE org_id = $1 AND command IN ('projects.weekly_status.share_note', 'notes.note.create')
            ORDER BY occurred_at ASC`,
           [org.orgId],
@@ -498,7 +498,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
       (
         await c.query<{ id: string; to_address: string; status: string; stream: string; template_key: string; source: string }>(
           `SELECT id, to_address, status, stream, template_key, source
-           FROM crove_kernel.mail_message
+           FROM ludy_kernel.mail_message
            WHERE org_id = $1 AND source = $2
            ORDER BY created_at ASC`,
           [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE],
@@ -541,7 +541,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     const outboxRows = await admin(async (c) =>
       (
         await c.query<{ id: string; payload: unknown }>(
-          `SELECT id, payload FROM crove_kernel.outbox_event
+          `SELECT id, payload FROM ludy_kernel.outbox_event
            WHERE org_id = $1 AND type = 'projects.weekly_status.sent'`,
           [org.orgId],
         )
@@ -573,7 +573,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     const auditRows = await admin(async (c) =>
       (
         await c.query<{ command: string; detail: unknown }>(
-          `SELECT command, detail FROM crove_kernel.audit_event
+          `SELECT command, detail FROM ludy_kernel.audit_event
            WHERE org_id = $1 AND command IN ('projects.weekly_status.send_mail', 'kernel.mail.members.queue')`,
           [org.orgId],
         )
@@ -601,30 +601,30 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     let branchTaskId = '';
     await admin(async (c) => {
       defaultEntityId = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
       ).rows[0]!.id;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhanh Mien Trung', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]!.id;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchMember.userId, branchEntityId, owner.userId],
       );
       defaultTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Viec tru so chinh', 'human', 'user', $2) RETURNING id`,
           [org.orgId, defaultEntityId],
         )
       ).rows[0]!.id;
       branchTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Viec chi nhanh', 'human', 'user', $2) RETURNING id`,
           [org.orgId, branchEntityId],
         )
@@ -661,7 +661,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     const mixedMails = await admin(async (c) =>
       (
         await c.query<{ to_address: string }>(
-          `SELECT to_address FROM crove_kernel.mail_message
+          `SELECT to_address FROM ludy_kernel.mail_message
            WHERE org_id = $1 AND source = $2 AND source_id = $3`,
           [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE, mixedProjectId],
         )
@@ -728,7 +728,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
       { value: targetEmail },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(foundByEmail.matches.map((m) => m.column)).toContain('crove_kernel.mail_message.payload');
+    expect(foundByEmail.matches.map((m) => m.column)).toContain('ludy_kernel.mail_message.payload');
 
     // Short numbers (8-9 digits, <10 digits) leave weekly status mails intact and list the kept reason.
     const shortKept = await rt.execute<PersonalDataErasure>(
@@ -737,7 +737,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
     expect(shortKept.kept).toContainEqual({
-      column: 'crove_kernel.mail_message.payload',
+      column: 'ludy_kernel.mail_message.payload',
       rows: 1,
       reason: expect.stringContaining('fewer than 10 digits'),
     });
@@ -748,13 +748,13 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
       { value: targetEmail },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erasedQueued.erased).toContainEqual({ column: 'crove_kernel.mail_message.payload', rows: 1 });
-    expect(erasedQueued.kept.filter((k) => k.column === 'crove_kernel.mail_message.payload')).toEqual([]);
+    expect(erasedQueued.erased).toContainEqual({ column: 'ludy_kernel.mail_message.payload', rows: 1 });
+    expect(erasedQueued.kept.filter((k) => k.column === 'ludy_kernel.mail_message.payload')).toEqual([]);
 
     const queuedRow = (
       await admin((c) =>
         c.query<{ id: string; subject: string | null; payload: unknown; to_address: string | null }>(
-          `SELECT id, subject, payload, to_address FROM crove_kernel.mail_message
+          `SELECT id, subject, payload, to_address FROM ludy_kernel.mail_message
            WHERE org_id = $1 AND source = $2 AND source_id = $3`,
           [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE, cleanProjectId],
         ),
@@ -803,7 +803,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     const deliveredMailId = (
       await admin((c) =>
         c.query<{ id: string }>(
-          `SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source = $2 AND source_id = $3`,
+          `SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = $2 AND source_id = $3`,
           [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE, namedProjectId],
         ),
       )
@@ -828,12 +828,12 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     );
     expect(erasedDelivered.erased).toEqual(
       expect.arrayContaining([
-        { column: 'crove_kernel.mail_message.payload', rows: 1 },
+        { column: 'ludy_kernel.mail_message.payload', rows: 1 },
         { column: 'crove_projects.project.name', rows: 1 },
       ]),
     );
     expect(erasedDelivered.kept).toContainEqual({
-      column: 'crove_kernel.mail_message.payload',
+      column: 'ludy_kernel.mail_message.payload',
       rows: 1,
       reason: expect.stringContaining('cannot be recalled'),
     });
@@ -841,7 +841,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     const eraseAudit = (
       await admin((c) =>
         c.query<{ detail: unknown }>(
-          `SELECT detail FROM crove_kernel.audit_event
+          `SELECT detail FROM ludy_kernel.audit_event
            WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok'
            ORDER BY id DESC LIMIT 1`,
           [org.orgId],

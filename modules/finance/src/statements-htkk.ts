@@ -65,7 +65,7 @@ export const statementsHtkkQuery = defineQuery({
   access: ALL,
   handler: async (ctx, { year, legalEntityId }): Promise<StatementsFiling> => {
     const entity = await resolveLegalEntity(ctx, legalEntityId);
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['tax_code', 'name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['tax_code', 'name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!org?.tax_code) throw new DomainError('TAX_CODE_REQUIRED', 422, 'Tổ chức chưa có mã số thuế. Nhập mã số thuế trong Cài đặt rồi xuất lại.');
     return { ...(await loadFiling(ctx, year, entity)), taxpayer: { taxCode: org.tax_code, name: org.name, address: org.address } };
   },

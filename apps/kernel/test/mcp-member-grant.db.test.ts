@@ -52,7 +52,7 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     );
   const setSwitch = (userId: string, enabled: boolean) => runtime.execute('kernel.mcp.member_grants.set', { enabled }, { actor: user(userId), orgId: orgA });
   const about = (userId: string, grantId: string, kind: 'company' | 'member' = 'member') => runtime.query('kernel.mcp.about', {}, { actor: mcp(userId, grantId, kind), orgId: orgA });
-  const row = (grantId: string) => admin((c) => c.query(`SELECT kind, member_id, user_id, scopes, revoked_at FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, grantId]).then((r) => r.rows[0]));
+  const row = (grantId: string) => admin((c) => c.query(`SELECT kind, member_id, user_id, scopes, revoked_at FROM ludy_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, grantId]).then((r) => r.rows[0]));
 
   beforeAll(async () => {
     if (!ADMIN) return;
@@ -64,9 +64,9 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -77,7 +77,7 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     }
     orgA = (await createOrg(runtime, user(users.ownerA), 'Org A')).orgId;
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'admin')`, [orgA, users.adminA, users.memberA, users.viewerA, users.capA]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'admin')`, [orgA, users.adminA, users.memberA, users.viewerA, users.capA]),
     );
   }, 120_000);
 
@@ -134,9 +134,9 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     await setSwitch(users.ownerA, true);
     const viewer = (await consent(users.viewerA, 'member')).grantId;
     expect(await about(users.viewerA, viewer)).toMatchObject({ orgName: 'Org A' });
-    await admin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgA, users.viewerA]));
+    await admin((c) => c.query(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgA, users.viewerA]));
     await refusal(about(users.viewerA, viewer));
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')`, [orgA, users.viewerA]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')`, [orgA, users.viewerA]));
     // Back in the org, but after the grant was made: it does not come back to life.
     await refusal(about(users.viewerA, viewer));
   });
@@ -162,11 +162,11 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     const mine = (await consent(demoted, 'member')).grantId;
     expect(await about(demoted, company, 'company')).toMatchObject({ orgName: 'Org A' });
     expect(await about(demoted, mine)).toMatchObject({ orgName: 'Org A' });
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
     // The trigger that guards the grants ends them all (and destroys their tokens) with the admin role they were made under: a demotion is a change of
     // standing the person did not choose, so nothing they connected under the old role keeps reading. They connect again as the member they now are.
     for (const id of [company, mine]) expect((await refusal(about(demoted, id, id === company ? 'company' : 'member'))).status).toBe(401);
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
     for (const id of [company, mine]) expect((await refusal(about(demoted, id, id === company ? 'company' : 'member'))).status).toBe(401);
     const fresh = (await consent(demoted, 'member')).grantId;
     expect(await about(demoted, fresh)).toMatchObject({ orgName: 'Org A' });

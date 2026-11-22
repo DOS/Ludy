@@ -333,7 +333,7 @@ export const einvoiceDraftSave = defineCommand({
 
     // The party, when the buyer was picked from the org's customers: it must be one of the org's.
     if (input.buyer.partyId && draft.buyer.kind !== 'consumer') {
-      const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.buyer.partyId).executeTakeFirst();
+      const party = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.buyer.partyId).executeTakeFirst();
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy khách hàng này');
     }
 

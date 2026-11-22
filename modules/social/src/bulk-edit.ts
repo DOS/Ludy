@@ -207,10 +207,10 @@ export const postBulkAssign = defineCommand({
       planned.push({ postId, dueAt: due, newAssignee: post.assignee_user_id !== input.assigneeUserId });
     }
     // Checked once for all the posts, and only when some post gets them as a new assignee (#1062): a person who is not a
-    // member is never assigned anything (crove_kernel.member_profiles answers for members of the org only), while
+    // member is never assigned anything (ludy_kernel.member_profiles answers for members of the org only), while
     // keeping one who has since left, to change only the due dates, is allowed as for a single assignment.
     if (input.assigneeUserId && planned.some((p) => p.newAssignee)) {
-      const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_profiles(${[input.assigneeUserId]}::uuid[])`.execute(ctx.trx);
+      const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_profiles(${[input.assigneeUserId]}::uuid[])`.execute(ctx.trx);
       if (rows.length === 0) throw new DomainError('ASSIGNEE_NOT_MEMBER', 422, 'Người được giao không phải thành viên của tổ chức');
     }
     const given: string[] = [];
@@ -498,7 +498,7 @@ export const postBulkAddChannel = defineCommand({
     const scope = await channelScope(ctx);
     refuseOutside(scope, [input.connectionId]);
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)

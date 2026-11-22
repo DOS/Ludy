@@ -330,7 +330,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
 async function assertContextTokenKey(pool: ReturnType<typeof createPool>, key: string): Promise<void> {
   const nil = '00000000-0000-4000-8000-000000000000';
   const token = mintContextToken(key, { userId: nil, sessionId: null, orgId: nil, aal: 'aal1', mfaAt: null });
-  const { rows } = await pool.query<{ ok: boolean }>('SELECT crove_kernel.context_token_valid($1) AS ok', [token]);
+  const { rows } = await pool.query<{ ok: boolean }>('SELECT ludy_kernel.context_token_valid($1) AS ok', [token]);
   if (rows[0]?.ok !== true) throw new Error('LUDY_CONTEXT_TOKEN_KEY is not the key the database holds: run the migrate step with it first');
 }
 
@@ -792,7 +792,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     configureOpsAlerts({ target: alerts.target, repeatSeconds: alerts.thresholds.repeatSeconds });
     // The worker alone enters system context, so it never shares the API's login role (External-tenant gate T5).
     const workerUrl = config.WORKER_DATABASE_URL;
-    if (worker && !workerUrl) throw new Error('WORKER_DATABASE_URL is required for the worker; connect it as crove_worker');
+    if (worker && !workerUrl) throw new Error('WORKER_DATABASE_URL is required for the worker; connect it as ludy_worker');
     // Files and emails are parsed only in the sandbox (External-tenant gate T12); the worker always passes this client.
     const extractUrl = config.EXTRACT_URL;
     if (worker && !extractUrl) throw new Error('EXTRACT_URL is required for the worker; point it at the crove-extract service');
@@ -992,7 +992,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   }
 
   // The operator's user-disable and user-enable roles (#985): the worker login is the only role that may execute
-  // crove_kernel.user_set_disabled and enter the system context the audit notes run in.
+  // ludy_kernel.user_set_disabled and enter the system context the audit notes run in.
   async function setUserStatus(disabled: boolean, argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error(`WORKER_DATABASE_URL is required for ${disabled ? 'user-disable' : 'user-enable'}; run it in the worker container`);
@@ -1007,7 +1007,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     }
   }
 
-  // The operator's org-purge role (#1024): the worker login is the only role that may execute crove_kernel.org_purge
+  // The operator's org-purge role (#1024): the worker login is the only role that may execute ludy_kernel.org_purge
   // and enter the system context the purge runs in. Its command deletes blobs, so only this runtime registers it.
   async function purgeOrg(argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
@@ -1025,7 +1025,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   }
 
   // The restore-report role (#2007): the worker login is the only role that may read the archive hashes and execute
-  // crove_kernel.number_series_reseed, in the system context its command runs in. Only this runtime registers it.
+  // ludy_kernel.number_series_reseed, in the system context its command runs in. Only this runtime registers it.
   async function restoreReport(argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for restore-report; run it in the worker container');

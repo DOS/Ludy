@@ -83,7 +83,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
   const snapshot = (orgId: string, conn: string, capturedOn: string, performance: Record<string, Figures> | null) =>
     admin((c) => c.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, performance) VALUES ($1, $2, $3, $4::jsonb)', [orgId, conn, capturedOn, performance === null ? null : JSON.stringify(performance)]));
   const trends = (o: { orgId: string; owner: string }, days: number) => api.query<AccountTrend[]>('social.account.trends', { days }, { actor: asUser(o.owner), orgId: o.orgId });
-  const status = (conn: string) => admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [conn])).rows[0]?.status);
+  const status = (conn: string) => admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [conn])).rows[0]?.status);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -94,15 +94,15 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -171,7 +171,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
     const answer = sandbox.accountMetrics.bind(sandbox);
     // A reconnect lands between the sweep reading the connection and the platform refusing the old token.
     sandbox.accountMetrics = async (input) => {
-      if (input.externalAccountId === 'sandbox-1546-reconnected') await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET updated_at = now() + interval '1 second' WHERE id = $1", [reconnected]));
+      if (input.externalAccountId === 'sandbox-1546-reconnected') await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET updated_at = now() + interval '1 second' WHERE id = $1", [reconnected]));
       return answer(input);
     };
     await sweepAccounts({ runtime: worker, broker: vault, workerDb, publishers: { sandbox } });
@@ -239,7 +239,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
     for (const p of bad) expect([JSON.stringify(p).slice(0, 60), await insert(p)]).toEqual([JSON.stringify(p).slice(0, 60), 'account_snapshot_performance_shape']);
     // The table stays append-only for tenant roles, the new column with it.
     const grants = await admin(async (c) =>
-      (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
     );
     expect(grants).toEqual(['INSERT', 'SELECT']);
   });

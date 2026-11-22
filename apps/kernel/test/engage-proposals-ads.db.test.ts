@@ -65,11 +65,11 @@ suite('the Ads proposal twins (#3863)', () => {
   async function rig(): Promise<Rig> {
     const connection = randomUUID();
     const account = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
     await h.q(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Thử', '2025-10-01', 'VND', $5)`, [h.orgId, account, connection, `acct-${connection.slice(0, 8)}`, ZONE]);
     // The account's write connection (an active one of the write twin's provider) and its switch: each has a guard of its own that asks a signed-in owner, set aside for the one statement.
     const write = randomUUID();
-    await h.q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Thử ghi', '{}', $4)`, [h.orgId, write, `acct-${connection.slice(0, 8)}`, h.owner]);
+    await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Thử ghi', '{}', $4)`, [h.orgId, write, `acct-${connection.slice(0, 8)}`, h.owner]);
     await withoutGuard('crove_ads.ad_account', ['switch_guard', 'write_connection_guard'], async (c) => {
       await c.query('UPDATE crove_ads.ad_account SET write_enabled = true, write_connection_id = $3 WHERE org_id = $1 AND id = $2', [h.orgId, account, write]);
     });
@@ -104,7 +104,7 @@ suite('the Ads proposal twins (#3863)', () => {
       [h.orgId, launch, kind ?? null],
     )).rows;
   const blocked = async () => (await h.q<{ b: boolean }>('SELECT launches_blocked AS b FROM crove_ads.ad_org_setting WHERE org_id = $1', [h.orgId])).rows[0]?.b as boolean;
-  const proposalsOf = async (twin: string) => (await h.q<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2', [h.orgId, twin])).rows[0]?.n ?? 0;
+  const proposalsOf = async (twin: string) => (await h.q<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND command = $2', [h.orgId, twin])).rows[0]?.n ?? 0;
   const asked = async (twin: string, payload: Record<string, unknown>) => {
     const { actor } = await h.grant();
     return h.propose(actor, twin, payload);
@@ -125,7 +125,7 @@ suite('the Ads proposal twins (#3863)', () => {
     expect(await h.ran(c.original)).toBe(ranBefore);
     expect(await launchRow(r.launch)).toEqual(before);
     expect(await effects(r)).toBe(0);
-    expect(await h.q('SELECT 1 FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2 AND payload @> $3::jsonb', [h.orgId, c.twin, JSON.stringify(sent)]).then((x) => x.rowCount)).toBe(1);
+    expect(await h.q('SELECT 1 FROM ludy_kernel.proposal WHERE org_id = $1 AND command = $2 AND payload @> $3::jsonb', [h.orgId, c.twin, JSON.stringify(sent)]).then((x) => x.rowCount)).toBe(1);
 
     // (b) Approved: the original runs once, as the person, and the proposal is executed.
     await h.approve(made.proposalId);
@@ -274,7 +274,7 @@ suite('the Ads proposal twins (#3863)', () => {
     await expect(h.approve(unknown.proposalId)).rejects.toMatchObject({ code: 'ADS_CHANGE_NOT_FOUND', status: 404 });
     // A change the job already begun (its call was recorded) may have landed: the original refuses it.
     const begun = await queuedRaise(await rig());
-    await h.q(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'ads', 'sandboxwrite_ads', 'manage_budget_raise', 'reconcile_only')`, [h.orgId, `ads.manage:${begun}:apply`]);
+    await h.q(`INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'ads', 'sandboxwrite_ads', 'manage_budget_raise', 'reconcile_only')`, [h.orgId, `ads.manage:${begun}:apply`]);
     const late = await asked(c.twin, { changeId: begun });
     await expect(h.approve(late.proposalId)).rejects.toMatchObject({ code: 'ADS_CHANGE_BEGUN', status: 409 });
     expect((await h.proposal(late.proposalId)).status).toBe('pending');
@@ -383,17 +383,17 @@ suite('the Ads proposal twins (#3863)', () => {
     expect(await blocked()).toBe(true);
     expect((await launchRow(r.launch)).state).toBe('stopped');
     expect((await launchRow(second.launch)).state).toBe('stopped');
-    const stoppedEvents = (await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued'`, [h.orgId])).rows[0]?.n;
+    const stoppedEvents = (await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued'`, [h.orgId])).rows[0]?.n;
     expect(stoppedEvents).toBeGreaterThanOrEqual(2);
     await expect(h.approve(made.proposalId)).rejects.toMatchObject({ status: expect.any(Number) });
     expect(await h.executions(c.original, made.proposalId)).toBe(1);
-    expect((await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued'`, [h.orgId])).rows[0]?.n).toBe(stoppedEvents);
+    expect((await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued'`, [h.orgId])).rows[0]?.n).toBe(stoppedEvents);
 
     // (d) The kill switch is idempotent: asked again, with the switch already on and nothing running, the approval still runs and changes nothing more.
     const again = await asked(c.twin, {});
     await h.approve(again.proposalId);
     expect(await h.executions(c.original, again.proposalId)).toBe(1);
     expect(await blocked()).toBe(true);
-    expect((await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued'`, [h.orgId])).rows[0]?.n).toBe(stoppedEvents);
+    expect((await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued'`, [h.orgId])).rows[0]?.n).toBe(stoppedEvents);
   });
 });

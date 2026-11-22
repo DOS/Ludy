@@ -5,20 +5,20 @@
 //     stopping ARCHIVE_LAG_SECONDS before now so a transaction still open is not cut off. Each window becomes one
 //     batch: the hash of each row, a batch hash over them and a chain hash that folds in the previous batch. The
 //     batch is written once to the archive store, then recorded in the database.
-//   - Batch versions: version 1 (#891) holds audit events and journal entries (crove_kernel.archive_row_hashes).
-//     Version 2 (#977) adds the voucher numbers and voids (crove_kernel.archive_number_hashes) created from
+//   - Batch versions: version 1 (#891) holds audit events and journal entries (ludy_kernel.archive_row_hashes).
+//     Version 2 (#977) adds the voucher numbers and voids (ludy_kernel.archive_number_hashes) created from
 //     `numbersFrom` to the end of its window: the epoch for the first version 2 batch, so it takes in every voucher
 //     and void made before the switch, and its own window's start for every later one. Version 3 (#1489) adds, the
 //     same way from `entitiesFrom`, the legal entity of every entry (and its lines), voucher and void
-//     (crove_kernel.archive_entity_hashes), so moving a row to another entity shows. Version 4 (#1594, #1596) adds,
+//     (ludy_kernel.archive_entity_hashes), so moving a row to another entity shows. Version 4 (#1594, #1596) adds,
 //     the same way from `allocationsFrom`, every number allocation and void of the gapless numbering and each
-//     voucher's number, number period and allocation (crove_kernel.archive_allocation_hashes). Version 5 (#1623) adds,
+//     voucher's number, number period and allocation (ludy_kernel.archive_allocation_hashes). Version 5 (#1623) adds,
 //     the same way from `seriesFrom`, every number series with the reset policy in force for its doc type
-//     (crove_kernel.archive_series_hashes), so switching a doc type's reset once it has numbers shows. Version 6
+//     (ludy_kernel.archive_series_hashes), so switching a doc type's reset once it has numbers shows. Version 6
 //     (#1337) adds, the same way from `revisionsFrom`, every journal entry's source revision and payload hash
-//     (crove_kernel.archive_revision_hashes), so editing either shows. Version 7 (#2007) adds, the same way from
+//     (ludy_kernel.archive_revision_hashes), so editing either shows. Version 7 (#2007) adds, the same way from
 //     `highsFrom`, the highest number each series allocated in the window, with the series' key
-//     (crove_kernel.archive_series_highs), so a restore can raise every series above the numbers the archive holds
+//     (ludy_kernel.archive_series_highs), so a restore can raise every series above the numbers the archive holds
 //     (restore-report.ts). Each batch verifies with the version it was written with; a batch of a lower version after a
 //     higher one means rows went unanchored.
 //   - verifyArchive, nightly: reads the batches back from the store, checks the chain, and recomputes every row hash
@@ -28,7 +28,7 @@
 //     reads every batch, which alone shows an old batch rewritten (planVerification). After a restore, the rows the restore lost are named by an acknowledgement the restore check
 //     wrote to the store (restores/v1/, #2020): those rows, in those batches, are excused, and nothing else is. A changed, missing or added row, a broken chain, a window gap, or a store and database that
 //     disagree fail the run: the job fails without a retry, and the prober alerts on the dead letter. So does an
-//     anchored number series whose period key does not fit its reset (crove_kernel.archive_series_misfits, #1820): a
+//     anchored number series whose period key does not fit its reset (ludy_kernel.archive_series_misfits, #1820): a
 //     reset switched and switched back before the series was anchored, which its row hash alone cannot show.
 // The archive holds hashes and references only, never row content, with one exception: a version 7 batch also holds
 // its series highs in the clear (`highs`: the series' legal entity, doc type, period key and highest number), which a
@@ -324,7 +324,7 @@ export function chainSha256(prev: string, seq: number, from: string, to: string,
   return sha256(`${prev}\n${seq}\n${from}\n${to}\n${batch}`);
 }
 
-// The row hash of a series high, as crove_kernel.archive_series_highs computes it (20261107140000): one line of text,
+// The row hash of a series high, as ludy_kernel.archive_series_highs computes it (20261107140000): one line of text,
 // so it is recomputed here from the clear values.
 export function highSha256(ref: string, legalEntityId: string, docType: string, periodKey: string, number: string): string {
   const [, orgId, seriesId] = ref.split(':');
@@ -335,7 +335,7 @@ export function highSha256(ref: string, legalEntityId: string, docType: string, 
 async function seriesHighs(db: Db, from: string, to: string): Promise<Array<{ row: [string, string]; high: ArchiveHigh }>> {
   const { rows } = await sql<{ ref: string; row_sha256: string; legal_entity_id: string; doc_type: string; period_key: string; high: string }>`
     SELECT ref, row_sha256, legal_entity_id, doc_type, period_key, high::text AS high
-    FROM crove_kernel.archive_series_highs(${from}::timestamptz, ${to}::timestamptz)`.execute(db);
+    FROM ludy_kernel.archive_series_highs(${from}::timestamptz, ${to}::timestamptz)`.execute(db);
   return rows.map((r) => ({ row: [r.ref, r.row_sha256], high: [r.ref, r.legal_entity_id, r.doc_type, r.period_key, r.high] }));
 }
 
@@ -354,40 +354,40 @@ async function rowHashes(
 ): Promise<Array<[string, string]>> {
   const { from, to } = batch.window;
   const { rows } = await sql<{ ref: string; row_sha256: string }>`
-    SELECT ref, row_sha256 FROM crove_kernel.archive_row_hashes(${from}::timestamptz, ${to}::timestamptz)`.execute(db);
+    SELECT ref, row_sha256 FROM ludy_kernel.archive_row_hashes(${from}::timestamptz, ${to}::timestamptz)`.execute(db);
   const numbers =
     batch.version >= 2
       ? (
           await sql<{ ref: string; row_sha256: string }>`
-            SELECT ref, row_sha256 FROM crove_kernel.archive_number_hashes(${batch.numbersFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
+            SELECT ref, row_sha256 FROM ludy_kernel.archive_number_hashes(${batch.numbersFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
         ).rows
       : [];
   const entities =
     batch.version >= 3
       ? (
           await sql<{ ref: string; row_sha256: string }>`
-            SELECT ref, row_sha256 FROM crove_kernel.archive_entity_hashes(${batch.entitiesFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
+            SELECT ref, row_sha256 FROM ludy_kernel.archive_entity_hashes(${batch.entitiesFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
         ).rows
       : [];
   const allocations =
     batch.version >= 4
       ? (
           await sql<{ ref: string; row_sha256: string }>`
-            SELECT ref, row_sha256 FROM crove_kernel.archive_allocation_hashes(${batch.allocationsFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
+            SELECT ref, row_sha256 FROM ludy_kernel.archive_allocation_hashes(${batch.allocationsFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
         ).rows
       : [];
   const series =
     batch.version >= 5
       ? (
           await sql<{ ref: string; row_sha256: string }>`
-            SELECT ref, row_sha256 FROM crove_kernel.archive_series_hashes(${batch.seriesFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
+            SELECT ref, row_sha256 FROM ludy_kernel.archive_series_hashes(${batch.seriesFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
         ).rows
       : [];
   const revisions =
     batch.version >= 6
       ? (
           await sql<{ ref: string; row_sha256: string }>`
-            SELECT ref, row_sha256 FROM crove_kernel.archive_revision_hashes(${batch.revisionsFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
+            SELECT ref, row_sha256 FROM ludy_kernel.archive_revision_hashes(${batch.revisionsFrom ?? from}::timestamptz, ${to}::timestamptz)`.execute(db)
         ).rows
       : [];
   const highs = batch.version >= 7 ? (knownHighs ?? (await seriesHighs(db, batch.highsFrom ?? from, to))).map((h) => ({ ref: h.row[0], row_sha256: h.row[1] })) : [];
@@ -478,10 +478,10 @@ export async function writeArchive(db: Db, store: ArchiveStore, options: { lagSe
   const lostRace = (error: unknown, seq: number) =>
     (error instanceof ArchiveObjectExistsError || (error as { code?: string }).code === '40001') && restart(seq);
   while (written < MAX_BATCHES_PER_RUN) {
-    const head = (await sql<{ seq: string; window_to: Date; chain_sha256: string }>`SELECT * FROM crove_kernel.archive_head()`.execute(db)).rows[0];
+    const head = (await sql<{ seq: string; window_to: Date; chain_sha256: string }>`SELECT * FROM ludy_kernel.archive_head()`.execute(db)).rows[0];
     const next = (
       await sql<{ window_from: Date; horizon: Date; first_row_at: Date | null }>`
-        SELECT * FROM crove_kernel.archive_next_window(${options.lagSeconds}::int)`.execute(db)
+        SELECT * FROM ludy_kernel.archive_next_window(${options.lagSeconds}::int)`.execute(db)
     ).rows[0];
     if (!next?.first_row_at) return written;
     const seq = head ? Number(head.seq) + 1 : 1;
@@ -497,7 +497,7 @@ export async function writeArchive(db: Db, store: ArchiveStore, options: { lagSe
       const found = parseBatch(existing);
       if (!found || found.seq !== seq || found.prevChainSha256 !== prev || found.window.from !== from) {
         // Another run may have recorded this sequence between the two reads above: then the head has moved on.
-        const now = (await sql<{ seq: string }>`SELECT seq FROM crove_kernel.archive_head()`.execute(db)).rows[0];
+        const now = (await sql<{ seq: string }>`SELECT seq FROM ludy_kernel.archive_head()`.execute(db)).rows[0];
         if (Number(now?.seq ?? 0) >= seq && restart(seq)) continue;
         throw new Error(`archive object ${key} does not continue the chain recorded in the database; run the verifier and see docs/runbooks/worm-archive.md`);
       }
@@ -543,7 +543,7 @@ export async function writeArchive(db: Db, store: ArchiveStore, options: { lagSe
       }
     }
     try {
-      await sql`SELECT crove_kernel.archive_record(${seq}::bigint, ${batch.window.from}::timestamptz, ${batch.window.to}::timestamptz,
+      await sql`SELECT ludy_kernel.archive_record(${seq}::bigint, ${batch.window.from}::timestamptz, ${batch.window.to}::timestamptz,
         ${batch.rows.length}::int, ${batch.batchSha256}, ${batch.chainSha256}, ${key})`.execute(db);
     } catch (error) {
       if (lostRace(error, seq)) continue;
@@ -827,7 +827,7 @@ export async function verifyArchive(
   const recorded = new Map(
     (
       await sql<{ seq: string; window_from: Date; window_to: Date; chain_sha256: string; object_key: string }>`
-        SELECT seq, window_from, window_to, chain_sha256, object_key FROM crove_kernel.archive_batches()`.execute(db)
+        SELECT seq, window_from, window_to, chain_sha256, object_key FROM ludy_kernel.archive_batches()`.execute(db)
     ).rows.map((r) => [Number(r.seq), r]),
   );
   const keys = await store.list(ARCHIVE_PREFIX);
@@ -972,7 +972,7 @@ export async function verifyArchive(
   // verifies as written, its reset switched and switched back before. A series not anchored yet is checked once a batch
   // holds it.
   if (seriesSeq.size > 0) {
-    const misfits = (await sql<{ ref: string }>`SELECT ref FROM crove_kernel.archive_series_misfits()`.execute(db)).rows;
+    const misfits = (await sql<{ ref: string }>`SELECT ref FROM ludy_kernel.archive_series_misfits()`.execute(db)).rows;
     for (const { ref } of misfits) {
       const anchored = seriesSeq.get(ref);
       if (anchored !== undefined && !rowProblems.has(ref)) note({ code: 'series_period_mismatch', seq: anchored, ref });
@@ -986,7 +986,7 @@ export async function verifyArchive(
   const now = (options.now ?? (() => new Date()))().getTime();
   // An acknowledgement whose write time the store cannot tell alerts too.
   const alertRestoreAck = restoreAck !== null && (ackWritten === null || now - ackWritten.getTime() < alertDays * 86_400_000);
-  await sql`SELECT crove_kernel.archive_verified(${problems.length === 0}, ${seq}::int, ${rowsChecked}::bigint, ${JSON.stringify(problems)}::jsonb, ${excused}::bigint,
+  await sql`SELECT ludy_kernel.archive_verified(${problems.length === 0}, ${seq}::int, ${rowsChecked}::bigint, ${JSON.stringify(problems)}::jsonb, ${excused}::bigint,
     ${restoreAck}::bigint)`.execute(db);
   const result = {
     ok: problems.length === 0,
@@ -1014,7 +1014,7 @@ export class ArchiveMismatchError extends Error {
     const codes = [...new Set(result.problems.map((p) => p.code))].join(', ');
     const ack = result.restoreAck === null ? '' : `; restore acknowledgement #${result.restoreAck} in force`;
     super(
-      `ARCHIVE_MISMATCH: ${result.problems.length} problem(s) over ${result.batches} batch(es): ${codes}${ack}; see crove_kernel.archive_verification and docs/runbooks/worm-archive.md`,
+      `ARCHIVE_MISMATCH: ${result.problems.length} problem(s) over ${result.batches} batch(es): ${codes}${ack}; see ludy_kernel.archive_verification and docs/runbooks/worm-archive.md`,
     );
     this.problems = result.problems;
     this.result = result;
@@ -1426,7 +1426,7 @@ export async function restoreReport(db: Db, store: ArchiveStore, options: { back
   const problems: ArchiveProblem[] = [];
   const recorded = new Map(
     (
-      await sql<{ seq: string; chain_sha256: string }>`SELECT seq, chain_sha256 FROM crove_kernel.archive_batches()`.execute(db)
+      await sql<{ seq: string; chain_sha256: string }>`SELECT seq, chain_sha256 FROM ludy_kernel.archive_batches()`.execute(db)
     ).rows.map((r) => [Number(r.seq), r.chain_sha256]),
   );
   const keys = await store.list(ARCHIVE_PREFIX);
@@ -1546,7 +1546,7 @@ export async function restoreReport(db: Db, store: ArchiveStore, options: { back
     // restamped, or the database is not a restore of that backup. The rows the reseed of this check writes (its audit
     // events, a series it made again) are the only ones expected, and a series' row only with its archived id.
     const reseeded = new Set(
-      (await sql<{ ref: string }>`SELECT ref FROM crove_kernel.archive_reseed_audit(${point}::timestamptz)`.execute(db)).rows.map((r) => r.ref),
+      (await sql<{ ref: string }>`SELECT ref FROM ludy_kernel.archive_reseed_audit(${point}::timestamptz)`.execute(db)).rows.map((r) => r.ref),
     );
     const since = (await rowsSince(db, point)).find(([ref]) => !reseeded.has(ref) && !comesBack(ref));
     if (since) problems.push({ code: 'restore_ack_mismatch', seq: Number.isFinite(first) ? first : 0, ref: since[0] });
@@ -1565,10 +1565,10 @@ export async function restoreReport(db: Db, store: ArchiveStore, options: { back
 
   // Every series whose restored next number is not above its archived highest, or that the restored database lacks.
   const { rows: restored } = await sql<{ org_id: string; series_id: string; legal_entity_id: string; doc_type: string; period_key: string; next_number: string }>`
-    SELECT org_id, series_id, legal_entity_id, doc_type, period_key, next_number::text AS next_number FROM crove_kernel.archive_series_next()`.execute(db);
+    SELECT org_id, series_id, legal_entity_id, doc_type, period_key, next_number::text AS next_number FROM ludy_kernel.archive_series_next()`.execute(db);
   const nextByKey = new Map(restored.map((r) => [`${r.org_id}|${r.legal_entity_id}|${r.doc_type}|${r.period_key}`, r]));
   const { rows: entities } = await sql<{ org_id: string; legal_entity_id: string }>`
-    SELECT org_id, legal_entity_id FROM crove_kernel.archive_legal_entities()`.execute(db);
+    SELECT org_id, legal_entity_id FROM ludy_kernel.archive_legal_entities()`.execute(db);
   const present = new Set(entities.map((e) => `${e.org_id}|${e.legal_entity_id}`));
   const reseed: RestoreSeries[] = [];
   const orphaned: RestoreSeries[] = [];
@@ -1669,7 +1669,7 @@ export async function acknowledgeRestore(db: Db, store: ArchiveStore, report: Re
     const bytes = await store.get(archiveKey(b.seq));
     const batch = bytes ? parseBatch(bytes) : null;
     if (!batch) throw new Error(`archive object ${archiveKey(b.seq)} cannot be read`);
-    await sql`SELECT crove_kernel.archive_record(${batch.seq}::bigint, ${batch.window.from}::timestamptz, ${batch.window.to}::timestamptz,
+    await sql`SELECT ludy_kernel.archive_record(${batch.seq}::bigint, ${batch.window.from}::timestamptz, ${batch.window.to}::timestamptz,
       ${batch.rows.length}::int, ${batch.batchSha256}, ${batch.chainSha256}, ${archiveKey(batch.seq)})`.execute(db);
   }
   return key;

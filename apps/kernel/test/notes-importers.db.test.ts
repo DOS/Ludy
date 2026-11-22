@@ -183,9 +183,9 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -308,7 +308,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
 
     const outbox = await admin(async (c) =>
       (await c.query<{ payload: { attachmentId: string } }>(
-        `SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'notes.attachment.extract_queued'`,
+        `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'notes.attachment.extract_queued'`,
         [orgId],
       )).rows,
     );
@@ -332,7 +332,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     // Audit trail logs counts only, zero note titles or attachment filenames.
     const auditRows = await admin(async (c) =>
       (await c.query<{ detail: unknown }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.note.import_enex'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.note.import_enex'`,
         [orgId],
       )).rows,
     );

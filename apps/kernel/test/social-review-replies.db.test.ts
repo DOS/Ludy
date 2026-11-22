@@ -1,7 +1,7 @@
 // The team's reply to a client's answer on a review link (#1301), with the plan link follow-ups of #930, on
 // PostgreSQL 17: members and above reply, edit and clear (viewers do not, a member limited to some channels only on
 // their posts); the client sees the reply on the single-post page and the plan page signed by neither a member's name
-// nor id; the answer counts and the client's verdict stay as they were; crove_tenant writes only the reply columns, and
+// nor id; the answer counts and the client's verdict stay as they were; ludy_tenant writes only the reply columns, and
 // only in its own member's name; a plan's body comes once per post; no tenant path adds a post to a frozen plan; and
 // the live link caps hold against links made at the same time. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
 // makes its own database.
@@ -24,7 +24,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
 
-// SQL run as crove_tenant in a member's context, as a command's own statements run, so the grants and the guard are
+// SQL run as ludy_tenant in a member's context, as a command's own statements run, so the grants and the guard are
 // what refuses it, not the commands' rules. A refusal comes back as its SQLSTATE (the savepoint keeps the transaction
 // usable for the command's audit row).
 const rawSql = defineCommand({
@@ -73,7 +73,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), name);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, name, owner, ...roles };
   }
@@ -81,7 +81,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
   async function connection(o: Org, name = 'Kênh thử') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -129,10 +129,10 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const registry = { commands: [...kernelCommands, ...socialCommands, rawSql], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 6 });
     db = createDb(pool);
@@ -202,7 +202,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     // Every reply, edit and clear is audited, with the answer, the post and the link.
     const audited = await admin(
       async (c) =>
-        (await c.query<{ target_id: string; detail: { post_id: string; cleared: boolean } }>("SELECT target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.review.reply' AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId])).rows,
+        (await c.query<{ target_id: string; detail: { post_id: string; cleared: boolean } }>("SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.review.reply' AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId])).rows,
     );
     expect(audited.map((a) => [a.target_id, a.detail.post_id, a.detail.cleared])).toEqual([
       [feedbackId, postId, false],
@@ -282,7 +282,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     expect((await reply(o, o.admin, onTheirs, 'Dạ')).reply?.by).toBe(o.admin);
   });
 
-  it('lets crove_tenant write only the reply, in its own member name, and the guard holds for every role', async () => {
+  it('lets ludy_tenant write only the reply, in its own member name, and the guard holds for every role', async () => {
     const o = await org();
     const conn = await connection(o);
     const postId = await draft(o, conn, 'Bài');
@@ -330,7 +330,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
 
     const privileges = await admin(async (c) => {
       const { rows } = await c.query<{ col: string; can: boolean }>(
-        "SELECT a.attname AS col, has_column_privilege('crove_tenant', 'crove_social.review_feedback', a.attname, 'UPDATE') AS can FROM pg_attribute a WHERE a.attrelid = 'crove_social.review_feedback'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+        "SELECT a.attname AS col, has_column_privilege('ludy_tenant', 'crove_social.review_feedback', a.attname, 'UPDATE') AS can FROM pg_attribute a WHERE a.attrelid = 'crove_social.review_feedback'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
       );
       return rows.filter((r) => r.can).map((r) => r.col);
     });
@@ -344,7 +344,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     const late = await draft(o, conn, 'Bài thêm sau');
     const { linkId } = await exec<{ linkId: string }>(o, o.admin, 'social.review_link.create_plan', { postIds: [first] });
     const denied = expect.objectContaining({ ok: false, code: '42501' });
-    // No INSERT for crove_tenant, whoever the member.
+    // No INSERT for ludy_tenant, whoever the member.
     expect(await raw(o, o.owner, 'INSERT INTO crove_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, 1)', [o.orgId, linkId, late])).toEqual(denied);
     // The definer refuses a plan that has its posts, and anyone but an owner or admin who made the link.
     expect(await raw(o, o.admin, 'SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [linkId, [late]])).toEqual(expect.objectContaining({ ok: false, code: '55000', message: 'REVIEW_PLAN_FROZEN' }));
@@ -383,15 +383,15 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
 
     const matrix = await admin(async (c) => {
       const fns = ['crove_social.review_plan_posts_add(uuid,uuid[])', 'crove_social.review_feedback_reply_guard()'];
-      const roles = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'public'];
+      const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'public'];
       const { rows: can } = await c.query<{ fn: string; role: string; can: boolean }>(
         `SELECT f AS fn, r AS role, has_function_privilege(r, f, 'EXECUTE') AS can FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r`,
         [fns, roles],
       );
       return Object.fromEntries(fns.map((f) => [f, roles.filter((r) => can.some((row) => row.fn === f && row.role === r && row.can))]));
     });
-    // crove_tenant's grant, which its member roles inherit (outside a member context the definer refuses), and nobody calls the guard.
-    expect(matrix).toEqual({ 'crove_social.review_plan_posts_add(uuid,uuid[])': ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant'], 'crove_social.review_feedback_reply_guard()': [] });
+    // ludy_tenant's grant, which its member roles inherit (outside a member context the definer refuses), and nobody calls the guard.
+    expect(matrix).toEqual({ 'crove_social.review_plan_posts_add(uuid,uuid[])': ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant'], 'crove_social.review_feedback_reply_guard()': [] });
     await expect(pool.query('SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, [late]])).rejects.toMatchObject({ code: '42501', message: 'NO_CONTEXT' });
   });
 

@@ -48,7 +48,7 @@ suite('the chapters of a meeting (#3844)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users[who] as string, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users[who] as string, orgId)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -94,13 +94,13 @@ suite('the chapters of a meeting (#3844)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerUrl = worker.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -111,7 +111,7 @@ suite('the chapters of a meeting (#3844)', () => {
     });
     for (const key of ['owner', 'recorder', 'reader', 'stranger']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'chapters', subject: key, email: `${key}@chapters.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Mục lục')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -289,7 +289,7 @@ suite('the chapters of a meeting (#3844)', () => {
     await system.connect();
     try {
       await system.query('BEGIN');
-      await system.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await system.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       const purged = (await system.query<{ n: number }>(`SELECT crove_meetings.meeting_draft_purge($1, $2) AS n`, [orgId, old])).rows[0]?.n;
       expect(purged).toBe(1);
       const kept = (await system.query<{ n: number }>(`SELECT crove_meetings.meeting_draft_purge($1, $2) AS n`, [orgId, fresh])).rows[0]?.n;
@@ -352,7 +352,7 @@ suite('the chapters of a meeting (#3844)', () => {
 
     // An admin of the org who neither recorded nor reads this meeting: a user context, but no role of the table's policies.
     users.admin = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'chapters', subject: 'admin', email: 'admin@chapters.test', name: null });
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, users.admin]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, users.admin]);
 
     // What each context may do to this meeting's rows with raw SQL, as the app's tenant login (rolled back). The read runs outside a savepoint on purpose: a login that could not read the table at all
     // would abort the transaction and fail the test loudly, never count as "reads nothing". The agent contexts' inserts are refused by the write guard trigger (agent_write_guard) before the policy is met;
@@ -384,7 +384,7 @@ suite('the chapters of a meeting (#3844)', () => {
     };
     const NOTHING: Probe = { read: 0, insert: 'refused', update: 0, delete: 0 };
     // A positive control for the contexts below: each one sees this org and says who the actor is, so its zeros come from the policy and not from a context that was never entered.
-    const whoAmI = async (c: pg.Client) => (await c.query<{ org: string; actor: string }>(`SELECT crove_kernel.ctx_org_id()::text AS org, crove_kernel.ctx_actor_type() AS actor`)).rows[0];
+    const whoAmI = async (c: pg.Client) => (await c.query<{ org: string; actor: string }>(`SELECT ludy_kernel.ctx_org_id()::text AS org, ludy_kernel.ctx_actor_type() AS actor`)).rows[0];
 
     // User contexts: the admin and the stranger read and write nothing; the reader reads the published rows and writes nothing.
     expect(await asMember('admin', probe)).toEqual(NOTHING);
@@ -402,8 +402,8 @@ suite('the chapters of a meeting (#3844)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.ctx_write($1::jsonb)', [JSON.stringify(ctx)]);
-        await c.query('SET LOCAL ROLE crove_tenant');
+        await c.query('SELECT ludy_kernel.ctx_write($1::jsonb)', [JSON.stringify(ctx)]);
+        await c.query('SET LOCAL ROLE ludy_tenant');
         return await fn(c);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
@@ -426,7 +426,7 @@ suite('the chapters of a meeting (#3844)', () => {
     await worker.connect();
     try {
       await worker.query('BEGIN');
-      await worker.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await worker.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       expect(await whoAmI(worker), 'the system context is entered').toEqual({ org: orgId, actor: 'system' });
       expect(await probe(worker), 'the system context').toEqual(NOTHING);
     } finally {

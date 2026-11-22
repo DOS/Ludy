@@ -137,12 +137,12 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const wUrl = new URL(adminUrl);
-    wUrl.username = 'crove_worker';
+    wUrl.username = 'ludy_worker';
     wUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -250,16 +250,16 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     let branchEntityId = '';
     await withAdmin(async (c) => {
       defaultEntityId = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
       ).rows[0]?.id as string;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh HCM', 'branch', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh HCM', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchMember.userId, branchEntityId, owner.userId],
       );
@@ -275,21 +275,21 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     await withAdmin(async (c) => {
       hqTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due)
            VALUES ($1, 'Số liệu bí mật trụ sở chính', 'human', 'user', $2, '2026-12-01T16:59:00.000Z') RETURNING id`,
           [org.orgId, defaultEntityId],
         )
       ).rows[0]?.id as string;
       hcmTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due)
            VALUES ($1, 'Kiểm kê kho HCM', 'human', 'user', $2, '2026-12-04T16:59:00.000Z') RETURNING id`,
           [org.orgId, branchEntityId],
         )
       ).rows[0]?.id as string;
       hcmAiTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due, tainted)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due, tainted)
            VALUES ($1, 'Đề xuất AI tại HCM', 'human', 'user', $2, '2026-12-05T16:59:00.000Z', true) RETURNING id`,
           [org.orgId, branchEntityId],
         )
@@ -334,7 +334,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     expect(clonedFromSnap.taskIds).toHaveLength(2);
     await withAdmin(async (c) => {
       const clonedTasks = await c.query<{ title: string; tainted: boolean }>(
-        `SELECT title, tainted FROM crove_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        `SELECT title, tainted FROM ludy_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
         [org.orgId, clonedFromSnap.taskIds],
       );
       expect(clonedTasks.rows.find((r) => r.title === 'Kiểm kê kho HCM')?.tainted).toBe(false);
@@ -489,7 +489,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     // Agent wakeup was queued for assigned AI seat.
     await withAdmin(async (c) => {
       const wake = await c.query<{ count: string }>(
-        `SELECT pg_catalog.count(*)::text AS count FROM crove_kernel.agent_wakeup WHERE org_id = $1 AND agent_id = $2`,
+        `SELECT pg_catalog.count(*)::text AS count FROM ludy_kernel.agent_wakeup WHERE org_id = $1 AND agent_id = $2`,
         [org.orgId, installed.agentId],
       );
       expect(Number(wake.rows[0]?.count ?? 0)).toBeGreaterThan(0);
@@ -553,7 +553,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     let weeklyCopyId = '';
     await withAdmin(async (c) => {
       const ev = await c.query<{ id: string; payload: { taskId?: string; positionId?: string | null } }>(
-        `SELECT id, payload FROM crove_kernel.outbox_event
+        `SELECT id, payload FROM ludy_kernel.outbox_event
          WHERE org_id = $1 AND type = 'projects.recurring.advanced' AND payload ->> 'sourceTaskId' = $2
          ORDER BY created_at DESC LIMIT 1`,
         [org.orgId, weeklyTaskId],
@@ -601,7 +601,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     expect(await sweepProjectsRecurring({ runtime: workerRt, workerDb })).toBe(1);
     await withAdmin(async (c) => {
       const ev = await c.query<{ payload: { wakeAgentId?: string } }>(
-        `SELECT payload FROM crove_kernel.outbox_event
+        `SELECT payload FROM ludy_kernel.outbox_event
          WHERE org_id = $1 AND type = 'projects.recurring.advanced' AND payload ->> 'sourceTaskId' = $2
          ORDER BY created_at DESC LIMIT 1`,
         [org.orgId, offAppTaskId],
@@ -770,7 +770,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
 
       // Clear assignee concurrently before advance acquires the project/task locks.
       await lockClient.query(
-        'UPDATE crove_kernel.task SET assignee_position_id = NULL WHERE org_id = $1 AND id = $2',
+        'UPDATE ludy_kernel.task SET assignee_position_id = NULL WHERE org_id = $1 AND id = $2',
         [org.orgId, taskId],
       );
       await lockClient.query('COMMIT');

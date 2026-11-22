@@ -42,12 +42,12 @@ suite('household business profile and rules (#2517)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Hộ Kinh Doanh ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
-    const company = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
+    const company = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
     const household = randomUUID();
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [orgId, household, owner]),
+      c.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [orgId, household, owner]),
     );
     return { orgId, owner, admin: adminUser, member, viewer, company, household };
   }
@@ -71,9 +71,9 @@ suite('household business profile and rules (#2517)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -169,7 +169,7 @@ suite('household business profile and rules (#2517)', () => {
     const o = await org();
     await setProfile(o);
     expect((await profileAt(o, '2026-06-30')).books).toHaveLength(1);
-    await admin((c) => c.query("UPDATE crove_kernel.legal_entity SET kind = 'company' WHERE org_id = $1 AND id = $2", [o.orgId, o.household]));
+    await admin((c) => c.query("UPDATE ludy_kernel.legal_entity SET kind = 'company' WHERE org_id = $1 AND id = $2", [o.orgId, o.household]));
     expect(await profileAt(o, '2026-06-30')).toEqual({ date: '2026-06-30', profile: null, books: [], commentary: false });
   });
 
@@ -247,7 +247,7 @@ suite('household business profile and rules (#2517)', () => {
     await expect(setProfile(o, { effectiveFrom: '2026-09-01', taxGroup: 2, pitMethod: 'percentage' }, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(setProfile(o, { effectiveFrom: '2026-09-01', taxGroup: 2, pitMethod: 'percentage' }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     for (const who of [o.owner, o.admin, o.member, o.viewer]) expect((await profileAt(o, '2026-06-30', who)).profile?.taxGroup).toBe(1);
-    const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok'`, [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok'`, [o.orgId])).rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.detail).toMatchObject({ legalEntityId: o.household, effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, vatCutEligible: null });
     expect(JSON.stringify(rows[0]?.detail)).not.toContain('Nguyễn');
@@ -266,7 +266,7 @@ suite('household business profile and rules (#2517)', () => {
     expect((await profileAt(o, '2026-08-15')).profile?.vatCutEligible).toBe('yes');
     expect((await profileAt(o, '2026-12-31')).profile?.vatCutEligible).toBe('no');
     // The audit row holds the answer (it is not personal data), and the table refuses a value outside the two.
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok' ORDER BY detail->>'effectiveFrom'`, [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok' ORDER BY detail->>'effectiveFrom'`, [o.orgId])).rows);
     expect(audit.map((r) => r.detail.vatCutEligible)).toEqual([null, 'yes', 'no']);
     await expect(admin((c) => c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, vat_cut_eligible) VALUES ($1, $2, '2027-01-01', 1, 'maybe')", [o.orgId, o.household]))).rejects.toMatchObject({ code: '23514' });
   });
@@ -349,7 +349,7 @@ suite('household business profile and rules (#2517)', () => {
         // A sales document is posted in the same transaction as its entry.
         let document: string | null = null;
         if (over.invoice) {
-          const party = (await a.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [orgId])).rows[0]?.id;
+          const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [orgId])).rows[0]?.id;
           document = (
             await a.query<{ id: string }>(
               "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'sale', $7) RETURNING id",

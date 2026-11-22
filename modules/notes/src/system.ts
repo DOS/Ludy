@@ -51,7 +51,7 @@ export const memberItemsPurge = defineCommand({
     assertSystem(ctx);
     if (input.eventId !== undefined) {
       const later = await ctx.trx
-        .selectFrom('crove_kernel.outbox_event')
+        .selectFrom('ludy_kernel.outbox_event')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('type', '=', 'kernel.member.removed')

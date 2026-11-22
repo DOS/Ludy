@@ -99,14 +99,14 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     const pool = createPool({ connectionString: appUrl, max: 4 });
     pools.push(pool);
     const db = createDb(pool);
@@ -142,7 +142,7 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
   const start = (who: Account = member, app: keyof typeof apps = 'zoom') => rpc('meetingPlatform/connectStart', who, { provider: 'zoom' }, { app });
   const finish = (who: Account, state: string, code = 'code-not-real-0001', app: keyof typeof apps = 'zoom') => rpc('meetingPlatform/connectFinish', who, { provider: 'zoom', state, code }, { app });
   const connections = async () => (await sqlAdmin<{ id: string; external_account: string; display_name: string; scopes: string[]; status: string; expires_at: Date | null }>(
-    "SELECT id, external_account, display_name, scopes, status, expires_at FROM crove_kernel.meeting_platform_connection WHERE org_id = $1 AND provider = 'zoom'", [org.orgId])).rows;
+    "SELECT id, external_account, display_name, scopes, status, expires_at FROM ludy_kernel.meeting_platform_connection WHERE org_id = $1 AND provider = 'zoom'", [org.orgId])).rows;
 
   it('offers Zoom only to a deployment that has the app and a credential key, and to any member', async () => {
     expect((await rpc('meetingPlatform/providers', member, {})).body).toEqual(['zoom']);
@@ -167,7 +167,7 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
     expect(await start(member, 'noZoom')).toMatchObject({ status: 404, body: { code: 'CHANNEL_PROVIDER_DISABLED' } });
     expect(await start(member, 'noKey')).toMatchObject({ status: 503, body: { code: 'BROKER_NOT_CONFIGURED' } });
     // The database kept the state's hash and the verifier, never the state.
-    const rows = await sqlAdmin<{ state_hash: string; provider: string; code_verifier: string | null }>("SELECT state_hash, provider, code_verifier FROM crove_kernel.oauth_state WHERE org_id = $1 AND provider = 'zoom_recordings'", [org.orgId]);
+    const rows = await sqlAdmin<{ state_hash: string; provider: string; code_verifier: string | null }>("SELECT state_hash, provider, code_verifier FROM ludy_kernel.oauth_state WHERE org_id = $1 AND provider = 'zoom_recordings'", [org.orgId]);
     expect(rows.rows.length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify(rows.rows)).not.toContain(String(started.body.state));
     expect(rows.rows.every((r) => r.code_verifier !== null)).toBe(true);
@@ -198,13 +198,13 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
     expect(rows[0]).toMatchObject({ id: done.body.connectionId, external_account: 'synthetic-user-id-0001', display_name: 'Linh Nguyen', status: 'active', scopes: ['cloud_recording:read:list_user_recordings', 'user:read:user'] });
     expect(new Date(String(rows[0]?.expires_at)).getTime()).toBeGreaterThan(Date.now() + 3_000_000);
     // The worker's read of the sealed bytes opens under the binding of this org, provider and account, and parses to a credential with an expiry (the refresh and the sweep depend on it).
-    const sealed = (await sqlAdmin<{ key_id: string; envelope: Buffer }>('SELECT key_id, envelope FROM crove_kernel.meeting_platform_credential WHERE id = $1', [done.body.connectionId])).rows[0];
+    const sealed = (await sqlAdmin<{ key_id: string; envelope: Buffer }>('SELECT key_id, envelope FROM ludy_kernel.meeting_platform_credential WHERE id = $1', [done.body.connectionId])).rows[0];
     const secret = vault.open({ keyId: String(sealed?.key_id), envelope: sealed?.envelope as Buffer }, meetingPlatformBinding(org.orgId, 'zoom', 'synthetic-user-id-0001'));
     const credential = parseCredential(secret);
     expect(credential).toMatchObject({ accessToken: 'zoom-access-not-real-0001', refreshToken: 'zoom-refresh-not-real-0001' });
     expect(credential.expiresAt?.getTime()).toBeGreaterThan(Date.now() + 3_000_000);
     // Nothing of it is in the audit log.
-    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.meeting_platform.%'", [org.orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.meeting_platform.%'", [org.orgId]);
     for (const secretText of ['zoom-access-not-real-0001', 'zoom-refresh-not-real-0001', verifier, String(started.body.state)]) expect(JSON.stringify(audit.rows)).not.toContain(secretText);
   });
 

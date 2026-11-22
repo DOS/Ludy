@@ -40,11 +40,11 @@ suite('one live Vy run per member per feature (#3029)', () => {
       await c.end();
     }
   };
-  const run = async (runId: string) => (await sqlAdmin<{ status: string; error: string | null; feature: string | null }>('SELECT status, error, feature FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, runId]))[0];
-  const result = async (runId: string) => (await sqlAdmin<{ status: string; error_code: string | null }>('SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, runId]))[0];
+  const run = async (runId: string) => (await sqlAdmin<{ status: string; error: string | null; feature: string | null }>('SELECT status, error, feature FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, runId]))[0];
+  const result = async (runId: string) => (await sqlAdmin<{ status: string; error_code: string | null }>('SELECT status, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, runId]))[0];
   const liveOf = async (who: string) =>
     (await sqlAdmin<{ feature: string }>(
-      `SELECT r.feature FROM crove_kernel.ai_run r JOIN crove_kernel.agent a ON a.org_id = r.org_id AND a.id = r.agent_id WHERE r.org_id = $1 AND a.member_user_id = $2 AND r.status = 'running' ORDER BY r.feature`,
+      `SELECT r.feature FROM ludy_kernel.ai_run r JOIN ludy_kernel.agent a ON a.org_id = r.org_id AND a.id = r.agent_id WHERE r.org_id = $1 AND a.member_user_id = $2 AND r.status = 'running' ORDER BY r.feature`,
       [orgId, who],
     )).map((r) => r.feature);
 
@@ -57,9 +57,9 @@ suite('one live Vy run per member per feature (#3029)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 12 });
     pools.push(pool);
@@ -69,7 +69,7 @@ suite('one live Vy run per member per feature (#3029)', () => {
       users[key] = await upsertIdentity(db, { issuer: 'vy-per-feature', subject: key, email: `${key}@vy-per-feature.test`, name: null });
     }
     orgId = (await createOrg(runtime, asUser(users.owner), 'Vy theo tính năng')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [
       orgId,
       users.alice,
       users.bob,
@@ -159,28 +159,28 @@ suite('one live Vy run per member per feature (#3029)', () => {
     // The transcription's own spend, recorded as the meter does; no other spend exists in this org this month.
     await exec(users.bob, 'kernel.member_vy.meter.record', { feature: 'meetings.transcribe', inputTokens: 1000, outputTokens: 100, cost: '0.500000' });
     const policy = (limit: string) =>
-      sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by) VALUES ($1, 'org', '*', $2, 80, true, $3)`, [orgId, limit, users.owner]);
+      sqlAdmin(`INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by) VALUES ($1, 'org', '*', $2, 80, true, $3)`, [orgId, limit, users.owner]);
     try {
-      await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+      await sqlAdmin('DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1', [orgId]);
       await policy('0.400000');
       await expect(start(users.bob, 'meetings.summary')).rejects.toMatchObject({ code: 'AI_BUDGET_EXHAUSTED' });
       await expect(start(users.bob, 'notes.summary')).rejects.toMatchObject({ code: 'AI_BUDGET_EXHAUSTED' });
       expect(await run(live.runId), 'the refused starts changed nothing about the live run').toMatchObject({ status: 'running' });
       // A limit above the spend lets the same start through while the transcription is live.
-      await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+      await sqlAdmin('DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1', [orgId]);
       await policy('1.000000');
       expect(await start(users.bob, 'meetings.summary')).toMatchObject({ runId: expect.any(String) });
       expect(await run(live.runId)).toMatchObject({ status: 'running' });
     } finally {
-      await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+      await sqlAdmin('DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1', [orgId]);
     }
   });
 
   it('answers VY_RUN_BUSY, never two running runs, when a start of the same feature loses a race', async () => {
     // Held open: another start of the feature has made its run and not yet committed (the supersede of the start below cannot see it).
     await start(users.carol, 'notes.todo_suggest');
-    const agent = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.carol]))[0]?.id;
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND agent_id = $2 AND status = 'running' AND feature = 'notes.todo_suggest'`, [orgId, agent]);
+    const agent = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.carol]))[0]?.id;
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND agent_id = $2 AND status = 'running' AND feature = 'notes.todo_suggest'`, [orgId, agent]);
     const holder = new pg.Client({ connectionString: adminUrl });
     await holder.connect();
     const winner = randomUUID();
@@ -189,7 +189,7 @@ suite('one live Vy run per member per feature (#3029)', () => {
       // The triggers are set aside: this seeds the committed state of the winning start by hand, as the superuser.
       await holder.query('SET LOCAL session_replication_role = replica');
       await holder.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.todo_suggest', 'running', true, now(), now() + interval '30 minutes')`,
+        `INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.todo_suggest', 'running', true, now(), now() + interval '30 minutes')`,
         [orgId, winner, agent],
       );
       const racing = start(users.carol, 'notes.todo_suggest').then(

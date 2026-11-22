@@ -66,7 +66,7 @@ suite('the S2c-HKD book download (#2517 slice 2b)', () => {
     }
   }
   const audits = () =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.export' AND outcome = 'ok' ORDER BY occurred_at, id", [orgId])).rows.map((r) => r.detail));
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.export' AND outcome = 'ok' ORDER BY occurred_at, id", [orgId])).rows.map((r) => r.detail));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -77,7 +77,7 @@ suite('the S2c-HKD book download (#2517 slice 2b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     // The seeded law rows are `confirmed` from #3710 (finance-household.db.test.ts checks that). This file exercises the provisional label, so it starts from the rows as they were before:
     // `commentary`, restored here as the database owner (the law tables are read-only to every tenant login).
     // The yearly revenue threshold and the PIT cut are set to 0 here: these files test the books' rows, splits, labels and Excel with small revenues, so every revenue is above the threshold and the tax is the plain
@@ -89,7 +89,7 @@ suite('the S2c-HKD book download (#2517 slice 2b)', () => {
     );
     await restore.end();
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     const db: Db = createDb(pool);
@@ -118,9 +118,9 @@ suite('the S2c-HKD book download (#2517 slice 2b)', () => {
     percentage = randomUUID();
     groupOne = randomUUID();
     await admin(async (a) => {
-      const user = (await a.query<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
+      const user = (await a.query<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
       for (const [id, name, group, method] of [[percentage, 'Hộ Theo Thu Nhập', 3, 'income'], [groupOne, 'Hộ Nhóm Một', 1, null]] as const) {
-        await a.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'household', $4)", [orgId, id, name, user]);
+        await a.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'household', $4)", [orgId, id, name, user]);
         await a.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', $3, $4, ARRAY['goods'])", [orgId, id, group, method]);
       }
       // One sale on account 511 and one expense on account 632 in September for the household on the income method; one transaction, since an entry needs its lines at commit.

@@ -1,5 +1,5 @@
 // Built-in migration runner: applies supabase/migrations/*.sql in order, one transaction per file (but a file marked to
-// build indexes concurrently, #1791), recording a ledger in crove_meta.schema_migrations. Works on any PostgreSQL 17; no
+// build indexes concurrently, #1791), recording a ledger in ludy_meta.schema_migrations (crove_meta before #3970). Works on any PostgreSQL 17; no
 // Supabase CLI.
 import { createHash, createHmac } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
@@ -7,14 +7,39 @@ import { dirname, join } from 'node:path';
 import pg from 'pg';
 import { readEnvPair } from './env.ts';
 
-const FILE_PATTERN = /^(\d{14})_crove_[a-z0-9]+_[a-z0-9_]+\.sql$/;
+const FILE_PATTERN = /^(\d{14})_(?:crove|ludy)_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 
 // Migrations that change state for the whole database, not for Ludy's roles and schemas: in a shared database one of them runs
 // only through a variant (#2284). A pending one without a variant stops the run, so a missing or mislocated variants
 // directory can never silently apply the original to the other system's database.
-// Ludy's own roles, by name (#2284): the roles the migrations create. A shared database may hold another system's role named
+// Ludy's own roles, by name (#2284): the roles the migrations create (both canonical ludy_* and legacy crove_* transition
+// aliases until #3972 drops the aliases). A shared database may hold another system's role named `ludy_something` or
 // `crove_something`; only these are trusted as Ludy's.
-export const LUDY_ROLES: readonly string[] = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter', 'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_system', 'crove_definer_einvoice'];
+export const LUDY_ROLES: readonly string[] = [
+  'ludy_tenant',
+  'ludy_app',
+  'ludy_worker',
+  'ludy_prober',
+  'ludy_reporter',
+  'ludy_auth_reader',
+  'ludy_definer_tenant',
+  'ludy_definer_system',
+  'ludy_definer_einvoice',
+  'crove_tenant',
+  'crove_app',
+  'crove_worker',
+  'crove_prober',
+  'crove_reporter',
+  'crove_auth_reader',
+  'crove_definer_tenant',
+  'crove_definer_system',
+  'crove_definer_einvoice',
+];
+
+async function resolveMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | 'crove_meta'> {
+  const { rows } = await client.query<{ ok: boolean }>("SELECT pg_catalog.to_regnamespace('ludy_meta') IS NOT NULL AS ok");
+  return rows[0]?.ok ? 'ludy_meta' : 'crove_meta';
+}
 
 export const DATABASE_WIDE_MIGRATIONS: ReadonlySet<string> = new Set(['20261015120000_crove_kernel_revoke_temp.sql']);
 
@@ -77,15 +102,20 @@ const QUIET_INSTALL_SETTINGS: ReadonlyArray<readonly [string, string]> = [
 export async function installContextTokenKey(client: pg.ClientBase, key: string, log: (message: string) => void = () => {}): Promise<void> {
   const bytes = contextTokenKeyBytes(key);
   // A database migrated only up to a version before the key's migration (tests of older states) has no installer.
-  const { rows: found } = await client.query<{ present: boolean }>(
-    "SELECT pg_catalog.to_regprocedure('crove_kernel.context_token_key_install(bytea)') IS NOT NULL AS present",
+  const { rows: found } = await client.query<{ schema: 'ludy_kernel' | 'crove_kernel' | null }>(
+    `SELECT CASE
+       WHEN pg_catalog.to_regprocedure('ludy_kernel.context_token_key_install(bytea)') IS NOT NULL THEN 'ludy_kernel'
+       WHEN pg_catalog.to_regprocedure('crove_kernel.context_token_key_install(bytea)') IS NOT NULL THEN 'crove_kernel'
+       ELSE NULL
+     END AS schema`,
   );
-  if (found[0]?.present !== true) {
-    log('context token key not installed: the database has no crove_kernel.context_token_key_install yet');
+  const kernel = found[0]?.schema ?? null;
+  if (kernel === null) {
+    log('context token key not installed: the database has no ludy_kernel.context_token_key_install yet');
     return;
   }
   const check = createHmac('sha256', bytes).update('crove context token key check', 'utf8').digest('hex');
-  const { rows: same } = await client.query<{ matches: boolean }>('SELECT crove_kernel.context_token_key_matches($1) AS matches', [check]);
+  const { rows: same } = await client.query<{ matches: boolean }>(`SELECT ${kernel}.context_token_key_matches($1) AS matches`, [check]);
   if (same[0]?.matches === true) {
     log('context token key unchanged');
     return;
@@ -105,7 +135,7 @@ export async function installContextTokenKey(client: pg.ClientBase, key: string,
     }
     // A runner that is not a superuser may not change these: the server's own settings for them apply to the install.
     if (loud.length > 0) log(`context token key: the runner may not turn off ${loud.join(', ')} for the install; the server's logging of them stays on`);
-    const { rows } = await client.query<{ result: string }>('SELECT crove_kernel.context_token_key_install($1::bytea) AS result', [bytes]);
+    const { rows } = await client.query<{ result: string }>(`SELECT ${kernel}.context_token_key_install($1::bytea) AS result`, [bytes]);
     await client.query('COMMIT');
     log(`context token key ${rows[0]?.result ?? 'not installed'}`);
   } catch (error) {
@@ -173,14 +203,15 @@ export async function readSharedVariants(dir: string, files: readonly MigrationF
 // event function reads it). Written after the pipeline session is marked, so creating the table is not DDL outside the
 // pipeline.
 async function recordDeploymentMode(client: pg.ClientBase, shared: boolean, allowSwitch: boolean, log: (message: string) => void): Promise<void> {
-  await client.query(`CREATE TABLE IF NOT EXISTS crove_meta.deployment (
+  const meta = await resolveMetaSchema(client);
+  await client.query(`CREATE TABLE IF NOT EXISTS ${meta}.deployment (
     key text PRIMARY KEY,
     value text NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`);
   // The mode the database was last migrated in. A database with a ledger and no mode is an owned one that predates the mode.
-  const recorded = (await client.query<{ value: string }>("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows[0]?.value ?? null;
-  const known = recorded ?? ((await client.query('SELECT 1 FROM crove_meta.schema_migrations LIMIT 1')).rowCount ? 'false' : null);
+  const recorded = (await client.query<{ value: string }>(`SELECT value FROM ${meta}.deployment WHERE key = 'shared_database'`)).rows[0]?.value ?? null;
+  const known = recorded ?? ((await client.query(`SELECT 1 FROM ${meta}.schema_migrations LIMIT 1`)).rowCount ? 'false' : null);
   const wanted = shared ? 'true' : 'false';
   if (known !== null && known !== wanted) {
     if (!allowSwitch) {
@@ -192,28 +223,28 @@ async function recordDeploymentMode(client: pg.ClientBase, shared: boolean, allo
     log(`switching the database from ${known === 'true' ? 'shared' : 'owned'} to ${shared ? 'shared' : 'owned'}-database mode (LUDY_SHARED_DATABASE_SWITCH)`);
   }
   await client.query(
-    `INSERT INTO crove_meta.deployment (key, value) VALUES ('shared_database', $1)
-     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now() WHERE crove_meta.deployment.value IS DISTINCT FROM excluded.value`,
+    `INSERT INTO ${meta}.deployment (key, value) VALUES ('shared_database', $1)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now() WHERE ${meta}.deployment.value IS DISTINCT FROM excluded.value`,
     [shared ? 'true' : 'false'],
   );
 }
 
-// Roles that hold a privilege on an object of a `crove_*` schema although they are not Ludy's: not a `crove_*` role, not
-// the object's owner, not the role running the check, not a superuser (which needs no grant), not a built-in `pg_*` role,
-// and not PUBLIC (a function's PUBLIC EXECUTE is the runner's own revoke; vendored crove_jobs keeps its default). Explicit
-// entries only: that is where another system's default privileges land. One row per (schema, role).
+// Roles that hold a privilege on an object of a `ludy_*` or `crove_*` schema although they are not Ludy's: not in
+// LUDY_ROLES, not the object's owner, not the role running the check, not a superuser (which needs no grant), not a
+// built-in `pg_*` role, and not PUBLIC (a function's PUBLIC EXECUTE is the runner's own revoke; vendored jobs keeps
+// its default). Explicit entries only: that is where another system's default privileges land. One row per (schema, role).
 const FOREIGN_PRIVILEGES_SQL = `
-  WITH crove_ns AS (SELECT n.oid, n.nspname, n.nspowner AS owner FROM pg_catalog.pg_namespace n WHERE n.nspname LIKE 'crove\\_%'),
+  WITH ludy_ns AS (SELECT n.oid, n.nspname, n.nspowner AS owner FROM pg_catalog.pg_namespace n WHERE n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%'),
   acls AS (
-    SELECT n.nspname AS schema, a.grantee, n.owner FROM crove_ns n
+    SELECT n.nspname AS schema, a.grantee, n.owner FROM ludy_ns n
       JOIN pg_catalog.pg_namespace s ON s.oid = n.oid, LATERAL pg_catalog.aclexplode(s.nspacl) a
     UNION ALL
     SELECT n.nspname, a.grantee, c.relowner FROM pg_catalog.pg_class c
-      JOIN crove_ns n ON n.oid = c.relnamespace, LATERAL pg_catalog.aclexplode(c.relacl) a
+      JOIN ludy_ns n ON n.oid = c.relnamespace, LATERAL pg_catalog.aclexplode(c.relacl) a
       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
     UNION ALL
     SELECT n.nspname, a.grantee, p.proowner FROM pg_catalog.pg_proc p
-      JOIN crove_ns n ON n.oid = p.pronamespace, LATERAL pg_catalog.aclexplode(p.proacl) a
+      JOIN ludy_ns n ON n.oid = p.pronamespace, LATERAL pg_catalog.aclexplode(p.proacl) a
   )
   SELECT DISTINCT x.schema, r.rolname::text AS role FROM acls x
   JOIN pg_catalog.pg_roles r ON r.oid = x.grantee
@@ -279,22 +310,25 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
   const variantsDir = options.sharedVariantsDir ?? join(dirname(options.dir), 'shared-variants');
   // Read in both modes: a ledger hash of a database-wide migration may be the original's or its variant's.
   const variants = await readSharedVariants(variantsDir, files);
-  if (shared) log('shared-database mode: effects are limited to crove_* roles and schemas');
-  const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-migrate' });
+  if (shared) log('shared-database mode: effects are limited to ludy_* and crove_* roles and schemas');
+  const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   const applied: string[] = [];
   try {
     await takeMigrateLock(client, { log, maxWaitMs: options.lockWaitMs });
+    // Resolve the ledger schema before creating anything: a pre-cutover database uses crove_meta, a cut-over or
+    // migrated database uses ludy_meta.
+    let meta = await resolveMetaSchema(client);
     // Once they exist, these statements change nothing, so the DDL watch has nothing to record before the mark below.
     await client.query(`
-      CREATE SCHEMA IF NOT EXISTS crove_meta;
-      CREATE TABLE IF NOT EXISTS crove_meta.schema_migrations (
+      CREATE SCHEMA IF NOT EXISTS ${meta};
+      CREATE TABLE IF NOT EXISTS ${meta}.schema_migrations (
         version text PRIMARY KEY,
         name text NOT NULL,
         sha256 text NOT NULL,
         applied_at timestamptz NOT NULL DEFAULT now()
       );
-      CREATE TABLE IF NOT EXISTS crove_meta.pipeline_session (
+      CREATE TABLE IF NOT EXISTS ${meta}.pipeline_session (
         pid integer NOT NULL,
         backend_start timestamptz NOT NULL,
         step text NOT NULL,
@@ -305,7 +339,7 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     const modeSwitch = readEnvPair(process.env, 'LUDY_SHARED_DATABASE_SWITCH', 'CROVE_SHARED_DATABASE_SWITCH');
     await recordDeploymentMode(client, shared, options.allowModeSwitch ?? modeSwitch === 'true', log);
     const { rows } = await client.query<{ version: string; sha256: string }>(
-      'SELECT version, sha256 FROM crove_meta.schema_migrations',
+      `SELECT version, sha256 FROM ${meta}.schema_migrations`,
     );
     const ledger = new Map(rows.map((r) => [r.version, r.sha256]));
     for (const file of files) {
@@ -323,7 +357,8 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         await applyConcurrentIndexes(client, file.name, indexes, log);
         // Recorded only once every index is built and valid: a run that failed halfway records nothing, and the next
         // run builds what is missing (IF NOT EXISTS) after dropping what a failed build left INVALID.
-        await client.query('INSERT INTO crove_meta.schema_migrations (version, name, sha256) VALUES ($1, $2, $3)', [
+        meta = await resolveMetaSchema(client);
+        await client.query(`INSERT INTO ${meta}.schema_migrations (version, name, sha256) VALUES ($1, $2, $3)`, [
           file.version,
           file.name,
           file.sha256,
@@ -339,8 +374,29 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
       await client.query('BEGIN');
       try {
         await client.query(variant?.sql ?? file.sql);
+        if (!shared && file.name === '20261015120000_crove_kernel_revoke_temp.sql') {
+          // Immutable 20261015120000 predates ADR-0054's ludy_* roles (its filter is NOT LIKE 'crove\_%'), so on a
+          // cluster where ludy_* roles already exist it grants them TEMPORARY before revoking PUBLIC. Take TEMPORARY
+          // back from ludy_* roles in the same transaction when this runner is superuser or database owner.
+          await client.query(`DO $$ DECLARE r record; BEGIN
+            IF (SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user)
+               OR pg_catalog.pg_has_role(
+                    current_user,
+                    (SELECT datdba FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()),
+                    'USAGE') THEN
+              FOR r IN
+                SELECT rolname FROM pg_catalog.pg_roles
+                WHERE rolname LIKE 'ludy\\_%' AND rolname <> current_user AND NOT rolsuper
+              LOOP
+                EXECUTE pg_catalog.format('REVOKE TEMPORARY ON DATABASE %I FROM %I', pg_catalog.current_database(), r.rolname);
+              END LOOP;
+            END IF;
+          END $$;`);
+        }
+        // Re-resolve after running the migration so the #3970 schema rename writes its own ledger row into ludy_meta.
+        meta = await resolveMetaSchema(client);
         // A variant's own hash is what the ledger records, so a database-wide migration that ran in shared mode shows it.
-        await client.query('INSERT INTO crove_meta.schema_migrations (version, name, sha256) VALUES ($1, $2, $3)', [
+        await client.query(`INSERT INTO ${meta}.schema_migrations (version, name, sha256) VALUES ($1, $2, $3)`, [
           file.version,
           file.name,
           variant?.sha256 ?? file.sha256,
@@ -352,17 +408,19 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
       }
       applied.push(file.name);
     }
-    // Let the app roles read the ledger for /readyz.
+    meta = await resolveMetaSchema(client);
+    // Let the app roles read the ledger for /readyz (after cutover crove_tenant inherits ludy_tenant).
+    const tenantRole = meta === 'ludy_meta' ? 'ludy_tenant' : 'crove_tenant';
     await client.query(`DO $$ BEGIN
-      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crove_tenant') THEN
-        GRANT USAGE ON SCHEMA crove_meta TO crove_tenant;
-        GRANT SELECT ON crove_meta.schema_migrations TO crove_tenant;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${tenantRole}') THEN
+        GRANT USAGE ON SCHEMA ${meta} TO ${tenantRole};
+        GRANT SELECT ON ${meta}.schema_migrations TO ${tenantRole};
       END IF;
     END $$;`);
     // PostgreSQL grants EXECUTE to PUBLIC on every new function. Module schemas only expose what a
     // migration grants explicitly, so a definer function added later without a REVOKE stays closed.
     await client.query(`DO $$ DECLARE s text; BEGIN
-      FOR s IN SELECT nspname FROM pg_namespace WHERE nspname LIKE 'crove\\_%' AND nspname NOT IN ('crove_meta', 'crove_jobs') LOOP
+      FOR s IN SELECT nspname FROM pg_namespace WHERE (nspname LIKE 'ludy\\_%' OR nspname LIKE 'crove\\_%') AND nspname NOT IN ('ludy_meta', 'ludy_jobs', 'crove_meta', 'crove_jobs') LOOP
         EXECUTE format('REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA %I FROM PUBLIC', s);
       END LOOP;
     END $$;`);
@@ -389,7 +447,7 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     // A run that failed halfway still leaves the tables it committed: the other system's default grants must not stay on them.
     if (shared) await isolateFromForeignRoles(client, log).catch(() => {});
     await unmarkPipelineSession(client).catch(() => {});
-    await client.query("SELECT pg_advisory_unlock(hashtext('crove_migrate'))").catch(() => {});
+    await client.query("SELECT pg_advisory_unlock(hashtext('ludy_migrate'))").catch(() => {});
     await client.end();
   }
   return applied;
@@ -412,7 +470,7 @@ export async function takeMigrateLock(client: pg.ClientBase, options: MigrateLoc
   const started = Date.now();
   let loggedAt: number | undefined;
   for (;;) {
-    const { rows: lock } = await client.query<{ ok: boolean }>("SELECT pg_try_advisory_lock(hashtext('crove_migrate')) AS ok");
+    const { rows: lock } = await client.query<{ ok: boolean }>("SELECT pg_try_advisory_lock(hashtext('ludy_migrate')) AS ok");
     if (lock[0]?.ok) {
       if (loggedAt !== undefined) log(`took the migration lock after ${Math.round((Date.now() - started) / 1000)}s`);
       return;
@@ -429,7 +487,7 @@ export async function takeMigrateLock(client: pg.ClientBase, options: MigrateLoc
   }
 }
 
-// The sessions holding the migration lock, as `pid 123 (crove-migrate, active)`, for the log.
+// The sessions holding the migration lock, as `pid 123 (ludy-migrate, active)`, for the log.
 async function lockHolders(client: pg.ClientBase): Promise<string> {
   try {
     const { rows } = await client.query<{ holder: string }>(
@@ -437,8 +495,8 @@ async function lockHolders(client: pg.ClientBase): Promise<string> {
        FROM pg_catalog.pg_locks l LEFT JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
        WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
          AND l.database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
-         AND l.classid::bigint = (hashtext('crove_migrate')::bigint >> 32) & 4294967295
-         AND l.objid::bigint = hashtext('crove_migrate')::bigint & 4294967295`,
+         AND l.classid::bigint = (hashtext('ludy_migrate')::bigint >> 32) & 4294967295
+         AND l.objid::bigint = hashtext('ludy_migrate')::bigint & 4294967295`,
     );
     return rows.length > 0 ? rows.map((r) => r.holder).join(', ') : 'a session that just let it go';
   } catch {
@@ -458,6 +516,7 @@ async function lockHolders(client: pg.ClientBase): Promise<string> {
 // what it leaves INVALID itself when it fails; an index already there under the name must have the definition the
 // statement asks for, or IF NOT EXISTS would keep another index in its place (#1803).
 export const CONCURRENT_INDEX_MARKER = '-- crove:concurrent-index';
+const LUDY_CONCURRENT_INDEX_MARKER = '-- ludy:concurrent-index';
 
 export interface ConcurrentIndex {
   sql: string;
@@ -501,7 +560,7 @@ export function concurrentIndexes(name: string, sql: string): ConcurrentIndex[] 
     const line = (lines[first] ?? '').trim();
     if (line === '') continue;
     if (!line.startsWith('--')) break;
-    if (line === CONCURRENT_INDEX_MARKER) marked = true;
+    if (line === CONCURRENT_INDEX_MARKER || line === LUDY_CONCURRENT_INDEX_MARKER) marked = true;
   }
   if (!marked) return null;
   const refuse = (why: string) => new Error(`migration ${name} is marked ${CONCURRENT_INDEX_MARKER} but ${why}`);
@@ -681,17 +740,18 @@ const INDEX_USER_CODE = `
 // against DDL while it runs. Throws when the index would call user code (INDEX_USER_CODE), before the real build does.
 async function intendedDefinition(client: pg.ClientBase, file: string, index: ConcurrentIndex): Promise<string> {
   const table = `${client.escapeIdentifier(index.schema)}.${client.escapeIdentifier(index.table)}`;
+  const meta = await resolveMetaSchema(client);
   await client.query('BEGIN');
   let userCode: string[];
   let def: string;
   try {
-    await client.query(`CREATE TABLE crove_meta.concurrent_index_probe (LIKE ${table})`);
-    await client.query(`CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX concurrent_index_probe_idx ON crove_meta.concurrent_index_probe ${index.definition}`);
+    await client.query(`CREATE TABLE ${meta}.concurrent_index_probe (LIKE ${table})`);
+    await client.query(`CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX concurrent_index_probe_idx ON ${meta}.concurrent_index_probe ${index.definition}`);
     const { rows } = await client.query<{ def: string }>(
-      "SELECT pg_catalog.pg_get_indexdef('crove_meta.concurrent_index_probe_idx'::pg_catalog.regclass) AS def",
+      `SELECT pg_catalog.pg_get_indexdef('${meta}.concurrent_index_probe_idx'::pg_catalog.regclass) AS def`,
     );
     def = definitionOf(rows[0]?.def ?? '');
-    userCode = (await client.query<{ what: string }>(INDEX_USER_CODE, ['crove_meta.concurrent_index_probe_idx'])).rows.map((r) => r.what);
+    userCode = (await client.query<{ what: string }>(INDEX_USER_CODE, [`${meta}.concurrent_index_probe_idx`])).rows.map((r) => r.what);
   } catch (error) {
     throw new Error(`migration ${file}: could not check the definition of ${index.schema}.${index.name}: ${(error as Error).message}`, { cause: error });
   } finally {
@@ -703,28 +763,33 @@ async function intendedDefinition(client: pg.ClientBase, file: string, index: Co
   return def;
 }
 
-// The DDL watch (issue #1202): crove_kernel.ddl_watch() records DDL from every session except the pipeline's own,
-// which list their backend (pid and start time) in crove_meta.pipeline_session for as long as they run. Only the
-// runner's role (the owner of crove_meta) and superusers may write that table, so a login role cannot pass its own DDL
-// off as the pipeline's; a row a crashed run left behind matches no later session, since a reused pid has another
-// start time. Rows of sessions that are gone are cleared on the way. A role that may not write the table (an
-// auth-grants admin URL other than the runner's) marks nothing, and its DDL is recorded like any other.
-async function mayMarkPipelineSession(client: pg.ClientBase): Promise<boolean> {
-  const { rows } = await client.query<{ ok: boolean }>(
-    // By OID: has_table_privilege raises for a table name that does not exist, and AND does not guarantee the order.
-    `SELECT COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass('crove_meta.pipeline_session'), 'INSERT, DELETE'), false) AS ok`,
+// The DDL watch (issue #1202): ludy_kernel.ddl_watch() records DDL from every session except the pipeline's own,
+// which list their backend (pid and start time) in ludy_meta.pipeline_session (crove_* pre-#3970) for as long as they
+// run. Only the runner's role (the owner of the meta schema) and superusers may write that table, so a login role cannot
+// pass its own DDL off as the pipeline's; a row a crashed run left behind matches no later session, since a reused pid
+// has another start time. Rows of sessions that are gone are cleared on the way. A role that may not write the table
+// (an auth-grants admin URL other than the runner's) marks nothing, and its DDL is recorded like any other.
+async function pipelineMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | 'crove_meta' | null> {
+  const { rows } = await client.query<{ schema: 'ludy_meta' | 'crove_meta' | null }>(
+    // By OID: has_table_privilege raises for a table name that does not exist, and to_regclass returns NULL without raising.
+    `SELECT CASE
+       WHEN COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass('ludy_meta.pipeline_session'), 'INSERT, DELETE'), false) THEN 'ludy_meta'
+       WHEN COALESCE(pg_catalog.has_table_privilege(pg_catalog.to_regclass('crove_meta.pipeline_session'), 'INSERT, DELETE'), false) THEN 'crove_meta'
+       ELSE NULL
+     END AS schema`,
   );
-  return rows[0]?.ok === true;
+  return rows[0]?.schema ?? null;
 }
 
 async function markPipelineSession(client: pg.ClientBase, step: string): Promise<void> {
-  if (!(await mayMarkPipelineSession(client))) return;
+  const meta = await pipelineMetaSchema(client);
+  if (meta === null) return;
   await client.query(
-    `DELETE FROM crove_meta.pipeline_session m
+    `DELETE FROM ${meta}.pipeline_session m
      WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity a WHERE a.pid = m.pid)`,
   );
   await client.query(
-    `INSERT INTO crove_meta.pipeline_session (pid, backend_start, step)
+    `INSERT INTO ${meta}.pipeline_session (pid, backend_start, step)
      SELECT a.pid, a.backend_start, $1 FROM pg_catalog.pg_stat_activity a WHERE a.pid = pg_catalog.pg_backend_pid()
      ON CONFLICT DO NOTHING`,
     [step],
@@ -732,8 +797,9 @@ async function markPipelineSession(client: pg.ClientBase, step: string): Promise
 }
 
 async function unmarkPipelineSession(client: pg.ClientBase): Promise<void> {
-  if (!(await mayMarkPipelineSession(client))) return;
-  await client.query('DELETE FROM crove_meta.pipeline_session m WHERE m.pid = pg_catalog.pg_backend_pid()');
+  const meta = await pipelineMetaSchema(client);
+  if (meta === null) return;
+  await client.query(`DELETE FROM ${meta}.pipeline_session m WHERE m.pid = pg_catalog.pg_backend_pid()`);
 }
 
 export interface DdlWatchOptions {
@@ -742,31 +808,41 @@ export interface DdlWatchOptions {
 }
 
 /**
- * Creates (again) the event triggers of the DDL watch (issue #1202) on crove_kernel.ddl_watch(), which a migration
- * defines: crove_ddl_watch on ddl_command_end and crove_ddl_watch_drop on sql_drop, both ENABLE ALWAYS so that a
- * session in replica mode is recorded too. Creating an event trigger needs a superuser (or, on hosted Supabase, the
- * supautils privileged role `postgres`), which the migration runner is not required to be (T17), so `migrate` runs this
- * step after the files with the same admin URL. Idempotent: it drops and recreates both triggers in one transaction,
- * which also repairs a trigger that was disabled or pointed elsewhere. Resolves to 'installed', or to 'skipped' when the
- * role may not create event triggers (42501): the step logs why and the deployment runs without the watch. Refuses when
- * the function is owned by a role that is neither a superuser nor the installing role, which could change the body
- * that every session's DDL then runs.
+ * Creates (again) the event triggers of the DDL watch (issue #1202) on ludy_kernel.ddl_watch() (or crove_kernel before
+ * #3970): ludy_ddl_watch on ddl_command_end and ludy_ddl_watch_drop on sql_drop, both ENABLE ALWAYS so that a session
+ * in replica mode is recorded too. Creating an event trigger needs a superuser (or, on hosted Supabase, the supautils
+ * privileged role `postgres`), which the migration runner is not required to be (T17), so `migrate` runs this step
+ * after the files with the same admin URL. Idempotent: it drops and recreates both triggers in one transaction, which
+ * also repairs a trigger that was disabled or pointed elsewhere. Resolves to 'installed', or to 'skipped' when the role
+ * may not create event triggers (42501): the step logs why and the deployment runs without the watch. Refuses when the
+ * function is owned by a role that is neither a superuser nor the installing role, which could change the body that
+ * every session's DDL then runs.
  */
 export async function installDdlWatch(options: DdlWatchOptions): Promise<'installed' | 'skipped'> {
   const log = options.log ?? (() => {});
-  const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-migrate' });
+  const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   try {
+    const { rows: foundKernel } = await client.query<{ schema: 'ludy_kernel' | 'crove_kernel' | null }>(
+      `SELECT CASE
+         WHEN pg_catalog.to_regprocedure('ludy_kernel.ddl_watch()') IS NOT NULL THEN 'ludy_kernel'
+         WHEN pg_catalog.to_regprocedure('crove_kernel.ddl_watch()') IS NOT NULL THEN 'crove_kernel'
+         ELSE NULL
+       END AS schema`,
+    );
+    const kernel = foundKernel[0]?.schema ?? 'ludy_kernel';
+    const prefix = kernel === 'ludy_kernel' ? 'ludy' : 'crove';
     // A superuser attaches event triggers to this function, which then runs for every session, so its owner must not be
     // a role with less than the installer has: only a superuser or the installing role itself.
     const { rows: owner } = await client.query<{ owner: string; ok: boolean }>(
       `SELECT r.rolname AS owner, r.rolsuper OR r.rolname = current_user AS ok
        FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
-       WHERE p.oid = 'crove_kernel.ddl_watch()'::pg_catalog.regprocedure`,
+       WHERE p.oid = $1::pg_catalog.regprocedure`,
+      [`${kernel}.ddl_watch()`],
     );
     if (!owner[0]?.ok) {
       throw new Error(
-        `crove_kernel.ddl_watch() is owned by ${owner[0]?.owner ?? 'nobody'}, neither a superuser nor the installing role; ` +
+        `${kernel}.ddl_watch() is owned by ${owner[0]?.owner ?? 'nobody'}, neither a superuser nor the installing role; ` +
           'refusing to attach the DDL watch to it (run migrate with the role that applied the migrations)',
       );
     }
@@ -775,10 +851,12 @@ export async function installDdlWatch(options: DdlWatchOptions): Promise<'instal
       await client.query(`
         DROP EVENT TRIGGER IF EXISTS crove_ddl_watch;
         DROP EVENT TRIGGER IF EXISTS crove_ddl_watch_drop;
-        CREATE EVENT TRIGGER crove_ddl_watch ON ddl_command_end EXECUTE FUNCTION crove_kernel.ddl_watch();
-        CREATE EVENT TRIGGER crove_ddl_watch_drop ON sql_drop EXECUTE FUNCTION crove_kernel.ddl_watch();
-        ALTER EVENT TRIGGER crove_ddl_watch ENABLE ALWAYS;
-        ALTER EVENT TRIGGER crove_ddl_watch_drop ENABLE ALWAYS;`);
+        DROP EVENT TRIGGER IF EXISTS ludy_ddl_watch;
+        DROP EVENT TRIGGER IF EXISTS ludy_ddl_watch_drop;
+        CREATE EVENT TRIGGER ${prefix}_ddl_watch ON ddl_command_end EXECUTE FUNCTION ${kernel}.ddl_watch();
+        CREATE EVENT TRIGGER ${prefix}_ddl_watch_drop ON sql_drop EXECUTE FUNCTION ${kernel}.ddl_watch();
+        ALTER EVENT TRIGGER ${prefix}_ddl_watch ENABLE ALWAYS;
+        ALTER EVENT TRIGGER ${prefix}_ddl_watch_drop ENABLE ALWAYS;`);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -875,7 +953,7 @@ export async function hardeningViolations(client: pg.ClientBase, options: { shar
 async function listHardeningViolations(client: pg.ClientBase, shared: boolean): Promise<string[]> {
   // The types a cast is found by (see the shared-database note on hardeningViolations).
   const castTypes = shared
-    ? 'SELECT u.t FROM used_types u JOIN pg_catalog.pg_type ty ON ty.oid = u.t WHERE ty.typnamespace IN (SELECT oid FROM crove_ns)'
+    ? 'SELECT u.t FROM used_types u JOIN pg_catalog.pg_type ty ON ty.oid = u.t WHERE ty.typnamespace IN (SELECT oid FROM ludy_ns)'
     : 'SELECT t FROM used_types';
   const { rows: functions } = await client.query<{ fn: string; kind: string; config: string | null; extra: boolean }>(
     `SELECT p.oid::pg_catalog.regprocedure::text AS fn, p.prokind::text AS kind,
@@ -883,9 +961,9 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
             EXISTS (SELECT 1 FROM pg_catalog.unnest(p.proconfig) c WHERE c NOT LIKE 'search\\_path=%') AS extra
      FROM pg_catalog.pg_proc p
      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-     WHERE n.nspname LIKE 'crove\\_%'
+     WHERE (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%')
        AND p.prokind IN ('f', 'p')
-       AND (n.nspname <> 'crove_jobs' OR p.prosecdef)
+       AND (n.nspname NOT IN ('ludy_jobs', 'crove_jobs') OR p.prosecdef)
        AND NOT EXISTS (
          SELECT 1 FROM pg_catalog.pg_depend d
          WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid AND d.deptype = 'e')
@@ -894,18 +972,18 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
     [PINNED_SEARCH_PATH],
   );
   const { rows: reachable } = await client.query<{ fn: string; kind: string; path: string | null; via: string }>(
-    `WITH RECURSIVE crove_ns AS (
-       SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname LIKE 'crove\\_%'
+    `WITH RECURSIVE ludy_ns AS (
+       SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%'
      ),
      used_types(t) AS (
        SELECT a.atttypid FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-       WHERE c.relnamespace IN (SELECT oid FROM crove_ns) AND a.attnum > 0 AND NOT a.attisdropped
+       WHERE c.relnamespace IN (SELECT oid FROM ludy_ns) AND a.attnum > 0 AND NOT a.attisdropped
        UNION
-       SELECT t.oid FROM pg_catalog.pg_type t WHERE t.typnamespace IN (SELECT oid FROM crove_ns)
+       SELECT t.oid FROM pg_catalog.pg_type t WHERE t.typnamespace IN (SELECT oid FROM ludy_ns)
        UNION
        SELECT u.t FROM pg_catalog.pg_proc p,
          LATERAL pg_catalog.unnest(p.prorettype || COALESCE(p.proallargtypes, p.proargtypes::pg_catalog.oid[])) u(t)
-       WHERE p.pronamespace IN (SELECT oid FROM crove_ns)
+       WHERE p.pronamespace IN (SELECT oid FROM ludy_ns)
        UNION
        SELECT n.t FROM used_types u JOIN pg_catalog.pg_type t ON t.oid = u.t
        CROSS JOIN LATERAL (
@@ -929,6 +1007,7 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
        WHERE (b.classid = 'pg_catalog.pg_type'::pg_catalog.regclass AND b.objid IN (SELECT t FROM used_types))
           OR (b.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass AND EXISTS (
                 SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.oid = b.objid AND k.contypid IN (SELECT t FROM used_types)))
+          OR (pg_catalog.pg_identify_object_as_address(b.classid, b.objid, b.objsubid)).object_names[1] LIKE 'ludy\\_%'
           OR (pg_catalog.pg_identify_object_as_address(b.classid, b.objid, b.objsubid)).object_names[1] LIKE 'crove\\_%'
        UNION ALL
        SELECT k.castfunc, pg_catalog.pg_describe_object('pg_catalog.pg_cast'::pg_catalog.regclass, k.oid, 0)
@@ -951,7 +1030,7 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
        FROM reached r
        JOIN pg_catalog.pg_proc p ON p.oid = r.fn
        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname NOT LIKE 'crove\\_%'
+       WHERE n.nspname NOT LIKE 'ludy\\_%' AND n.nspname NOT LIKE 'crove\\_%'
        GROUP BY p.oid, p.prokind, p.prosecdef, p.proconfig
      ) x
      WHERE x.path IS DISTINCT FROM $1 AND (x.definer OR x.path IS NOT NULL)
@@ -964,8 +1043,18 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
     ? (none as { rows: Array<{ rolname: string }> })
     : await client.query<{ rolname: string }>(
         `SELECT r.rolname FROM pg_catalog.pg_roles r
-     WHERE r.rolname LIKE 'crove\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
+     WHERE (r.rolname LIKE 'ludy\\_%' OR r.rolname LIKE 'crove\\_%') AND r.rolname <> current_user AND NOT r.rolsuper
        AND pg_catalog.has_database_privilege(r.oid, pg_catalog.current_database(), 'TEMPORARY')
+       AND NOT (
+         r.rolname LIKE 'crove\\_%'
+         AND EXISTS (
+           SELECT 1 FROM pg_catalog.pg_roles twin
+           WHERE twin.rolname = 'ludy_' || pg_catalog.substr(r.rolname, 7)
+             AND twin.rolname <> current_user AND NOT twin.rolsuper
+             AND pg_catalog.pg_has_role(r.oid, twin.oid, 'USAGE')
+             AND pg_catalog.has_database_privilege(twin.oid, pg_catalog.current_database(), 'TEMPORARY')
+         )
+       )
      ORDER BY 1`,
       );
   // "Acts as" y: uses y's privileges, may SET ROLE to y, or holds ADMIN OPTION on y and so may grant y to itself.
@@ -975,31 +1064,44 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   const { rows: members } = shared
     ? (none as { rows: Array<{ rolname: string; via: string; grants: string }> })
     : await client.query<{ rolname: string; via: string; grants: string }>(
-    `WITH crove AS (SELECT c.oid, c.rolname FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'crove\\_%'),
+    `WITH ludy AS (SELECT c.oid, c.rolname FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'ludy\\_%' OR c.rolname LIKE 'crove\\_%'),
      owners AS (
        SELECT DISTINCT p.proowner AS oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname LIKE 'crove\\_%' AND p.prosecdef
+       WHERE (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') AND p.prosecdef
      )
      SELECT r.rolname,
             (SELECT pg_catalog.string_agg(c.rolname::text, ', ' ORDER BY c.rolname::text COLLATE "C")
-             FROM crove c WHERE ${actsAs('r.oid', 'c.oid')}) AS via,
+             FROM ludy c WHERE ${actsAs('r.oid', 'c.oid')}) AS via,
             (SELECT pg_catalog.string_agg(DISTINCT g.rolname::text COLLATE "C", ', ' ORDER BY g.rolname::text COLLATE "C")
              FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles g ON g.oid = m.roleid
-             WHERE m.member = r.oid AND EXISTS (SELECT 1 FROM crove c WHERE g.oid = c.oid OR ${actsAs('g.oid', 'c.oid')})) AS grants
+             WHERE m.member = r.oid AND EXISTS (SELECT 1 FROM ludy c WHERE g.oid = c.oid OR ${actsAs('g.oid', 'c.oid')})) AS grants
      FROM pg_catalog.pg_roles r
-     WHERE r.rolname NOT LIKE 'crove\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
+     WHERE r.rolname NOT LIKE 'ludy\\_%' AND r.rolname NOT LIKE 'crove\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
        AND pg_catalog.has_database_privilege(r.oid, pg_catalog.current_database(), 'TEMPORARY')
-       AND EXISTS (SELECT 1 FROM crove c WHERE ${actsAs('r.oid', 'c.oid')})
+       AND EXISTS (SELECT 1 FROM ludy c WHERE ${actsAs('r.oid', 'c.oid')})
        AND EXISTS (SELECT 1 FROM owners o WHERE NOT ${actsAs('r.oid', 'o.oid')})
      ORDER BY r.rolname::text COLLATE "C"`,
   );
-  const { rows: jobCreators } = await client.query<{ rolname: string }>(
-    `SELECT r.rolname FROM pg_catalog.pg_roles r
-     WHERE pg_catalog.to_regnamespace('crove_jobs') IS NOT NULL
+  const { rows: jobCreators } = await client.query<{ schema: string; rolname: string }>(
+    `SELECT n.nspname AS schema, r.rolname
+     FROM pg_catalog.pg_namespace n
+     CROSS JOIN pg_catalog.pg_roles r
+     WHERE n.nspname IN ('ludy_jobs', 'crove_jobs')
        AND r.rolname <> current_user AND NOT r.rolsuper
        AND NOT ${actsAs('r.oid', 'current_user')}
-       AND pg_catalog.has_schema_privilege(r.oid, 'crove_jobs', 'CREATE')
-     ORDER BY 1`,
+       AND pg_catalog.has_schema_privilege(r.oid, n.oid, 'CREATE')
+       AND NOT (
+         r.rolname LIKE 'crove\\_%'
+         AND EXISTS (
+           SELECT 1 FROM pg_catalog.pg_roles twin
+           WHERE twin.rolname = 'ludy_' || pg_catalog.substr(r.rolname, 7)
+             AND twin.rolname <> current_user AND NOT twin.rolsuper
+             AND NOT ${actsAs('twin.oid', 'current_user')}
+             AND pg_catalog.pg_has_role(r.oid, twin.oid, 'USAGE')
+             AND pg_catalog.has_schema_privilege(twin.oid, n.oid, 'CREATE')
+         )
+       )
+     ORDER BY 1, 2`,
   );
   const foreign = shared ? await foreignPrivileges(client) : [];
   // The membership rule without its TEMPORARY condition: in a shared database every role holds TEMPORARY, so what must
@@ -1028,14 +1130,14 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
     ...reachable.map((f) => {
       const setting = f.path === null ? 'is SECURITY DEFINER with no search_path setting' : `sets "${f.path}"`;
       return (
-        `function ${f.fn} is reached from crove_* objects (${f.via}) and ${setting}, expected "${PINNED_SEARCH_PATH}"; ` +
+        `function ${f.fn} is reached from ludy_* objects (${f.via}) and ${setting}, expected "${PINNED_SEARCH_PATH}"; ` +
         `fix in a new migration as its owner: ALTER ${f.kind === 'p' ? 'PROCEDURE' : 'FUNCTION'} ${f.fn} SET search_path = pg_catalog, pg_temp, ` +
-        'or stop using it from crove_* objects'
+        'or stop using it from ludy_* objects'
       );
     }),
     ...jobCreators.map(
       (r) =>
-        `role ${r.rolname} may CREATE in schema crove_jobs, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA crove_jobs FROM ${r.rolname}`,
+        `role ${r.rolname} may CREATE in schema ${r.schema}, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA ${r.schema} FROM ${r.rolname}`,
     ),
     ...foreign.map((f) => {
       const schema = quoteIdent(f.schema);
@@ -1054,7 +1156,7 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
     ...roles.map(
       (r) =>
         `role ${r.rolname} can create temporary objects (TEMPORARY on database ${dbName}); fix as the database owner or a superuser: ` +
-        `GRANT TEMPORARY ON DATABASE ${dbName} directly to any non-Crove role that needs it, then ` +
+        `GRANT TEMPORARY ON DATABASE ${dbName} directly to any non-Ludy role that needs it, then ` +
         `REVOKE TEMPORARY ON DATABASE ${dbName} FROM PUBLIC, ${r.rolname}`,
     ),
     ...members.map(
@@ -1071,12 +1173,14 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
 // the database failed rather than that the schema is behind.
 export async function schemaMissing(client: pg.ClientBase, dir: string): Promise<string[]> {
   const files = await readMigrations(dir);
-  const { rows } = await client.query<{ version: string }>('SELECT version FROM crove_meta.schema_migrations').catch((error: { code?: string }) => {
-    // 42P01 undefined_table, 3F000 invalid_schema_name: no migration has run on this database.
-    if (error?.code === '42P01' || error?.code === '3F000') return { rows: [] as { version: string }[] };
-    throw error;
-  });
-  const have = new Set(rows.map((r) => r.version));
+  const readLedger = (schema: string) =>
+    client.query<{ version: string }>(`SELECT version FROM ${schema}.schema_migrations`).catch((error: { code?: string }) => {
+      // 42P01 undefined_table, 3F000 invalid_schema_name: schema or ledger not created yet.
+      if (error?.code === '42P01' || error?.code === '3F000') return null;
+      throw error;
+    });
+  const result = (await readLedger('ludy_meta')) ?? (await readLedger('crove_meta')) ?? { rows: [] as { version: string }[] };
+  const have = new Set(result.rows.map((r) => r.version));
   return files.filter((f) => !have.has(f.version)).map((f) => f.name);
 }
 
@@ -1123,7 +1227,7 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
     throw new Error('auth-grants is not available in a shared database (LUDY_SHARED_DATABASE=true / CROVE_SHARED_DATABASE=true): it would change the other system\'s auth tables; use AUTH_SESSION_CHECK=jwt');
   }
   const deadline = Date.now() + (options.timeoutMs ?? 120_000);
-  const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-auth-grants' });
+  const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'ludy-auth-grants' });
   await client.connect();
   try {
     // Its grants and policies on the auth tables are the pipeline's own DDL (#1202).
@@ -1157,23 +1261,32 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
       log(`waiting for Supabase Auth to create ${missing.map((m) => m.name).join(', ')}`);
       await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 2000));
     }
+    const { rows: resolved } = await client.query<{ kernel: 'ludy_kernel' | 'crove_kernel' }>(
+      `SELECT CASE WHEN pg_catalog.to_regprocedure('ludy_kernel.auth_grants_ready()') IS NOT NULL THEN 'ludy_kernel' ELSE 'crove_kernel' END AS kernel`,
+    );
+    const kernel = resolved[0]?.kernel ?? 'crove_kernel';
+    const readerRole = kernel === 'ludy_kernel' ? 'ludy_auth_reader' : 'crove_auth_reader';
+    const policyName = readerRole === 'ludy_auth_reader' ? 'ludy_auth_reader_select' : 'crove_auth_reader_select';
     await client.query('BEGIN');
     try {
       await client.query(`
-        GRANT USAGE ON SCHEMA auth TO crove_auth_reader;
-        GRANT SELECT (id, user_id, not_after) ON auth.sessions TO crove_auth_reader;
-        GRANT SELECT (id, banned_until, deleted_at) ON auth.users TO crove_auth_reader;
+        GRANT USAGE ON SCHEMA auth TO ${readerRole};
+        GRANT SELECT (id, user_id, not_after) ON auth.sessions TO ${readerRole};
+        GRANT SELECT (id, banned_until, deleted_at) ON auth.users TO ${readerRole};
         -- Read only by the invite definers in db mode (#134); without it invites answer 503 (#208).
-        GRANT SELECT (email_confirmed_at) ON auth.users TO crove_auth_reader;
+        GRANT SELECT (email_confirmed_at) ON auth.users TO ${readerRole};
         -- Supabase Auth enables row-level security on its tables without policies, so a grant alone shows no rows.
         -- These policies let only the reader see rows (still only the granted columns).
         DROP POLICY IF EXISTS crove_auth_reader_select ON auth.sessions;
-        CREATE POLICY crove_auth_reader_select ON auth.sessions AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
+        DROP POLICY IF EXISTS ludy_auth_reader_select ON auth.sessions;
+        CREATE POLICY ${policyName} ON auth.sessions AS PERMISSIVE FOR SELECT TO ${readerRole} USING (true);
         DROP POLICY IF EXISTS crove_auth_reader_select ON auth.users;
-        CREATE POLICY crove_auth_reader_select ON auth.users AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
-        GRANT SELECT (user_id, status) ON auth.mfa_factors TO crove_auth_reader;
+        DROP POLICY IF EXISTS ludy_auth_reader_select ON auth.users;
+        CREATE POLICY ${policyName} ON auth.users AS PERMISSIVE FOR SELECT TO ${readerRole} USING (true);
+        GRANT SELECT (user_id, status) ON auth.mfa_factors TO ${readerRole};
         DROP POLICY IF EXISTS crove_auth_reader_select ON auth.mfa_factors;
-        CREATE POLICY crove_auth_reader_select ON auth.mfa_factors AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
+        DROP POLICY IF EXISTS ludy_auth_reader_select ON auth.mfa_factors;
+        CREATE POLICY ${policyName} ON auth.mfa_factors AS PERMISSIVE FOR SELECT TO ${readerRole} USING (true);
         -- The OAuth session check (issue #276): only when this Supabase Auth has the column. Waited for above only
         -- where the OAuth server exists, since older releases never get it; once it exists, auth_grants_ready()
         -- requires this grant.
@@ -1184,11 +1297,11 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
             WHERE a.attrelid = pg_catalog.to_regclass('auth.sessions') AND a.attname = 'oauth_client_id'
               AND a.attnum > 0 AND NOT a.attisdropped
           ) THEN
-            GRANT SELECT (oauth_client_id) ON auth.sessions TO crove_auth_reader;
+            GRANT SELECT (oauth_client_id) ON auth.sessions TO ${readerRole};
           END IF;
         END $grant$;`);
       const { rows } = await client.query<{ ok: boolean; invites: boolean }>(
-        'SELECT crove_kernel.auth_grants_ready() AS ok, crove_kernel.auth_email_check_ready() AS invites',
+        `SELECT ${kernel}.auth_grants_ready() AS ok, ${kernel}.auth_email_check_ready() AS invites`,
       );
       if (!rows[0]?.ok) throw new Error('the session check still cannot read auth.sessions, auth.users and auth.mfa_factors after the grant');
       if (!rows[0]?.invites) throw new Error('the invite check still cannot read auth.users.email_confirmed_at after the grant');
@@ -1197,7 +1310,7 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
       await client.query('ROLLBACK');
       throw error;
     }
-    log('crove_auth_reader may read auth.sessions (with oauth_client_id when present), auth.users and auth.mfa_factors (user_id, status)');
+    log(`${readerRole} may read auth.sessions (with oauth_client_id when present), auth.users and auth.mfa_factors (user_id, status)`);
   } finally {
     await unmarkPipelineSession(client).catch(() => {});
     await client.end();
@@ -1210,7 +1323,7 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
 export async function setRolePasswords(adminUrl: string, passwords: Record<string, string | undefined>, options: { sharedDatabase?: boolean } = {}): Promise<void> {
   const shared =
     options.sharedDatabase ?? sharedDatabaseSetting(readEnvPair(process.env, 'LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'));
-  const client = new pg.Client({ connectionString: adminUrl, application_name: 'crove-migrate' });
+  const client = new pg.Client({ connectionString: adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   try {
     for (const [role, password] of Object.entries(passwords)) {

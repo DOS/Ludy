@@ -42,7 +42,7 @@ export const preparePayrollPayment = defineCommand({
     const obligation = obligationOf(result.obligations, input.kind);
     // One open proposal per run and kind: another still open ends it, and one already paid is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', PAYROLL_PAYMENT_COMMAND)

@@ -71,7 +71,7 @@ suite('journal entry source revisions (#1283)', () => {
       if (p.dateStyle) await app.query(`SELECT set_config('DateStyle', $1, false)`, [p.dateStyle]);
       await app.query('BEGIN');
       try {
-        await app.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+        await app.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
         const args = [p.date ?? '2026-10-01', p.description ?? 'Mua văn phòng phẩm', p.sourceType ?? 'test.source', p.sourceId, JSON.stringify(p.lines), p.reverses ?? null];
         const { rows } =
           p.revision === undefined
@@ -115,9 +115,9 @@ suite('journal entry source revisions (#1283)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 1 });

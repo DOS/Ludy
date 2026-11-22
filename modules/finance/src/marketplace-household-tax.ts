@@ -11,7 +11,7 @@ import type { HouseholdTaxRate } from './marketplace-settlement-posting.ts';
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 
 export async function householdTaxRate(ctx: Ctx, legalEntityId: string, date: string): Promise<HouseholdTaxRate | null> {
-  const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst();
+  const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst();
   if (entity?.kind !== 'household') return null;
   const profile = await ctx.trx
     .selectFrom('crove_finance.household_profile')

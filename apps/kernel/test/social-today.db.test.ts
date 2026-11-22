@@ -50,7 +50,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const roles = { admin: await person('admin'), limited: await person('limited'), free: await person('free'), viewer: await person('viewer') };
     const role = { admin: 'admin', limited: 'member', free: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles };
   }
@@ -58,7 +58,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
   async function connection(orgId: string, owner: string, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         provider,
@@ -91,9 +91,9 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -147,8 +147,8 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const ads = await connection(o.orgId, o.owner, 'sandbox_ads');
     // An e-invoice provider's connection is the finance module's: its sign-in breaking is not a Social channel to reconnect.
     const einvoice = await connection(o.orgId, o.owner, 'einvoice_sandbox');
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY ($1::uuid[])", [[a, ads, einvoice]]));
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'error' WHERE id = $1", [b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = ANY ($1::uuid[])", [[a, ads, einvoice]]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'error' WHERE id = $1", [b]));
     const expected = [{ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: 2 } }, count: 2, severity: 'warn', href: '/social/channels' }];
     expect(await today(o, o.owner)).toEqual(expected);
     expect(await today(o, o.admin)).toEqual(expected);
@@ -157,7 +157,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     expect(await today(o, o.limited)).toEqual([]);
     expect(await today(o, o.viewer)).toEqual([]);
     // Disconnected on purpose (revoked) is not a channel to reconnect.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
     expect(ofKind(await today(o, o.owner), 'flag')[0]?.count).toBe(1);
   });
 
@@ -264,7 +264,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const o = await org();
     const a = await connection(o.orgId, o.owner);
     await submitted(o, o.free, [a]);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [a]));
     expect((await today(o, o.owner)).length).toBeGreaterThan(0);
     const other = await org();
     expect(await today(other, other.owner)).toEqual([]);

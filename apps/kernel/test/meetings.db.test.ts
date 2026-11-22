@@ -177,7 +177,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const accepted = await rpc('invites/accept', name, { token: tokenPart }, null);
     expect(accepted.status).toBe(200);
     const uid = await admin(async (c) => {
-      const res = await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email]);
+      const res = await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email]);
       return res.rows[0]!.id;
     });
     userIds.set(name, uid);
@@ -203,10 +203,10 @@ suite('meetings module database integration tests (#2576)', () => {
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -268,7 +268,7 @@ suite('meetings module database integration tests (#2576)', () => {
     orgId = String(created.body.orgId);
     const ownerEmail = accounts.get('owner')?.email;
     const ownerUid = await admin(async (c) => {
-      const res = await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [ownerEmail]);
+      const res = await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [ownerEmail]);
       return res.rows[0]!.id;
     });
     userIds.set('owner', ownerUid);
@@ -363,7 +363,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, audioUploadId, stagingKeyAudio, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -375,7 +375,7 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKeyInvalid, Buffer.alloc(100, 0x41));
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, invalidUploadId, stagingKeyInvalid, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -390,9 +390,9 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(store.staged.has(stagingKeyAudio)).toBe(false);
     const audioFileId = String(claimAudioRes.body.fileId);
 
-    // Check crove_kernel.file and crove_meetings.media_key
+    // Check ludy_kernel.file and crove_meetings.media_key
     const fileRow = await admin(async (c) =>
-      (await c.query('SELECT * FROM crove_kernel.file WHERE id = $1', [audioFileId])).rows[0],
+      (await c.query('SELECT * FROM ludy_kernel.file WHERE id = $1', [audioFileId])).rows[0],
     );
     expect(fileRow.source).toBe('meeting_audio');
     expect(fileRow.generation).toBeDefined();
@@ -414,7 +414,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
         [orgId, videoUploadId, stagingKeyVideo, userIds.get('recorder'), 2 * 1024 * 1024 * 1024],
       );
@@ -447,7 +447,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, audioUploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -472,7 +472,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
     const auditCountAfterFull = await admin(async (c) =>
       Number((await c.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM crove_kernel.audit_event
+        `SELECT count(*)::text AS count FROM ludy_kernel.audit_event
          WHERE org_id = $1 AND command = 'meetings.meeting.audio_read' AND target_id = $2`,
         [orgId, meetingId],
       )).rows[0]!.count),
@@ -496,7 +496,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
     const auditCountAfterMidRange = await admin(async (c) =>
       Number((await c.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM crove_kernel.audit_event
+        `SELECT count(*)::text AS count FROM ludy_kernel.audit_event
          WHERE org_id = $1 AND command = 'meetings.meeting.audio_read' AND target_id = $2`,
         [orgId, meetingId],
       )).rows[0]!.count),
@@ -624,7 +624,7 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKey, Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(50)]));
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -677,7 +677,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, meetingUploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -825,7 +825,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(up.status).toBe(200);
 
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 4 });
     try {
@@ -840,7 +840,7 @@ suite('meetings module database integration tests (#2576)', () => {
       expect(outcome.resealed).toBeGreaterThanOrEqual(1);
       const row = await admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows[0]);
       expect(row?.key_id).toBe('k2-meetings-test');
-      const audits = await admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.media_key.reseal'", [orgId])).rows[0]!.n));
+      const audits = await admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.media_key.reseal'", [orgId])).rows[0]!.n));
       expect(audits).toBeGreaterThanOrEqual(1);
     } finally {
       await workerPool.end();
@@ -889,7 +889,7 @@ suite('meetings module database integration tests (#2576)', () => {
       return target.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
     };
     const objectsBefore = store.storage.size;
-    const files = async () => admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1 AND source = 'meeting_audio'", [orgId])).rows[0]!.n));
+    const files = async () => admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.file WHERE org_id = $1 AND source = 'meeting_audio'", [orgId])).rows[0]!.n));
     const filesBefore = await files();
 
     // MEDIA_URL unset: refused before a byte is stored.
@@ -1171,7 +1171,7 @@ suite('meetings module database integration tests (#2576)', () => {
       store.staged.set(stagingKey, bytes);
       await admin(async (c) => {
         await c.query(
-          `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+          `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
            VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
           [orgId, uploadId, stagingKey, userIds.get('recorder'), maxBytes],
         );
@@ -1261,7 +1261,7 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKey, Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(100, 5)]));
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -1298,7 +1298,7 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKey, Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(100, 7)]));
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
@@ -1339,7 +1339,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await rpc('meetings/create', 'recorder', { title: 'Bad method', consentMethod: 'in_the_hallway' })).status).toBe(400);
     expect(await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting')).rows[0]?.n))).toBe(before);
     // The audit row names the method and the version, and holds none of the notice's words or the title.
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.meeting.create' AND detail->>'meetingId' = $1`, [String(made.body.meetingId)])).rows[0]?.detail);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.meeting.create' AND detail->>'meetingId' = $1`, [String(made.body.meetingId)])).rows[0]?.detail);
     expect(audit).toMatchObject({ consentMethod: 'in_call_chat', consentNoticeVersion: '2026-11-v1' });
     expect(JSON.stringify(audit)).not.toMatch(/ghi âm|recorded|Notice pasted/);
     // The meeting says so when read back, and audio is still refused for a meeting whose consent was not recorded (the column is NOT NULL).
@@ -1359,7 +1359,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(typeof got.body.endedAt).toBe('string');
     expect(new Date(String(got.body.endedAt)).getTime()).toBeGreaterThanOrEqual(new Date(String(got.body.startedAt)).getTime());
     expect(new Date(String(got.body.endedAt)).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.media.record' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.media.record' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
     expect(audit).toMatchObject({ stopReason: 'tab_closed' });
     // A recording the recorder stopped has no reason and no stop time of its own.
     const clean = await rpc('meetings/create', 'recorder', { title: 'Stopped by a click', consentMethod: 'told_at_start' });
@@ -1421,7 +1421,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).body).toEqual({ policy: 'strict' });
     expect((await rpc('meetings/consentPolicy/get', 'recorder', {})).body.policy).toBe('strict');
     expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
-    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.consent_policy.set' AND outcome = 'ok' ORDER BY occurred_at`)).rows.map((r) => r.detail));
+    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.consent_policy.set' AND outcome = 'ok' ORDER BY occurred_at`)).rows.map((r) => r.detail));
     expect(audits).toEqual([expect.objectContaining({ policy: 'strict', previous: 'standard' }), expect.objectContaining({ policy: 'standard', previous: 'strict' })]);
     // Codes only: exactly these keys, nothing free-form beside them.
     for (const detail of audits) expect(Object.keys(detail).filter((k) => !['extensionToken', 'requestId'].includes(k)).sort()).toEqual(['policy', 'previous']);
@@ -1468,25 +1468,25 @@ suite('meetings module database integration tests (#2576)', () => {
     const recordingId = randomUUID();
     await admin(async (c) => {
       const connection = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.meeting_platform_connection (org_id, user_id, provider, external_account, display_name) VALUES ($1, $2, $4, $3, 'Sandbox') RETURNING id`,
+        `INSERT INTO ludy_kernel.meeting_platform_connection (org_id, user_id, provider, external_account, display_name) VALUES ($1, $2, $4, $3, 'Sandbox') RETURNING id`,
         [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`, over.provider ?? 'sandbox'],
       );
       await c.query(
-        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio, has_video, has_transcript)
+        `INSERT INTO ludy_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio, has_video, has_transcript)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes, over.hasAudio ?? true, over.hasVideo ?? false, over.hasTranscript ?? false],
       );
     });
     return recordingId;
   }
-  const recordingRowCount = (connectionId: string) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).rows[0]?.n));
+  const recordingRowCount = (connectionId: string) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).rows[0]?.n));
   const recordingRow = (id: string) =>
-    admin(async (c) => (await c.query<{ status: string; meeting_id: string | null; staging_key: string | null; error_code: string | null }>('SELECT status, meeting_id, staging_key, error_code FROM crove_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0]!);
+    admin(async (c) => (await c.query<{ status: string; meeting_id: string | null; staging_key: string | null; error_code: string | null }>('SELECT status, meeting_id, staging_key, error_code FROM ludy_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0]!);
   // What the worker does: the bytes wait under the row's staging key and the row becomes staged.
   async function stage(recordingId: string, bytes: Buffer = OGG) {
     const row = await recordingRow(recordingId);
     store.staged.set(row.staging_key!, bytes);
-    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'staged', staged_at = now() WHERE id = $1`, [recordingId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'staged', staged_at = now() WHERE id = $1`, [recordingId]));
     return row.staging_key!;
   }
   const claimImport = async (who: string, meetingId: string, body: Record<string, unknown>) => {
@@ -1515,7 +1515,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(row).toMatchObject({ status: 'importing', meeting_id: meetingId, error_code: null });
     expect(row.staging_key).toMatch(/^staging\/[0-9a-f]{64}$/);
     // The audit row names the ids and the provider, never the title, the staging key or the platform's id.
-    const detail = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    const detail = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
     expect(detail).toMatchObject({ recordingId, meetingId, provider: 'sandbox', consentMethod: 'platform_notice' });
     expect(JSON.stringify(detail)).not.toContain('Họp khách hàng');
     expect(JSON.stringify(detail)).not.toContain('staging/');
@@ -1624,7 +1624,7 @@ suite('meetings module database integration tests (#2576)', () => {
   });
 
   it('31b. C1: a retry removes only the empty meeting of the failed try: one that holds a note, or another member\'s, or a recording that never failed, is kept (#3288)', async () => {
-    const fail = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
+    const fail = (id: string) => admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
     // A failed try whose meeting holds a note the recorder typed: kept, and the retry makes a new meeting.
     const withNote = await suggest('recorder');
     const first = await startImport('recorder', { recordingId: withNote });
@@ -1637,7 +1637,7 @@ suite('meetings module database integration tests (#2576)', () => {
     // A failed try whose meeting is another member's (a row pointing at it): never touched.
     const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của người khác', consentMethod: 'told_at_start' })).body.meetingId);
     const pointing = await suggest('recorder');
-    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
     await startImport('recorder', { recordingId: pointing });
     expect(await meetingExists(theirs)).toBe(true);
     // A meeting the member edited since the import made it (a new title) is kept, and so is one that holds a link to a party.
@@ -1650,7 +1650,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const linked = await suggest('recorder');
     const linkedFirst = await startImport('recorder', { recordingId: linked });
     await admin(async (c) => {
-      const party = await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, 'Công ty liên kết', 'organization') RETURNING id`, [orgId]);
+      const party = await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, 'Công ty liên kết', 'organization') RETURNING id`, [orgId]);
       await c.query('INSERT INTO crove_meetings.meeting_link (org_id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, linkedFirst.meetingId, party.rows[0]!.id, userIds.get('recorder')]);
     });
     await fail(linked);
@@ -1669,8 +1669,8 @@ suite('meetings module database integration tests (#2576)', () => {
     await fail(retried);
     const retriedSecond = await startImport('recorder', { recordingId: retried });
     const audit = await admin(async (c) => ({
-      deleted: (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, retriedFirst.meetingId])).rowCount,
-      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [retriedSecond.meetingId])).rows[0]?.detail,
+      deleted: (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, retriedFirst.meetingId])).rowCount,
+      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [retriedSecond.meetingId])).rows[0]?.detail,
     }));
     expect(audit.deleted).toBe(1);
     expect(audit.detail).toMatchObject({ meetingId: retriedSecond.meetingId, replacedMeetingId: retriedFirst.meetingId });
@@ -1682,10 +1682,10 @@ suite('meetings module database integration tests (#2576)', () => {
   });
 
   it('31c. C1: dismissing a failed recording, or disconnecting its platform, removes the empty meeting of the failed try by the retry\'s rule, and only that (#3587)', async () => {
-    const fail = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
+    const fail = (id: string) => admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
     const dismiss = (who: string, recordingId: string) => runtime.execute('kernel.meeting_platform.recording.dismiss', { recordingId }, { actor: asUser(who), orgId });
     const discard = (who: string, input: Record<string, unknown>) => runtime.execute<{ removed: number }>('meetings.import.discard_empty', input, { actor: asUser(who), orgId });
-    const connectionOf = (recordingId: string) => admin(async (c) => (await c.query<{ connection_id: string }>('SELECT connection_id FROM crove_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]!.connection_id);
+    const connectionOf = (recordingId: string) => admin(async (c) => (await c.query<{ connection_id: string }>('SELECT connection_id FROM ludy_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]!.connection_id);
     const note = (meetingId: string) => admin((c) => c.query(`INSERT INTO crove_meetings.meeting_note (org_id, meeting_id, body) VALUES ($1, $2, 'Ghi chú của tôi')`, [orgId, meetingId]));
 
     // A failed try with an empty meeting: dismissed, then cleaned; the recording row stays as dismissed, the meeting is gone, the removal is audited as the recorder's own delete.
@@ -1698,8 +1698,8 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(await meetingExists(emptyMeeting)).toBe(false);
     expect(await recordingRow(empty)).toMatchObject({ status: 'dismissed' });
     const audits = await admin(async (c) => ({
-      deleted: (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, emptyMeeting])).rowCount,
-      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.import.discard_empty' AND detail->>'recordingId' = $2`, [orgId, empty])).rows[0]?.detail,
+      deleted: (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, emptyMeeting])).rowCount,
+      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.import.discard_empty' AND detail->>'recordingId' = $2`, [orgId, empty])).rows[0]?.detail,
     }));
     expect(audits.deleted).toBe(1);
     expect(audits.detail).toMatchObject({ recordingId: empty, connectionId: null, removed: 1 });
@@ -1723,7 +1723,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(await meetingExists(editedMeeting)).toBe(true);
     const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của người khác', consentMethod: 'told_at_start' })).body.meetingId);
     const pointing = await suggest('recorder');
-    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
     await dismiss('recorder', pointing);
     expect((await discard('recorder', { recordingId: pointing })).removed).toBe(0);
     expect(await meetingExists(theirs)).toBe(true);
@@ -1756,7 +1756,7 @@ suite('meetings module database integration tests (#2576)', () => {
     await admin(async (c) => {
       for (const id of [second, third]) {
         await c.query(
-          `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio) VALUES ($1, $2, $3, $4, $5, 'Họp', now() - interval '90 days', 4096, true)`,
+          `INSERT INTO ludy_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio) VALUES ($1, $2, $3, $4, $5, 'Họp', now() - interval '90 days', 4096, true)`,
           [orgId, id, connection, userIds.get('recorder'), randomUUID()],
         );
       }
@@ -1767,7 +1767,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const thirdMeeting = (await startImport('recorder', { recordingId: third })).meetingId;
     await fail(first);
     await fail(second);
-    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'imported', staging_key = NULL WHERE id = $1`, [third]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'imported', staging_key = NULL WHERE id = $1`, [third]));
     expect((await discard('recorder', { connectionId: connection })).removed).toBe(1);
     expect(await meetingExists(firstMeeting)).toBe(false);
     expect(await meetingExists(secondMeeting)).toBe(true);
@@ -1780,7 +1780,7 @@ suite('meetings module database integration tests (#2576)', () => {
   it('32. C1: a meeting that is no import is untouched when its media is recorded', async () => {
     const made = await rpc('meetings/create', 'recorder', { title: 'Not an import', consentMethod: 'told_at_start' });
     expect((await uploadRaw(String(made.body.meetingId), '?kind=audio')).status).toBe(200);
-    const imported = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE meeting_id = $1`, [String(made.body.meetingId)])).rows[0]?.n));
+    const imported = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_kernel.meeting_platform_recording WHERE meeting_id = $1`, [String(made.body.meetingId)])).rows[0]?.n));
     expect(imported).toBe(0);
   });
 
@@ -1859,7 +1859,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const claimed = async (meetingId: string, over: { hasAudio?: boolean; status?: string; owner?: string } = {}) => {
       const recordingId = await suggest(over.owner ?? 'recorder', { hasAudio: over.hasAudio ?? false, hasTranscript: true });
       await admin((c) =>
-        c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = $2, meeting_id = $3, staging_key = $4, length_seconds = 600 WHERE id = $1`, [recordingId, over.status ?? 'claimed', meetingId, `staging/${randomBytes(32).toString('hex')}`]),
+        c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = $2, meeting_id = $3, staging_key = $4, length_seconds = 600 WHERE id = $1`, [recordingId, over.status ?? 'claimed', meetingId, `staging/${randomBytes(32).toString('hex')}`]),
       );
       return recordingId;
     };
@@ -1902,7 +1902,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const first = (read.body as { segments: { id: string }[] }).segments[0]!;
     expect((await rpc('meetings/transcript/correct', 'recorder', { segmentId: first.id, text: 'Chào cả nhà, bắt đầu họp.' })).status).toBe(200);
     expect((await stored(meetingId)).map((x) => x.source)).toEqual(['google_meet', 'google_meet']);
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
     expect(audit).toMatchObject({ meetingId, recordingId, stored: 2, source: 'google_meet' });
     expect(JSON.stringify(audit)).not.toContain('120 triệu');
     await expect(admin((c) => c.query(`UPDATE crove_meetings.transcript_segment SET source = 'ludy' WHERE meeting_id = $1`, [meetingId]))).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
@@ -1917,14 +1917,14 @@ suite('meetings module database integration tests (#2576)', () => {
     const meetingId = String((await rpc('meetings/create', 'recorder', { title: 'Họp Teams', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
     const recordingId = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'microsoft_teams' });
     await admin((c) =>
-      c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [recordingId, meetingId, `staging/${randomBytes(32).toString('hex')}`]),
+      c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [recordingId, meetingId, `staging/${randomBytes(32).toString('hex')}`]),
     );
     expect(await runtime.execute('meetings.import.take_transcript', { meetingId, segments }, { actor: asUser('recorder'), orgId })).toEqual({ meetingId, stored: 1 });
     const rows = await admin(async (c) => (await c.query<{ source: string; tainted: boolean }>('SELECT source, tainted FROM crove_meetings.transcript_segment WHERE meeting_id = $1', [meetingId])).rows);
     expect(rows).toEqual([{ source: 'microsoft_teams', tainted: true }]);
     const read = await rpc('meetings/transcript/get', 'recorder', { meetingId });
     expect((read.body as { segments: { source: string }[] }).segments.map((x) => x.source)).toEqual(['microsoft_teams']);
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
     expect(audit).toMatchObject({ meetingId, recordingId, stored: 1, source: 'microsoft_teams' });
     expect(JSON.stringify(audit)).not.toContain('Chào mọi người');
     // The database still backs the label: a Teams line untainted is refused, its source never changes, and an unknown maker is refused by the CHECK.
@@ -1937,7 +1937,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const zoomMeeting = String((await rpc('meetings/create', 'recorder', { title: 'Họp Zoom', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
     const zoomRecording = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'zoom' });
     await admin((c) =>
-      c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [zoomRecording, zoomMeeting, `staging/${randomBytes(32).toString('hex')}`]),
+      c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [zoomRecording, zoomMeeting, `staging/${randomBytes(32).toString('hex')}`]),
     );
     expect(await refusedWith(runtime.execute('meetings.import.take_transcript', { meetingId: zoomMeeting, segments }, { actor: asUser('recorder'), orgId }))).toBe('IMPORT_NOT_CLAIMED');
     expect(await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.transcript_segment WHERE meeting_id = $1', [zoomMeeting])).rows[0]?.n))).toBe(0);
@@ -2001,7 +2001,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(await postTranscript('recorder', cutOne.meetingId, { importId: cutOne.recordingId })).toBe(200);
     expect(await cutFlag(cutOne.meetingId)).toBe(true);
     // The audit row holds ids, the platform and a count and a boolean, never a line.
-    const cutAudit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [cutOne.meetingId])).rows[0]?.detail);
+    const cutAudit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [cutOne.meetingId])).rows[0]?.detail);
     expect(cutAudit).toMatchObject({ meetingId: cutOne.meetingId, stored: 2, source: 'google_meet', cut: true });
     expect(JSON.stringify(cutAudit)).not.toContain('120 triệu');
     // The note does not outlive the partial draft: the recorder's own transcription replaces it and clears the flag.
@@ -2114,7 +2114,7 @@ suite('meetings module database integration tests (#2576)', () => {
     // One object in the store (the Opus sealed as the audio), the temporary sealed video is gone, and no video row exists.
     expect(store.storage.size).toBe(objectsBefore + 1);
     expect(await count('meeting_video', meetingId)).toBe(0);
-    const rows = await admin(async (c) => (await c.query<{ length_seconds: number; content_type: string }>('SELECT s.length_seconds, f.content_type FROM crove_meetings.audio_segment s JOIN crove_kernel.file f ON f.org_id = s.org_id AND f.id = s.file_id WHERE s.meeting_id = $1', [meetingId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ length_seconds: number; content_type: string }>('SELECT s.length_seconds, f.content_type FROM crove_meetings.audio_segment s JOIN ludy_kernel.file f ON f.org_id = s.org_id AND f.id = s.file_id WHERE s.meeting_id = $1', [meetingId])).rows);
     expect(rows).toEqual([{ length_seconds: 1800, content_type: 'audio/ogg' }]);
     const played = await withExtractor.request(`/api/meetings/${meetingId}/audio`, { headers: await headers() });
     expect(played.status).toBe(200);
@@ -2194,7 +2194,7 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKey, mp4);
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+        `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
         [orgId, uploadId, stagingKey, userIds.get('recorder'), 10_000_000],
       );

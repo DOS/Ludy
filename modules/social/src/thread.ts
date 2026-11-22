@@ -38,7 +38,7 @@ export async function threadCallsOf(trx: Trx, orgId: string, variants: readonly 
   if (variants.length === 0) return out;
   const prefixes = variants.map(threadPrefix);
   const { rows } = await sql<CommentCall>`
-    SELECT key, state, external_ref, error_code, started_at FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid AND key LIKE ANY(${prefixes.map((p) => `${p}\\_%`)}::text[])
     ORDER BY started_at, key`.execute(trx);
   for (const row of rows) {
@@ -133,7 +133,7 @@ export const threadBegin = defineCommand({
     const step = mine.length === 0 ? `${THREAD_STEP}_${n}` : `${THREAD_STEP}_${n}_${mine.length + 1}`;
     const callKey = publishCallKey(v.id, callRevision(v), v.attempt, step);
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step, retry_safety: 'never', request_hash: v.content_hash, started_at: ctx.now })
       .execute();
     return { action: 'call', variantId: v.id, provider: v.provider, connectionId: v.channel_connection_id, callKey, part: n, externalId: parent, rootExternalId: v.external_post_id, text: parts[n - 2] as string };
@@ -172,7 +172,7 @@ export const threadRecord = defineCommand({
         ? { state, external_ref: r.externalId, finished_at: ctx.now }
         : { state, error_kind: r.kind === 'unknown' ? 'unknown' : r.kind === 'blocked' ? (r.code === 'CHANNEL_NOT_ACTIVE' ? 'token_expired' : 'permission') : r.error, error_code: errorCode, ...(state === 'failed' ? { finished_at: ctx.now } : {}) };
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ ...values, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)

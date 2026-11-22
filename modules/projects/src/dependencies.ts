@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Project task dependencies (issue #2601, docs/plan/projects-v2.md section 4.3, ADR-0056 section 3).
-// Cycle-free directed acyclic graph isolated from crove_kernel.task.parent_task_id.
+// Cycle-free directed acyclic graph isolated from ludy_kernel.task.parent_task_id.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { TaskStatus } from '@ludy/db';
@@ -97,7 +97,7 @@ export const projectDependencyAdd = defineCommand({
     const { rows: projectTaskRows } = await sql<{ task_id: string }>`
       SELECT pt.task_id
         FROM crove_projects.project_task pt
-        JOIN crove_kernel.task t
+        JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id
          AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -247,9 +247,9 @@ export const projectDependencyRemove = defineCommand({
         d.blocked_task_id,
         (bt.id IS NOT NULL AND dt.id IS NOT NULL) AS visible
       FROM crove_projects.task_dependency d
-      LEFT JOIN crove_kernel.task bt
+      LEFT JOIN ludy_kernel.task bt
         ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-      LEFT JOIN crove_kernel.task dt
+      LEFT JOIN ludy_kernel.task dt
         ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
       WHERE d.org_id = ${ctx.orgId}::uuid
         AND d.project_id = ${project.id}::uuid
@@ -333,9 +333,9 @@ export const projectDependencyList = defineQuery({
         dt.status AS blocked_status,
         dt.due AS blocked_due
       FROM crove_projects.task_dependency d
-      JOIN crove_kernel.task bt
+      JOIN ludy_kernel.task bt
         ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-      JOIN crove_kernel.task dt
+      JOIN ludy_kernel.task dt
         ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
       WHERE d.org_id = ${ctx.orgId}::uuid
         AND d.project_id = ${project.id}::uuid

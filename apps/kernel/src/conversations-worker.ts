@@ -2,7 +2,7 @@
 // The conversation core's worker side (issue #2303, plan docs/plan/conversations.md sections 6.1 and 7), run as the system.
 //
 // Intake. A platform's signed notice is parked by the public webhook (or, for the sandbox, by the API) in
-// crove_kernel.conversation_inbound_pending, which holds the body only until it is stored: the worker claims notices under a
+// ludy_kernel.conversation_inbound_pending, which holds the body only until it is stored: the worker claims notices under a
 // lease, parses each with its provider's parser, finds the connections the platform's own account id names (the org comes
 // from the stored connection, never from the notice) and runs kernel.conversation.ingest for each, then deletes the notice.
 // A body is personal data of a third party, so it is never logged, never put in a job and never kept past its storing; a
@@ -76,18 +76,18 @@ export interface ClaimedNotice {
 export async function claimNotices(workerDb: Db): Promise<ClaimedNotice[]> {
   const { rows } = await sql<ClaimedNotice>`
     SELECT seq::text AS seq, provider, body, attempts, dropped, reason
-    FROM crove_kernel.conversation_inbound_claim(${CONVERSATION_CLAIM}::int, ${CONVERSATION_LEASE_SECONDS}::int)`.execute(workerDb);
+    FROM ludy_kernel.conversation_inbound_claim(${CONVERSATION_CLAIM}::int, ${CONVERSATION_LEASE_SECONDS}::int)`.execute(workerDb);
   return rows;
 }
 
 const finishNotice = async (workerDb: Db, seq: string): Promise<void> => {
-  await sql`SELECT crove_kernel.conversation_inbound_done(${seq}::bigint)`.execute(workerDb);
+  await sql`SELECT ludy_kernel.conversation_inbound_done(${seq}::bigint)`.execute(workerDb);
 };
 
 async function connectionsFor(workerDb: Db, provider: string, accountId: string): Promise<Array<{ orgId: string; connectionId: string }>> {
   const { rows } = HOOK_PROVIDERS.has(provider)
-    ? await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM crove_kernel.conversation_chat_hook_connections(${accountId})`.execute(workerDb)
-    : await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM crove_kernel.conversation_connections_for(${provider}, ${accountId})`.execute(workerDb);
+    ? await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM ludy_kernel.conversation_chat_hook_connections(${accountId})`.execute(workerDb)
+    : await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM ludy_kernel.conversation_connections_for(${provider}, ${accountId})`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id }));
 }
 
@@ -266,7 +266,7 @@ export async function sweepStaleReplies(deps: { workerDb: Db; runtime: Runtime; 
   const now = (deps.now ?? Date.now)();
   if (now - lastStaleSweep < STALE_SWEEP_MS) return 0;
   lastStaleSweep = now;
-  const { rows } = await sql<{ org_id: string; message_id: string }>`SELECT org_id, message_id FROM crove_kernel.conversation_stale_sends(50::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string; message_id: string }>`SELECT org_id, message_id FROM ludy_kernel.conversation_stale_sends(50::int)`.execute(deps.workerDb);
   for (const row of rows) {
     await deps.runtime.execute('kernel.conversation.reply_begin', { messageId: row.message_id }, { actor: SYSTEM, orgId: row.org_id });
   }
@@ -464,12 +464,12 @@ export async function runConversationSync(deps: SendDeps, job: ConversationSyncJ
   return answer.complete ? 'complete' : 'gap';
 }
 
-// The work the relay hands out each pass (crove_kernel.conversation_sync_due, the worker login's): which connections' history is due,
+// The work the relay hands out each pass (ludy_kernel.conversation_sync_due, the worker login's): which connections' history is due,
 // and which customers have no name yet, for the providers whose adapters can read them.
 export async function dueConversationSync(workerDb: Db, providers: { history: string[]; profile: string[] }): Promise<ConversationSyncJob[]> {
   if (providers.history.length === 0 && providers.profile.length === 0) return [];
   const { rows } = await sql<{ kind: string; org_id: string; connection_id: string; identity_id: string | null }>`
-    SELECT kind, org_id, connection_id, identity_id FROM crove_kernel.conversation_sync_due(${providers.history}::text[], ${providers.profile}::text[], 60, 50)`.execute(workerDb);
+    SELECT kind, org_id, connection_id, identity_id FROM ludy_kernel.conversation_sync_due(${providers.history}::text[], ${providers.profile}::text[], 60, 50)`.execute(workerDb);
   return rows.map((r) => (r.kind === 'history' ? { orgId: r.org_id, connectionId: r.connection_id, action: 'history' as const } : { orgId: r.org_id, connectionId: r.connection_id, action: 'profile' as const, identityId: r.identity_id as string }));
 }
 
@@ -557,13 +557,13 @@ export async function runConversationAttachment(deps: AttachmentDeps, job: Conve
   return done.recorded ? 'stored' : 'none';
 }
 
-// The pending images the relay hands out each pass (crove_kernel.conversation_attachment_due, the worker login's). The same call drops the
+// The pending images the relay hands out each pass (ludy_kernel.conversation_attachment_due, the worker login's). The same call drops the
 // images that will never be fetched: older than six days, or tried five times.
 export const ATTACHMENT_RETRY_SECONDS = 300;
 export const ATTACHMENT_BATCH = 50;
 export async function dueConversationAttachments(workerDb: Db): Promise<Array<{ orgId: string; connectionId: string; attachmentId: string }>> {
   const { rows } = await sql<{ org_id: string; attachment_id: string; connection_id: string }>`
-    SELECT org_id, attachment_id, connection_id FROM crove_kernel.conversation_attachment_due(${ATTACHMENT_BATCH}::int, ${ATTACHMENT_RETRY_SECONDS}::int)`.execute(workerDb);
+    SELECT org_id, attachment_id, connection_id FROM ludy_kernel.conversation_attachment_due(${ATTACHMENT_BATCH}::int, ${ATTACHMENT_RETRY_SECONDS}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, attachmentId: r.attachment_id }));
 }
 
@@ -577,7 +577,7 @@ export async function requestConversationAttachments(runtime: Runtime, due: Read
   return queued;
 }
 
-// Deletes from the store the blobs whose rows are gone (crove_kernel.conversation_blob_doomed: every path that deletes a row queued its
+// Deletes from the store the blobs whose rows are gone (ludy_kernel.conversation_blob_doomed: every path that deletes a row queued its
 // key in the same transaction), then tells the database which are done. A key that could not be deleted stays leased for five minutes and
 // is claimed again. At most once a minute, a batch at a time; `force` skips the wait (tests, and a purge that wants its blobs now).
 // Returns how many blobs were deleted. A missing object is a success (the store's delete says nothing of it).
@@ -590,7 +590,7 @@ export async function sweepConversationBlobs(deps: { workerDb: Db; store: BlobSt
   lastBlobSweep = now;
   let deleted = 0;
   for (let pass = 0; pass < 10; pass++) {
-    const { rows } = await sql<{ blob_key: string }>`SELECT blob_key FROM crove_kernel.conversation_blob_claim(${BLOB_SWEEP_BATCH}::int)`.execute(deps.workerDb);
+    const { rows } = await sql<{ blob_key: string }>`SELECT blob_key FROM ludy_kernel.conversation_blob_claim(${BLOB_SWEEP_BATCH}::int)`.execute(deps.workerDb);
     if (rows.length === 0) break;
     const done: string[] = [];
     for (const { blob_key: key } of rows) {
@@ -601,7 +601,7 @@ export async function sweepConversationBlobs(deps: { workerDb: Db; store: BlobSt
         // Left to its lease; nothing of the key or the error goes to the log, only the count below.
       }
     }
-    if (done.length > 0) await sql`SELECT crove_kernel.conversation_blob_done(${done}::text[])`.execute(deps.workerDb);
+    if (done.length > 0) await sql`SELECT ludy_kernel.conversation_blob_done(${done}::text[])`.execute(deps.workerDb);
     deleted += done.length;
     if (done.length < rows.length) {
       console.error(`[conversations] ${rows.length - done.length} blob(s) not deleted; claimed again after the lease`);
@@ -750,7 +750,7 @@ const PURGE_BATCH = 200;
 // org is logged by name of the error and left for the next run, so one org cannot hold the others behind it. Returns the threads
 // deleted. Nothing a customer wrote is read or logged: only counts.
 export async function purgeExpiredConversations(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
-  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.conversation_purge_due(${PURGE_ORGS}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_kernel.conversation_purge_due(${PURGE_ORGS}::int)`.execute(deps.workerDb);
   let threads = 0;
   for (const { org_id: orgId } of rows) {
     try {
@@ -766,14 +766,14 @@ export async function purgeExpiredConversations(deps: { runtime: Runtime; worker
   return threads;
 }
 
-// The requests of Meta's data deletion callback that name conversations (crove_kernel.conversation_deletion_*): for each open
+// The requests of Meta's data deletion callback that name conversations (ludy_kernel.conversation_deletion_*): for each open
 // request that is due, the connections its keyed hash names are closed (as a platform's deletion closes them: the credential is
 // forgotten) and their conversations erased, each in the connection's own org, then the request is completed. A request that names
 // no connection is completed with none. Every step is idempotent, so a pass that dies half way is run again whole; a request that
 // fails is put off five minutes in the database. Returns how many requests it completed.
 export async function runConversationDeletions(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   const { rows } = await sql<{ code: string; org_id: string | null; connection_id: string | null }>`
-    SELECT code, org_id, connection_id FROM crove_kernel.conversation_deletion_claim(50::int)`.execute(deps.workerDb);
+    SELECT code, org_id, connection_id FROM ludy_kernel.conversation_deletion_claim(50::int)`.execute(deps.workerDb);
   const byCode = new Map<string, Array<{ orgId: string; connectionId: string }>>();
   for (const row of rows) {
     const connections = byCode.get(row.code) ?? [];
@@ -788,19 +788,19 @@ export async function runConversationDeletions(deps: { runtime: Runtime; workerD
         await deps.runtime.execute('kernel.channel.revoke_by_platform', { connectionId: c.connectionId }, options);
         await deps.runtime.execute('kernel.conversation.erase_connection', { connectionId: c.connectionId }, options);
       }
-      await sql`SELECT crove_kernel.conversation_deletion_complete(${code}, ${connections.length}::int)`.execute(deps.workerDb);
+      await sql`SELECT ludy_kernel.conversation_deletion_complete(${code}, ${connections.length}::int)`.execute(deps.workerDb);
       completed++;
     } catch (error) {
       // By code only: nothing of the request or the connections goes to the log.
       console.error(`[conversations] deletion request ${code.slice(0, 8)} not completed`, error instanceof Error ? error.name : 'error');
-      await sql`SELECT crove_kernel.conversation_deletion_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
+      await sql`SELECT ludy_kernel.conversation_deletion_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
     }
   }
   return completed;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Vy's drafts (CV8, #2310). The relay asks crove_kernel.conversation_draft_due which new conversations to draft for, and hands each through
+// Vy's drafts (CV8, #2310). The relay asks ludy_kernel.conversation_draft_due which new conversations to draft for, and hands each through
 // kernel.conversation.draft_enqueue (a row requested and the event the draft queue takes, ids only); a member's "Vy soạn" makes the same event. The job
 // reads the end of the thread (customer text: tainted), calls the model in packages/agent and records the answer as a system command, so the draft is the
 // system's text, always tainted, and no org-chart agent writes anything. Nothing the customer or Vy wrote is logged or put in a job: ids and codes only.
@@ -885,29 +885,29 @@ export async function failUndraftable(runtime: Runtime, job: ConversationDraftJo
   await runtime.execute('kernel.conversation.draft_record', { outcome: 'none', draftId: job.draftId, code: 'AI_OFF' }, { actor: SYSTEM, orgId: job.orgId });
 }
 
-// Drafts that outlived their time (crove_kernel.conversation_draft_sweep, the worker login's): a request the job never answered is settled after 15
+// Drafts that outlived their time (ludy_kernel.conversation_draft_sweep, the worker login's): a request the job never answered is settled after 15
 // minutes, and a live draft nobody opened loses its text after 7 days. The relay runs it whether or not a model is configured: the text of a draft is
 // customer-derived, and it must not outlive its week in a deployment that switched the model off (ADR-0041). Not more often than every ten seconds.
 export async function sweepConversationDrafts(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<{ settled: number; expired: number }> {
   const now = (deps.now ?? Date.now)();
   if (!deps.force && now - lastDraftSweep < DRAFT_DUE_MS) return { settled: 0, expired: 0 };
   lastDraftSweep = now;
-  const { rows } = await sql<{ settled: number; expired: number }>`SELECT settled, expired FROM crove_kernel.conversation_draft_sweep()`.execute(deps.workerDb);
+  const { rows } = await sql<{ settled: number; expired: number }>`SELECT settled, expired FROM ludy_kernel.conversation_draft_sweep()`.execute(deps.workerDb);
   return rows[0] ?? { settled: 0, expired: 0 };
 }
 
-// The "you are replying" markers that expired more than five minutes ago (crove_kernel.conversation_composing_sweep, the worker login's, CV3): readers
+// The "you are replying" markers that expired more than five minutes ago (ludy_kernel.conversation_composing_sweep, the worker login's, CV3): readers
 // ignore a marker after its 60 seconds, so this only keeps the table small. Not more often than every ten seconds; runs in every deployment.
 let lastComposingSweep = 0;
 export async function sweepConversationComposing(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<number> {
   const now = (deps.now ?? Date.now)();
   if (!deps.force && now - lastComposingSweep < DRAFT_DUE_MS) return 0;
   lastComposingSweep = now;
-  const { rows } = await sql<{ n: number }>`SELECT crove_kernel.conversation_composing_sweep() AS n`.execute(deps.workerDb);
+  const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.conversation_composing_sweep() AS n`.execute(deps.workerDb);
   return rows[0]?.n ?? 0;
 }
 
-// The new conversations to draft for (crove_kernel.conversation_draft_due, the worker login's), at most a few at a time and not more often than every
+// The new conversations to draft for (ludy_kernel.conversation_draft_due, the worker login's), at most a few at a time and not more often than every
 // ten seconds: each costs a model call.
 const DRAFT_DUE_MS = 10_000;
 let lastDraftSweep = 0;
@@ -917,7 +917,7 @@ export async function requestDueConversationDrafts(deps: { runtime: Runtime; wor
   const now = (deps.now ?? Date.now)();
   if (!deps.force && now - lastDraftDue < DRAFT_DUE_MS) return 0;
   lastDraftDue = now;
-  const { rows } = await sql<{ org_id: string; conversation_id: string }>`SELECT org_id, conversation_id FROM crove_kernel.conversation_draft_due(${DRAFT_BATCH}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string; conversation_id: string }>`SELECT org_id, conversation_id FROM ludy_kernel.conversation_draft_due(${DRAFT_BATCH}::int)`.execute(deps.workerDb);
   let queued = 0;
   for (const row of rows) {
     const result = await deps.runtime.execute<{ queued: boolean }>('kernel.conversation.draft_enqueue', { conversationId: row.conversation_id }, { actor: SYSTEM, orgId: row.org_id });

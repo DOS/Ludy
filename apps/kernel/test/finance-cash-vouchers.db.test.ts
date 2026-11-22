@@ -145,17 +145,17 @@ suite('cash and bank vouchers (#327)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -207,8 +207,8 @@ suite('cash and bank vouchers (#327)', () => {
     customer = randomUUID();
     otherParty = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Khách Hàng', '0312345675')`, [org.orgId, customer]);
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Đối tác của tổ chức khác')`, [other.orgId, otherParty]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Khách Hàng', '0312345675')`, [org.orgId, customer]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Đối tác của tổ chức khác')`, [other.orgId, otherParty]);
     });
   });
 
@@ -270,7 +270,7 @@ suite('cash and bank vouchers (#327)', () => {
   });
 
   async function vendorName() {
-    const [p] = await admin(async (c) => (await c.query('SELECT name FROM crove_kernel.party WHERE id = $1', [vendor.id])).rows);
+    const [p] = await admin(async (c) => (await c.query('SELECT name FROM ludy_kernel.party WHERE id = $1', [vendor.id])).rows);
     return p.name as string;
   }
 
@@ -317,13 +317,13 @@ suite('cash and bank vouchers (#327)', () => {
     expect(row).toMatchObject({ opening: '0', increase: '1980000', decrease: '1980000', closing: '0' });
     expect(ledger.body.trialBalance.balanced).toBe(true);
     const [audit] = await admin(
-      async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.voucher.record' AND outcome = 'ok'`, [org.orgId])).rows,
+      async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.voucher.record' AND outcome = 'ok'`, [org.orgId])).rows,
     );
     expect(audit?.detail).toMatchObject({ voucher_type: 'cash_payment', number: 1, lines: 1 });
     const approval = await admin(
       async (c) =>
         (
-          await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' AND target_id = $2`, [
+          await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' AND target_id = $2`, [
             org.orgId,
             vouchers.body.items[0].proposalId,
           ])
@@ -454,13 +454,13 @@ suite('cash and bank vouchers (#327)', () => {
   it('holds every writer to the numbering, the cash account, the entry and append-only', async () => {
     const asApp = async <T>(fn: (c: pg.Client) => Promise<T>) => {
       const url = new URL(adminUrl);
-      url.username = 'crove_app';
+      url.username = 'ludy_app';
       url.password = 'test-app-pw';
       const c = new pg.Client({ connectionString: url.toString() });
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         return await fn(c);
       } finally {
         await c.query('ROLLBACK').catch(() => undefined);
@@ -526,9 +526,9 @@ suite('cash and bank vouchers (#327)', () => {
     // A party whose stored tax code is longer than a voucher holds (zCashVoucherProposal): the proposal would be refused
     // at approval, and abort every bulk approval it is part of, so it is never stored.
     const odd = randomUUID();
-    await admin((c) => c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Đối tác mã dài', $3)`, [org.orgId, odd, '0'.repeat(25)]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Đối tác mã dài', $3)`, [org.orgId, odd, '0'.repeat(25)]));
     const count = async () =>
-      Number((await admin(async (c) => (await c.query(`SELECT count(*) AS n FROM crove_kernel.proposal WHERE org_id = $1 AND kind = 'finance.cash_voucher'`, [org.orgId])).rows))[0].n);
+      Number((await admin(async (c) => (await c.query(`SELECT count(*) AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND kind = 'finance.cash_voucher'`, [org.orgId])).rows))[0].n);
     const before = await count();
     const refused = await ask(member, payment('1000', { partyId: odd }));
     expect(refused).toMatchObject({ status: 422, body: { code: 'VOUCHER_INVALID', data: { problems: ['PROPOSAL_INVALID'], fields: ['party.taxCode'] } } });
@@ -662,7 +662,7 @@ suite('cash and bank vouchers (#327)', () => {
       const bytes = new Uint8Array(await response.arrayBuffer());
       expect(String.fromCharCode(bytes[0] ?? 0, bytes[1] ?? 0)).toBe('PK');
       const audits = await admin(
-        async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
+        async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
       );
       expect(audits.map((a) => a.detail)).toContainEqual({ entries, format, from: '2026-11-01', to: '2026-11-30' });
     }
@@ -744,7 +744,7 @@ suite('cash and bank vouchers (#327)', () => {
       const bytes = new Uint8Array(await response.arrayBuffer());
       expect(String.fromCharCode(bytes[0] ?? 0, bytes[1] ?? 0)).toBe('PK');
       const audits = await admin(
-        async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
+        async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
       );
       expect(audits.map((a) => a.detail)).toContainEqual({ entries, format, from: '2026-12-01', to: '2026-12-31' });
     }

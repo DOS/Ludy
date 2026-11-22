@@ -2,7 +2,7 @@
 // Importing a recording a meeting platform finished (meetings integrations C1, issue #3173, plan docs/plan/meetings-integrations.md section 6.1).
 //
 // - The member presses "Nhập" on a suggestion. meetings.import.start is the one command behind it: it creates the meeting with its consent record (the platform showed its own notice to everyone
-//   and the importer confirms it) through the same core as meetings.meeting.create, then links the recording and queues the download (crove_kernel.meeting_platform_recording_begin).
+//   and the importer confirms it) through the same core as meetings.meeting.create, then links the recording and queues the download (ludy_kernel.meeting_platform_recording_begin).
 //   A retry of a failed recording first removes the meeting its earlier try made, when that meeting is the importer's own, was never edited since the import made it, and nothing of Meetings' own
 //   hangs off it (#3288): no audio, video, transcript, minutes, items, note, link or calendar link (a translation needs a transcript or minutes, so it is covered). One that holds anything, or was
 //   edited (a title, readers, a series), is kept. The meeting row is locked first, so a note or a link another tab adds meanwhile waits for the retry and is seen, never lost to the delete's cascade.
@@ -54,8 +54,8 @@ type Trx = CommandContext['trx'];
 
 async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordingId: string) {
   return trx
-    .selectFrom('crove_kernel.meeting_platform_recording as r')
-    .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
+    .selectFrom('ludy_kernel.meeting_platform_recording as r')
+    .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
     .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'c.provider'])
     .where('r.org_id', '=', orgId)
     .where('r.id', '=', recordingId)
@@ -143,7 +143,7 @@ export const meetingImportStart = defineCommand({
       extensionTokenId: null,
     });
 
-    await sql`SELECT crove_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${meetingId}::uuid, ${newStagingKey()}::text)`.execute(ctx.trx).catch(importError);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${meetingId}::uuid, ${newStagingKey()}::text)`.execute(ctx.trx).catch(importError);
 
     ctx.audit({
       recordingId: input.recordingId,
@@ -177,7 +177,7 @@ export const meetingImportDiscardEmpty = defineCommand({
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới dọn được bản ghi đã nhập');
     const userId = ctx.actor.userId;
     let q = ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_recording')
+      .selectFrom('ludy_kernel.meeting_platform_recording')
       .select(['id', 'meeting_id'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -222,8 +222,8 @@ export const meetingImportTakeTranscript = defineCommand({
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Chỉ người ghi cuộc họp mới nhập được bản chép lời của nó');
     // The recording with the connection it came through (an inner join: a recording whose connection is gone is no claim). Whose transcription the lines are follows that provider, never the caller's input.
     const row = await ctx.trx
-      .selectFrom('crove_kernel.meeting_platform_recording as r')
-      .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
+      .selectFrom('ludy_kernel.meeting_platform_recording as r')
+      .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
       .select(['r.id', 'r.length_seconds', 'c.provider'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.meeting_id', '=', input.meetingId)
@@ -240,10 +240,10 @@ export const meetingImportTakeTranscript = defineCommand({
     // The same lock as every writer of a meeting's media, so a piece or an upload that races with this finds the meeting done or waits for it.
     await lockMeetingMedia(ctx, input.meetingId);
     await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source, platformCut: input.platformCut });
-    await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
     // The definer does nothing for a row that is no longer claimed (the sweep may have failed a stale claim since the read above, and the row cannot be locked by this role): then the
     // lines and the end of the meeting go with the rolled-back transaction, and the member is told so, never left with a half-imported meeting and a retry that makes a second one.
-    const done = await ctx.trx.selectFrom('crove_kernel.meeting_platform_recording').select('status').where('org_id', '=', ctx.orgId).where('id', '=', row.id).executeTakeFirst();
+    const done = await ctx.trx.selectFrom('ludy_kernel.meeting_platform_recording').select('status').where('org_id', '=', ctx.orgId).where('id', '=', row.id).executeTakeFirst();
     if (done?.status !== 'imported') throw new DomainError('IMPORT_NOT_CLAIMED', 409, 'Bản chép lời này không còn chờ nhập nữa, hãy thử nhập lại');
     // The call ended when the platform says it did, else with its last line; never later than now (the rule of recording a media).
     const seconds = row.length_seconds ?? Math.ceil(Math.max(...input.segments.map((s) => s.endSeconds)));

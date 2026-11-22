@@ -71,7 +71,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
     expect(await page.evaluate(() => (window as unknown as { printed: number }).printed)).toBe(1);
     // The view the print comes from left the same audit row a file leaves (counts only), written by the server.
     const rows = sql<{ via: string; kind: string }>(
-      `SELECT a.detail->>'via' AS via, a.detail->>'kind' AS kind FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'hr.payroll.declaration.export' AND a.outcome = 'ok'`,
+      `SELECT a.detail->>'via' AS via, a.detail->>'kind' AS kind FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'hr.payroll.declaration.export' AND a.outcome = 'ok'`,
       { slug },
     );
     expect(rows.length).toBeGreaterThan(0);

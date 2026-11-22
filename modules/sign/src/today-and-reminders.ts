@@ -195,7 +195,7 @@ export const signToday = defineQuery({
     if (ctx.actor.type !== 'user' || ctx.role === null || ctx.role === 'viewer') return [];
 
     const { rows: appRows } = await sql<{ enabled: boolean }>`
-      SELECT crove_kernel.org_app_on(${ctx.orgId}::uuid, 'sign') AS enabled
+      SELECT ludy_kernel.org_app_on(${ctx.orgId}::uuid, 'sign') AS enabled
     `.execute(ctx.trx);
     if (!appRows[0]?.enabled) return [];
 
@@ -500,7 +500,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
 
       if (orgName === null) {
         const tenant = await ctx.trx
-          .selectFrom('crove_kernel.tenant')
+          .selectFrom('ludy_kernel.tenant')
           .select('name')
           .where('org_id', '=', ctx.orgId)
           .executeTakeFirstOrThrow();

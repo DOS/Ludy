@@ -233,7 +233,7 @@ const NOTEBOOK_COLUMNS = [
 ] as const;
 
 async function hasWholeOrgScope(trx: QueryContext['trx']): Promise<boolean> {
-  const { rows } = await sql<{ whole: boolean }>`SELECT ('*' = ANY ((crove_kernel.ctx_le_scope())::text[])) AS whole`.execute(trx);
+  const { rows } = await sql<{ whole: boolean }>`SELECT ('*' = ANY ((ludy_kernel.ctx_le_scope())::text[])) AS whole`.execute(trx);
   return rows[0]?.whole === true;
 }
 

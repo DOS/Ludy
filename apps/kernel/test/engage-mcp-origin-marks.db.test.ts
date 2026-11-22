@@ -50,7 +50,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const id = randomUUID();
     counter += 1;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Dy test client', 'client.example.com', $5::text[], $6, clock_timestamp(), now() + interval '30 days', $3, $7, $8)`,
       [org, id, users[who], `client-${counter}-${id}`, scopes, `oauth-${id}`, kind, kind === 'member' ? users[who] : null],
     );
@@ -75,9 +75,9 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -92,23 +92,23 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     orgA = (await createOrg(runtime, browser('owner'), 'Org A')).orgId;
     orgB = (await createOrg(runtime, browser('foreign'), 'Org B')).orgId;
     for (const [who, role] of [['admin', 'admin'], ['member', 'member'], ['viewer', 'viewer']] as const) {
-      await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, users[who], role]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, users[who], role]);
     }
     for (const [key, org, owner] of [['a1', orgA, users.owner], ['b1', orgB, users.foreign]] as const) {
       channel[key] = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, $4, $5)`, [org, channel[key], `ext-${key}`, `Trang ${key}`, owner]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, $4, $5)`, [org, channel[key], `ext-${key}`, `Trang ${key}`, owner]);
     }
     const seed = async (org: string, ch: string, key: string) => {
       const id = randomUUID();
       const ident = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, 'Khách thử')`, [org, ident, `u-${key}-12345678`]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', $3, 'Khách thử')`, [org, ident, `u-${key}-12345678`]);
       await sqlAdmin(
-        `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at)
+        `INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at)
          VALUES ($1, $2, $3, 'comment_thread', $4, $5, 1, now(), now())`,
         [org, id, ch, `t-${key}`, ident],
       );
       await sqlAdmin(
-        `INSERT INTO crove_kernel.conversation_message (org_id, id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, body, tainted, author_identity_id)
+        `INSERT INTO ludy_kernel.conversation_message (org_id, id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, body, tainted, author_identity_id)
          VALUES ($1, $2, $3, $4, 'comment_thread', 1, 'in', now(), 'contact', 'Cho mình hỏi giá', true, $5)`,
         [org, randomUUID(), id, ch, ident],
       );
@@ -118,7 +118,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     thread = a.id;
     await seed(orgB, channel.b1 as string, 'b');
     const connection = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
     adAccount = randomUUID();
     await sqlAdmin(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [orgA, adAccount, connection]);
   }, 300_000);
@@ -137,7 +137,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
   it('marks a note a coworker adds and leaves a person\'s own note unmarked, and the thread detail says which is which', async () => {
     const mine = await run<{ noteId: string }>('kernel.conversation.note', { conversationId: thread, body: 'ghi chú của người' }, asBrowser('owner'));
     const theirs = await run<{ noteId: string }>('kernel.mcp.conversation_note', { conversationId: thread, body: 'ghi chú của Dy' });
-    const rows = await sqlAdmin<{ id: string; actor_origin: string; tainted: boolean; author_user_id: string }>(`SELECT id, actor_origin, tainted, author_user_id FROM crove_kernel.conversation_note WHERE id = ANY ($1::uuid[])`, [[mine.noteId, theirs.noteId]]);
+    const rows = await sqlAdmin<{ id: string; actor_origin: string; tainted: boolean; author_user_id: string }>(`SELECT id, actor_origin, tainted, author_user_id FROM ludy_kernel.conversation_note WHERE id = ANY ($1::uuid[])`, [[mine.noteId, theirs.noteId]]);
     expect(rows.rows.find((r) => r.id === mine.noteId)).toMatchObject({ actor_origin: 'ui', tainted: false });
     // The coworker's note stays under the name of the person who connected the app, and says an app wrote it.
     expect(rows.rows.find((r) => r.id === theirs.noteId)).toMatchObject({ actor_origin: 'mcp', tainted: true, author_user_id: users.owner });
@@ -248,7 +248,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();
     try {
-      const keys = async () => (await c.query<{ k: string }>(`SELECT COALESCE(pg_catalog.current_setting('crove.tainted_line_keys', true), '') AS k`)).rows[0]?.k;
+      const keys = async () => (await c.query<{ k: string }>(`SELECT COALESCE(pg_catalog.current_setting('ludy.tainted_line_keys', true), '') AS k`)).rows[0]?.k;
       const drop = () => c.query(`DELETE FROM crove_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id]);
       expect(await keys()).toBe('');
       await c.query('BEGIN');
@@ -284,14 +284,14 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     expect((await timeline(mine.partyId)).items).toEqual([expect.objectContaining({ kind: 'party.created', actorOrigin: 'ui' })]);
   });
 
-  // Plain SQL as the tenant role with row-level security on (the login enters the user's context with a token, then `SET LOCAL ROLE crove_tenant`): the role the app's reads run as, so a column the role may not read,
+  // Plain SQL as the tenant role with row-level security on (the login enters the user's context with a token, then `SET LOCAL ROLE ludy_tenant`): the role the app's reads run as, so a column the role may not read,
   // or a policy that hides the row, shows here and not in a superuser read.
   const asTenant = async <R extends pg.QueryResultRow>(who: string, org: string, text: string, params: unknown[]): Promise<R[]> => {
     const c = await (pools[0] as pg.Pool).connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(users[who] as string, org)]);
-      await c.query('SET LOCAL ROLE crove_tenant');
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(users[who] as string, org)]);
+      await c.query('SET LOCAL ROLE ludy_tenant');
       return (await c.query<R>(text, params)).rows;
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -302,17 +302,17 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
   it('reads the marks of a thread\'s notes and of a contact\'s timeline as a plain tenant login with row-level security on, and shows nothing of another org', async () => {
     const mine = await run<{ noteId: string }>('kernel.conversation.note', { conversationId: thread, body: 'ghi chú người, đọc bằng vai tenant' }, asBrowser('owner'));
     const theirs = await run<{ noteId: string }>('kernel.mcp.conversation_note', { conversationId: thread, body: 'ghi chú Dy, đọc bằng vai tenant' });
-    const notes = await asTenant<{ id: string; actor_origin: string; tainted: boolean }>('member', orgA, 'SELECT id, actor_origin, tainted FROM crove_kernel.conversation_note WHERE conversation_id = $1', [thread]);
+    const notes = await asTenant<{ id: string; actor_origin: string; tainted: boolean }>('member', orgA, 'SELECT id, actor_origin, tainted FROM ludy_kernel.conversation_note WHERE conversation_id = $1', [thread]);
     expect(notes.find((n) => n.id === mine.noteId)).toMatchObject({ actor_origin: 'ui', tainted: false });
     expect(notes.find((n) => n.id === theirs.noteId)).toMatchObject({ actor_origin: 'mcp', tainted: true });
     const made = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách đọc bằng vai tenant' });
-    const party = await asTenant<{ actor_origin: string; tainted: boolean }>('member', orgA, 'SELECT actor_origin, tainted FROM crove_kernel.party WHERE id = $1', [made.partyId]);
+    const party = await asTenant<{ actor_origin: string; tainted: boolean }>('member', orgA, 'SELECT actor_origin, tainted FROM ludy_kernel.party WHERE id = $1', [made.partyId]);
     expect(party).toEqual([expect.objectContaining({ actor_origin: 'mcp', tainted: true })]);
     // The timeline of a contact (the activity rows of record type kernel.party).
-    const timeline = await asTenant<{ kind: string; actor_origin: string }>('member', orgA, "SELECT kind, actor_origin FROM crove_kernel.activity WHERE record_type = 'kernel.party' AND record_id = $1", [made.partyId]);
+    const timeline = await asTenant<{ kind: string; actor_origin: string }>('member', orgA, "SELECT kind, actor_origin FROM ludy_kernel.activity WHERE record_type = 'kernel.party' AND record_id = $1", [made.partyId]);
     expect(timeline).toEqual([expect.objectContaining({ kind: 'party.created', actor_origin: 'mcp' })]);
     // Row-level security still holds: the other org's login sees none of these rows.
-    expect(await asTenant('foreign', orgB, 'SELECT id FROM crove_kernel.conversation_note WHERE conversation_id = $1', [thread])).toEqual([]);
-    expect(await asTenant('foreign', orgB, 'SELECT id FROM crove_kernel.activity WHERE record_id = $1', [made.partyId])).toEqual([]);
+    expect(await asTenant('foreign', orgB, 'SELECT id FROM ludy_kernel.conversation_note WHERE conversation_id = $1', [thread])).toEqual([]);
+    expect(await asTenant('foreign', orgB, 'SELECT id FROM ludy_kernel.activity WHERE record_id = $1', [made.partyId])).toEqual([]);
   });
 });

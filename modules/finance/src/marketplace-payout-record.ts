@@ -137,13 +137,13 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     throw new DomainError('MARKETPLACE_PAYOUT_GOODS_BACK', 409, 'Hàng của đơn này đã được nhập lại kho nên không thể phân loại là hãng vận chuyển bồi thường hàng mất', { lineId: goodsBack });
   }
   // A household's withheld tax is the settlement's 3331 and 3335; only a seller that is no household can have tax withheld by mistake (#4303 S4).
-  const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', settlement.legal_entity_id).executeTakeFirst();
+  const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', settlement.legal_entity_id).executeTakeFirst();
   // No row is no answer: never read as "not a household" (that would open the tax-withheld-by-mistake classification).
   if (!entity) throw notPostable('Không tìm thấy pháp nhân của kỳ đối soát', { reason: 'ENTITY' });
   // The settlement's posting created the platform's party and its link, so a settlement whose posting stands has one; without it the stored books are not as the posting left them.
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.legal_entity_id', '=', settlement.legal_entity_id)

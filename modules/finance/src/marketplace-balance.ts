@@ -24,7 +24,7 @@ const FEES_AWAITING = MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331';
 export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: string | undefined): Promise<MarketplaceBalance> {
   let links = ctx.trx
     .selectFrom('crove_finance.marketplace_party as mp')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'mp.org_id').onRef('p.id', '=', 'mp.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'mp.org_id').onRef('p.id', '=', 'mp.party_id'))
     .select(['mp.legal_entity_id', 'mp.platform', 'mp.party_id', 'p.name'])
     .where('mp.org_id', '=', ctx.orgId);
   if (legalEntityId !== undefined) links = links.where('mp.legal_entity_id', '=', legalEntityId);

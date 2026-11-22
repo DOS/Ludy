@@ -60,13 +60,13 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, owner, admin: await person('admin'), member: await person('member'), dispatched: new Set<string>() };
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, o.admin, o.member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, o.admin, o.member]));
     return o;
   }
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -85,7 +85,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
 
   // What the worker does for each new event: the dispatch; returns the notifications it names for push.
   async function deliver(o: Org): Promise<string[]> {
-    const events = await one<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+    const events = await one<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
     const push: string[] = [];
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -131,9 +131,9 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: app.toString(), max: 4 });
@@ -141,7 +141,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -167,14 +167,14 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     expect(await devices(o, o.owner, ep)).toEqual({ subscribed: false, devices: [] });
     expect(await exec(o, o.owner, 'social.push.unsubscribe', { id })).toEqual({ removed: 0 });
     expect(await exec(o, o.owner, 'social.push.unsubscribe', { endpoint: ep })).toEqual({ removed: 0 });
-    // The table's own policy, below the commands: in a member's context (crove_app, as the API) a member reads and
+    // The table's own policy, below the commands: in a member's context (ludy_app, as the API) a member reads and
     // deletes only their own rows; the owner's context sees none of the member's, endpoints and keys included.
     const asApp = async <T>(user: string, fn: (c: pg.Client) => Promise<T>) => {
       const client = new pg.Client({ connectionString: appUrl });
       await client.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
         return await fn(client);
       } finally {
         await client.query('ROLLBACK').catch(() => {});
@@ -238,7 +238,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     // Every device of the admin was posted to, with a VAPID token for the push service's origin.
     expect(service.requests.map((r) => r.url).sort()).toEqual([gone, missing, busy, ok].sort());
     expect(service.requests.every((r) => r.headers.authorization?.startsWith(`vapid t=`) && r.headers['content-encoding'] === 'aes128gcm' && r.headers.ttl === '86400')).toBe(true);
-    const slug = (await one<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [o.orgId]))[0]?.slug;
+    const slug = (await one<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [o.orgId]))[0]?.slug;
     expect(JSON.parse(service.payloads[0] ?? '{}')).toEqual({ title: 'Crove', body: 'Có bài đang chờ bạn duyệt', url: `/o/${slug}/social/${postId}`, tag: `review_requested:${postId}` });
     for (const p of service.payloads) expect(p).not.toContain('Khai trương');
     // 404 and 410 deleted; the failed one counts; the delivered one is marked used.
@@ -271,14 +271,14 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     expect(await push(fakeService().sender, o, ownerNotice)).toEqual({ sent: 0, gone: 0, failed: 0 });
     // The admin's account disabled: nothing, and the subscription stays for when it is enabled again.
     const adminNotice = await notificationOf(o, ids, o.admin);
-    await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.admin]));
+    await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.admin]));
     const service = fakeService();
     expect(await push(service.sender, o, adminNotice)).toEqual({ sent: 0, gone: 0, failed: 0 });
     expect(service.requests).toEqual([]);
-    await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [o.admin]));
+    await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [o.admin]));
     expect(await push(fakeService().sender, o, adminNotice)).toEqual({ sent: 1, gone: 0, failed: 0 });
     // A member who left: the subscriptions go with the membership, and nothing is sent.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin]));
     expect((await rows(o)).map((r) => r.user_id).sort()).toEqual([o.owner, o.member].sort());
     expect(await push(fakeService().sender, o, adminNotice)).toEqual({ sent: 0, gone: 0, failed: 0 });
   });

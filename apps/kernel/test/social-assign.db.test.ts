@@ -42,7 +42,7 @@ suite('social post assignment on PostgreSQL (#640)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'member' | 'viewer', string> = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -51,7 +51,7 @@ suite('social post assignment on PostgreSQL (#640)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -70,9 +70,9 @@ suite('social post assignment on PostgreSQL (#640)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -105,7 +105,7 @@ suite('social post assignment on PostgreSQL (#640)', () => {
     expect(after).toMatchObject({ assigneeUserId: o.owner, revision: before.revision });
     expect(Date.parse(after.dueAt ?? '')).toBe(Date.parse(due));
     expect(after.variants.map((v) => v.revision)).toEqual(before.variants.map((v) => v.revision));
-    const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.assigned'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.assigned'", [o.orgId])).rows);
     expect(events.map((e) => e.payload)).toEqual([{ post_id: postId, assignee_user_id: o.owner, by: o.member }]);
 
     // The owner sees it under Mine; the member does not.
@@ -115,18 +115,18 @@ suite('social post assignment on PostgreSQL (#640)', () => {
     // A viewer, or a member who did not write it, cannot change it; nobody can assign it outside the org.
     await expect(exec(o, o.viewer, 'social.post.assign', { postId, assigneeUserId: null, dueAt: null })).rejects.toMatchObject({ status: 403 });
     const other = await person('other');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, other]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, other]));
     await expect(exec(o, other, 'social.post.assign', { postId, assigneeUserId: other, dueAt: null })).rejects.toMatchObject({ status: 403 });
     const stranger = await person('stranger');
     await expect(exec(o, o.owner, 'social.post.assign', { postId, assigneeUserId: stranger, dueAt: null })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_MEMBER' });
     // A member of another org (here, the owner of a second org the caller also belongs to) is no member of this one.
     const second = await org();
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [second.orgId, o.owner]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [second.orgId, o.owner]));
     await expect(exec(o, o.owner, 'social.post.assign', { postId, assigneeUserId: second.owner, dueAt: null })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_MEMBER' });
 
     // Someone assigned who has since left keeps the post until changed: its due date can still move.
     await exec(o, o.owner, 'social.post.assign', { postId, assigneeUserId: other, dueAt: null });
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, other]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, other]));
     await exec(o, o.owner, 'social.post.assign', { postId, assigneeUserId: other, dueAt: due });
     expect(await get(o, o.owner, postId)).toMatchObject({ assigneeUserId: other });
 

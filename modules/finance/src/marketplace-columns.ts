@@ -54,13 +54,13 @@ export function sameMapping(stored: { platform: string | null; assignments: unkn
 async function unrecognisedSheet(ctx: CommandContext | QueryContext, fileId: string): Promise<{ id: string; storage_key: string; generation: string | null; sha256: string; size_bytes: number } | null> {
   const { rows } = await sql<{ id: string; storage_key: string; generation: string | null; sha256: string; size_bytes: number }>`
     SELECT f.id::text AS id, f.storage_key, f.generation, f.sha256, f.size_bytes::bigint::int AS size_bytes
-      FROM crove_kernel.file f
+      FROM ludy_kernel.file f
      WHERE f.org_id = ${ctx.orgId}::uuid AND f.id = ${fileId}::uuid AND f.original_deleted_at IS NULL
        AND f.content_type = ANY(${SHEET_TYPES}::text[])
        AND EXISTS (
-         SELECT 1 FROM crove_kernel.extraction x
+         SELECT 1 FROM ludy_kernel.extraction x
           WHERE x.org_id = f.org_id AND x.file_id = f.id AND x.method = 'unsupported'
-            AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+            AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
             AND coalesce(x.result ->> 'kind', '') <> ALL(${READ_KINDS}::text[]))`.execute(ctx.trx);
   return rows[0] ?? null;
 }
@@ -235,14 +235,14 @@ export const marketplaceColumnsFiles = defineQuery({
   handler: async (ctx): Promise<MarketplaceColumnsFile[]> => {
     const { rows } = await sql<{ id: string; filename: string; created_at: Date | string; state: string | null }>`
       SELECT f.id::text AS id, f.filename, f.created_at, c.state
-        FROM crove_kernel.file f
+        FROM ludy_kernel.file f
         LEFT JOIN crove_finance.marketplace_column_check c ON c.org_id = f.org_id AND c.file_id = f.id
        WHERE f.org_id = ${ctx.orgId}::uuid AND f.original_deleted_at IS NULL
          AND f.content_type = ANY(${SHEET_TYPES}::text[])
          AND EXISTS (
-           SELECT 1 FROM crove_kernel.extraction x
+           SELECT 1 FROM ludy_kernel.extraction x
             WHERE x.org_id = f.org_id AND x.file_id = f.id AND x.method = 'unsupported'
-              AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+              AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
               AND coalesce(x.result ->> 'kind', '') <> ALL(${READ_KINDS}::text[]))
        ORDER BY f.created_at DESC, f.id DESC
        LIMIT ${MARKETPLACE_COLUMN_FILES_LIMIT}`.execute(ctx.trx);

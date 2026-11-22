@@ -58,8 +58,8 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Kho ${randomUUID().slice(0, 6)}`);
     const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
-    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]);
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]);
     return { orgId, owner, member, viewer, entity: entity?.id ?? '' };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -67,7 +67,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
   const makeItem = (o: Org, code: string, extra: Record<string, unknown> = {}) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods', ...extra }).then((r) => r.id);
   const party = (o: Org, name: string, email: string | null = null) =>
-    rows<{ id: string }>('INSERT INTO crove_kernel.party (org_id, name, email) VALUES ($1, $2, $3) RETURNING id', [o.orgId, name, email]).then((r) => r[0]?.id as string);
+    rows<{ id: string }>('INSERT INTO ludy_kernel.party (org_id, name, email) VALUES ($1, $2, $3) RETURNING id', [o.orgId, name, email]).then((r) => r[0]?.id as string);
   let serial = 0;
   // A posted document with one goods line and, unless `moved` is false, its move (signed: a sale is negative), dated `daysAgo` days before today.
   async function line(o: Org, item: string | null, partyId: string, direction: 'purchase' | 'sale', daysAgo: number, quantity: string, options: { moved?: boolean; description?: string; unit?: string } = {}) {
@@ -120,9 +120,9 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -282,7 +282,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       const supplier = await party(o, 'Nhà cung cấp Phương Nam', 'ncc@phuongnam.example');
       const a = await makeItem(o, 'A1', { name: 'Áo thun trắng M' });
       const b = await makeItem(o, 'B1', { name: 'Nước suối 500ml', unit: 'thùng' });
-      const [entityRow] = await rows<{ name: string }>('SELECT name FROM crove_kernel.legal_entity WHERE org_id = $1 AND id = $2', [o.orgId, o.entity]);
+      const [entityRow] = await rows<{ name: string }>('SELECT name FROM ludy_kernel.legal_entity WHERE org_id = $1 AND id = $2', [o.orgId, o.entity]);
       const source = await query<{ orgName: string; supplier: unknown; items: unknown[]; template: string }>(o, 'finance.stock.reorder_source', {
         legalEntityId: o.entity,
         supplierPartyId: supplier,

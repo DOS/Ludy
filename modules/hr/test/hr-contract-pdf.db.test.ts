@@ -54,18 +54,18 @@ suite('hr.employee.contract_pdf sensitive query (#3548)', () => {
     const created = await createOrg(rt, asUser(owner), `${namePrefix} ${tag}`);
     const orgId = created.orgId;
     await adminPool.query(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
       [orgId, admin, chiefAccountant, viewer],
     );
     // Assign Kế toán trưởng (finance.chief_accountant) to the member to prove HR contract PDF still answers 403 FORBIDDEN.
     await adminPool.query(
-      `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by)
+      `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by)
        VALUES ($1, $2, 'finance.chief_accountant', $3)`,
       [orgId, chiefAccountant, owner],
     );
     await adminPool.query(
-      `UPDATE crove_kernel.tenant SET tax_code = '0100000000', address = '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh' WHERE org_id = $1`,
+      `UPDATE ludy_kernel.tenant SET tax_code = '0100000000', address = '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh' WHERE org_id = $1`,
       [orgId],
     );
 
@@ -86,11 +86,11 @@ suite('hr.employee.contract_pdf sensitive query (#3548)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     adminPool = createPool({ connectionString: adminUrl, max: 2, resetOnRelease: false });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     appPool = createPool({ connectionString: appUrl.toString(), max: 4 });
 
@@ -161,7 +161,7 @@ suite('hr.employee.contract_pdf sensitive query (#3548)', () => {
     // Check audit_event rows: two sensitive reads committed, zero PII or wages in audit rows.
     const auditRes = await adminPool.query<{ target_type: string; target_id: string; row_text: string }>(
       `SELECT target_type, target_id, audit_event::text AS row_text
-       FROM crove_kernel.audit_event
+       FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command = 'hr.employee.contract_pdf'
        ORDER BY id`,
       [o.orgId],
@@ -291,7 +291,7 @@ suite('hr.employee.contract_pdf sensitive query (#3548)', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
     const forbiddenAudits = await adminPool.query<{ n: string }>(
-      `SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.employee.contract_pdf'`,
+      `SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.employee.contract_pdf'`,
       [orgA.orgId],
     );
     expect(Number(forbiddenAudits.rows[0]?.n)).toBe(0);

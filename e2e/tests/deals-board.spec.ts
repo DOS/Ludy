@@ -37,7 +37,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await signInNewUser(page, email);
   const slug = await createOrg(page, 'Công ty Cơ Hội');
   // A contact to sell to; the contacts screen comes with a later step, so it is made as the stack's database owner.
-  exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM ludy_kernel.tenant WHERE slug = :'slug'`, { slug });
 
   await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();
@@ -144,7 +144,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     await expect(column('Báo giá')).toContainText('13.500.000');
     await expect(column('Thắng')).toContainText('15.000.000');
     const stored = sql<{ title: string; kind: string; closed: boolean }>(
-      `SELECT d.title, s.kind, d.closed_at IS NOT NULL AS closed FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' ORDER BY d.title`,
+      `SELECT d.title, s.kind, d.closed_at IS NOT NULL AS closed FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' ORDER BY d.title`,
       { slug },
     );
     expect(stored).toEqual([
@@ -176,7 +176,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await test.step('a deal won more than 30 days ago is off the board, and "Xem tất cả" in Thắng lists it (crm.md section 6)', async () => {
     exec(
       `SET session_replication_role = replica;
-       UPDATE crove_crm.deal SET closed_at = now() - interval '45 days' WHERE title = 'Gói kế toán năm' AND org_id = (SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug')`,
+       UPDATE crove_crm.deal SET closed_at = now() - interval '45 days' WHERE title = 'Gói kế toán năm' AND org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`,
       { slug },
     );
     await page.reload();

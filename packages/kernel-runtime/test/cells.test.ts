@@ -27,7 +27,7 @@ function fakeDb(role: string) {
   const connection: DatabaseConnection = {
     async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
       statements.push(query.sql);
-      const rows = /crove_kernel\.enter_(?:user_)?context\(/.test(query.sql) ? [{ role }] : /pg_attribute/.test(query.sql) ? [{ present: true }] : /"apps_off"/.test(query.sql) ? [{ apps_off: [] }] : [];
+      const rows = /ludy_kernel\.enter_(?:user_)?context\(/.test(query.sql) ? [{ role }] : /pg_attribute/.test(query.sql) ? [{ present: true }] : /"apps_off"/.test(query.sql) ? [{ apps_off: [] }] : [];
       return { rows: rows as R[] };
     },
     // oxlint-disable-next-line require-yield
@@ -158,7 +158,7 @@ describe('cell resolution', () => {
 
   it('runs signed-in user reads on the control plane', async () => {
     const { resolver, tenant, control } = cells();
-    await runtimeOn(resolver).forUser(USER, (db) => sql`SELECT crove_kernel.my_orgs(${USER.userId}::uuid)`.execute(db));
+    await runtimeOn(resolver).forUser(USER, (db) => sql`SELECT ludy_kernel.my_orgs(${USER.userId}::uuid)`.execute(db));
     expect(resolver.controlPlane).toHaveBeenCalledTimes(1);
     expect(resolver.resolveTenant).not.toHaveBeenCalled();
     expect(control.some((s) => s.includes('my_orgs'))).toBe(true);
@@ -167,7 +167,7 @@ describe('cell resolution', () => {
 
   it('runs org-less machinery on the control plane', async () => {
     const { resolver, tenant, control } = cells();
-    await runtimeOn(resolver).orgless((db) => sql`SELECT crove_kernel.org_by_inbound_token(${'t'})`.execute(db));
+    await runtimeOn(resolver).orgless((db) => sql`SELECT ludy_kernel.org_by_inbound_token(${'t'})`.execute(db));
     expect(resolver.controlPlane).toHaveBeenCalledTimes(1);
     expect(resolver.resolveTenant).not.toHaveBeenCalled();
     expect(control.some((s) => s.includes('org_by_inbound_token'))).toBe(true);

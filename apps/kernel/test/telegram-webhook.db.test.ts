@@ -89,7 +89,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     }
   }
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
-  const waiting = async () => (await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).length;
+  const waiting = async () => (await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).length;
   const derived = () => vault.deriveKeys(TELEGRAM_HOOK_KEY_INFO).map((k) => k.key);
   const secretOf = (hook: string) => telegramHookSecret(derived()[0] as Buffer, hook);
   const post = (target: ReturnType<typeof createHttpApp>, hook: string, body: string, headers: Record<string, string> = {}) =>
@@ -150,7 +150,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const t = telegram();
     const outcome = await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: o.orgId, connectionId: o.connectionId, action: 'chat', on: true });
     expect(outcome).toBe('on');
-    const [row] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId]);
+    const [row] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId]);
     return { hook: (row as { chat_hook: string }).chat_hook, calls: t.calls };
   }
 
@@ -163,9 +163,9 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -180,7 +180,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     app = createHttpApp({ ...common, telegramWebhook: { keys: derived, now: () => NOW } });
     bare = createHttpApp(common);
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     pools.push(workerPool);
@@ -204,12 +204,12 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(asked).toEqual({ chatState: 'enabling' });
     // A second ask while it is enabling changes nothing (no second hook, no second job).
     // The hook being set waits in chat_hook_next; there is no live one yet.
-    const [before] = await rows<{ chat_hook: string | null; chat_hook_next: string; chat_state: string }>('SELECT chat_hook, chat_hook_next, chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
+    const [before] = await rows<{ chat_hook: string | null; chat_hook_next: string; chat_state: string }>('SELECT chat_hook, chat_hook_next, chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
     expect(before?.chat_state).toBe('enabling');
     expect(before?.chat_hook).toBeNull();
     expect(before?.chat_hook_next).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: true }, asOwner(a))).toEqual({ chatState: 'enabling' });
-    const [same] = await rows<{ chat_hook_next: string }>('SELECT chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
+    const [same] = await rows<{ chat_hook_next: string }>('SELECT chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
     expect(same?.chat_hook_next).toBe(before?.chat_hook_next);
     const t = telegram();
     const outcome = await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true });
@@ -219,21 +219,21 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     // One setWebhook with this bot's token, the hook in the path, the derived secret as secret_token, and only private messages asked for.
     expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_A, json: { url: `${APP_URL}${BASE}/${hookA}`, secret_token: secretOf(hookA), allowed_updates: [...TELEGRAM_CHAT_UPDATES] } }]);
     // The hook being set is the live one now, and the connection remembers its bot.
-    expect(await rows('SELECT chat_state, chat_error, chat_bot_id, chat_hook, chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on', chat_error: null, chat_bot_id: '111111111', chat_hook: hookA, chat_hook_next: null }]);
+    expect(await rows('SELECT chat_state, chat_error, chat_bot_id, chat_hook, chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on', chat_error: null, chat_bot_id: '111111111', chat_hook: hookA, chat_hook_next: null }]);
     // The same job again finds the connection already on and calls nothing.
     expect(await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true })).toBe('none');
     expect(t.calls).toHaveLength(1);
     // Only an owner or an admin may; a viewer is refused and a connection of another provider is not a bot.
     for (const role of ['member', 'viewer'] as const) {
       const personId = (await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `${role}-${randomUUID().slice(0, 8)}@telegram.test`, name: null })) as string;
-      await rows('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [a.orgId, personId, role]);
+      await rows('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [a.orgId, personId, role]);
       await expect(api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: false }, { actor: { type: 'user', userId: personId, aal: 'aal1' }, orgId: a.orgId })).rejects.toMatchObject({ status: 403 });
     }
     // The export of the org never carries a hook.
     expect(EXPORT_TABLES['kernel.channel_connection'].omit).toEqual(expect.arrayContaining(['chat_hook', 'chat_hook_next']));
     // The hook is a capability: neither the audit log nor the events hold it.
-    expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1', [`%${hookA}%`])).length).toBe(0);
-    expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1', [`%${hookA}%`])).length).toBe(0);
+    expect((await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE $1', [`%${hookA}%`])).length).toBe(0);
+    expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE payload::text LIKE $1', [`%${hookA}%`])).length).toBe(0);
   });
 
   it('does not exist without the credential key: it answers as a path nobody registered does', async () => {
@@ -271,7 +271,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     answers.push({ status: crossed.status, body: await crossed.text() });
     for (const answer of answers) expect(answer).toEqual({ status: 401, body: '{"code":"WEBHOOK_SIGNATURE"}' });
     expect(await waiting()).toBe(0);
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
   });
 
   it('refuses before it reads the body: a wrong secret with a body that is no JSON is the same 401, not a 400', async () => {
@@ -305,12 +305,12 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('{"ok":true}');
     expect(await waiting()).toBe(1);
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
-    expect(await rows('SELECT provider FROM crove_kernel.conversation_inbound_pending')).toEqual([{ provider: 'telegram_chat' }]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+    expect(await rows('SELECT provider FROM ludy_kernel.conversation_inbound_pending')).toEqual([{ provider: 'telegram_chat' }]);
     expect(await intake()).toEqual({ stored: 1, dropped: 0 });
     expect(await waiting()).toBe(0);
     const seen = await rows(
-      "SELECT m.body, m.direction, m.tainted, m.seq, c.kind, c.external_thread_id, c.reply_window_until IS NULL AS no_window, i.external_user_id, i.display_name, i.provider FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE m.org_id = $1",
+      "SELECT m.body, m.direction, m.tainted, m.seq, c.kind, c.external_thread_id, c.reply_window_until IS NULL AS no_window, i.external_user_id, i.display_name, i.provider FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE m.org_id = $1",
       [a.orgId],
     );
     // A bot may answer at any time: no window. The customer is the sender, the thread is the chat, the text is tainted.
@@ -323,8 +323,8 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect((await post(app, hookA, forA, signed(hookA))).status).toBe(200);
     expect((await post(app, hookB, forB, signed(hookB))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 2, dropped: 0 });
-    const onA = await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND body LIKE $2', [a.orgId, 'Gửi cho bot%']);
-    const onB = await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND body LIKE $2', [b.orgId, 'Gửi cho bot%']);
+    const onA = await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body LIKE $2', [a.orgId, 'Gửi cho bot%']);
+    const onB = await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body LIKE $2', [b.orgId, 'Gửi cho bot%']);
     expect(onA).toEqual([{ body: 'Gửi cho bot A' }]);
     expect(onB).toEqual([{ body: 'Gửi cho bot B' }]);
   });
@@ -347,7 +347,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(await waiting()).toBe(3);
     // The unique message id keeps the thread to one copy however often the update was parked.
     expect(await intake()).toEqual({ stored: 2, dropped: 0 });
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body = 'Gửi lại nhiều lần'", [a.orgId])).toHaveLength(1);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body = 'Gửi lại nhiều lần'", [a.orgId])).toHaveLength(1);
     // A secret that fails never reaches the cache, so a forged body cannot make a real one look replayed.
     const real = update('Thật', { chat: 601, messageId: 33 });
     expect((await post(replaying, hookA, real, {})).status).toBe(401);
@@ -364,22 +364,22 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(await ok(update('Cũ', { date: sec(NOW - 3 * 86_400_000), messageId: 41 }))).toBe(200);
     expect(await ok(JSON.stringify({ update_id: 6, message: { message_id: 2, chat: { id: 777, type: 'private' }, from: { id: 777 }, date: sec(NOW), pinned_message: {} } }))).toBe(200);
     expect(await waiting()).toBe(0);
-    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'telegram_chat', 'x'::bytea FROM generate_series(1, 10001)");
+    await rows("INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) SELECT 'telegram_chat', 'x'::bytea FROM generate_series(1, 10001)");
     const fresh = update('Hàng đợi đầy', { chat: 701, messageId: 51 });
     const response = await post(app, hookA, fresh, signed(hookA));
     expect([response.status, await response.text()]).toEqual([503, '{"code":"BACKLOG"}']);
-    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
     expect((await post(app, hookA, fresh, signed(hookA))).status).toBe(200);
     expect(await waiting()).toBe(1);
     await intake();
   });
 
   it('is not refused for the sandbox\'s backlog: the cap is per provider', async () => {
-    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1000)");
+    await rows("INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1000)");
     const real = update('Tin thật vẫn nhận', { chat: 801, messageId: 61 });
     expect((await post(app, hookA, real, signed(hookA))).status).toBe(200);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'telegram_chat'")).toHaveLength(1);
-    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_inbound_pending WHERE provider = 'telegram_chat'")).toHaveLength(1);
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
   });
 
   it('logs nothing of the body it parks or refuses, the hook or the secret', async () => {
@@ -411,15 +411,15 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const later = update('Tin đến sau', { chat: 1001, messageId: 82, date: sec(NOW - 60_000) });
     for (const body of [later, first, later]) expect((await post(app, hookA, body, signed(hookA))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 2, dropped: 0 });
-    const seen = await rows<{ body: string; seq: number }>("SELECT body, seq FROM crove_kernel.conversation_message WHERE org_id = $1 AND body LIKE 'Tin đến%' ORDER BY seq", [a.orgId]);
+    const seen = await rows<{ body: string; seq: number }>("SELECT body, seq FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body LIKE 'Tin đến%' ORDER BY seq", [a.orgId]);
     expect(seen.map((m) => m.body).sort()).toEqual(['Tin đến sau', 'Tin đến trước']);
     // A hook whose connection was turned off: the secret still derives (nothing is stored), so the update is parked, claimed, found nowhere, deleted.
-    await rows("UPDATE crove_kernel.channel_connection SET chat_hook = NULL, chat_state = 'off' WHERE org_id = $1 AND id = $2", [b.orgId, b.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_hook = NULL, chat_state = 'off' WHERE org_id = $1 AND id = $2", [b.orgId, b.connectionId]);
     const stranger = update('Gửi cho hook cũ', { chat: 1002, messageId: 83 });
     expect((await post(app, hookB, stranger, signed(hookB))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
     expect(await waiting()).toBe(0);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE body = 'Gửi cho hook cũ'")).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE body = 'Gửi cho hook cũ'")).toHaveLength(0);
     // Put the other bot back on for the tests after.
     hookB = (await turnOn(b)).hook;
   });
@@ -445,7 +445,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect((await post(rotating, hookA, body, { 'x-telegram-bot-api-secret-token': telegramHookSecret(Buffer.alloc(32, 8), hookA) })).status).toBe(401);
     // Without the old key in the list the old secret is refused.
     expect((await post(app, hookA, body, { 'x-telegram-bot-api-secret-token': telegramHookSecret(oldKey, hookA) })).status).toBe(401);
-    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
   });
 
   it('answers the customer through sendMessage once, with no window, and the reply is the business\'s own message', async () => {
@@ -453,7 +453,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const incoming = update('Còn hàng không shop?', { chat: 1201, messageId: 101, date: now });
     expect((await post(createHttpApp({ ...commonDeps(), telegramWebhook: { keys: derived } }), hookA, incoming, signed(hookA))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 1, dropped: 0 });
-    const thread = (await rows<{ id: string; last_seq: number }>("SELECT id, last_seq FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1201'", [a.orgId]))[0] as { id: string; last_seq: number };
+    const thread = (await rows<{ id: string; last_seq: number }>("SELECT id, last_seq FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1201'", [a.orgId]))[0] as { id: string; last_seq: number };
     const t = telegram({ sendMessage: [{ body: { ok: true, result: { message_id: 5551 } } }] });
     const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t.fetchImpl })).conversations;
     const deps = { runtime: worker, broker: vault, adapter: (provider: string) => (provider === 'telegram' ? adapter : undefined) };
@@ -461,12 +461,12 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const job = { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' as const };
     expect(await runConversationJob(deps, job)).toBe('accepted');
     expect(t.calls).toEqual([{ method: 'sendMessage', token: TOKEN_A, json: { chat_id: '1201', text: 'Dạ shop còn hàng ạ' } }]);
-    expect(await rows('SELECT send_state, external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: '1201:5551' }]);
+    expect(await rows('SELECT send_state, external_message_id FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: '1201:5551' }]);
     // The same job again calls nothing: a reply is sent exactly once.
     expect(await runConversationJob(deps, job)).toBe('settled');
     expect(t.calls).toHaveLength(1);
     // No window to close: the screen's reply state is allowed, and a long-ago customer message can still be answered.
-    await rows("UPDATE crove_kernel.conversation SET last_inbound_at = now() - interval '40 days' WHERE org_id = $1 AND id = $2", [a.orgId, thread.id]);
+    await rows("UPDATE ludy_kernel.conversation SET last_inbound_at = now() - interval '40 days' WHERE org_id = $1 AND id = $2", [a.orgId, thread.id]);
     const detail = await api.query<{ reply: { allowed: boolean; reason: string | null } }>('kernel.conversation.get', { conversationId: thread.id }, asOwner(a));
     expect(detail.reply).toEqual({ allowed: true, reason: null });
     // A comment is not a chat, and hiding is not offered.
@@ -478,13 +478,13 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const incoming = update('Hỏi giá', { chat: 1301, messageId: 111, date: now });
     expect((await post(createHttpApp({ ...commonDeps(), telegramWebhook: { keys: derived } }), hookA, incoming, signed(hookA))).status).toBe(200);
     await intake();
-    const thread = (await rows<{ id: string; last_seq: number }>("SELECT id, last_seq FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1301'", [a.orgId]))[0] as { id: string; last_seq: number };
+    const thread = (await rows<{ id: string; last_seq: number }>("SELECT id, last_seq FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1301'", [a.orgId]))[0] as { id: string; last_seq: number };
     const t = telegram({ sendMessage: [{ status: 403, body: { ok: false, error_code: 403, description: 'Forbidden: bot was blocked by the user' } }] });
     const adapter = new TelegramConversations({ fetch: t.fetchImpl });
     const deps = { runtime: worker, broker: vault, adapter: (provider: string) => (provider === 'telegram' ? adapter : undefined) };
     const { messageId } = await api.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ 100k ạ', lastSeenSeq: thread.last_seq }, asOwner(a));
     expect(await runConversationJob(deps, { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' })).toBe('rejected');
-    expect(await rows('SELECT send_state, send_error_code FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'failed', send_error_code: 'TELEGRAM_BOT_BLOCKED' }]);
+    expect(await rows('SELECT send_state, send_error_code FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'failed', send_error_code: 'TELEGRAM_BOT_BLOCKED' }]);
     expect(await runConversationJob(deps, { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' })).toBe('settled');
     expect(t.calls).toHaveLength(1);
   });
@@ -503,37 +503,37 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const idle = telegram();
     expect(await runTelegramChatHook(hookDeps(idle.fetchImpl), { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:BOT_IN_USE');
     expect(idle.calls).toHaveLength(0);
-    expect(await rows('SELECT chat_state, chat_hook, chat_error FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, second])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: 'BOT_IN_USE' }]);
+    expect(await rows('SELECT chat_state, chat_hook, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, second])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: 'BOT_IN_USE' }]);
     // A plain-http deployment cannot take a Telegram webhook: refused in words before any call.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: second, on: true }, asOwner(a));
-    await rows("UPDATE crove_kernel.channel_connection SET chat_bot_id = NULL WHERE org_id = $1", [a.orgId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_bot_id = NULL WHERE org_id = $1", [a.orgId]);
     expect(await runTelegramChatHook(hookDeps(idle.fetchImpl, 'http://localhost:8080'), { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:WEBHOOK_NEEDS_HTTPS');
     // Telegram refuses the address: recorded as a code, the connection is off again with nothing to delete.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: second, on: true }, asOwner(a));
     const refusing = telegram({ setWebhook: [{ status: 400, body: { ok: false, error_code: 400, description: 'Bad Request: bad webhook: HTTPS url must be provided for webhook' } }] });
     expect(await runTelegramChatHook(hookDeps(refusing.fetchImpl), { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:TELEGRAM_WEBHOOK_REFUSED');
-    expect(await rows('SELECT chat_state, chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, second])).toEqual([{ chat_state: 'off', chat_hook: null }]);
+    expect(await rows('SELECT chat_state, chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, second])).toEqual([{ chat_state: 'off', chat_hook: null }]);
     // Off: the command marks it disabling and keeps the hook until the job has deleted the webhook with this bot's token.
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: false }, asOwner(a))).toEqual({ chatState: 'disabling' });
-    expect(await rows('SELECT chat_state, chat_hook IS NOT NULL AS hooked FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'disabling', hooked: true }]);
+    expect(await rows('SELECT chat_state, chat_hook IS NOT NULL AS hooked FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'disabling', hooked: true }]);
     // While it is being turned off an update on the hook is still taken in (nothing in flight is lost), and turning on again waits.
     await expect(api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: true }, asOwner(a))).rejects.toMatchObject({ code: 'CHAT_BUSY' });
     const off = telegram();
     expect(await runTelegramChatHook(hookDeps(off.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: false })).toBe('off');
     expect(off.calls).toEqual([{ method: 'deleteWebhook', token: TOKEN_A, json: {} }]);
-    expect(await rows('SELECT chat_state, chat_hook, chat_error FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: null }]);
+    expect(await rows('SELECT chat_state, chat_hook, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: null }]);
     // A failed delete leaves it off in Ludy with the code for the screen: nothing is received any more either way.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: b.connectionId, on: false }, asOwner(b));
     const dead = telegram({ deleteWebhook: [{ status: 401, body: { ok: false, error_code: 401, description: 'Unauthorized' } }] });
     expect(await runTelegramChatHook(hookDeps(dead.fetchImpl), { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: false })).toBe('failed:TELEGRAM_TOKEN_REFUSED');
-    expect(await rows('SELECT chat_state, chat_hook, chat_error FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: 'TELEGRAM_TOKEN_REFUSED' }]);
+    expect(await rows('SELECT chat_state, chat_hook, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: 'TELEGRAM_TOKEN_REFUSED' }]);
     // Neither the hook, the secret nor the token is in anything the job returned or recorded.
-    expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1 OR detail::text LIKE $2', [`%${TOKEN_A}%`, `%${hookA}%`])).length).toBe(0);
+    expect((await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE $1 OR detail::text LIKE $2', [`%${TOKEN_A}%`, `%${hookA}%`])).length).toBe(0);
   });
 
   it('gives the hook up when the connection is disconnected, and refuses chats for a connection that is not a Telegram one', async () => {
     const { hook } = await turnOn(a);
-    expect(await rows('SELECT chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on' }]);
+    expect(await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on' }]);
     // While chats are on it is refused (the webhook is removed by turning off, which needs the token a disconnect forgets); turned off first it goes.
     await expect(api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { ...asOwner(a), idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'CHAT_IS_ON', status: 409 });
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: false }, asOwner(a));
@@ -541,7 +541,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(await runTelegramChatHook(hookDeps(gone.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: false })).toBe('off');
     expect(gone.calls.map((c) => c.method)).toEqual(['deleteWebhook']);
     await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { ...asOwner(a), idempotencyKey: randomUUID() });
-    expect(await rows('SELECT chat_state, chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null }]);
+    expect(await rows('SELECT chat_state, chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null }]);
     // An update still arriving on the old hook finds no connection and is dropped after storing nothing.
     expect((await post(app, hook, update('Đến hook cũ', { chat: 1401, messageId: 121 }), signed(hook))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
@@ -567,7 +567,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
       asOwner(b),
     );
     expect(again).toEqual({ connectionId: b.connectionId, reconnected: true });
-    const [mid] = await rows<{ chat_hook: string; chat_hook_next: string; chat_state: string }>('SELECT chat_hook, chat_hook_next, chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]);
+    const [mid] = await rows<{ chat_hook: string; chat_hook_next: string; chat_state: string }>('SELECT chat_hook, chat_hook_next, chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]);
     expect(mid?.chat_state).toBe('enabling');
     expect(mid?.chat_hook).toBe(old);
     expect(mid?.chat_hook_next).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -579,19 +579,19 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: true })).toBe('on');
     const next = mid?.chat_hook_next as string;
     expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_B, json: { url: `${APP_URL}${BASE}/${next}`, secret_token: secretOf(next), allowed_updates: [...TELEGRAM_CHAT_UPDATES] } }]);
-    expect(await rows('SELECT chat_state, chat_hook, chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId])).toEqual([{ chat_state: 'on', chat_hook: next, chat_hook_next: null }]);
+    expect(await rows('SELECT chat_state, chat_hook, chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId])).toEqual([{ chat_state: 'on', chat_hook: next, chat_hook_next: null }]);
     // The secret of the old hook opens nothing on the new one, and an update still arriving on the old hook finds no connection.
     expect((await post(app, next, update('x'), signed(old))).status).toBe(401);
     expect((await post(app, old, update('Hook cũ đã bỏ', { chat: 1602, messageId: 142 }), signed(old))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
     hookB = next;
     // The connect event of the reconnect and the queued switch carry ids only, never a hook.
-    expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1 OR payload::text LIKE $2', [`%${next}%`, `%${old}%`])).length).toBe(0);
+    expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE payload::text LIKE $1 OR payload::text LIKE $2', [`%${next}%`, `%${old}%`])).length).toBe(0);
   });
 
   it('keeps Telegram pointing at the hook the database holds when a reconnect changes it while the job is at Telegram', async () => {
     // Org B's bot answers chats (the test before left it on).
-    expect((await rows<{ chat_state: string }>('SELECT chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]))[0]?.chat_state).toBe('on');
+    expect((await rows<{ chat_state: string }>('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]))[0]?.chat_state).toBe('on');
     const sealed = vault.seal(JSON.stringify({ botToken: TOKEN_B, username: null }), { orgId: b.orgId, provider: 'telegram', externalAccountId: CHANNEL_B });
     const reconnect = () =>
       api.execute('kernel.channel.connect', { provider: 'telegram', externalAccountId: CHANNEL_B, displayName: 'Kênh thử', scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } }, asOwner(b));
@@ -617,7 +617,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     // The job set the first hook, found it was no longer the one wanted, and set the new one: the last hook sent is the one the row holds.
     expect(sent).toHaveLength(2);
     expect(sent[0]).not.toBe(sent[1]);
-    const [row] = await rows<{ chat_state: string; chat_hook: string; chat_hook_next: string | null }>('SELECT chat_state, chat_hook, chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]);
+    const [row] = await rows<{ chat_state: string; chat_hook: string; chat_hook_next: string | null }>('SELECT chat_state, chat_hook, chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]);
     expect(row).toMatchObject({ chat_state: 'on', chat_hook: sent[1], chat_hook_next: null });
     hookB = row?.chat_hook as string;
   });
@@ -628,10 +628,10 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     // The bot's token is refused: the connection is marked expired. It cannot be asked of Telegram, so turning off is done here.
     await worker.execute('kernel.channel.mark_expired', { connectionId: o.connectionId, reason: 'token_refused' }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId });
     await expect(api.execute('kernel.channel.telegram_chat_set', { connectionId: o.connectionId, on: true }, asOwner(o))).rejects.toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
-    const events = () => rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [o.orgId]);
+    const events = () => rows("SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [o.orgId]);
     const queued = (await events()).length;
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: o.connectionId, on: false }, asOwner(o))).toEqual({ chatState: 'off' });
-    expect(await rows('SELECT chat_state, chat_hook, chat_hook_next, chat_bot_id FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null }]);
+    expect(await rows('SELECT chat_state, chat_hook, chat_hook_next, chat_bot_id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null }]);
     expect((await events()).length).toBe(queued);
     // A connection that went inactive while chats were on may be disconnected without turning them off first.
     const p = await connectBot('Công ty Telegram D', '444444444:DDHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw4', '-1004444444440');
@@ -639,32 +639,32 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     await expect(api.execute('kernel.channel.disconnect', { connectionId: p.connectionId }, { ...asOwner(p), idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'CHAT_IS_ON' });
     await worker.execute('kernel.channel.mark_expired', { connectionId: p.connectionId, reason: 'token_refused' }, { actor: { type: 'system', component: 'test' }, orgId: p.orgId });
     await api.execute('kernel.channel.disconnect', { connectionId: p.connectionId }, { ...asOwner(p), idempotencyKey: randomUUID() });
-    expect(await rows('SELECT status, chat_state, chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [p.orgId, p.connectionId])).toEqual([{ status: 'revoked', chat_state: 'off', chat_hook: null }]);
+    expect(await rows('SELECT status, chat_state, chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [p.orgId, p.connectionId])).toEqual([{ status: 'revoked', chat_state: 'off', chat_hook: null }]);
     // A switch whose job was lost (no answer for minutes) is asked again by the same command; inside the window it changes nothing.
     const q = await connectBot('Công ty Telegram E', '555555555:EEHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw5', '-1005555555550');
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: q.connectionId, on: true }, asOwner(q));
-    const hookOf = async () => ((await rows<{ chat_hook_next: string }>('SELECT chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [q.orgId, q.connectionId]))[0] as { chat_hook_next: string }).chat_hook_next;
+    const hookOf = async () => ((await rows<{ chat_hook_next: string }>('SELECT chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [q.orgId, q.connectionId]))[0] as { chat_hook_next: string }).chat_hook_next;
     const first = await hookOf();
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: q.connectionId, on: true }, asOwner(q))).toEqual({ chatState: 'enabling' });
     expect(await hookOf()).toBe(first);
-    await rows("UPDATE crove_kernel.channel_connection SET chat_changed_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [q.orgId, q.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_changed_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [q.orgId, q.connectionId]);
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: q.connectionId, on: true }, asOwner(q))).toEqual({ chatState: 'enabling' });
     expect(await hookOf()).not.toBe(first);
-    expect((await rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [q.orgId])).length).toBe(2);
+    expect((await rows("SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [q.orgId])).length).toBe(2);
     // The same for a turn off that stood: it is asked again once the window has passed.
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'disabling', chat_hook = chat_hook_next, chat_hook_next = NULL, chat_changed_at = now() WHERE org_id = $1 AND id = $2", [q.orgId, q.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'disabling', chat_hook = chat_hook_next, chat_hook_next = NULL, chat_changed_at = now() WHERE org_id = $1 AND id = $2", [q.orgId, q.connectionId]);
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: q.connectionId, on: false }, asOwner(q))).toEqual({ chatState: 'disabling' });
-    expect((await rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [q.orgId])).length).toBe(2);
-    await rows("UPDATE crove_kernel.channel_connection SET chat_changed_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [q.orgId, q.connectionId]);
+    expect((await rows("SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [q.orgId])).length).toBe(2);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_changed_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [q.orgId, q.connectionId]);
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: q.connectionId, on: false }, asOwner(q))).toEqual({ chatState: 'disabling' });
-    expect((await rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [q.orgId])).length).toBe(3);
+    expect((await rows("SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.chat_queued'", [q.orgId])).length).toBe(3);
   });
 
   it('records a switch queued where the worker has no channel as failed, so the screen says so and nothing waits for a job that will never exist', async () => {
     const o = await connectBot('Công ty Telegram F', '666666666:FFHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw6', '-1006666666660');
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: o.connectionId, on: true }, asOwner(o));
     await failChatHook(worker, { orgId: o.orgId, connectionId: o.connectionId, action: 'chat', on: true });
-    expect(await rows('SELECT chat_state, chat_error, chat_hook, chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId])).toEqual([{ chat_state: 'off', chat_error: 'CHANNEL_NOT_CONFIGURED', chat_hook: null, chat_hook_next: null }]);
+    expect(await rows('SELECT chat_state, chat_error, chat_hook, chat_hook_next FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId])).toEqual([{ chat_state: 'off', chat_error: 'CHANNEL_NOT_CONFIGURED', chat_hook: null, chat_hook_next: null }]);
   });
 
   it('holds one hook to a rate against a flood on a public bot, without charging other hooks or refused requests', async () => {
@@ -683,27 +683,27 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const first = update('Số của mình là 0912 345 678', { chat: 1501, messageId: 131 });
     expect((await post(app, hookB, first, signed(hookB))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 1, dropped: 0 });
-    const thread = (await rows<{ id: string }>("SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1501'", [b.orgId]))[0] as { id: string };
+    const thread = (await rows<{ id: string }>("SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1501'", [b.orgId]))[0] as { id: string };
     const erased = await api.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: thread.id, confirm: true }, { actor: { type: 'user', userId: b.ownerId, aal: 'aal2', sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId: b.orgId, idempotencyKey: randomUUID() });
     expect(erased).toEqual({ threads: 1, messages: 1 });
     // Nothing of the customer is left: the thread, the messages and the identity are gone.
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1501'", [b.orgId])).toHaveLength(0);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body LIKE '%0912%'", [b.orgId])).toHaveLength(0);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '1501'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1501'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body LIKE '%0912%'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '1501'", [b.orgId])).toHaveLength(0);
     // The message the erased customer writes next is not brought back in (the erase tombstone).
     const again = update('Mình nhắn lại', { chat: 1501, messageId: 132 });
     expect((await post(app, hookB, again, signed(hookB))).status).toBe(200);
     await intake();
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body = 'Mình nhắn lại'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body = 'Mình nhắn lại'", [b.orgId])).toHaveLength(0);
     // The export of the org lists the conversation tables (provider-neutral), and the retention purge works on a Telegram thread like any other.
     const kept = update('Tin cũ để xóa theo thời hạn', { chat: 1502, messageId: 133 });
     expect((await post(app, hookB, kept, signed(hookB))).status).toBe(200);
     await intake();
-    await rows("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '30 months', last_inbound_at = now() - interval '30 months' WHERE org_id = $1 AND external_thread_id = '1502'", [b.orgId]);
-    await rows("UPDATE crove_kernel.conversation_message SET received_at = now() - interval '30 months', sent_at = now() - interval '30 months' WHERE org_id = $1 AND body = 'Tin cũ để xóa theo thời hạn'", [b.orgId]);
+    await rows("UPDATE ludy_kernel.conversation SET last_message_at = now() - interval '30 months', last_inbound_at = now() - interval '30 months' WHERE org_id = $1 AND external_thread_id = '1502'", [b.orgId]);
+    await rows("UPDATE ludy_kernel.conversation_message SET received_at = now() - interval '30 months', sent_at = now() - interval '30 months' WHERE org_id = $1 AND body = 'Tin cũ để xóa theo thời hạn'", [b.orgId]);
     const purged = await worker.execute<{ threads: number }>('kernel.conversation.purge_expired', { limit: 10 }, { actor: { type: 'system', component: 'conversations' }, orgId: b.orgId });
     expect(purged.threads).toBe(1);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1502'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1502'", [b.orgId])).toHaveLength(0);
   });
 
   it('lists the chat state of a connection and keeps the hook out of the list and the export', async () => {

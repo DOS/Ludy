@@ -84,12 +84,12 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
@@ -266,36 +266,36 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
     let tA2 = '';
     let tB = '';
     await withAdmin(async (c) => {
-      leA = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]
+      leA = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]
         ?.id as string;
       leB = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchMember.userId, leA, owner.userId],
       );
       tA1 = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Việc A1', 'human', 'user', $2) RETURNING id`,
           [org.orgId, leA],
         )
       ).rows[0]?.id as string;
       tA2 = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Việc A2', 'human', 'user', $2) RETURNING id`,
           [org.orgId, leA],
         )
       ).rows[0]?.id as string;
       tB = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Việc B bí mật', 'human', 'user', $2) RETURNING id`,
           [org.orgId, leB],
         )
@@ -455,7 +455,7 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
 
     // Mark tTainted as tainted (like an AI proposal) and tCancelled as cancelled via task status update.
     await exec(owner.userId, org.orgId, 'kernel.task.set_status', { id: tCancelled, status: 'cancelled' });
-    await withAdmin((c) => c.query('UPDATE crove_kernel.task SET tainted = true WHERE id = $1', [tTainted]));
+    await withAdmin((c) => c.query('UPDATE ludy_kernel.task SET tainted = true WHERE id = $1', [tTainted]));
 
     // 1) Save & list a shared kernel.task saved view isolating AI-proposed (tainted) tasks.
     const savedTainted: FilterAst = { v: 1, all: [{ field: 'tainted', op: 'is', value: true }] };

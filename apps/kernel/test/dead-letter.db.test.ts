@@ -68,7 +68,7 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
     admin(async (c) =>
       (
         await c.query<{ org_id: string; kind: string; dedupe_key: string; detail: Record<string, unknown>; dismissed_at: Date | null }>(
-          `SELECT org_id, kind, dedupe_key, detail, dismissed_at FROM crove_kernel.inbox_item ${orgId ? 'WHERE org_id = $1' : ''} ORDER BY raised_at, id`,
+          `SELECT org_id, kind, dedupe_key, detail, dismissed_at FROM ludy_kernel.inbox_item ${orgId ? 'WHERE org_id = $1' : ''} ORDER BY raised_at, id`,
           orgId ? [orgId] : [],
         )
       ).rows,
@@ -97,9 +97,9 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (db: ReturnType<typeof createDb>) => new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const db = createDb(pool);
     runtime = register(db);
@@ -116,7 +116,7 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
       await runtime.executeOrgless('kernel.member.invite.accept', { token: acceptPath.split('#')[1] }, { actor: asUser(who) });
     }
     orgB = await createOrg(runtime, asUser(people.outsider), 'Công ty Khác');
-    boss = new PgBoss({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });
+    boss = new PgBoss({ connectionString: loginUrl('ludy_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });
     boss.on('error', () => {});
     await boss.start();
   }, 120_000);
@@ -231,7 +231,7 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
       admin(async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.inbox_item (org_id, kind, dedupe_key, detail, raised_at, dismissed_at, dismissed_by)
+            `INSERT INTO ludy_kernel.inbox_item (org_id, kind, dedupe_key, detail, raised_at, dismissed_at, dismissed_by)
              VALUES ($1, 'kernel.job.dead_lettered', $2, $3, $4, $5, $6) RETURNING id`,
             [orgId, key, JSON.stringify({ queue: QUEUES.portalList, jobId: randomUUID(), retries: 0 }), raisedAt, dismissedAt, dismissedAt ? people.owner : null],
           )
@@ -247,7 +247,7 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
     const otherGone = await make(orgB.orgId, `prune:${randomUUID()}`, ago(100), null);
     const removed = await pruneInboxItems({ runtime: workerRuntime, workerDb: createDb(workerPool) });
     expect(removed).toBeGreaterThanOrEqual(3);
-    const left = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.inbox_item WHERE id = ANY($1::uuid[])', [[...gone, ...kept, otherGone]])).rows.map((r) => r.id));
+    const left = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.inbox_item WHERE id = ANY($1::uuid[])', [[...gone, ...kept, otherGone]])).rows.map((r) => r.id));
     expect(left.sort()).toEqual([...kept].sort());
   });
 
@@ -256,7 +256,7 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
     const { id, letter } = await deadLetter(QUEUES.retention, null);
     expect(await takeDeadLetter(workerRuntime, letter)).toBe('system');
     expect(await items()).toEqual(before);
-    const health = await admin(async (c) => (await c.query<{ dead_letter_count: number }>('SELECT dead_letter_count FROM crove_kernel.health(3600)')).rows[0]);
+    const health = await admin(async (c) => (await c.query<{ dead_letter_count: number }>('SELECT dead_letter_count FROM ludy_kernel.health(3600)')).rows[0]);
     expect(health?.dead_letter_count).toBeGreaterThanOrEqual(1);
     const failed = await admin(async (c) => (await c.query<{ state: string }>(`SELECT state FROM ${JOB_SCHEMA}.job WHERE id = $1`, [id])).rows);
     expect(failed).toEqual([{ state: 'failed' }]);
@@ -285,13 +285,13 @@ suite('dead letters raise an Inbox item in their own org (#1720)', () => {
   });
 
   it('refuses an item a member context makes up', async () => {
-    const client = new pg.Client({ connectionString: loginUrl('crove_app', 'test-app-pw') });
+    const client = new pg.Client({ connectionString: loginUrl('ludy_app', 'test-app-pw') });
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA.orgId, contextToken(people.owner, orgA.orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA.orgId, contextToken(people.owner, orgA.orgId)]);
       await expect(
-        client.query(`INSERT INTO crove_kernel.inbox_item (org_id, kind, dedupe_key) VALUES ($1, 'kernel.job.dead_lettered', 'job:made-up')`, [orgA.orgId]),
+        client.query(`INSERT INTO ludy_kernel.inbox_item (org_id, kind, dedupe_key) VALUES ($1, 'kernel.job.dead_lettered', 'job:made-up')`, [orgA.orgId]),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('inbox_item_raise') });
       await client.query('ROLLBACK');
     } finally {

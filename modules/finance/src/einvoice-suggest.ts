@@ -93,7 +93,7 @@ async function rateRowsOf(ctx: Ctx, ids: readonly string[]): Promise<Array<{ par
 // The rate history of the customer the form names (#2713), or null when it is none of the org's customers (another org's id, a merged duplicate and an unknown id all read as none).
 async function formBuyerRatesOf(ctx: Ctx, partyId: string | undefined): Promise<RateCount[] | null> {
   if (partyId === undefined) return null;
-  const known = await sql<{ id: string }>`SELECT p.id FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${partyId} AND p.duplicate_of IS NULL`.execute(ctx.trx);
+  const known = await sql<{ id: string }>`SELECT p.id FROM ludy_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${partyId} AND p.duplicate_of IS NULL`.execute(ctx.trx);
   if (known.rows.length === 0) return null;
   return (await rateRowsOf(ctx, [partyId])).map((r) => ({ vatRate: r.vat_rate, n: r.n }));
 }
@@ -123,7 +123,7 @@ export const einvoiceDraftSuggestSource = defineQuery({
     const score = sql.join(words.map((word) => sql`(pg_catalog.strpos(pg_catalog.lower(normalize(p.name, NFC)), ${word}) > 0)::int`), sql` + `);
     const partyRows = await sql<{ id: string; kind: 'organization' | 'person'; name: string; tax_code: string | null; address: string | null; email: string | null }>`
       SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email
-      FROM crove_kernel.party p
+      FROM ludy_kernel.party p
       WHERE p.org_id = ${ctx.orgId} AND p.duplicate_of IS NULL AND (${score}) > 0
       ORDER BY (${score}) DESC, p.name, p.id
       LIMIT ${SUGGEST_PARTIES_MAX}`.execute(ctx.trx);
@@ -172,7 +172,7 @@ export const einvoicePreviousInvoice = defineQuery({
     // The buyer's details are the party record's as they are now (a tax code or an address added since is not lost); the invoice's own where the record has none.
     const party = (
       await sql<{ name: string | null; tax_code: string | null; address: string | null; email: string | null }>`
-        SELECT p.name, p.tax_code, p.address, p.email FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${input.buyerPartyId}`.execute(ctx.trx)
+        SELECT p.name, p.tax_code, p.address, p.email FROM ludy_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${input.buyerPartyId}`.execute(ctx.trx)
     ).rows[0];
     // A record value that is empty or longer than the field of the form takes (the party tables allow far longer ones than a draft) is not used: the invoice's own value stands.
     const pick = (fresh: string | null | undefined, held: string | null, max: number): string | null => {

@@ -71,7 +71,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
   };
   const mails = (meetingId: string) =>
     sqlAdmin<{ to_address: string; status: string; source: string; source_id: string; template_key: string; payload: Record<string, unknown> }>(
-      "SELECT to_address, status, source, source_id, template_key, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = 'meetings.followup' ORDER BY created_at, id",
+      "SELECT to_address, status, source, source_id, template_key, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = 'meetings.followup' ORDER BY created_at, id",
       [orgId, meetingId],
     ).then((r) => r.rows);
 
@@ -84,9 +84,9 @@ suite('the follow-up email of a meeting (#2590)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
@@ -97,7 +97,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
       users[key] = await upsertIdentity(createDb(pool), { issuer: 'followup', subject: key, email: `${key}@followup.test`, name: null });
     }
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Tiên Phong')).orgId;
-    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')", [orgId, users.recorder, users.attendee, users.other]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')", [orgId, users.recorder, users.attendee, users.other]);
   }, 300_000);
 
   afterAll(async () => {
@@ -119,7 +119,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
     // Nothing is published yet: no draft of a mail from words nobody read.
     expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId }))).toBe('NO_PUBLISHED_SUMMARY');
     const m = await seedPublished(['attendee']);
-    const partyId = (await sqlAdmin<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email) VALUES ($1, 'Công ty Khách', 'organization', 'Khach@KhachHang.test') RETURNING id", [orgId])).rows[0]!.id;
+    const partyId = (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, 'Công ty Khách', 'organization', 'Khach@KhachHang.test') RETURNING id", [orgId])).rows[0]!.id;
     await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: partyId });
     const draft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
     expect(draft).toMatchObject({ meetingId: m, lang: 'vi', org: 'Công ty Tiên Phong', sendsLeft: FOLLOWUP_SENDS_PER_MEETING_PER_DAY });
@@ -143,7 +143,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ to_address: 'attendee@followup.test', status: 'queued', source: 'meetings.followup', source_id: m, template_key: 'meetings.followup' });
     expect(rows[0]?.payload).toMatchObject({ lang: 'vi', batch: sent.batchId, facts: { summary: 'Chốt báo giá tuần này.' } });
-    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2", [orgId, m]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2", [orgId, m]);
     expect(audit.rows).toHaveLength(1);
     expect(audit.rows[0]?.detail).toMatchObject({ meetingId: m, batchId: sent.batchId, recipientCount: 1, queued: 1, suppressed: 0 });
     // No address and no word of the mail in the audit row.
@@ -181,7 +181,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(await refuses(send(m, { recipients: ['không phải thư'] }))).toBe('RECIPIENT_INVALID');
     expect(await mails(m)).toEqual([]);
     expect(await send(m, { recipients: ['attendee@followup.test', 'ngoai@ngoai.test'], confirmedOutsiders: ['Ngoai@ngoai.test'] })).toMatchObject({ queued: 2 });
-    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2", [orgId, m]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2", [orgId, m]);
     expect(audit.rows[0]?.detail).toMatchObject({ recipientCount: 2, outsiders: 1 });
   });
 

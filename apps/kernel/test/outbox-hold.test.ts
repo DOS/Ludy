@@ -122,7 +122,7 @@ describe('the plan of one relay batch', () => {
 
   it('wires the plan into the relay: parked rows get no step, and the drain loop counts the whole claim', () => {
     const source = readFileSync(new URL('../src/worker.ts', import.meta.url), 'utf8');
-    const claim = source.slice(source.indexOf('SELECT * FROM crove_kernel.outbox_claim(100)'), source.indexOf('SELECT * FROM crove_kernel.inbound_claim(100)'));
+    const claim = source.slice(source.indexOf('SELECT * FROM ludy_kernel.outbox_claim(100)'), source.indexOf('SELECT * FROM ludy_kernel.inbound_claim(100)'));
     expect(claim).toContain('const rows = plan.rest;');
     expect(claim).toContain('await holdEvents(trx, plan.held)');
     // The pre-plan list is used for the plan alone: a step built from it would queue a parked event too.

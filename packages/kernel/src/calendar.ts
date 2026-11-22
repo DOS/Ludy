@@ -1,5 +1,5 @@
 // The calendar core (issue #1313, plan docs/plan/calendar.md): each member's weekly working hours
-// (crove_kernel.availability_rule) and the events on their calendar (crove_kernel.calendar_event). A member reads and
+// (ludy_kernel.availability_rule) and the events on their calendar (ludy_kernel.calendar_event). A member reads and
 // changes only their own calendar here; the crm booking command (#1318) writes bookings on a host's calendar as the
 // system, and reads the host's hours and busy time through workingHoursOf() and busyOf().
 //
@@ -41,7 +41,7 @@ function userOf(actor: QueryContext['actor']): string {
 /** A member's working hours, and whether they saved their own (otherwise the default: weekdays 8:00 to 17:00). */
 export async function workingHoursOf(ctx: Reader, userId: string): Promise<{ hours: WorkingHours; saved: boolean }> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.availability_rule')
+    .selectFrom('ludy_kernel.availability_rule')
     .select(['weekday', 'start_minute', 'end_minute', 'time_zone'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
@@ -62,7 +62,7 @@ export async function workingHoursOf(ctx: Reader, userId: string): Promise<{ hou
  */
 export async function busyOf(ctx: Reader, userId: string, from: Date, to: Date, exceptEventId?: string): Promise<Interval[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.calendar_event')
+    .selectFrom('ludy_kernel.calendar_event')
     .select(['starts_at', 'ends_at'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
@@ -77,7 +77,7 @@ export async function busyOf(ctx: Reader, userId: string, from: Date, to: Date, 
 
 async function eventsOf(ctx: Reader, userId: string, from: Date, to: Date): Promise<CalendarEventView[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.calendar_event')
+    .selectFrom('ludy_kernel.calendar_event')
     .select(['id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
@@ -148,12 +148,12 @@ export const calendarHoursSave = defineCommand({
     if (input.windows.length === 0) throw new DomainError('WORKING_HOURS_EMPTY', 422, 'Hãy chọn ít nhất một khung giờ làm việc');
     // The whole set at once, one save of a member at a time: without the lock, two first saves would both delete
     // nothing and both insert their windows.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.availability_rule:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_kernel.availability_rule:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
     const before = await workingHoursOf(ctx, userId);
-    await ctx.trx.deleteFrom('crove_kernel.availability_rule').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
+    await ctx.trx.deleteFrom('ludy_kernel.availability_rule').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
     const windows = [...input.windows].sort((a, b) => a.weekday - b.weekday || a.start - b.start);
     await ctx.trx
-      .insertInto('crove_kernel.availability_rule')
+      .insertInto('ludy_kernel.availability_rule')
       .values(windows.map((w) => ({ org_id: ctx.orgId, user_id: userId, weekday: w.weekday, start_minute: w.start, end_minute: w.end, time_zone: input.timeZone, created_by: userId, created_at: ctx.now })))
       .execute();
     ctx.audit({ previous: before.saved ? before.hours : null, hours: { timeZone: input.timeZone, windows } });
@@ -171,7 +171,7 @@ export const calendarEventAdd = defineCommand({
     const userId = userOf(ctx.actor);
     const title = input.title?.trim() || null;
     const row = await ctx.trx
-      .insertInto('crove_kernel.calendar_event')
+      .insertInto('ludy_kernel.calendar_event')
       .values({ org_id: ctx.orgId, user_id: userId, starts_at: input.startsAt, ends_at: input.endsAt, time_zone: input.timeZone, title, kind: input.kind, created_by: userId, created_at: ctx.now })
       .returning(['id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind'])
       .executeTakeFirstOrThrow();
@@ -189,7 +189,7 @@ export const calendarEventCancel = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const event = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event')
+      .selectFrom('ludy_kernel.calendar_event')
       .select(['kind', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.eventId)
@@ -203,7 +203,7 @@ export const calendarEventCancel = defineCommand({
     if (event.kind !== 'manual' && event.kind !== 'time_off') throw new DomainError('CALENDAR_EVENT_IS_EXTERNAL', 409, 'Đây là giờ bận từ lịch bên ngoài; hãy ngắt kết nối lịch đó nếu không muốn dùng');
     if (event.status === 'active') {
       await ctx.trx
-        .updateTable('crove_kernel.calendar_event')
+        .updateTable('ludy_kernel.calendar_event')
         .set({ status: 'cancelled', cancelled_by: userId, cancelled_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.eventId)

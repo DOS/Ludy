@@ -499,7 +499,7 @@ export const meetingReaderAdd = defineCommand({
     }
 
     const member = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select(['role'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', input.userId)
@@ -825,7 +825,7 @@ export const meetingAudioRead = defineQuery({
 
     const segment = await ctx.trx
       .selectFrom('crove_meetings.audio_segment as s')
-      .innerJoin('crove_kernel.file as f', (join) =>
+      .innerJoin('ludy_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
       )
       .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
@@ -888,7 +888,7 @@ export const meetingVideoRead = defineQuery({
 
     const video = await ctx.trx
       .selectFrom('crove_meetings.meeting_video as v')
-      .innerJoin('crove_kernel.file as f', (join) =>
+      .innerJoin('ludy_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
       )
       .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
@@ -952,7 +952,7 @@ export const meetingMediaMeta = defineQuery({
     if (input.kind === 'audio') {
       const segment = await ctx.trx
         .selectFrom('crove_meetings.audio_segment as s')
-        .innerJoin('crove_kernel.file as f', (join) =>
+        .innerJoin('ludy_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
         )
         .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
@@ -976,7 +976,7 @@ export const meetingMediaMeta = defineQuery({
     } else {
       const video = await ctx.trx
         .selectFrom('crove_meetings.meeting_video as v')
-        .innerJoin('crove_kernel.file as f', (join) =>
+        .innerJoin('ludy_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
         )
         .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])

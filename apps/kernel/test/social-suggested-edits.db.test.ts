@@ -2,7 +2,7 @@
 // and suggests others; the author accepts through the ordinary edit (a new revision, content hash and version, the
 // channel back in review) or skips it. Outdated suggestions are refused, never applied; channel limits (#1081) hold for
 // suggesting and accepting; viewers do neither; a channel that went out takes no suggestion. The table's CHECKs, the
-// one column crove_tenant may update, and the comment's events. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// one column ludy_tenant may update, and the comment's events. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
 // makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +49,7 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -57,7 +57,7 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -102,9 +102,9 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -144,7 +144,7 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     expect(row).toEqual({ suggest_hash: textHash(body), suggest_state: 'open', resolved_at: null });
     expect((await get(o, postId)).openComments).toBe(1);
     // Told as a comment is, the mention as a mention.
-    const events = await admin(async (c) => (await c.query<{ type: string; payload: Record<string, unknown> }>("SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND payload ->> 'comment_id' = $2 ORDER BY created_at, type", [o.orgId, commentId])).rows);
+    const events = await admin(async (c) => (await c.query<{ type: string; payload: Record<string, unknown> }>("SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND payload ->> 'comment_id' = $2 ORDER BY created_at, type", [o.orgId, commentId])).rows);
     expect(events).toEqual([
       { type: 'social.post.commented', payload: { post_id: postId, comment_id: commentId, mentioned: [o.admin] } },
       { type: 'social.post.mentioned', payload: { post_id: postId, comment_id: commentId, user_ids: [o.admin] } },
@@ -171,7 +171,7 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     expect(items.filter((i) => i.kind === 'edited' && i.userId === o.member)).toHaveLength(1);
     expect(items.filter((i) => i.kind === 'submitted' && i.userId === o.member).length).toBeGreaterThanOrEqual(2);
     // Audited: the accept and the nested edit and submit.
-    const audit = await admin(async (c) => (await c.query<{ command: string; outcome: string }>("SELECT command, outcome FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('social.post_comment.suggest', 'social.post_comment.accept', 'social.post.update', 'social.post.submit') AND occurred_at >= $2 ORDER BY occurred_at, command", [o.orgId, new Date(Date.now() - 600_000)])).rows);
+    const audit = await admin(async (c) => (await c.query<{ command: string; outcome: string }>("SELECT command, outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('social.post_comment.suggest', 'social.post_comment.accept', 'social.post.update', 'social.post.submit') AND occurred_at >= $2 ORDER BY occurred_at, command", [o.orgId, new Date(Date.now() - 600_000)])).rows);
     expect(audit.filter((a) => a.command === 'social.post_comment.accept')).toEqual([{ command: 'social.post_comment.accept', outcome: 'ok' }]);
     expect(audit.filter((a) => a.command === 'social.post.update')).toEqual([{ command: 'social.post.update', outcome: 'ok' }]);
 
@@ -305,7 +305,7 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     expect((await skip(o, o.member, early.commentId)).state).toBe('skipped');
   });
 
-  it('keeps the CHECKs in the table and lets crove_tenant update only the state', async () => {
+  it('keeps the CHECKs in the table and lets ludy_tenant update only the state', async () => {
     const o = await org();
     const conn = await connection(o);
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Bài', channels: [{ connectionId: conn }] });
@@ -343,13 +343,13 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     expect(await insert({ ...full, resolved_at: new Date(), resolved_by: o.owner })).toBe('post_comment_suggest_resolved_check');
     expect(await insert({ ...full, suggest_state: 'skipped', resolved_at: new Date(), resolved_by: o.owner })).toBe('ok');
 
-    // crove_tenant inserts a suggestion and changes only its state.
+    // ludy_tenant inserts a suggestion and changes only its state.
     for (const column of ['suggest_field', 'suggest_start', 'suggest_end', 'suggest_quote', 'suggest_text', 'suggest_hash']) {
       await expect(
         admin(async (c) => {
           await c.query('BEGIN');
           try {
-            await c.query('SET LOCAL ROLE crove_tenant');
+            await c.query('SET LOCAL ROLE ludy_tenant');
             await c.query(`UPDATE crove_social.post_comment SET ${column} = NULL WHERE false`);
           } finally {
             await c.query('ROLLBACK');
@@ -359,7 +359,7 @@ suite('suggested edits on PostgreSQL (#1236)', () => {
     }
     const grants = await admin((c) =>
       c.query<{ column_name: string }>(
-        "SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'crove_social' AND table_name = 'post_comment' AND grantee = 'crove_tenant' AND privilege_type = 'UPDATE' ORDER BY column_name",
+        "SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'crove_social' AND table_name = 'post_comment' AND grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' ORDER BY column_name",
       ),
     );
     expect(grants.rows.map((r) => r.column_name)).toEqual(['body', 'edited_at', 'resolved_at', 'resolved_by', 'suggest_state']);

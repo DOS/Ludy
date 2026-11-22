@@ -47,7 +47,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, owner, admin: await person('admin'), lan: await person('lan'), viewer: await person('viewer') };
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, o.admin, o.lan, o.viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, o.admin, o.lan, o.viewer]),
     );
     return o;
   }
@@ -66,9 +66,9 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -88,12 +88,12 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     // The TypeScript side runs the same table in packages/kernel-contract/test/phone.test.ts.
     const keys = await admin(async (c) => {
       const out: Array<string | null> = [];
-      for (const [phone] of PHONE_KEY_CASES) out.push((await c.query<{ k: string | null }>('SELECT crove_kernel.phone_key($1) AS k', [phone])).rows[0]?.k ?? null);
+      for (const [phone] of PHONE_KEY_CASES) out.push((await c.query<{ k: string | null }>('SELECT ludy_kernel.phone_key($1) AS k', [phone])).rows[0]?.k ?? null);
       return out;
     });
     expect(keys).toEqual(PHONE_KEY_CASES.map(([, key]) => key));
     // No phone, no key.
-    expect((await admin((c) => c.query<{ k: string | null }>('SELECT crove_kernel.phone_key(NULL) AS k'))).rows[0]?.k).toBeNull();
+    expect((await admin((c) => c.query<{ k: string | null }>('SELECT ludy_kernel.phone_key(NULL) AS k'))).rows[0]?.k).toBeNull();
   });
 
   it('backs the party phone key with an expression index the planner can use, and lets tenants call the function', async () => {
@@ -102,24 +102,24 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     const plan = await admin(async (c) => {
       await c.query('SET enable_seqscan = off');
       return (
-        await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT id FROM crove_kernel.party WHERE org_id = $1 AND crove_kernel.phone_key(phone) = '0912345678'`, [o.orgId])
+        await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT id FROM ludy_kernel.party WHERE org_id = $1 AND ludy_kernel.phone_key(phone) = '0912345678'`, [o.orgId])
       ).rows
         .map((r) => r['QUERY PLAN'])
         .join('\n');
     });
     expect(plan).toContain('party_phone_key_idx');
     const executable = await admin((c) =>
-      c.query<{ ok: boolean }>("SELECT has_function_privilege('crove_tenant', 'crove_kernel.phone_key(text)', 'EXECUTE') AS ok, has_function_privilege('public', 'crove_kernel.phone_key(text)', 'EXECUTE') AS pub"),
+      c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_tenant', 'ludy_kernel.phone_key(text)', 'EXECUTE') AS ok, has_function_privilege('public', 'ludy_kernel.phone_key(text)', 'EXECUTE') AS pub"),
     );
     expect(executable.rows[0]).toMatchObject({ ok: true, pub: false });
     // The stored phone is never rewritten.
-    expect((await admin((c) => c.query<{ phone: string }>('SELECT phone FROM crove_kernel.party WHERE org_id = $1', [o.orgId]))).rows[0]?.phone).toBe('0912 345 678');
+    expect((await admin((c) => c.query<{ phone: string }>('SELECT phone FROM ludy_kernel.party WHERE org_id = $1', [o.orgId]))).rows[0]?.phone).toBe('0912 345 678');
   });
 
   it('adds a person or a company by hand, checked as an edit is, and refuses a used tax code naming the party', async () => {
     const o = await org();
     const made = await create(o, o.lan, { kind: 'organization', name: '  Công ty  TNHH Nguyễn  ', taxCode: '0101234567', address: '12 Lê Lợi, Hà Nội', email: 'lien-he@example.com', phone: '+84 912 345 678' });
-    const row = (await admin((c) => c.query('SELECT * FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, made.partyId]))).rows[0];
+    const row = (await admin((c) => c.query('SELECT * FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, made.partyId]))).rows[0];
     expect(row).toMatchObject({ kind: 'organization', name: 'Công ty TNHH Nguyễn', tax_code: '0101234567', address: '12 Lê Lợi, Hà Nội', email: 'lien-he@example.com', phone: '+84 912 345 678', source_trust: 'user', version: 1 });
     expect(made.version).toBe(1);
     // Only a name is needed.
@@ -140,7 +140,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     const both = await Promise.allSettled([create(o, o.lan, { name: 'Cùng lúc A', taxCode: '0309876543' }), create(o, o.admin, { name: 'Cùng lúc B', taxCode: '0309876543' })]);
     expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(both.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'PARTY_TAX_CODE_TAKEN' } });
-    expect((await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1 AND tax_code = '0309876543'", [o.orgId]))).rows[0]?.n).toBe(1);
+    expect((await admin((c) => c.query("SELECT count(*)::int AS n FROM ludy_kernel.party WHERE org_id = $1 AND tax_code = '0309876543'", [o.orgId]))).rows[0]?.n).toBe(1);
     // Another org may use the same tax code.
     const other = await org();
     await expect(create(other, other.owner, { name: 'Ở tổ chức khác', taxCode: '0101234567' })).resolves.toBeTruthy();
@@ -154,16 +154,16 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     await expect(create(o, o.viewer, { name: 'Do người xem' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     const agent = { type: 'agent' as const, agentId: randomUUID(), runId: randomUUID() };
     await expect(rt.execute('kernel.party.create', { kind: 'person', name: 'Do máy' }, { actor: agent, orgId: o.orgId })).rejects.toBeTruthy();
-    expect((await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1 AND name LIKE 'Do %'", [o.orgId]))).rows[0]?.n).toBe(3);
+    expect((await admin((c) => c.query("SELECT count(*)::int AS n FROM ludy_kernel.party WHERE org_id = $1 AND name LIKE 'Do %'", [o.orgId]))).rows[0]?.n).toBe(3);
 
     const made = await create(o, o.lan, { kind: 'organization', name: 'Công ty Bí Mật', taxCode: '0108888880', address: '9 Phố Bí Mật', email: 'bi-mat@example.vn', phone: '0988 777 777' });
-    const audit = (await admin((c) => c.query<{ detail: unknown; command: string }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.create' AND detail ->> 'partyId' = $2", [o.orgId, made.partyId]))).rows;
+    const audit = (await admin((c) => c.query<{ detail: unknown; command: string }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.create' AND detail ->> 'partyId' = $2", [o.orgId, made.partyId]))).rows;
     expect(audit).toHaveLength(1);
     const detail = JSON.stringify(audit[0]?.detail);
     for (const secret of ['Bí Mật', '0108888880', 'bi-mat@example.vn', '0988', '9 Phố']) expect(detail).not.toContain(secret);
     expect(audit[0]?.detail).toMatchObject({ partyId: made.partyId, kind: 'organization', fields: ['name', 'taxCode', 'address', 'email', 'phone'] });
     // The party's timeline says it was added, with fixed text.
-    const activity = (await admin((c) => c.query<{ summary: string }>("SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'", [o.orgId, made.partyId]))).rows;
+    const activity = (await admin((c) => c.query<{ summary: string }>("SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'", [o.orgId, made.partyId]))).rows;
     expect(activity).toEqual([{ summary: 'Thêm liên hệ' }]);
   });
 
@@ -345,7 +345,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       const mine = (await list(long, long.lan)).items[0];
       const theirs = (await list(other, other.owner)).items[0];
       const refused = (cursor: string, sort?: object) => expect(list(long, long.lan, { cursor, ...(sort ? { sort } : {}) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
-      for (const id of ['-'.repeat(36), "'; DROP TABLE crove_kernel.party; --", 'không-phải-id']) await refused(forge({ f: 'name', d: 'asc', id, v: 'x' }));
+      for (const id of ['-'.repeat(36), "'; DROP TABLE ludy_kernel.party; --", 'không-phải-id']) await refused(forge({ f: 'name', d: 'asc', id, v: 'x' }));
       await refused(forge({ f: 'name', d: 'asc', id: mine?.id }));
       // A value that is not a time the server wrote never reaches a cast; a made-up name only narrows this org's list.
       for (const v of ['2026-13-45T00:00:00.000000Z', '2026-11-01 00:00:00+00', '2026-11-01T25:00:00.000000Z', "1'; DROP TABLE x; --"]) {
@@ -402,7 +402,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     const company = (name: string, extra: Record<string, unknown> = {}) => create(o, o.lan, { kind: 'organization', name, ...extra });
     const link = (user: string, partyId: string, companyId: string | null, version: number) => exec<{ partyId: string; version: number }>(o, user, 'kernel.party.set_company', { partyId, companyId, version });
     const row = async (id: string) => (await list(o, o.lan, { limit: 100 })).items.find((c) => c.id === id);
-    const versionOf = async (id: string) => Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM crove_kernel.party WHERE id = $1', [id]))).rows[0]?.version);
+    const versionOf = async (id: string) => Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM ludy_kernel.party WHERE id = $1', [id]))).rows[0]?.version);
     const sqlError = (text: string, values: unknown[]) => admin((c) => c.query(text, values)).then(() => null, (e: { code?: string; message?: string }) => ({ code: e.code, message: e.message }));
 
     beforeAll(async () => {
@@ -431,7 +431,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       expect(await row(beta.partyId)).toMatchObject({ peopleCount: 0 });
       expect(cleared.version).toBe(moved.version + 1);
       // The audit rows hold ids and no name, number or tax code.
-      const audit = (await admin((c) => c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.set_company' AND outcome = 'ok' ORDER BY id", [o.orgId]))).rows;
+      const audit = (await admin((c) => c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.set_company' AND outcome = 'ok' ORDER BY id", [o.orgId]))).rows;
       expect(audit.filter((r) => 'partyId' in r.detail).map((r) => Object.keys(r.detail).sort())).toEqual([['companyId', 'partyId', 'previousCompanyId'], ['companyId', 'partyId', 'previousCompanyId'], ['companyId', 'partyId', 'previousCompanyId']]);
       expect(JSON.stringify(audit)).not.toMatch(/Acme|Beta|Lan Trần|0102030406|0912/);
       expect(audit.filter((r) => 'partyId' in r.detail)[2]?.detail).toMatchObject({ partyId: lan.partyId, companyId: null, previousCompanyId: beta.partyId });
@@ -466,7 +466,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       const acme = await company('Công ty Delta');
       const merged = await company('Công ty Delta (bản sao)');
       const outsider = await create(other, other.lan, { kind: 'organization', name: 'Công ty bên khác nữa' });
-      const set = (id: string, value: string | null) => sqlError('UPDATE crove_kernel.party SET company_id = $2 WHERE id = $1', [id, value]);
+      const set = (id: string, value: string | null) => sqlError('UPDATE ludy_kernel.party SET company_id = $2 WHERE id = $1', [id, value]);
       expect(await set(lan.partyId, friend.partyId)).toMatchObject({ code: '23514', message: expect.stringContaining('PARTY_COMPANY_INVALID') });
       expect(await set(acme.partyId, merged.partyId)).toMatchObject({ code: '23514' });
       expect(await set(lan.partyId, lan.partyId)).toMatchObject({ code: '23514' });
@@ -476,10 +476,10 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       expect(await set(lan.partyId, merged.partyId)).toMatchObject({ code: '23514', message: expect.stringContaining('PARTY_COMPANY_INVALID') });
       expect(await set(lan.partyId, acme.partyId)).toBeNull();
       // A company with people stays a company, and a person with a company stays a person until the link is cleared.
-      expect(await sqlError("UPDATE crove_kernel.party SET kind = 'person' WHERE id = $1", [acme.partyId])).toMatchObject({ code: '23514', message: expect.stringContaining('PARTY_COMPANY_HAS_PEOPLE') });
-      expect(await sqlError("UPDATE crove_kernel.party SET kind = 'organization' WHERE id = $1", [lan.partyId])).toMatchObject({ code: '23514' });
+      expect(await sqlError("UPDATE ludy_kernel.party SET kind = 'person' WHERE id = $1", [acme.partyId])).toMatchObject({ code: '23514', message: expect.stringContaining('PARTY_COMPANY_HAS_PEOPLE') });
+      expect(await sqlError("UPDATE ludy_kernel.party SET kind = 'organization' WHERE id = $1", [lan.partyId])).toMatchObject({ code: '23514' });
       // The same insert, as a writer that skips the command.
-      expect(await sqlError("INSERT INTO crove_kernel.party (org_id, kind, name, company_id) VALUES ($1, 'organization', 'Một công ty có công ty', $2)", [o.orgId, acme.partyId])).toMatchObject({ code: '23514' });
+      expect(await sqlError("INSERT INTO ludy_kernel.party (org_id, kind, name, company_id) VALUES ($1, 'organization', 'Một công ty có công ty', $2)", [o.orgId, acme.partyId])).toMatchObject({ code: '23514' });
     });
 
     it('shows a person under the company kept when their company was merged into another, and filters by company or by none', async () => {
@@ -490,7 +490,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       await link(o.lan, lan.partyId, dup.partyId, lan.version);
       await exec(o, o.owner, 'kernel.party.mark_duplicate', { partyId: dup.partyId, keepId: kept.partyId });
       // Nothing was re-pointed: the column still names the merged company, and every read shows the one kept.
-      expect((await admin((c) => c.query<{ company_id: string }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [lan.partyId]))).rows[0]?.company_id).toBe(dup.partyId);
+      expect((await admin((c) => c.query<{ company_id: string }>('SELECT company_id FROM ludy_kernel.party WHERE id = $1', [lan.partyId]))).rows[0]?.company_id).toBe(dup.partyId);
       expect(await row(lan.partyId)).toMatchObject({ company: { id: kept.partyId, name: 'Công ty Epsilon' } });
       expect(await row(kept.partyId)).toMatchObject({ peopleCount: 1 });
       expect(await names(o, o.lan, all({ field: 'company', op: 'is', value: kept.partyId }))).toEqual(['Phúc Đỗ']);
@@ -531,7 +531,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       // The company the person worked at is merged into another; the person leaves it: the departure is on the company kept, where the counts put them.
       await exec(o, o.owner, 'kernel.party.mark_duplicate', { partyId: dup.partyId, keepId: kept.partyId });
       await link(o.lan, lan.partyId, null, linked.version);
-      const departures = await admin((c) => c.query<{ record_id: string }>("SELECT record_id FROM crove_kernel.activity WHERE org_id = $1 AND kind = 'party.person_unlinked'", [o.orgId]));
+      const departures = await admin((c) => c.query<{ record_id: string }>("SELECT record_id FROM ludy_kernel.activity WHERE org_id = $1 AND kind = 'party.person_unlinked'", [o.orgId]));
       expect(departures.rows.map((r) => r.record_id)).toContain(kept.partyId);
       expect(departures.rows.map((r) => r.record_id)).not.toContain(dup.partyId);
     });
@@ -543,7 +543,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       const other = await company('Công ty Iota');
       const empty = await company('Công ty Kappa');
       await link(o.lan, lan.partyId, staffed.partyId, lan.version);
-      const merge = (id: string, into: string) => sqlError('UPDATE crove_kernel.party SET duplicate_of = $2 WHERE id = $1', [id, into]);
+      const merge = (id: string, into: string) => sqlError('UPDATE ludy_kernel.party SET duplicate_of = $2 WHERE id = $1', [id, into]);
       // Into a person: refused while people work at it (the table says so even when the command's own check is skipped).
       expect(await merge(staffed.partyId, boss.partyId)).toMatchObject({ code: '23514', message: expect.stringContaining('PARTY_COMPANY_HAS_PEOPLE') });
       // A company with no one working at it may go anywhere, and a staffed one into another company.

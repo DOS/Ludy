@@ -10,7 +10,7 @@ export const TEAM_REPORT_DST_SLACK_MS = 2 * 3_600_000;
 
 export interface TeamMemberRow {
   userId: string;
-  // The member's name while they are a member (crove_kernel.member_profiles); null once they left.
+  // The member's name while they are a member (ludy_kernel.member_profiles); null once they left.
   name: string | null;
   left: boolean;
   // Posts they wrote that were created in the period.

@@ -57,7 +57,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     const kind = over.kind ?? 'company';
     counter += 1;
     await rows(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '30 days', ${over.revoked ? 'now()' : 'NULL'}, $3, $6, ${kind === 'member' ? '$3' : 'NULL'})`,
       [orgId, id, userId, `client-${counter}-${id}`, `oauth-${id}`, kind],
     );
@@ -84,9 +84,9 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -96,13 +96,13 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) users[key] = (await upsertIdentity(db, { issuer: 'signals-mcp', subject: key, email: `${key}@signals-mcp.test`, name: null })) as string;
     orgId = (await createOrg(rt, browser(users.owner), 'Org A')).orgId;
-    entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
-    const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, users.owner]))[0]?.id as string;
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [orgId, users.admin, users.member, users.branchMember]);
-    await rows('UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1', [orgId]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, users.branchMember, branch, users.owner]);
+    entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    const branch = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, users.owner]))[0]?.id as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [orgId, users.admin, users.member, users.branchMember]);
+    await rows('UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1', [orgId]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, users.branchMember, branch, users.owner]);
     // Party A: a deal won 8 days ago, no invoice. Party B: an open deal and an invoice 40 days old (overdue). Party C: a deal won 8 days ago with an invoice after the win.
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const [a, b, c] = [await party('A'), await party('B'), await party('C')];
     partyIds = [a, b, c];
     const exec = <T>(command: string, body: unknown) => rt.execute<T>(command, body, { actor: browser(users.owner), orgId });
@@ -231,9 +231,9 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     answers.push(await refusal(run(mcp(users.owner, revoked, 'company'), 'crm.signals.won_deals')));
     const demoted = await grant(users.admin);
     await run(mcp(users.admin, demoted, 'company'), 'crm.signals.won_deals');
-    await rows("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
+    await rows("UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
     answers.push(await refusal(run(mcp(users.admin, demoted, 'company'), 'crm.signals.won_deals')));
-    await rows("UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
+    await rows("UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
     // The revoked grant and the demoted grantor are the one generic answer; the missing scope is refused before the grant is looked at.
     expect(answers[1]?.code).toBe('MCP_GRANT_INVALID');
     expect(answers[2]?.code).toBe('MCP_GRANT_INVALID');

@@ -53,7 +53,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     }
   };
   const count = (table: 'member_vy_result' | 'member_vy_memory', user?: string) =>
-    admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table} WHERE org_id = $1${user ? ' AND member_user_id = $2' : ''}`, user ? [orgId, user] : [orgId])).rows[0]?.n));
+    admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.${table} WHERE org_id = $1${user ? ' AND member_user_id = $2' : ''}`, user ? [orgId, user] : [orgId])).rows[0]?.n));
 
   // A member's Vy agent, a run, a result (live or expired) and a memory entry, seeded as the superuser with the binding set aside.
   async function seed(userId: string, expired: boolean, org: string = orgId, ageDays = 0) {
@@ -62,14 +62,14 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       await c.query('SET session_replication_role = replica');
       const agentId = randomUUID();
       const runId = randomUUID();
-      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [org, agentId, userId]);
-      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [org, runId, agentId]);
+      await c.query(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [org, agentId, userId]);
+      await c.query(`INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [org, runId, agentId]);
       await c.query(
-        `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
+        `INSERT INTO ludy_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
          VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : `${born}, now() + interval '30 days'`})`,
         [org, randomUUID(), userId, runId, randomUUID()],
       );
-      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body, created_at, updated_at) VALUES ($1, $2, $3, 'Gọi khách là anh', ${born}, ${born})`, [org, randomUUID(), userId]);
+      await c.query(`INSERT INTO ludy_kernel.member_vy_memory (org_id, id, member_user_id, body, created_at, updated_at) VALUES ($1, $2, $3, 'Gọi khách là anh', ${born}, ${born})`, [org, randomUUID(), userId]);
     });
   }
 
@@ -82,15 +82,15 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     const appPool = createPool({ connectionString: appUrl, max: 4 });
     const workerPool = createPool({ connectionString: workerUrl, max: 4 });
     pools.push(appPool, workerPool);
@@ -104,13 +104,13 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       users[key] = await upsertIdentity(appDb, { issuer: 'member-vy-sweeps', subject: key, email: `${key}@member-vy-sweeps.test`, name: null });
     }
     orgId = (await createOrg(apiRuntime, { type: 'user', userId: users.owner, aal: 'aal1' }, 'Vy dọn')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.member, users.recent, users.old, users.rejoined]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.member, users.recent, users.old, users.rejoined]));
     // Two members removed through the command: one now, one 31 days ago by the audit trail (append-only, so its trigger is set aside for the statement).
     for (const user of [users.recent, users.old, users.rejoined]) await apiRuntime.execute('kernel.member.remove', { userId: user }, { actor: asMfa(users.owner), orgId });
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = ANY ($2::uuid[])`, [orgId, [users.old, users.rejoined]]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = ANY ($2::uuid[])`, [orgId, [users.old, users.rejoined]]);
       await c.query('COMMIT');
     });
     // The active member (an expired result and a live one is made below), a former member with no removal in the audit trail, the two removed ones.
@@ -136,7 +136,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     const asApp = new pg.Client({ connectionString: appUrl });
     await asApp.connect();
     try {
-      for (const call of ['SELECT * FROM crove_kernel.member_vy_results_due(10)', 'SELECT * FROM crove_kernel.member_vy_former_members_due(10)']) {
+      for (const call of ['SELECT * FROM ludy_kernel.member_vy_results_due(10)', 'SELECT * FROM ludy_kernel.member_vy_former_members_due(10)']) {
         expect(await outcome(asApp.query(call)), `the app login: ${call}`).toMatchObject({ ok: false, code: '42501' });
       }
     } finally {
@@ -147,8 +147,8 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
-      for (const call of ['SELECT * FROM crove_kernel.member_vy_results_due(10)', 'SELECT * FROM crove_kernel.member_vy_former_members_due(10)']) {
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+      for (const call of ['SELECT * FROM ludy_kernel.member_vy_results_due(10)', 'SELECT * FROM ludy_kernel.member_vy_former_members_due(10)']) {
         await c.query('SAVEPOINT s');
         const refused = await outcome(c.query(call));
         await c.query('ROLLBACK TO SAVEPOINT s');
@@ -158,8 +158,8 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       await c.query('ROLLBACK').catch(() => {});
       await c.end();
     }
-    expect((await asWorker('SELECT * FROM crove_kernel.member_vy_results_due(10)')).rows, 'the worker outside a context').toEqual([{ org_id: orgId }]);
-    expect((await asWorker(`SELECT * FROM crove_kernel.member_vy_results_due(10, '${orgId}'::uuid)`)).rows, 'keyset paging: nothing is due after this org id').toEqual([]);
+    expect((await asWorker('SELECT * FROM ludy_kernel.member_vy_results_due(10)')).rows, 'the worker outside a context').toEqual([{ org_id: orgId }]);
+    expect((await asWorker(`SELECT * FROM ludy_kernel.member_vy_results_due(10, '${orgId}'::uuid)`)).rows, 'keyset paging: nothing is due after this org id').toEqual([]);
   });
 
   it('removes the expired results of an org past the first batch of 1,000, and leaves the live ones and the memory', async () => {
@@ -167,7 +167,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       await c.query(
-        `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, status, created_at, expires_at)
+        `INSERT INTO ludy_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, status, created_at, expires_at)
          SELECT $1, $2, gen_random_uuid(), 'notes.summary', 'note', gen_random_uuid(), 'running', now() - interval '30 days', now() - interval '1 day' FROM generate_series(1, 1500)`,
         [orgId, users.member],
       );
@@ -179,12 +179,12 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     expect(await count('member_vy_result', users.member), 'none of the member left').toBe(0);
     expect(await count('member_vy_result', users.gone), 'a live result stays').toBe(live);
     expect(await count('member_vy_memory'), 'no memory entry is touched by the expiry').toBe(memoryBefore);
-    expect((await asWorker('SELECT * FROM crove_kernel.member_vy_results_due(10)')).rows, 'no org is due now').toEqual([]);
+    expect((await asWorker('SELECT * FROM ludy_kernel.member_vy_results_due(10)')).rows, 'no org is due now').toEqual([]);
     expect(await sweepMemberVyResults({ runtime: workerRuntime, workerDb }), 'a second pass has nothing to do').toBe(0);
   });
 
   it('lists the former members with whether their removal is recorded, recorded first, and never a member or a removal younger than 30 days', async () => {
-    const due = (await asWorker<{ org_id: string; user_id: string; recorded: boolean }>('SELECT * FROM crove_kernel.member_vy_former_members_due(10)')).rows;
+    const due = (await asWorker<{ org_id: string; user_id: string; recorded: boolean }>('SELECT * FROM ludy_kernel.member_vy_former_members_due(10)')).rows;
     expect(due[0], 'a recorded exit older than 30 days first').toEqual({ org_id: orgId, user_id: users.old, recorded: true });
     expect(
       due.slice(1).sort((a, b) => a.user_id.localeCompare(b.user_id)),
@@ -260,7 +260,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [org]);
+        await c.query(`UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [org]);
         await c.query('COMMIT');
       });
     }
@@ -270,8 +270,8 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
   it('leaves a closed org out of both lists, and lists an org that is offboarding (#2822 PR 4)', async () => {
     const closed = await dueOrg('closed');
     const open = await dueOrg('active');
-    const dueOrgs = async () => (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
-    const formerOrgs = async () => (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_former_members_due(1000)')).rows.map((r) => r.org_id);
+    const dueOrgs = async () => (await asWorker<{ org_id: string }>('SELECT * FROM ludy_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
+    const formerOrgs = async () => (await asWorker<{ org_id: string }>('SELECT * FROM ludy_kernel.member_vy_former_members_due(1000)')).rows.map((r) => r.org_id);
     expect(await dueOrgs(), 'a closed org is not due').not.toContain(closed);
     expect(await formerOrgs(), 'a closed org\'s former members are not listed').not.toContain(closed);
     expect(await dueOrgs(), 'an active org is due').toContain(open);
@@ -279,7 +279,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [closed]);
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [closed]);
       await c.query('COMMIT');
     });
     expect(await dueOrgs(), 'an offboarding org is listed again').toContain(closed);
@@ -291,14 +291,14 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
 
   it('pages the due orgs by keyset: a second page reads the orgs after the last id of the first', async () => {
     for (let i = 0; i < 4; i += 1) await dueOrg('active');
-    const all = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
+    const all = (await asWorker<{ org_id: string }>('SELECT * FROM ludy_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
     expect(all.length, 'at least four orgs are due').toBeGreaterThanOrEqual(4);
     expect(all, 'in org id order').toEqual([...all].sort());
-    const first = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(2)')).rows.map((r) => r.org_id);
+    const first = (await asWorker<{ org_id: string }>('SELECT * FROM ludy_kernel.member_vy_results_due(2)')).rows.map((r) => r.org_id);
     expect(first).toEqual(all.slice(0, 2));
-    const second = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(2, $1::uuid)', [first[1]])).rows.map((r) => r.org_id);
+    const second = (await asWorker<{ org_id: string }>('SELECT * FROM ludy_kernel.member_vy_results_due(2, $1::uuid)', [first[1]])).rows.map((r) => r.org_id);
     expect(second).toEqual(all.slice(2, 4));
     const last = all[all.length - 1] as string;
-    expect((await asWorker('SELECT * FROM crove_kernel.member_vy_results_due(2, $1::uuid)', [last])).rows, 'nothing is due after the last id').toEqual([]);
+    expect((await asWorker('SELECT * FROM ludy_kernel.member_vy_results_due(2, $1::uuid)', [last])).rows, 'nothing is due after the last id').toEqual([]);
   });
 });

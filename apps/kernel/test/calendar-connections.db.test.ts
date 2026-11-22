@@ -59,7 +59,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const other = await person('other');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, other, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, other, viewer]),
     );
     const exec = <T>(user: string, command: string, input: unknown) => api.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, name: string, input: unknown) => api.query<T>(name, input, { actor: asUser(user), orgId });
@@ -90,7 +90,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
   async function bookingEvent(o: Org, user: string, day: string, from: number, to: number, title = 'Tư vấn: Lan') {
     const r = await admin((cl) =>
       cl.query<{ id: string }>(
-        "INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, $3, $4, 'Asia/Ho_Chi_Minh', $5, 'booking', $2) RETURNING id",
+        "INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, $3, $4, 'Asia/Ho_Chi_Minh', $5, 'booking', $2) RETURNING id",
         [o.orgId, user, at(day, from), at(day, to), title],
       ),
     );
@@ -109,15 +109,15 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(defs);
@@ -164,12 +164,12 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     // No Crove login role holds a grant on the credential table, and the audit trail holds no token.
     const grants = await admin((cl) =>
       cl.query<{ role: string }>(
-        `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r
-         CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p WHERE has_table_privilege(r, 'crove_kernel.calendar_credential', p)`,
+        `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
+         CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p WHERE has_table_privilege(r, 'ludy_kernel.calendar_credential', p)`,
       ),
     );
     expect(grants.rows).toEqual([]);
-    const audit = await admin((cl) => cl.query<{ text: string }>("SELECT detail::text AS text FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]));
+    const audit = await admin((cl) => cl.query<{ text: string }>("SELECT detail::text AS text FROM ludy_kernel.audit_event WHERE org_id = $1", [o.orgId]));
     expect(audit.rows.map((r) => r.text).join('\n')).not.toMatch(/access-1|refresh-1|envelope/);
   });
 
@@ -192,7 +192,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(await o.exec(o.member, 'kernel.calendar.oauth_consume', { provider: 'google_calendar', stateHash: hash })).toEqual({ codeVerifier: verifier });
     await expect(o.exec(o.member, 'kernel.calendar.oauth_consume', { provider: 'google_calendar', stateHash: hash })).rejects.toMatchObject({ code: 'OAUTH_STATE_USED' });
     // The verifier is wiped with the consume; a viewer cannot start one.
-    const row = await admin((c) => c.query<{ code_verifier: string | null }>('SELECT code_verifier FROM crove_kernel.oauth_state WHERE state_hash = $1', [hash]));
+    const row = await admin((c) => c.query<{ code_verifier: string | null }>('SELECT code_verifier FROM ludy_kernel.oauth_state WHERE state_hash = $1', [hash]));
     expect(row.rows[0]?.code_verifier).toBeNull();
     await expect(o.exec(o.viewer, 'kernel.calendar.oauth_begin', { provider: 'google_calendar', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ status: 403 });
   });
@@ -215,7 +215,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect((await slots()).length).toBeLessThan(before.length);
     expect((await slots()).length).toBeGreaterThan(0);
     // Only start and end are kept: no title, and the kind names the provider.
-    const stored = await admin((cl) => cl.query<{ title: string | null; kind: string; source_id: string }>('SELECT title, kind, source_id FROM crove_kernel.calendar_event WHERE source_id = $1', [c.connectionId]));
+    const stored = await admin((cl) => cl.query<{ title: string | null; kind: string; source_id: string }>('SELECT title, kind, source_id FROM ludy_kernel.calendar_event WHERE source_id = $1', [c.connectionId]));
     expect(stored.rows).toEqual([{ title: null, kind: 'google', source_id: c.connectionId }]);
     // The member sees the block on their calendar and cannot cancel it by hand.
     const mine = await o.query<{ events: { id: string; kind: string; title: string | null }[] }>(o.member, 'kernel.calendar.get', range);
@@ -250,7 +250,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: a.connectionId })).toEqual({ connectionId: a.connectionId, disconnected: true });
     // Step 1: the member's list and the slots are clean at once; a block of another connection stays.
     expect(await o.query(o.member, 'kernel.calendar.connections', {})).toEqual([]);
-    const left = await admin((cl) => cl.query<{ source_id: string }>('SELECT source_id FROM crove_kernel.calendar_event WHERE org_id = $1 AND source_id IS NOT NULL', [o.orgId]));
+    const left = await admin((cl) => cl.query<{ source_id: string }>('SELECT source_id FROM ludy_kernel.calendar_event WHERE org_id = $1 AND source_id IS NOT NULL', [o.orgId]));
     expect(left.rows.map((r) => r.source_id)).toEqual([b.connectionId]);
     // The token is still sealed, for the worker to revoke the grant with: the API cannot, so it could not revoke here.
     const sealed = await o.sysQuery<SealedCalendarCredential>('kernel.calendar.credential', { connectionId: a.connectionId });
@@ -260,19 +260,19 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(await o.sys('kernel.calendar.mark_failed', { connectionId: a.connectionId, status: 'expired', reason: 'refused (x)' })).toMatchObject({ marked: false });
     expect(await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: a.connectionId })).toMatchObject({ disconnected: true });
     // The worker's list names it as disconnecting; only the system finishes it.
-    const due = await workerPool.query<{ connection_id: string }>('SELECT connection_id FROM crove_kernel.calendar_sync_due(NULL, NULL, 1000) WHERE org_id = $1', [o.orgId]);
+    const due = await workerPool.query<{ connection_id: string }>('SELECT connection_id FROM ludy_kernel.calendar_sync_due(NULL, NULL, 1000) WHERE org_id = $1', [o.orgId]);
     expect(due.rows.map((r) => r.connection_id).sort()).toEqual([a.connectionId, b.connectionId].sort());
     const states = await Promise.all([a, b].map((c) => o.sysQuery<{ status: string }>('kernel.calendar.connection_state', { connectionId: c.connectionId })));
     expect(states.map((s) => s.status)).toEqual(['disconnecting', 'active']);
     await expect(o.exec(o.member, 'kernel.calendar.finish_disconnect', { connectionId: a.connectionId, revoked: true })).rejects.toMatchObject({ status: 403 });
     // Step 2.
     expect(await o.sys('kernel.calendar.finish_disconnect', { connectionId: a.connectionId, revoked: true })).toEqual({ connectionId: a.connectionId, finished: true });
-    const creds = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_credential WHERE org_id = $1 AND id = $2', [o.orgId, a.connectionId]));
+    const creds = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_credential WHERE org_id = $1 AND id = $2', [o.orgId, a.connectionId]));
     expect(creds.rowCount).toBe(0);
-    const rows = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, a.connectionId]));
+    const rows = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, a.connectionId]));
     expect(rows.rowCount).toBe(0);
     // The audit row says whether the grant was revoked.
-    const audit = await admin((cl) => cl.query<{ detail: { revoked?: boolean } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.calendar.finish_disconnect'", [o.orgId]));
+    const audit = await admin((cl) => cl.query<{ detail: { revoked?: boolean } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.calendar.finish_disconnect'", [o.orgId]));
     expect(audit.rows[0]?.detail).toMatchObject({ revoked: true });
   });
 
@@ -281,7 +281,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const c = await connect(o, o.member);
     await o.sys('kernel.calendar.mark_failed', { connectionId: c.connectionId, status: 'expired', reason: 'refused (invalid_grant)' });
     expect(await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: c.connectionId })).toMatchObject({ disconnected: true });
-    const gone = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId]));
+    const gone = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId]));
     expect(gone.rowCount).toBe(0);
     // An active connection is not finished by the worker's command: a member who connected again keeps it.
     const kept = await connect(o, o.member);
@@ -321,11 +321,11 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const o = await org();
     const c = await connect(o, o.member);
     await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: c.connectionId });
-    await admin((cl) => cl.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
+    await admin((cl) => cl.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
     // The revoke is the one use the token has there, so it is handed out whatever became of the member.
     const sealed = await o.sysQuery<SealedCalendarCredential>('kernel.calendar.credential', { connectionId: c.connectionId });
     expect(JSON.parse(vault.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, calendarBinding(o.orgId, 'google', c.account)))).toMatchObject({ refreshToken: 'refresh-1' });
-    const due = await workerPool.query<{ connection_id: string }>('SELECT connection_id FROM crove_kernel.calendar_sync_due(NULL, NULL, 1000) WHERE org_id = $1', [o.orgId]);
+    const due = await workerPool.query<{ connection_id: string }>('SELECT connection_id FROM ludy_kernel.calendar_sync_due(NULL, NULL, 1000) WHERE org_id = $1', [o.orgId]);
     expect(due.rows).toEqual([{ connection_id: c.connectionId }]);
     expect(await o.sysQuery('kernel.calendar.connection_state', { connectionId: c.connectionId })).toMatchObject({ status: 'disconnecting' });
     expect(await o.sys('kernel.calendar.finish_disconnect', { connectionId: c.connectionId, revoked: true })).toMatchObject({ finished: true });
@@ -338,8 +338,8 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const stillActive = await connect(o, o.owner);
     await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: viewerDemoted.connectionId });
     await o.exec(o.other, 'kernel.calendar.disconnect', { connectionId: disabled.connectionId });
-    await admin((cl) => cl.query("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.member]));
-    await admin((cl) => cl.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.other]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.member]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.other]));
     await expect(o.sysQuery('kernel.calendar.credential', { connectionId: viewerDemoted.connectionId })).resolves.toMatchObject({ provider: 'google' });
     await expect(o.sysQuery('kernel.calendar.credential', { connectionId: disabled.connectionId })).resolves.toMatchObject({ provider: 'google' });
     // A refresh and a sync of a disconnecting connection are refused: it is the revoke's token only.
@@ -361,7 +361,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(await o.sys('kernel.calendar.finish_disconnect', { connectionId: c.connectionId, revoked: true, ifVersion: seen.updatedAt })).toMatchObject({ finished: false });
     const list = await o.query<{ status: string; statusReason: string | null }[]>(o.member, 'kernel.calendar.connections', {});
     expect(list[0]).toMatchObject({ status: 'expired' });
-    const sealedLeft = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_credential WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId]));
+    const sealedLeft = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_credential WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId]));
     expect(sealedLeft.rowCount).toBe(0);
   });
 
@@ -383,11 +383,11 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(list[0]).toMatchObject({ status: 'expired' });
     await expect(o.sysQuery('kernel.calendar.credential', { connectionId: c.connectionId })).rejects.toMatchObject({ code: 'CALENDAR_NOT_ACTIVE' });
     // The refusal above comes before the credential lookup: the row itself is what must be gone.
-    const sealedLeft = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_credential WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId]));
+    const sealedLeft = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_credential WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId]));
     expect(sealedLeft.rowCount).toBe(0);
     // Its blocks stay, so time that may still be busy is not offered; a sync of an expired connection stores nothing.
     expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [] })).toMatchObject({ replaced: false });
-    const blocks = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_event WHERE source_id = $1', [c.connectionId]));
+    const blocks = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_event WHERE source_id = $1', [c.connectionId]));
     expect(blocks.rowCount).toBe(1);
     // Connecting again brings it back, with a new token.
     const again = await connect(o, o.member, c.account, JSON.stringify({ accessToken: 'access-2', refreshToken: 'refresh-2' }));
@@ -429,12 +429,12 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     // A block of last week, put there as the sync of last week left it.
     await admin((cl) =>
       cl.query(
-        "INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, kind, source_id, external_id, created_by) VALUES ($1, $2, now() - interval '20 days', now() - interval '20 days' + interval '1 hour', 'UTC', 'google', $3, 'old-block', $2)",
+        "INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, kind, source_id, external_id, created_by) VALUES ($1, $2, now() - interval '20 days', now() - interval '20 days' + interval '1 hour', 'UTC', 'google', $3, 'old-block', $2)",
         [o.orgId, o.member, c.connectionId],
       ),
     );
     await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [busy(day, 480, 540)] });
-    const left = await admin((cl) => cl.query<{ external_id: string }>('SELECT external_id FROM crove_kernel.calendar_event WHERE source_id = $1', [c.connectionId]));
+    const left = await admin((cl) => cl.query<{ external_id: string }>('SELECT external_id FROM ludy_kernel.calendar_event WHERE source_id = $1', [c.connectionId]));
     expect(left.rows.map((r) => r.external_id)).not.toContain('old-block');
     expect(left.rowCount).toBe(1);
   });
@@ -442,7 +442,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
   it('lets a member demoted to viewer still disconnect their own calendar', async () => {
     const o = await org();
     const c = await connect(o, o.member);
-    await admin((cl) => cl.query("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.member]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.member]));
     expect(await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: c.connectionId })).toEqual({ connectionId: c.connectionId, disconnected: true });
   });
 
@@ -478,12 +478,12 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     await record(o, c.connectionId, first as WriteBackAction, 'written');
     expect(await plan(o, c.connectionId)).toEqual([]);
     // A move changes what is written, so it is written again.
-    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_event SET starts_at = $3, ends_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 600), at(day, 630)]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_event SET starts_at = $3, ends_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 600), at(day, 630)]));
     const [moved] = await plan(o, c.connectionId);
     expect(moved).toMatchObject({ kind: 'upsert', startsAt: at(day, 600) });
     await record(o, c.connectionId, moved as WriteBackAction, 'written');
     // A cancel deletes it, once.
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, e]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, e]));
     const [gone] = await plan(o, c.connectionId);
     expect(gone).toMatchObject({ eventId: e, kind: 'delete', hash: 'deleted', externalId: first?.externalId });
     await record(o, c.connectionId, gone as WriteBackAction, 'removed');
@@ -511,7 +511,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const [a] = (await plan(o, c.connectionId)) as [WriteBackAction];
     await record(o, c.connectionId, a, 'removed');
     expect(await plan(o, c.connectionId)).toEqual([]);
-    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_event SET ends_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 600)]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_event SET ends_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 600)]));
     const [changed] = (await plan(o, c.connectionId)) as [WriteBackAction];
     expect(changed.kind).toBe('upsert');
     // Failures are retried until the sixth in a row; then it waits for a change.
@@ -521,13 +521,13 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     }
     await record(o, c.connectionId, changed, 'error', 'rateLimitExceeded');
     expect(await plan(o, c.connectionId)).toEqual([]);
-    const row = await admin((cl) => cl.query<{ attempts: number; last_error: string }>('SELECT attempts, last_error FROM crove_kernel.calendar_event_link WHERE org_id = $1 AND event_id = $2', [o.orgId, e]));
+    const row = await admin((cl) => cl.query<{ attempts: number; last_error: string }>('SELECT attempts, last_error FROM ludy_kernel.calendar_event_link WHERE org_id = $1 AND event_id = $2', [o.orgId, e]));
     expect(row.rows[0]).toEqual({ attempts: 6, last_error: 'rateLimitExceeded' });
     // A write that succeeds resets the count.
-    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_event SET ends_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 630)]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_event SET ends_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 630)]));
     const [again] = (await plan(o, c.connectionId)) as [WriteBackAction];
     await record(o, c.connectionId, again, 'written');
-    const reset = await admin((cl) => cl.query<{ attempts: number }>('SELECT attempts FROM crove_kernel.calendar_event_link WHERE org_id = $1 AND event_id = $2', [o.orgId, e]));
+    const reset = await admin((cl) => cl.query<{ attempts: number }>('SELECT attempts FROM ludy_kernel.calendar_event_link WHERE org_id = $1 AND event_id = $2', [o.orgId, e]));
     expect(reset.rows[0]?.attempts).toBe(0);
   });
 
@@ -543,13 +543,13 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(await o.sysQuery<string[]>('kernel.calendar.writeback_connections', {})).toEqual([on.connectionId]);
     await expect(o.query(o.member, 'kernel.calendar.writeback_connections', {})).rejects.toMatchObject({ status: 403 });
     // Expired, or a grant that lost the events scope while the switch stayed on, takes it out; so does off.
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_connection SET status = 'expired' WHERE org_id = $1 AND id = $2", [o.orgId, on.connectionId]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_connection SET status = 'expired' WHERE org_id = $1 AND id = $2", [o.orgId, on.connectionId]));
     expect(await o.sysQuery<string[]>('kernel.calendar.writeback_connections', {})).toEqual([]);
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_connection SET status = 'active' WHERE org_id = $1 AND id = $2", [o.orgId, on.connectionId]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_connection SET status = 'active' WHERE org_id = $1 AND id = $2", [o.orgId, on.connectionId]));
     expect(await o.sysQuery<string[]>('kernel.calendar.writeback_connections', {})).toEqual([on.connectionId]);
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_connection SET scopes = ARRAY['https://www.googleapis.com/auth/calendar.freebusy'] WHERE org_id = $1 AND id = $2", [o.orgId, on.connectionId]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_connection SET scopes = ARRAY['https://www.googleapis.com/auth/calendar.freebusy'] WHERE org_id = $1 AND id = $2", [o.orgId, on.connectionId]));
     expect(await o.sysQuery<string[]>('kernel.calendar.writeback_connections', {})).toEqual([]);
-    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_connection SET scopes = $3 WHERE org_id = $1 AND id = $2', [o.orgId, on.connectionId, ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_SCOPE]]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_connection SET scopes = $3 WHERE org_id = $1 AND id = $2', [o.orgId, on.connectionId, ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_SCOPE]]));
     await o.exec(o.member, 'kernel.calendar.write_back.set', { connectionId: on.connectionId, enabled: false });
     expect(await o.sysQuery<string[]>('kernel.calendar.writeback_connections', {})).toEqual([]);
   });
@@ -557,7 +557,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
   it('the read of the member\'s meetings (B1, #3165): off by default, on only with the scope, kept by a reconnect only while the grant still carries the scope', async () => {
     const o = await org();
     const FREEBUSY = 'https://www.googleapis.com/auth/calendar.freebusy';
-    const state = async (id: string) => (await admin((cl) => cl.query<{ read_events: boolean }>('SELECT read_events FROM crove_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, id]))).rows[0]?.read_events;
+    const state = async (id: string) => (await admin((cl) => cl.query<{ read_events: boolean }>('SELECT read_events FROM ludy_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, id]))).rows[0]?.read_events;
     const first = await connect(o, o.member, undefined, undefined, [FREEBUSY]);
     expect(await state(first.connectionId)).toBe(false);
     // Without the scope the switch cannot go on, with its own code (not the write-back one).
@@ -584,12 +584,12 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const c = await connectWriter(o, o.member);
     await o.exec(o.member, 'kernel.calendar.write_back.set', { connectionId: c.connectionId, enabled: true });
     const e = await bookingEvent(o, o.member, day, 540, 570);
-    const attempts = async () => (await admin((cl) => cl.query<{ attempts: number }>('SELECT attempts FROM crove_kernel.calendar_event_link WHERE org_id = $1 AND event_id = $2', [o.orgId, e]))).rows[0]?.attempts;
+    const attempts = async () => (await admin((cl) => cl.query<{ attempts: number }>('SELECT attempts FROM ludy_kernel.calendar_event_link WHERE org_id = $1 AND event_id = $2', [o.orgId, e]))).rows[0]?.attempts;
     const [first] = (await plan(o, c.connectionId)) as [WriteBackAction];
     for (let i = 0; i < 6; i++) await record(o, c.connectionId, first, 'error', 'rateLimitExceeded');
     expect(await plan(o, c.connectionId)).toEqual([]);
     // The booking moves: its first failure is the first of a new count, so it is planned again.
-    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_event SET ends_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 600)]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_event SET ends_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, e, at(day, 600)]));
     const [moved] = (await plan(o, c.connectionId)) as [WriteBackAction];
     await record(o, c.connectionId, moved, 'error', 'rateLimitExceeded');
     expect(await attempts()).toBe(1);
@@ -597,7 +597,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     // Cancelled after the sixth failure of the write: the delete is a new piece of work.
     for (let i = 0; i < 5; i++) await record(o, c.connectionId, moved, 'error', 'rateLimitExceeded');
     expect(await plan(o, c.connectionId)).toEqual([]);
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, e]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, e]));
     const [gone] = (await plan(o, c.connectionId)) as [WriteBackAction];
     expect(gone.kind).toBe('delete');
     await record(o, c.connectionId, gone, 'error', 'rateLimitExceeded');
@@ -612,7 +612,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     await o.exec(o.member, 'kernel.calendar.write_back.set', { connectionId: c.connectionId, enabled: true });
     const e = await bookingEvent(o, o.member, day, 540, 570);
     // The write reached the provider but its record did not (a crash between the two): there is no link, then the booking is cancelled.
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, e]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, e]));
     const [gone] = (await plan(o, c.connectionId)) as [WriteBackAction];
     expect(gone).toMatchObject({ eventId: e, kind: 'delete', externalId: writeBackEventId(o.orgId, e, c.connectionId) });
     await record(o, c.connectionId, gone, 'removed');
@@ -629,7 +629,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     await record(o, c.connectionId, written, 'written');
     // The sweep did not run for days: the booking is cancelled and long over.
     await admin((cl) =>
-      cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now(), starts_at = now() - interval '4 days 1 hour', ends_at = now() - interval '4 days' WHERE org_id = $1 AND id = $2", [o.orgId, e]),
+      cl.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now(), starts_at = now() - interval '4 days 1 hour', ends_at = now() - interval '4 days' WHERE org_id = $1 AND id = $2", [o.orgId, e]),
     );
     const [gone] = (await plan(o, c.connectionId)) as [WriteBackAction];
     expect(gone).toMatchObject({ eventId: e, kind: 'delete', externalId: written.externalId });
@@ -638,7 +638,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     // A cancelled booking long over that never had an event owes nothing.
     const never = await bookingEvent(o, o.member, day, 700, 730);
     await admin((cl) =>
-      cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now(), starts_at = now() - interval '5 days 1 hour', ends_at = now() - interval '5 days' WHERE org_id = $1 AND id = $2", [o.orgId, never]),
+      cl.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now(), starts_at = now() - interval '5 days 1 hour', ends_at = now() - interval '5 days' WHERE org_id = $1 AND id = $2", [o.orgId, never]),
     );
     expect(await plan(o, c.connectionId)).toEqual([]);
   });
@@ -657,13 +657,13 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     }
     await admin(async (cl) => {
       const made = await cl.query<{ id: string; starts_at: Date; ends_at: Date }>(
-        "INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) SELECT $1, $2, x.s, x.e, 'UTC', 'Tư vấn: Lan', 'booking', $2 FROM unnest($3::timestamptz[], $4::timestamptz[]) AS x(s, e) RETURNING id, starts_at, ends_at",
+        "INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) SELECT $1, $2, x.s, x.e, 'UTC', 'Tư vấn: Lan', 'booking', $2 FROM unnest($3::timestamptz[], $4::timestamptz[]) AS x(s, e) RETURNING id, starts_at, ends_at",
         [o.orgId, o.member, starts, ends],
       );
       const ids = made.rows.map((r) => r.id);
       const hs = made.rows.map((r) => writeBackHash(new Date(r.starts_at), new Date(r.ends_at), 'Tư vấn: Lan'));
       await cl.query(
-        "INSERT INTO crove_kernel.calendar_event_link (org_id, connection_id, event_id, user_id, external_id, state, synced_hash) SELECT $1, $2, x.id, $3, 'ext' || x.id::text, 'written', x.h FROM unnest($4::uuid[], $5::text[]) AS x(id, h)",
+        "INSERT INTO ludy_kernel.calendar_event_link (org_id, connection_id, event_id, user_id, external_id, state, synced_hash) SELECT $1, $2, x.id, $3, 'ext' || x.id::text, 'written', x.h FROM unnest($4::uuid[], $5::text[]) AS x(id, h)",
         [o.orgId, c.connectionId, o.member, ids, hs],
       );
     });
@@ -681,7 +681,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const [a] = (await plan(o, c.connectionId)) as [WriteBackAction];
     await record(o, c.connectionId, a, 'written');
     const window = { from: at(day, 0), to: new Date(Date.parse(at(day, 0)) + 60 * DAY).toISOString() };
-    const stored = async () => (await admin((cl) => cl.query<{ starts_at: Date; ends_at: Date }>('SELECT starts_at, ends_at FROM crove_kernel.calendar_event WHERE source_id = $1 ORDER BY starts_at', [c.connectionId]))).rows;
+    const stored = async () => (await admin((cl) => cl.query<{ starts_at: Date; ends_at: Date }>('SELECT starts_at, ends_at FROM ludy_kernel.calendar_event WHERE source_id = $1 ORDER BY starts_at', [c.connectionId]))).rows;
     // The answer holds the copy of the booking and an unrelated meeting: only the meeting is stored.
     expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [busy(day, 540, 570), busy(day, 700, 730)] })).toMatchObject({ added: 1, removed: 0 });
     expect((await stored()).map((r) => r.starts_at.toISOString())).toEqual([at(day, 700)]);
@@ -703,14 +703,14 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const c = await connectWriter(o, o.member);
     await o.exec(o.member, 'kernel.calendar.write_back.set', { connectionId: c.connectionId, enabled: true });
     const add = (intervals: Array<{ start: string; end: string }>, org = o, id = c.connectionId) => org.sys<{ added: number }>('kernel.calendar.busy_add', { connectionId: id, busy: intervals });
-    const stored = async () => (await admin((cl) => cl.query<{ starts_at: Date }>('SELECT starts_at FROM crove_kernel.calendar_event WHERE source_id = $1 ORDER BY starts_at', [c.connectionId]))).rows.map((r) => r.starts_at.toISOString());
+    const stored = async () => (await admin((cl) => cl.query<{ starts_at: Date }>('SELECT starts_at FROM ludy_kernel.calendar_event WHERE source_id = $1 ORDER BY starts_at', [c.connectionId]))).rows.map((r) => r.starts_at.toISOString());
     // A booking written to the provider, then cancelled (its link says written until the write-back deletes the event) and one
     // moved by the host (the copy is still at the old time): neither copy is a busy time.
     const cancelled = await bookingEvent(o, o.member, day, 540, 570);
     const moved = await bookingEvent(o, o.member, day, 600, 630);
     for (const a of await plan(o, c.connectionId)) await record(o, c.connectionId, a, 'written');
-    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, cancelled]));
-    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_event SET starts_at = $3, ends_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, moved, at(day, 720), at(day, 750)]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, cancelled]));
+    await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_event SET starts_at = $3, ends_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, moved, at(day, 720), at(day, 750)]));
     expect(await add([busy(day, 540, 570)])).toMatchObject({ added: 0 });
     expect(await add([busy(day, 600, 630)])).toMatchObject({ added: 0 });
     expect(await stored()).toEqual([]);
@@ -721,7 +721,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     // Another org's connection is not found; an expired or disconnecting one takes nothing.
     await expect(add([busy(day, 1000, 1030)], elsewhere)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     for (const status of ['expired', 'disconnecting']) {
-      await admin((cl) => cl.query('UPDATE crove_kernel.calendar_connection SET status = $3 WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId, status]));
+      await admin((cl) => cl.query('UPDATE ludy_kernel.calendar_connection SET status = $3 WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId, status]));
       expect(await add([busy(day, 1000, 1030)]), status).toMatchObject({ added: 0 });
     }
     expect(await stored()).toEqual([at(day, 900)]);
@@ -732,7 +732,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const day = nextWorkday();
     const c = await connect(o, o.member);
     const window = { from: at(day, 0), to: new Date(Date.parse(at(day, 0)) + 60 * DAY).toISOString() };
-    const blocks = async () => (await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_event WHERE source_id = $1', [c.connectionId]))).rowCount;
+    const blocks = async () => (await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_event WHERE source_id = $1', [c.connectionId]))).rowCount;
     await o.sys('kernel.calendar.busy_add', { connectionId: c.connectionId, busy: [busy(day, 540, 570)] });
     // The sync read the provider a minute ago, before the block was added: its answer is older, the block stays.
     expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [], readStartedAt: new Date(Date.now() - 60_000).toISOString() })).toMatchObject({ removed: 0 });
@@ -759,7 +759,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     for (const id of rest.slice(0, 4)) for (let i = 0; i < LIVE_CONNECTION_PER_MINUTE; i++) expect((await take(id)).allowed).toBe(true);
     expect(await take(rest[4] as string)).toEqual({ allowed: false, limit: 'org' });
     // Only the calls that were allowed are counted: 5 connections of their cap, nothing for the refusals.
-    const counted = await admin((cl) => cl.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.calendar.live_take' AND detail->>'allowed' = 'true'", [o.orgId]));
+    const counted = await admin((cl) => cl.query<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.calendar.live_take' AND detail->>'allowed' = 'true'", [o.orgId]));
     expect(Number(counted.rows[0]?.n)).toBe(5 * LIVE_CONNECTION_PER_MINUTE);
     expect(5 * LIVE_CONNECTION_PER_MINUTE).toBe(LIVE_ORG_PER_MINUTE);
     // Another org has its own budget.
@@ -804,7 +804,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     // Disconnecting and finishing takes the links with the connection.
     await o.exec(o.member, 'kernel.calendar.disconnect', { connectionId: c.connectionId });
     await o.sys('kernel.calendar.finish_disconnect', { connectionId: c.connectionId, revoked: true });
-    const left = await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_event_link WHERE org_id = $1', [o.orgId]));
+    const left = await admin((cl) => cl.query('SELECT 1 FROM ludy_kernel.calendar_event_link WHERE org_id = $1', [o.orgId]));
     expect(left.rowCount).toBe(0);
   });
 
@@ -814,15 +814,15 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const expired = await connect(o, o.other);
     await o.sys('kernel.calendar.mark_failed', { connectionId: expired.connectionId, status: 'expired', reason: 'refused (invalid_grant)' });
     const due = async () => {
-      const { rows } = await workerPool.query<{ org_id: string; connection_id: string }>('SELECT org_id, connection_id FROM crove_kernel.calendar_sync_due(NULL, NULL, 1000) WHERE org_id = $1', [o.orgId]);
+      const { rows } = await workerPool.query<{ org_id: string; connection_id: string }>('SELECT org_id, connection_id FROM ludy_kernel.calendar_sync_due(NULL, NULL, 1000) WHERE org_id = $1', [o.orgId]);
       return rows.map((r) => r.connection_id);
     };
     expect(await due()).toEqual([active.connectionId]);
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
     expect(await due()).toEqual([]);
     // A worker cannot read the credential of a member who left.
     await expect(o.sysQuery('kernel.calendar.credential', { connectionId: active.connectionId })).rejects.toMatchObject({ code: 'CALENDAR_OWNER_LEFT' });
     // No login role but the worker may list them.
-    await expect(appPool.query('SELECT * FROM crove_kernel.calendar_sync_due(NULL, NULL, 10)')).rejects.toThrow();
+    await expect(appPool.query('SELECT * FROM ludy_kernel.calendar_sync_due(NULL, NULL, 10)')).rejects.toThrow();
   });
 });

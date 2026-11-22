@@ -97,7 +97,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await builder.getByLabel('Trang mà quảng cáo mở ra').fill('http://khong-an-toan.example');
     await builder.getByRole('button', { name: 'Lưu bản nháp' }).click();
     await expect(builder.getByText('Đường dẫn phải là địa chỉ đầy đủ bắt đầu bằng https://.')).toBeVisible();
-    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_ads.ad_campaign_draft d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ n: 0 }]);
+    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ n: 0 }]);
   });
 
   await test.step('saving keeps the draft and lists what is to fix in words: no spend cap yet and running ads off', async () => {
@@ -117,7 +117,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await expect(page.getByTestId('campaign-drafts').getByText('Khai trương chi nhánh mới', { exact: false })).toBeVisible();
     const rows = sql<{ status: string; origin: string; source_post_id: string | null; budget_ok: boolean; spend_ok: boolean }>(
       `SELECT d.status, d.origin, d.source_post_id::text AS source_post_id, d.daily_budget = 100000 AS budget_ok, d.max_spend = 700000 AS spend_ok
-         FROM crove_ads.ad_campaign_draft d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+         FROM crove_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     // The post is kept as an opaque id, and a draft a person wrote is not marked as the AI's.
@@ -148,7 +148,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await dialog.getByRole('button', { name: 'Bỏ', exact: true }).click();
     await expect(page.getByText('Đã bỏ bản nháp.')).toBeVisible();
     await expect(page.getByTestId('campaign-drafts')).toHaveCount(0);
-    const rows = sql<{ status: string }>(`SELECT d.status FROM crove_ads.ad_campaign_draft d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ status: string }>(`SELECT d.status FROM crove_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ status: 'discarded' }]);
   });
 });

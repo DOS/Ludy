@@ -21,9 +21,9 @@ export const NOTE_TARGET_QUERIES = {
 const UNREADABLE = new Set(['DOCUMENT_NOT_FOUND', 'ENTRY_NOT_FOUND', 'BOOKING_NOT_FOUND', 'PROJECT_NOT_FOUND', 'MEETING_NOT_FOUND', 'FORBIDDEN']);
 
 const KERNEL_TABLES = {
-  'kernel.party': 'crove_kernel.party',
-  'kernel.file': 'crove_kernel.file',
-  'kernel.task': 'crove_kernel.task',
+  'kernel.party': 'ludy_kernel.party',
+  'kernel.file': 'ludy_kernel.file',
+  'kernel.task': 'ludy_kernel.task',
 } as const;
 
 type LinkParent = { kind: 'note'; id: string } | { kind: 'todo'; id: string };

@@ -105,7 +105,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
   }
 
   const status = (orgId: string) =>
-    withAdmin(async (admin) => (await admin.query<{ status: string }>('SELECT status FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.status);
+    withAdmin(async (admin) => (await admin.query<{ status: string }>('SELECT status FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.status);
 
   beforeAll(async () => {
     const base = new URL(ADMIN as string);
@@ -116,16 +116,16 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = loginUrl('crove_app', 'test-app-pw');
+    appUrl = loginUrl('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 4 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'test-worker-pw'), max: 4 });
     db = createDb(pool);
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
@@ -157,7 +157,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       expect(exportCoverageProblems(catalog.tables, exportedTables())).toEqual([]);
       // Every name an entry omits is a real column of its table: `jsonb - text[]` ignores an unknown key, so a typo would export the secret.
       const found = await client.query<{ tbl: string; col: string }>(
-        "SELECT table_schema || '.' || table_name AS tbl, column_name AS col FROM information_schema.columns WHERE table_schema LIKE 'crove\\_%'",
+        "SELECT table_schema || '.' || table_name AS tbl, column_name AS col FROM information_schema.columns WHERE table_schema LIKE 'ludy\\_%' OR table_schema LIKE 'crove\\_%'",
       );
       const columns = new Map<string, Set<string>>();
       for (const r of found.rows) columns.set(r.tbl, (columns.get(r.tbl) ?? new Set<string>()).add(r.col));
@@ -184,7 +184,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const refusals = await withAdmin(async (admin) =>
       (
         await admin.query<{ outcome: string }>(
-          `SELECT outcome FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.offboard' ORDER BY occurred_at, id`,
+          `SELECT outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.offboard' ORDER BY occurred_at, id`,
           [org.orgId],
         )
       ).rows.map((r) => r.outcome),
@@ -200,7 +200,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const audit = await withAdmin(async (admin) =>
       (
         await admin.query<{ actor_id: string; outcome: string; detail: Record<string, unknown> }>(
-          `SELECT actor_id, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.offboard'`,
+          `SELECT actor_id, outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.offboard'`,
           [org.orgId],
         )
       ).rows,
@@ -209,7 +209,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       { actor_id: owner.id, outcome: 'ok', detail: expect.objectContaining({ previous_status: 'active', status: 'offboarding', aal: 'aal2' }) },
     ]);
     const events = await withAdmin(async (admin) =>
-      (await admin.query<{ type: string }>(`SELECT type FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'kernel.org.%'`, [org.orgId])).rows,
+      (await admin.query<{ type: string }>(`SELECT type FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'kernel.org.%'`, [org.orgId])).rows,
     );
     expect(events).toEqual([{ type: 'kernel.org.export_requested' }]);
 
@@ -248,9 +248,9 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const worker = await workerPool.connect();
     try {
       await worker.query('BEGIN');
-      await worker.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
+      await worker.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [org.orgId]);
       await worker.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, 'system', 'test.system', $2, 'ok', repeat('0', 64), '{"rows": 1}')`,
         [org.orgId, systemCommand],
       );
@@ -261,7 +261,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const reader = new pg.Client({ connectionString: adminUrl });
     await reader.connect();
     const stamped = await reader
-      .query<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command_id = $2', [org.orgId, systemCommand])
+      .query<{ detail: Record<string, unknown> }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command_id = $2', [org.orgId, systemCommand])
       .finally(() => reader.end());
     expect(stamped.rows[0]?.detail).toMatchObject({ rows: 1, workerInstance: expect.any(String) });
 
@@ -272,7 +272,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     try {
       // A member's private and shared saved views (#3367): the snapshot reads as the system actor, which sees every member's rows, so the export itself keeps the private one out.
       await seeder.query(
-        "INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters, shared) VALUES ($1, $2, 'finance.bills', 'Chờ duyệt', '{\"status\":\"pending\"}'::jsonb, false), ($1, $2, 'finance.bills', 'Cả nhóm', '{}'::jsonb, true)",
+        "INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters, shared) VALUES ($1, $2, 'finance.bills', 'Chờ duyệt', '{\"status\":\"pending\"}'::jsonb, false), ($1, $2, 'finance.bills', 'Cả nhóm', '{}'::jsonb, true)",
         [org.orgId, member.id],
       );
       await seeder.query(
@@ -280,9 +280,9 @@ suite('org offboarding on PostgreSQL (#38)', () => {
         [org.orgId, member.id],
       );
       // A member's own notification and daily mail setting stay private to them: the export must not carry them.
-      await seeder.query("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'finance.invoice')", [org.orgId, member.id]);
+      await seeder.query("INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'finance.invoice')", [org.orgId, member.id]);
       await seeder.query("INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Đàm phán', 'open', 1)", [org.orgId]);
-      await seeder.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [org.orgId, householdId, owner.id]);
+      await seeder.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [org.orgId, householdId, owner.id]);
       await seeder.query(
         "INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades, einvoice_registered, representative_name, created_by) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods'], false, 'Nguyễn Văn A', $3)",
         [org.orgId, householdId, owner.id],
@@ -504,7 +504,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     // A new audit row by the restore, the old one untouched; a second run finds nothing to do.
     const audits = await withAdmin(async (admin) =>
       (await admin.query<{ actor_type: string; generation: string }>(
-        `SELECT actor_type, detail->>'manifest_generation' AS generation FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.record' ORDER BY occurred_at, id`,
+        `SELECT actor_type, detail->>'manifest_generation' AS generation FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.record' ORDER BY occurred_at, id`,
         [org.orgId],
       )).rows,
     );
@@ -535,7 +535,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     await expect(workerRuntime.execute('kernel.org.export.record', older, system)).rejects.toMatchObject({ code: 'VALIDATION' });
     await withAdmin((admin) =>
       admin.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, 'system', 'kernel.org.export.record', gen_random_uuid(), 'ok', repeat('0', 64), $2::jsonb)`,
         [
           org.orgId,
@@ -582,11 +582,11 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     // still waits for it.
     const purgeState = () =>
       withAdmin(async (admin) => {
-        const refusal = (await admin.query<{ r: string | null }>('SELECT crove_kernel.org_purge_refusal($1, 30) AS r', [org.orgId])).rows[0]?.r;
-        const check = (await admin.query<{ exported_at: Date }>('SELECT exported_at FROM crove_kernel.org_purge_check($1)', [org.orgId])).rows[0];
+        const refusal = (await admin.query<{ r: string | null }>('SELECT ludy_kernel.org_purge_refusal($1, 30) AS r', [org.orgId])).rows[0]?.r;
+        const check = (await admin.query<{ exported_at: Date }>('SELECT exported_at FROM ludy_kernel.org_purge_check($1)', [org.orgId])).rows[0];
         const own = (
           await admin.query<{ at: Date }>(
-            `SELECT max(occurred_at) AS at FROM crove_kernel.audit_event
+            `SELECT max(occurred_at) AS at FROM ludy_kernel.audit_event
              WHERE org_id = $1 AND command = 'kernel.org.export.record' AND outcome = 'ok' AND NOT detail ? 'rebind'`,
             [org.orgId],
           )
@@ -607,9 +607,9 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     await job.connect();
     try {
       await job.query('BEGIN');
-      await job.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_kernel.org_export:' || $1, 0))`, [org.orgId]);
+      await job.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('ludy_kernel.org_export:' || $1, 0))`, [org.orgId]);
       await job.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, 'system', 'kernel.org.export.record', gen_random_uuid(), 'ok', repeat('0', 64), $2::jsonb)`,
         [
           org.orgId,
@@ -658,7 +658,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const plant = (detail: Record<string, unknown>) =>
       withAdmin((admin) =>
         admin.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
            VALUES ($1, now() + interval '1 hour', 'system', 'kernel.org.export.record', gen_random_uuid(), 'ok', repeat('0', 64), $2::jsonb)`,
           [org.orgId, JSON.stringify(detail)],
         ),
@@ -709,7 +709,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const ROWS = 250_000;
     // Synthetic parties, written as the database owner (test data only).
     await withAdmin((admin) =>
-      admin.query(`INSERT INTO crove_kernel.party (org_id, name, tax_code) SELECT $1, 'Nhà cung cấp ' || g, lpad(g::text, 10, '0') FROM generate_series(1, $2) g`, [org.orgId, ROWS]),
+      admin.query(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) SELECT $1, 'Nhà cung cấp ' || g, lpad(g::text, 10, '0') FROM generate_series(1, $2) g`, [org.orgId, ROWS]),
     );
     // Wraps the export's stream to watch the batches and to write while it reads: a party added after the snapshot
     // began must not appear in the export.
@@ -727,7 +727,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
         maxBatch = Math.max(maxBatch, b.lines.length);
         if (!sneaked && b.table === 'kernel.tenant') {
           sneaked = true;
-          await withAdmin((admin) => admin.query(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Sau ảnh chụp')`, [org.orgId]));
+          await withAdmin((admin) => admin.query(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Sau ảnh chụp')`, [org.orgId]));
         }
         await sink(batch);
       });

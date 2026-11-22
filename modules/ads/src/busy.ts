@@ -19,7 +19,7 @@ export async function adsBusy(trx: Transaction<Database>, orgId: string): Promis
              OR (l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL))
     ), calls AS (
       SELECT c.key LIKE 'ads.launch:%:activate\\_%' AS activation
-      FROM crove_kernel.external_call c
+      FROM ludy_kernel.external_call c
       JOIN open o ON o.id::text = pg_catalog.split_part(c.key, ':', 2)
       WHERE c.org_id = ${orgId}::uuid AND (c.key LIKE 'ads.launch:%' OR c.key LIKE 'ads.pause:%') AND c.state IN ('started', 'ambiguous')
     )

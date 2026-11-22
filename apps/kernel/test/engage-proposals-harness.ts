@@ -61,14 +61,14 @@ export async function startHarness(prefix: string): Promise<Harness> {
   base.pathname = `/${dbName}`;
   const adminUrl = base.toString();
   await migrate({ adminUrl, dir: MIGRATIONS });
-  await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+  await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
   const app = new URL(adminUrl);
-  app.username = 'crove_app';
+  app.username = 'ludy_app';
   app.password = 'test-app-pw';
   const pool = createPool({ connectionString: app.toString(), max: 6 });
   const db = createDb(pool);
   const w = new URL(adminUrl);
-  w.username = 'crove_worker';
+  w.username = 'ludy_worker';
   w.password = 'test-worker-pw';
   const workerPool = createPool({ connectionString: w.toString(), max: 2 });
   const registered = {
@@ -103,14 +103,14 @@ export async function startHarness(prefix: string): Promise<Harness> {
     person,
     addOwner: async () => {
       const id = await upsertIdentity(db, { issuer: 'engage-proposals', subject: `owner-${randomUUID()}`, email: `owner-${randomUUID().slice(0, 8)}@engage-proposals.test`, name: 'second owner' });
-      await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [orgId, id]);
+      await q(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [orgId, id]);
       return id;
     },
     grant: async (scopes = [ENGAGE_SCOPE, ADS_SCOPE]) => {
       const grantId = randomUUID();
       const all = ['ludy.read', ...scopes];
       await q(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
          VALUES ($1, $2, $3, $4, 'Dy', 'dy.example.org', $5::text[], $6, now(), now() + interval '30 days', $3, 'company', NULL)`,
         [orgId, grantId, owner, `client-${grantId}`, all, `oauth-${grantId}`],
       );
@@ -118,14 +118,14 @@ export async function startHarness(prefix: string): Promise<Harness> {
     },
     propose: (actor, command, payload) => runtime.execute<{ proposalId: string; status: string }>(command, { payload }, { actor, orgId }),
     approve: async (proposalId, who = owner) => {
-      const row = (await q<{ revision: number }>(`SELECT revision FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposalId])).rows[0];
+      const row = (await q<{ revision: number }>(`SELECT revision FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposalId])).rows[0];
       return runtime.execute('kernel.proposal.approve', { id: proposalId, revision: row?.revision ?? 1 }, { actor: person(who, true), orgId });
     },
     reject: (proposalId, who = owner) => runtime.execute('kernel.proposal.reject', { id: proposalId, reason: 'no' }, { actor: person(who), orgId }),
-    proposal: async (proposalId) => (await q(`SELECT status, command, kind, tainted, payload, requested_by_grant, revision, result FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposalId])).rows[0] as never,
+    proposal: async (proposalId) => (await q(`SELECT status, command, kind, tainted, payload, requested_by_grant, revision, result FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposalId])).rows[0] as never,
     executions: async (command, proposalId) =>
-      (await q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' AND detail ->> 'under_proposal' = $3`, [orgId, command, proposalId])).rows[0]?.n ?? 0,
-    ran: async (command) => (await q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'`, [orgId, command])).rows[0]?.n ?? 0,
+      (await q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' AND detail ->> 'under_proposal' = $3`, [orgId, command, proposalId])).rows[0]?.n ?? 0,
+    ran: async (command) => (await q<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'`, [orgId, command])).rows[0]?.n ?? 0,
     stop: async () => {
       await pool.end();
       await workerPool.end();

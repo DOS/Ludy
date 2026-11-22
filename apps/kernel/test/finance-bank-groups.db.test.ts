@@ -144,17 +144,17 @@ suite('bank match groups and the matched lines (#2385)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -201,7 +201,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
     const [doc] = await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows);
     vendor = doc.party_id;
     customer = randomUUID();
-    await admin((c) => c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`, [org.orgId, customer]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`, [org.orgId, customer]));
 
     const imported = await rpc('bank/import', await tokenFor(member), {
       bankAccount: '1121',
@@ -234,7 +234,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
   async function sellerFacts() {
     return admin(async (c) => {
       const doc = (await c.query<{ invoice_number: string; invoice_series: string; total: string }>(`SELECT invoice_number, invoice_series, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND party_id = $2`, [org.orgId, vendor])).rows[0];
-      const party = (await c.query<{ name: string; tax_code: string }>(`SELECT name, tax_code FROM crove_kernel.party WHERE org_id = $1 AND id = $2`, [org.orgId, vendor])).rows[0];
+      const party = (await c.query<{ name: string; tax_code: string }>(`SELECT name, tax_code FROM ludy_kernel.party WHERE org_id = $1 AND id = $2`, [org.orgId, vendor])).rows[0];
       return { number: String(doc?.invoice_number), series: String(doc?.invoice_series), total: Number(doc?.total), taxCode: String(party?.tax_code), name: String(party?.name) };
     });
   }
@@ -363,7 +363,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
       idempotencyKey: randomUUID(),
     });
     expect(asked.status).toBe(200);
-    const payload = await admin(async (c) => (await c.query<{ matched_by: unknown }>(`SELECT payload -> 'matchedBy' AS matched_by FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [org.orgId, asked.body.proposalId])).rows[0]?.matched_by);
+    const payload = await admin(async (c) => (await c.query<{ matched_by: unknown }>(`SELECT payload -> 'matchedBy' AS matched_by FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [org.orgId, asked.body.proposalId])).rows[0]?.matched_by);
     expect(payload).toEqual({ kind: 'manual' });
     // A voucher made from a line with no claim at all is the person's own choice too.
     const plain = await rpc('inbox/request', await tokenFor(member), {
@@ -380,7 +380,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
       idempotencyKey: randomUUID(),
     });
     expect(plain.status).toBe(200);
-    expect(await admin(async (c) => (await c.query<{ matched_by: unknown }>(`SELECT payload -> 'matchedBy' AS matched_by FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [org.orgId, plain.body.proposalId])).rows[0]?.matched_by)).toEqual({ kind: 'manual' });
+    expect(await admin(async (c) => (await c.query<{ matched_by: unknown }>(`SELECT payload -> 'matchedBy' AS matched_by FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`, [org.orgId, plain.body.proposalId])).rows[0]?.matched_by)).toEqual({ kind: 'manual' });
   });
 
   it('undoes a match through the ordinary reversal: the line opens again and the review page says reversed', async () => {

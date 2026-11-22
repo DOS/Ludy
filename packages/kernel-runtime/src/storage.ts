@@ -123,7 +123,7 @@ export interface PresignedUpload {
 
 export interface DirectTransfers {
   // A form for one staging key (plan §7.6 step 1): valid for UPLOAD_TTL_SECONDS, 1 to maxBytes bytes. The grant row
-  // in crove_kernel.file_upload makes it single-use: the server reads the staging key at most once.
+  // in ludy_kernel.file_upload makes it single-use: the server reads the staging key at most once.
   presignUpload(stagingKey: string, maxBytes: number): Promise<PresignedUpload>;
   // A short-lived GET for the exact version, as an attachment. null when the generation cannot be pinned (content:
   // or a row from before ADR-0013): the caller then streams the bytes through readVerified instead.
@@ -308,7 +308,7 @@ export function archiveKey(orgId: string, year: number, sha256: string): string 
 
 // A customer's image in a conversation (issue #2357): bound to one message, so under a random id of its own and never a content
 // address (the same bytes sent by two customers are two blobs, and deleting one message's image never touches another's). The row
-// that names it is crove_kernel.conversation_attachment; its blob is deleted by the worker when that row goes.
+// that names it is ludy_kernel.conversation_attachment; its blob is deleted by the worker when that row goes.
 export function conversationKey(orgId: string, blobId: string): string {
   return `conversation/${orgId}/${blobId}`;
 }
@@ -318,7 +318,7 @@ export function newConversationBlobId(): string {
 }
 
 // Isolated note attachment (Notes v2 E2, #3561, owner decision A3): bound to one note attachment id under notes/<org_id>/<attachment_id>,
-// never content-addressed and never stored in crove_kernel.file, so deleting a note or attachment removes its own bytes with zero sha256 oracle.
+// never content-addressed and never stored in ludy_kernel.file, so deleting a note or attachment removes its own bytes with zero sha256 oracle.
 export function noteAttachmentKey(orgId: string, attachmentId: string): string {
   return `notes/${orgId}/${attachmentId}`;
 }

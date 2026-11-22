@@ -14,7 +14,7 @@ test('the suggestion panel answers when no model is on, the editor still works, 
   await page.goto('/');
   await signInNewUser(page, newEmail('quote-suggest'));
   const slug = await createOrg(page, 'Công ty Báo Giá');
-  exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM ludy_kernel.tenant WHERE slug = :'slug'`, { slug });
 
   await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();

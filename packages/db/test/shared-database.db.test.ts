@@ -56,11 +56,11 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     );
     const roles = await client.query(
       `SELECT rolname, rolsuper, rolcreaterole, rolcreatedb, rolcanlogin, rolinherit, rolbypassrls, rolconfig::text AS config, rolvaliduntil::text AS until
-       FROM pg_roles WHERE rolname NOT LIKE 'crove\\_%' ORDER BY 1`,
+       FROM pg_roles WHERE rolname NOT LIKE 'crove\\_%' AND rolname NOT LIKE 'ludy\\_%' ORDER BY 1`,
     );
     const members = await client.query(
       `SELECT r.rolname AS role, m.rolname AS member, am.admin_option FROM pg_auth_members am JOIN pg_roles r ON r.oid = am.roleid JOIN pg_roles m ON m.oid = am.member
-       WHERE r.rolname NOT LIKE 'crove\\_%' AND m.rolname NOT LIKE 'crove\\_%' ORDER BY 1, 2`,
+       WHERE r.rolname NOT LIKE 'crove\\_%' AND r.rolname NOT LIKE 'ludy\\_%' AND m.rolname NOT LIKE 'crove\\_%' AND m.rolname NOT LIKE 'ludy\\_%' ORDER BY 1, 2`,
     );
     const datacl = await client.query('SELECT datacl::text AS acl FROM pg_database WHERE datname = current_database()');
     return { acls: acls.rows, roles: roles.rows, members: members.rows, datacl: datacl.rows };
@@ -76,7 +76,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     }
   };
   const ddlEvents = async () => (await client.query<{ session_role: string; command_tag: string; object_identity: string | null }>(
-    'SELECT session_role, command_tag, object_identity FROM crove_kernel.ddl_event ORDER BY id',
+    'SELECT session_role, command_tag, object_identity FROM ludy_kernel.ddl_event ORDER BY id',
   )).rows;
 
   beforeAll(async () => {
@@ -111,7 +111,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     await client?.end();
     await admin?.query(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`).catch(() => {});
     for (const role of ['dos_app', 'dos_reader', 'crove_lookalike']) await admin?.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
-    await admin?.query('ALTER ROLE crove_prober PASSWORD NULL').catch(() => {});
+    await admin?.query('ALTER ROLE ludy_prober PASSWORD NULL').catch(() => {});
     await admin?.end();
   });
 
@@ -122,11 +122,11 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     expect(await migrateShared()).toEqual([]);
     const variant = (await readSharedVariants(VARIANTS, files)).get(REVOKE_TEMP);
     const original = files.find((f) => f.name === REVOKE_TEMP);
-    const row = await client.query('SELECT sha256 FROM crove_meta.schema_migrations WHERE name = $1', [REVOKE_TEMP]);
+    const row = await client.query('SELECT sha256 FROM ludy_meta.schema_migrations WHERE name = $1', [REVOKE_TEMP]);
     // The variant's own hash is in the ledger, not the original's, so a shared database shows what ran.
     expect(row.rows[0]?.sha256).toBe(variant?.sha256);
     expect(variant?.sha256).not.toBe(original?.sha256);
-    expect((await client.query("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
+    expect((await client.query("SELECT value FROM ludy_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
   }, 180_000);
 
   it('leaves TEMPORARY with PUBLIC: the other system keeps it, and so do its new roles', async () => {
@@ -160,14 +160,14 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
 
   it('lets no foreign role reach what Ludy built, although the other system grants every new object of the migration role', async () => {
     // The precondition: the default privileges do reach a new object of this role in a Ludy schema.
-    await client.query('CREATE TABLE crove_kernel.t2284_probe (i int)');
+    await client.query('CREATE TABLE ludy_kernel.t2284_probe (i int)');
     try {
-      expect((await client.query("SELECT has_table_privilege('dos_reader', 'crove_kernel.t2284_probe', 'SELECT') AS reach")).rows).toEqual([{ reach: true }]);
-      expect((await hardeningViolations(client, { shared: true })).join('\n')).toMatch(/role dos_reader holds privileges on objects of the Ludy schema crove_kernel/);
+      expect((await client.query("SELECT has_table_privilege('dos_reader', 'ludy_kernel.t2284_probe', 'SELECT') AS reach")).rows).toEqual([{ reach: true }]);
+      expect((await hardeningViolations(client, { shared: true })).join('\n')).toMatch(/role dos_reader holds privileges on objects of the Ludy schema ludy_kernel/);
       await migrateShared();
       expect(logs.some((l) => l.includes("took back dos_reader's privileges"))).toBe(true);
     } finally {
-      await client.query('DROP TABLE crove_kernel.t2284_probe');
+      await client.query('DROP TABLE ludy_kernel.t2284_probe');
     }
     expect(await hardeningViolations(client, { shared: true })).toEqual([]);
     const reach = await client.query(
@@ -179,7 +179,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
        CROSS JOIN pg_namespace n
        LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v')
        LEFT JOIN pg_proc p ON p.pronamespace = n.oid
-       WHERE r.rolname IN ('dos_reader', 'dos_app', 'anon', 'authenticated', 'service_role') AND n.nspname IN ('crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr')
+       WHERE r.rolname IN ('dos_reader', 'dos_app', 'anon', 'authenticated', 'service_role') AND n.nspname IN ('ludy_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr')
        GROUP BY r.rolname ORDER BY 1`,
     );
     for (const row of reach.rows) expect(row, row.rolname).toMatchObject({ tables: false, schemas: false, functions: false });
@@ -190,7 +190,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     const result = await installDdlWatch({ adminUrl: sharedUrl, log: (m) => logs.push(m) });
     // On this image `postgres` may create event triggers (supautils' privileged role), as on a hosted project.
     expect(result).toBe('installed');
-    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await client.query('DELETE FROM ludy_kernel.ddl_event');
     // The other system's roles and the migration role in the other system's schema: no row.
     await withRole('dos_app', async (c) => {
       await c.query('CREATE TABLE dos_core.t1 (i int)');
@@ -202,52 +202,52 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     await client.query('DROP TABLE dos_core.t2');
     expect(await ddlEvents()).toEqual([]);
     // A foreign role that touches a Ludy schema, and a Ludy-named role anywhere, are recorded.
-    await client.query('GRANT USAGE, CREATE ON SCHEMA crove_kernel TO dos_app');
-    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await client.query('GRANT USAGE, CREATE ON SCHEMA ludy_kernel TO dos_app');
+    await client.query('DELETE FROM ludy_kernel.ddl_event');
     await withRole('dos_app', async (c) => {
-      await c.query('CREATE TABLE crove_kernel.foreign_probe (i int)');
-      await c.query('DROP TABLE crove_kernel.foreign_probe');
+      await c.query('CREATE TABLE ludy_kernel.foreign_probe (i int)');
+      await c.query('DROP TABLE ludy_kernel.foreign_probe');
     });
-    await client.query('REVOKE ALL ON SCHEMA crove_kernel FROM dos_app');
+    await client.query('REVOKE ALL ON SCHEMA ludy_kernel FROM dos_app');
     // One of Ludy's own roles, by name, is recorded wherever it works; a look-alike role of the other system is not.
-    await admin.query(`ALTER ROLE crove_prober PASSWORD '${FOREIGN_PASSWORD}'`);
-    await client.query('GRANT USAGE, CREATE ON SCHEMA dos_core TO crove_prober');
-    await withRole('crove_prober', (c) => c.query('CREATE TABLE dos_core.ludy_probe (i int)'));
+    await admin.query(`ALTER ROLE ludy_prober PASSWORD '${FOREIGN_PASSWORD}'`);
+    await client.query('GRANT USAGE, CREATE ON SCHEMA dos_core TO ludy_prober');
+    await withRole('ludy_prober', (c) => c.query('CREATE TABLE dos_core.ludy_probe (i int)'));
     await withRole('crove_lookalike', (c) => c.query('CREATE TABLE dos_core.lookalike_probe (i int)'));
     await client.query('DROP TABLE dos_core.ludy_probe');
     await client.query('DROP TABLE dos_core.lookalike_probe');
-    await client.query('REVOKE ALL ON SCHEMA dos_core FROM crove_prober');
+    await client.query('REVOKE ALL ON SCHEMA dos_core FROM ludy_prober');
     const recorded = await ddlEvents();
     expect(recorded).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ session_role: 'dos_app', command_tag: 'CREATE TABLE', object_identity: 'crove_kernel.foreign_probe' }),
-        expect.objectContaining({ session_role: 'crove_prober', command_tag: 'CREATE TABLE', object_identity: 'dos_core.ludy_probe' }),
+        expect.objectContaining({ session_role: 'dos_app', command_tag: 'CREATE TABLE', object_identity: 'ludy_kernel.foreign_probe' }),
+        expect.objectContaining({ session_role: 'ludy_prober', command_tag: 'CREATE TABLE', object_identity: 'dos_core.ludy_probe' }),
       ]),
     );
     expect(recorded.some((e) => e.object_identity === 'dos_core.lookalike_probe')).toBe(false);
-    expect(recorded.every((e) => (e.object_identity ?? '').startsWith('crove_') || e.session_role === 'crove_prober' || e.session_role === 'postgres')).toBe(true);
+    expect(recorded.every((e) => (e.object_identity ?? '').startsWith('ludy_') || (e.object_identity ?? '').startsWith('crove_') || e.session_role === 'ludy_prober' || e.session_role === 'postgres')).toBe(true);
     // The owned mode records the other system's DDL, as before (the flag is what differs).
-    await client.query("UPDATE crove_meta.deployment SET value = 'false' WHERE key = 'shared_database'");
+    await client.query("UPDATE ludy_meta.deployment SET value = 'false' WHERE key = 'shared_database'");
     try {
-      await client.query('DELETE FROM crove_kernel.ddl_event');
+      await client.query('DELETE FROM ludy_kernel.ddl_event');
       await withRole('dos_app', (c) => c.query('CREATE TABLE dos_core.owned_probe (i int)'));
       await client.query('DROP TABLE dos_core.owned_probe');
       expect((await ddlEvents()).some((e) => e.session_role === 'dos_app' && e.object_identity === 'dos_core.owned_probe')).toBe(true);
     } finally {
-      await client.query("UPDATE crove_meta.deployment SET value = 'true' WHERE key = 'shared_database'");
+      await client.query("UPDATE ludy_meta.deployment SET value = 'true' WHERE key = 'shared_database'");
     }
     // A database whose runner never wrote the mode (no table) behaves as an owned one, and a statement never fails for it.
-    await client.query('DROP TABLE crove_meta.deployment');
-    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await client.query('DROP TABLE ludy_meta.deployment');
+    await client.query('DELETE FROM ludy_kernel.ddl_event');
     await withRole('dos_app', (c) => c.query('CREATE TABLE dos_core.no_mode_probe (i int)'));
     await client.query('DROP TABLE dos_core.no_mode_probe');
     expect((await ddlEvents()).some((e) => e.object_identity === 'dos_core.no_mode_probe')).toBe(true);
     // A database with a ledger and no recorded mode is an owned one: the run refuses to call it shared without the switch.
     await expect(migrateShared()).rejects.toThrow(/migrated in owned-database mode/);
     await migrateShared({ allowModeSwitch: true });
-    expect((await client.query('SELECT value FROM crove_meta.deployment')).rows).toEqual([{ value: 'true' }]);
+    expect((await client.query('SELECT value FROM ludy_meta.deployment')).rows).toEqual([{ value: 'true' }]);
     // The pipeline's own runs leave no row either way.
-    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await client.query('DELETE FROM ludy_kernel.ddl_event');
     await migrateShared();
     expect(await ddlEvents()).toEqual([]);
   }, 180_000);
@@ -285,7 +285,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
 
   it('locks the mode to the database: a run that asks for the other mode is refused unless a switch is set, both ways', async () => {
     await expect(migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false })).rejects.toThrow(/migrated in shared-database mode and LUDY_SHARED_DATABASE \/ CROVE_SHARED_DATABASE asks for owned/);
-    expect((await client.query("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
+    expect((await client.query("SELECT value FROM ludy_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
     // The switch is explicit; the run that makes it is logged. The recorded mode follows, and so does the lock.
     logs.length = 0;
     try {
@@ -295,7 +295,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     } finally {
       await migrateShared({ allowModeSwitch: true });
     }
-    expect((await client.query("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
+    expect((await client.query("SELECT value FROM ludy_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
   }, 180_000);
 
   it('reports the roles of the host that can read and write every org\'s data, without failing the run', async () => {
@@ -310,24 +310,24 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     if ((await installDdlWatch({ adminUrl: sharedUrl })) !== 'installed') return;
     // The rename itself is DDL the watch would record into the table it moves: the triggers are off for it, and for the rename back.
     const triggers = async (state: 'DISABLE' | 'ENABLE ALWAYS') => {
-      for (const t of ['crove_ddl_watch', 'crove_ddl_watch_drop']) await client.query(`ALTER EVENT TRIGGER ${t} ${state}`);
+      for (const t of ['ludy_ddl_watch', 'ludy_ddl_watch_drop']) await client.query(`ALTER EVENT TRIGGER ${t} ${state}`);
     };
     await triggers('DISABLE');
-    await client.query('ALTER TABLE crove_kernel.ddl_event RENAME TO ddl_event_moved');
+    await client.query('ALTER TABLE ludy_kernel.ddl_event RENAME TO ddl_event_moved');
     await triggers('ENABLE ALWAYS');
     try {
       // The other system's statement does not touch the table at all.
       await withRole('dos_app', (c) => c.query('CREATE TABLE dos_core.unbroken (i int)'));
       await client.query('DROP TABLE dos_core.unbroken');
       // A Ludy role's does, and fails: nothing of Ludy's goes unrecorded.
-      await admin.query(`ALTER ROLE crove_prober PASSWORD '${FOREIGN_PASSWORD}'`);
-      await client.query('GRANT USAGE, CREATE ON SCHEMA dos_core TO crove_prober');
-      await expect(withRole('crove_prober', (c) => c.query('CREATE TABLE dos_core.refused (i int)'))).rejects.toThrow(/ddl_event/);
+      await admin.query(`ALTER ROLE ludy_prober PASSWORD '${FOREIGN_PASSWORD}'`);
+      await client.query('GRANT USAGE, CREATE ON SCHEMA dos_core TO ludy_prober');
+      await expect(withRole('ludy_prober', (c) => c.query('CREATE TABLE dos_core.refused (i int)'))).rejects.toThrow(/ddl_event/);
     } finally {
       await triggers('DISABLE');
-      await client.query('ALTER TABLE crove_kernel.ddl_event_moved RENAME TO ddl_event');
+      await client.query('ALTER TABLE ludy_kernel.ddl_event_moved RENAME TO ddl_event');
       await triggers('ENABLE ALWAYS');
-      await client.query('REVOKE ALL ON SCHEMA dos_core FROM crove_prober');
+      await client.query('REVOKE ALL ON SCHEMA dos_core FROM ludy_prober');
     }
   });
 
@@ -384,19 +384,21 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     await dropLogin('ludy_migrate_test');
     await admin.query(`CREATE ROLE ludy_migrate_test LOGIN CREATEROLE NOSUPERUSER PASSWORD '${FOREIGN_PASSWORD}'`);
     await admin.query(`GRANT CREATE ON DATABASE ${db.url.split('/').pop()} TO ludy_migrate_test`);
-    // The crove_* roles belong to the cluster and exist from the runs above, made by this container's admin; on a project they are
+    // The crove_*/ludy_* roles belong to the cluster and exist from the runs above, made by this container's admin; on a project they are
     // created by the login itself, which then holds ADMIN OPTION on them. Here the login is handed that, as a hand-over would.
-    const existing = await admin.query<{ rolname: string }>("SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%'");
+    const existing = await admin.query<{ rolname: string }>(
+      "SELECT rolname FROM pg_roles WHERE (rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname <> 'ludy_migrate_test'",
+    );
     for (const { rolname } of existing.rows) await admin.query(`GRANT ${pg.escapeIdentifier(rolname)} TO ludy_migrate_test WITH ADMIN OPTION`);
     const url = as(adminUrl, 'ludy_migrate_test', FOREIGN_PASSWORD, `${DB}_login`);
     try {
       const files = await readMigrations(MIGRATIONS);
       // Every file applies; the run then fails the guard, which names the admin that made the roles and can still act as them.
-      await expect(migrate({ adminUrl: url, dir: MIGRATIONS, sharedDatabase: true })).rejects.toThrow(/role postgres is not a Ludy role but can act as crove_/);
+      await expect(migrate({ adminUrl: url, dir: MIGRATIONS, sharedDatabase: true })).rejects.toThrow(/role postgres is not a Ludy role but can act as (?:crove|ludy)_/);
       const c = new pg.Client({ connectionString: url });
       await c.connect();
       try {
-        expect((await c.query('SELECT count(*)::int AS n FROM crove_meta.schema_migrations')).rows).toEqual([{ n: files.length }]);
+        expect((await c.query('SELECT count(*)::int AS n FROM ludy_meta.schema_migrations')).rows).toEqual([{ n: files.length }]);
         const violations = await hardeningViolations(c, { shared: true });
         expect(violations).toHaveLength(1);
         expect(violations[0]).toMatch(/^role postgres is not a Ludy role but can act as /);
@@ -411,11 +413,11 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
   }, 240_000);
 
   it('fails the guard for a foreign role that can act as a Ludy role', async () => {
-    await client.query('GRANT crove_auth_reader TO dos_reader');
+    await client.query('GRANT ludy_auth_reader TO dos_reader');
     try {
-      expect((await hardeningViolations(client, { shared: true })).join('\n')).toMatch(/role dos_reader is not a Ludy role but can act as crove_auth_reader/);
+      expect((await hardeningViolations(client, { shared: true })).join('\n')).toMatch(/role dos_reader is not a Ludy role but can act as ludy_auth_reader/);
     } finally {
-      await client.query('REVOKE crove_auth_reader FROM dos_reader');
+      await client.query('REVOKE ludy_auth_reader FROM dos_reader');
     }
     expect(await hardeningViolations(client, { shared: true })).toEqual([]);
   });

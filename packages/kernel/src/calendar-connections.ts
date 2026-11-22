@@ -8,7 +8,7 @@
 // - The connect command never sees a token: the OAuth callback seals it with the credential broker for the binding
 //   (org, calendar provider, account) and passes the envelope, which the calendar_credential_put definer stores.
 // - Only the worker reads a credential back (kernel.calendar.credential, system actor, calendar_credential_get granted
-//   to crove_worker alone), and only while the member is still in the org.
+//   to ludy_worker alone), and only while the member is still in the org.
 // - The worker's sync replaces the connection's busy blocks as a set (kernel.calendar.busy_replace). A block holds a
 //   start and an end, never a title or an attendee.
 import { sql } from 'kysely';
@@ -80,7 +80,7 @@ export const calendarOAuthBegin = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const { rows } = await sql<{ id: string }>`
-      SELECT crove_kernel.calendar_oauth_begin(${input.provider}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
+      SELECT ludy_kernel.calendar_oauth_begin(${input.provider}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
       .execute(ctx.trx)
       .catch(oauthError);
     const attemptId = rows[0]?.id;
@@ -100,7 +100,7 @@ export const calendarOAuthConsume = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const { rows } = await sql<{ code_verifier: string | null }>`
-      SELECT code_verifier FROM crove_kernel.calendar_oauth_consume(${input.provider}, ${input.stateHash})`
+      SELECT code_verifier FROM ludy_kernel.calendar_oauth_consume(${input.provider}, ${input.stateHash})`
       .execute(ctx.trx)
       .catch(oauthError);
     if (rows.length !== 1) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
@@ -131,7 +131,7 @@ export const calendarConnect = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.calendar:${ctx.orgId}:${userId}:${input.provider}:${input.externalAccount}`}, 0))`.execute(ctx.trx);
     const values = { display_name: input.displayName, scopes: input.scopes, expires_at: input.expiresAt, status: 'active' as const, status_reason: null, updated_at: ctx.now };
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['id', 'read_events'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -143,17 +143,17 @@ export const calendarConnect = defineCommand({
     if (existing) {
       // The read of the member's meetings stays on only if the new grant still carries its scope (a grant is exactly what was asked for this time: connecting again for
       // write-back alone drops it), so the switch never reads on without the grant.
-      await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ ...values, read_events: existing.read_events && canReadEventsWith(input.provider, input.scopes) }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.calendar_connection').set({ ...values, read_events: existing.read_events && canReadEventsWith(input.provider, input.scopes) }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       id = existing.id;
     } else {
       const row = await ctx.trx
-        .insertInto('crove_kernel.calendar_connection')
+        .insertInto('ludy_kernel.calendar_connection')
         .values({ org_id: ctx.orgId, user_id: userId, provider: input.provider, external_account: input.externalAccount, ...values })
         .returning('id')
         .executeTakeFirstOrThrow();
       id = row.id;
     }
-    await sql`SELECT crove_kernel.calendar_credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
+    await sql`SELECT ludy_kernel.calendar_credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
       .catch(calendarError);
     ctx.audit({ connection_id: id, provider: input.provider, reconnected: Boolean(existing) });
@@ -173,7 +173,7 @@ export const calendarDisconnect = defineCommand({
     const userId = requireUser(ctx);
     // The row policy shows a member only their own, so another member's connection is not found.
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['provider', 'user_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -185,15 +185,15 @@ export const calendarDisconnect = defineCommand({
     if (row.status === 'expired') {
       // The provider refused the grant already and the token is gone: nothing to revoke. The tokens first, then the
       // row: its foreign keys delete the busy blocks it made.
-      await sql`SELECT crove_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
-      await ctx.trx.deleteFrom('crove_kernel.calendar_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+      await sql`SELECT ludy_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
+      await ctx.trx.deleteFrom('ludy_kernel.calendar_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     } else {
       // The API cannot open the sealed token, so it cannot revoke the grant at the provider: the connection is marked, its
       // busy blocks go now (the slots are free at once) and the worker revokes the grant and finishes the removal
       // (kernel.calendar.finish_disconnect). It no longer shows in the member's list.
-      await ctx.trx.deleteFrom('crove_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('source_id', '=', input.connectionId).execute();
+      await ctx.trx.deleteFrom('ludy_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('source_id', '=', input.connectionId).execute();
       await ctx.trx
-        .updateTable('crove_kernel.calendar_connection')
+        .updateTable('ludy_kernel.calendar_connection')
         .set({ status: 'disconnecting', status_reason: null, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
@@ -218,7 +218,7 @@ export const calendarFinishDisconnect = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['status', 'provider', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -232,12 +232,12 @@ export const calendarFinishDisconnect = defineCommand({
       const reconnected = row.status === 'active' && input.revoked && input.ifVersion !== undefined && Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion);
       if (reconnected) {
         await ctx.trx
-          .updateTable('crove_kernel.calendar_connection')
+          .updateTable('ludy_kernel.calendar_connection')
           .set({ status: 'expired', status_reason: 'grant revoked while reconnecting: connect again', updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', input.connectionId)
           .execute();
-        await sql`SELECT crove_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
+        await sql`SELECT ludy_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
         ctx.audit({ connection_id: input.connectionId, provider: row.provider, expired_by_revoke: true });
       }
       return { connectionId: input.connectionId, finished: false };
@@ -248,8 +248,8 @@ export const calendarFinishDisconnect = defineCommand({
     if (!input.revoked && input.ifVersion !== undefined && Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) {
       return { connectionId: input.connectionId, finished: false };
     }
-    await sql`SELECT crove_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
-    await ctx.trx.deleteFrom('crove_kernel.calendar_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    await sql`SELECT ludy_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
+    await ctx.trx.deleteFrom('ludy_kernel.calendar_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, revoked: input.revoked, ...(input.reason ? { reason: input.reason } : {}) });
     return { connectionId: input.connectionId, finished: true };
   },
@@ -270,7 +270,7 @@ export const calendarMarkFailed = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['status', 'provider', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -281,12 +281,12 @@ export const calendarMarkFailed = defineCommand({
     if (row.status === 'disconnecting') return { connectionId: input.connectionId, marked: false };
     if (input.ifVersion !== undefined && Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) return { connectionId: input.connectionId, marked: false };
     await ctx.trx
-      .updateTable('crove_kernel.calendar_connection')
+      .updateTable('ludy_kernel.calendar_connection')
       .set(input.status === 'expired' ? { status: 'expired', status_reason: input.reason, updated_at: ctx.now } : { status_reason: input.reason })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
-    if (input.status === 'expired') await sql`SELECT crove_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
+    if (input.status === 'expired') await sql`SELECT ludy_kernel.calendar_credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(calendarError);
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, status: input.status, reason: input.reason });
     return { connectionId: input.connectionId, marked: true };
   },
@@ -305,7 +305,7 @@ export const calendarRefresh = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['status', 'provider', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -314,11 +314,11 @@ export const calendarRefresh = defineCommand({
     if (!row) throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
     // Compared at millisecond precision, the precision the caller read it at.
     if (row.status !== 'active' || Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) return { connectionId: input.connectionId, refreshed: false };
-    await sql`SELECT crove_kernel.calendar_credential_put(${input.connectionId}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
+    await sql`SELECT ludy_kernel.calendar_credential_put(${input.connectionId}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
       .catch(calendarError);
     await ctx.trx
-      .updateTable('crove_kernel.calendar_connection')
+      .updateTable('ludy_kernel.calendar_connection')
       .set({ expires_at: input.expiresAt, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -378,8 +378,8 @@ type TrxContext = { trx: CommandContext['trx']; orgId: string };
 // booking's own now) that ends after `from`: the provider's busy answer holds their copies, which the bookings already cover.
 async function writtenCopyCuts(ctx: TrxContext, connectionId: string, from: number, to?: number): Promise<BusyPiece[]> {
   const copies = await ctx.trx
-    .selectFrom('crove_kernel.calendar_event_link as l')
-    .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
+    .selectFrom('ludy_kernel.calendar_event_link as l')
+    .innerJoin('ludy_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
     .select(['l.synced_hash', 'e.starts_at', 'e.ends_at', 'e.title'])
     .where('l.org_id', '=', ctx.orgId)
     .where('l.connection_id', '=', connectionId)
@@ -416,7 +416,7 @@ export const calendarBusyReplace = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const conn = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['status', 'provider', 'user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -434,7 +434,7 @@ export const calendarBusyReplace = defineCommand({
     const answered = input.busy.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
     const wanted = new Map(busyPieces(cuts.length > 0 ? cutOut(answered, cuts) : answered, from, to).map((p) => [pieceKey(p), p]));
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event')
+      .selectFrom('ludy_kernel.calendar_event')
       .select(['id', 'external_id', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('source_id', '=', input.connectionId)
@@ -445,13 +445,13 @@ export const calendarBusyReplace = defineCommand({
     const stale = existing
       .filter((e) => (e.external_id === null || !wanted.has(e.external_id)) && (readStarted === null || new Date(e.created_at).getTime() <= readStarted))
       .map((e) => e.id);
-    if (stale.length > 0) await ctx.trx.deleteFrom('crove_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('id', 'in', stale).execute();
+    if (stale.length > 0) await ctx.trx.deleteFrom('ludy_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('id', 'in', stale).execute();
     // Blocks that ended before the window are history nobody reads: they go with the sync that moved past them.
-    await ctx.trx.deleteFrom('crove_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('source_id', '=', input.connectionId).where('ends_at', '<=', new Date(from)).execute();
+    await ctx.trx.deleteFrom('ludy_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('source_id', '=', input.connectionId).where('ends_at', '<=', new Date(from)).execute();
     const fresh = [...wanted.entries()].filter(([key]) => !have.has(key));
     for (let i = 0; i < fresh.length; i += 500) {
       await ctx.trx
-        .insertInto('crove_kernel.calendar_event')
+        .insertInto('ludy_kernel.calendar_event')
         .values(
           fresh.slice(i, i + 500).map(([key, p]) => ({
             org_id: ctx.orgId,
@@ -470,7 +470,7 @@ export const calendarBusyReplace = defineCommand({
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_kernel.calendar_connection')
+      .updateTable('ludy_kernel.calendar_connection')
       .set({ last_synced_at: ctx.now, status_reason: null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -497,7 +497,7 @@ export const calendarBusyAdd = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const conn = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['status', 'provider', 'user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -511,8 +511,8 @@ export const calendarBusyAdd = defineCommand({
     // The copy of a booking that was cancelled or moved and whose event the write-back has not deleted or moved yet is still at
     // the provider: an interval that is exactly such a copy (same times and title as its link recorded) is not a busy time.
     const copies = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event_link as l')
-      .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
+      .selectFrom('ludy_kernel.calendar_event_link as l')
+      .innerJoin('ludy_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
       .select(['l.synced_hash', 'e.title'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.connection_id', '=', input.connectionId)
@@ -526,7 +526,7 @@ export const calendarBusyAdd = defineCommand({
     const wanted = busyPieces(cuts.length > 0 ? cutOut(seen, cuts) : seen, from, to);
     if (wanted.length === 0) return { connectionId: input.connectionId, added: 0 };
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event')
+      .selectFrom('ludy_kernel.calendar_event')
       .select('external_id')
       .where('org_id', '=', ctx.orgId)
       .where('source_id', '=', input.connectionId)
@@ -537,7 +537,7 @@ export const calendarBusyAdd = defineCommand({
     const fresh = wanted.filter((p) => !have.has(pieceKey(p)));
     if (fresh.length > 0) {
       await ctx.trx
-        .insertInto('crove_kernel.calendar_event')
+        .insertInto('ludy_kernel.calendar_event')
         .values(
           fresh.map((p) => ({
             org_id: ctx.orgId,
@@ -577,12 +577,12 @@ export const calendarLiveTake = defineCommand({
   target: (input) => ({ type: 'kernel.calendar_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<{ allowed: boolean; limit?: 'connection' | 'org' }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.calendar_live:${ctx.orgId}`}, 0))`.execute(ctx.trx);
-    const conn = await ctx.trx.selectFrom('crove_kernel.calendar_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_kernel.calendar_live:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    const conn = await ctx.trx.selectFrom('ludy_kernel.calendar_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     if (!conn || conn.status !== 'active') throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
     const { rows } = await sql<{ org: string; connection: string }>`
       SELECT count(*) AS org, count(*) FILTER (WHERE target_id = ${input.connectionId}::uuid) AS connection
-      FROM crove_kernel.audit_event
+      FROM ludy_kernel.audit_event
       WHERE org_id = ${ctx.orgId}::uuid AND command = 'kernel.calendar.live_take' AND outcome = 'ok'
         AND occurred_at > now() - interval '1 minute' AND detail->>'allowed' = 'true'`.execute(ctx.trx);
     const used = { org: Number(rows[0]?.org ?? 0), connection: Number(rows[0]?.connection ?? 0) };
@@ -601,7 +601,7 @@ export const calendarConnectionsOf = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<Array<{ connectionId: string; userId: string; provider: string; expiresAt: string | null; updatedAt: string }>> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['id', 'user_id', 'provider', 'expires_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')
@@ -628,7 +628,7 @@ export const calendarCredential = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<SealedCalendarCredential> => {
     const { rows } = await sql<{ key_id: string; envelope: Buffer; provider: string; external_account: string }>`
-      SELECT key_id, envelope, provider, external_account FROM crove_kernel.calendar_credential_get(${input.connectionId}::uuid)`
+      SELECT key_id, envelope, provider, external_account FROM ludy_kernel.calendar_credential_get(${input.connectionId}::uuid)`
       .execute(ctx.trx)
       .catch(calendarError);
     const row = rows[0];
@@ -644,7 +644,7 @@ export const calendarConnectionState = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['status', 'provider', 'expires_at', 'updated_at', 'write_back', 'read_events', 'scopes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -671,7 +671,7 @@ export const calendarConnections = defineQuery({
   handler: async (ctx): Promise<CalendarConnectionView[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được lịch đã kết nối');
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['id', 'provider', 'display_name', 'status', 'status_reason', 'last_synced_at', 'write_back', 'read_events', 'scopes', 'connected_at'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', ctx.actor.userId)
@@ -745,7 +745,7 @@ export const calendarWriteBackSet = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['user_id', 'status', 'scopes', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -757,7 +757,7 @@ export const calendarWriteBackSet = defineCommand({
       // The grant must carry the events scope: the member connects again, asking for it.
       if (!row.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE)) throw new DomainError('CALENDAR_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép ghi lịch hẹn');
     }
-    await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ write_back: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    await ctx.trx.updateTable('ludy_kernel.calendar_connection').set({ write_back: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, write_back: input.enabled });
     return { connectionId: input.connectionId, writeBack: input.enabled };
   },
@@ -776,7 +776,7 @@ export const calendarReadEventsSet = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['user_id', 'status', 'scopes', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -787,7 +787,7 @@ export const calendarReadEventsSet = defineCommand({
       if (row.status !== 'active') throw new DomainError('CALENDAR_NOT_ACTIVE', 409, 'Lịch này không còn hoạt động, hãy kết nối lại');
       if (!canReadEventsWith(row.provider, row.scopes)) throw new DomainError('CALENDAR_READ_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch');
     }
-    await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ read_events: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    await ctx.trx.updateTable('ludy_kernel.calendar_connection').set({ read_events: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, read_events: input.enabled });
     return { connectionId: input.connectionId, readEvents: input.enabled };
   },
@@ -818,7 +818,7 @@ export const calendarWriteBackPlan = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<{ actions: WriteBackAction[] }> => {
     const conn = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['user_id', 'status', 'write_back', 'scopes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -828,7 +828,7 @@ export const calendarWriteBackPlan = defineQuery({
     // A host with two Google connections that write back has the event written to both, but only one asks for the Meet (C7, #1375): the one connected first, so a
     // booking has one join link and the one the booking records is the one its event holds.
     const meetConnection = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', conn.user_id)
@@ -847,7 +847,7 @@ export const calendarWriteBackPlan = defineQuery({
     const linksOf = async (ids: string[]): Promise<Map<string, PlanLink>> => {
       if (ids.length === 0) return new Map();
       const rows = await ctx.trx
-        .selectFrom('crove_kernel.calendar_event_link')
+        .selectFrom('ludy_kernel.calendar_event_link')
         .select(['event_id', 'external_id', 'state', 'synced_hash', 'attempts'])
         .where('org_id', '=', ctx.orgId)
         .where('connection_id', '=', input.connectionId)
@@ -890,7 +890,7 @@ export const calendarWriteBackPlan = defineQuery({
     for (let page = 0; page < PLAN_MAX_PAGES && actions.length < PLAN_LIMIT; page++) {
       const after: { startsAt: Date; id: string } | null = cursor;
       const events: PlanEvent[] = await ctx.trx
-        .selectFrom('crove_kernel.calendar_event')
+        .selectFrom('ludy_kernel.calendar_event')
         .select(['id', 'starts_at', 'ends_at', 'title', 'status', 'conference'])
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', conn.user_id)
@@ -911,8 +911,8 @@ export const calendarWriteBackPlan = defineQuery({
     // (a sweep that did not run for days): the delete is owed whatever the window says.
     if (actions.length < PLAN_LIMIT) {
       const owed = await ctx.trx
-        .selectFrom('crove_kernel.calendar_event_link as l')
-        .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
+        .selectFrom('ludy_kernel.calendar_event_link as l')
+        .innerJoin('ludy_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
         .select(['e.id', 'e.starts_at', 'e.ends_at', 'e.title', 'e.status', 'e.conference'])
         .where('l.org_id', '=', ctx.orgId)
         .where('l.connection_id', '=', input.connectionId)
@@ -947,7 +947,7 @@ export const calendarLinkRecord = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const conn = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select(['user_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -956,7 +956,7 @@ export const calendarLinkRecord = defineCommand({
     if (!conn) throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
     // Only a booking event of the connection's own member is linked.
     const event = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event')
+      .selectFrom('ludy_kernel.calendar_event')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.eventId)
@@ -968,7 +968,7 @@ export const calendarLinkRecord = defineCommand({
     // event Ludy made: the worker deletes events by this id, and the database holds the rule, not just the worker.
     if (input.externalId !== writeBackEventId(ctx.orgId, input.eventId, input.connectionId)) throw new DomainError('VALIDATION', 422, 'Mã sự kiện trên lịch ngoài không khớp với lịch hẹn này');
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event_link')
+      .selectFrom('ludy_kernel.calendar_event_link')
       .select(['id', 'attempts', 'synced_hash'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
@@ -980,14 +980,14 @@ export const calendarLinkRecord = defineCommand({
       // Attempts count failures of one thing to write: a booking that changed (or went from written to deleted) starts again.
       const sameWork = existing.synced_hash === input.syncedHash;
       await ctx.trx
-        .updateTable('crove_kernel.calendar_event_link')
+        .updateTable('ludy_kernel.calendar_event_link')
         .set({ state: input.state, synced_hash: input.syncedHash, attempts: input.state === 'error' ? Math.min((sameWork ? existing.attempts : 0) + 1, 1000) : 0, last_error: error, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
         .execute();
     } else {
       await ctx.trx
-        .insertInto('crove_kernel.calendar_event_link')
+        .insertInto('ludy_kernel.calendar_event_link')
         .values({
           org_id: ctx.orgId,
           connection_id: input.connectionId,
@@ -1015,7 +1015,7 @@ export const calendarWriteBackConnections = defineQuery({
   access: 'system',
   handler: async (ctx): Promise<string[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')

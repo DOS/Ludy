@@ -3,7 +3,7 @@
 // 1) Direct cycle (A->B->A), transitive cycle (A->B->C->A), self-loop (A->A) reject with 422 DEPENDENCY_CYCLE; diamond DAG succeeds.
 // 2) Concurrent projects.dependency.add serialized by project FOR UPDATE lock never closes a cycle race.
 // 3) Cross-project FK refusal, duplicate 409 DEPENDENCY_ALREADY_EXISTS, graph caps (20/task, 500/project).
-// 4) Isolated from crove_kernel.task.parent_task_id and request_depth (ADR-0029 agent delegation unchanged).
+// 4) Isolated from ludy_kernel.task.parent_task_id and request_depth (ADR-0029 agent delegation unchanged).
 // 5) Agent/viewer write refusal, tenant/legal-entity isolation, ON DELETE CASCADE on project_task removal & org_purge + offboarding.
 // 6) Deterministic board openBlockerCount/blockingCount, projects.today bottleneck items, and projects.weekly_status bottlenecks (AI off & on).
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -150,12 +150,12 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
@@ -306,10 +306,10 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'DEPENDENCY_CYCLE', status: 422 });
 
-    // Confirm crove_kernel.task.parent_task_id and request_depth stayed strictly untouched on every task.
+    // Confirm ludy_kernel.task.parent_task_id and request_depth stayed strictly untouched on every task.
     await withAdmin(async (client) => {
       const { rows } = await client.query<{ id: string; parent_task_id: string | null; request_depth: number }>(
-        `SELECT id, parent_task_id, request_depth FROM crove_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        `SELECT id, parent_task_id, request_depth FROM ludy_kernel.task WHERE org_id = $1 AND id = ANY($2::uuid[])`,
         [org.orgId, [a, b, c, d]],
       );
       expect(rows).toHaveLength(4);
@@ -346,22 +346,22 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     let defaultEntityId = '';
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1, $2, 'viewer'), ($1, $3, 'member')`,
         [org.orgId, viewer.userId, branchMember.userId],
       );
       defaultEntityId = (
-        await c.query<{ id: string }>(`SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`, [org.orgId])
+        await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [org.orgId])
       ).rows[0]!.id;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]!.id;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchMember.userId, branchEntityId, owner.userId],
       );
@@ -392,7 +392,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
       withAdmin(async (c) => {
         const tId = (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+            `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
              VALUES ($1, $2, 'human', 'user', $3) RETURNING id`,
             [org.orgId, title, entityId],
           )
@@ -492,7 +492,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
         const id = randomUUID();
         capTaskIds.push(id);
         await c.query(
-          `INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, $2, $3, 'human', 'user', $4)`,
           [org.orgId, id, `Chain ${i}`, defaultEntityId],
         );
@@ -651,7 +651,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_kernel.audit_event
+        `UPDATE ludy_kernel.audit_event
             SET occurred_at = $1
           WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
         [new Date(Date.now() - 32 * DAY), org.orgId],

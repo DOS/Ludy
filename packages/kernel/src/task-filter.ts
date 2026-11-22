@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Saved view filter and sort field mappings for the `kernel.task` scope (#2610) over `crove_kernel.task` (alias `t`).
+// Saved view filter and sort field mappings for the `kernel.task` scope (#2610) over `ludy_kernel.task` (alias `t`).
 import { sql, type Expression } from 'kysely';
 import {
   dateCompare,
@@ -14,7 +14,7 @@ import {
 const OPEN_TASK = sql<boolean>`t.status NOT IN ('done', 'cancelled')`;
 
 /**
- * Filter AST condition map for the `kernel.task` scope over `crove_kernel.task` aliased as `t`.
+ * Filter AST condition map for the `kernel.task` scope over `ludy_kernel.task` aliased as `t`.
  * Caller RLS (`le_scope`, tenant isolation, and agent scope) still applies underneath.
  */
 export function taskFields(options: { isOwner: boolean }): Record<string, FieldCondition> {
@@ -27,7 +27,7 @@ export function taskFields(options: { isOwner: boolean }): Record<string, FieldC
       if (op === 'is_empty') return sql<boolean>`t.assignee_position_id IS NULL`;
       if (ctx.me === null) return sql<boolean>`false`;
       const holdsSeat = sql<boolean>`EXISTS (
-        SELECT 1 FROM crove_kernel.position pos
+        SELECT 1 FROM ludy_kernel.position pos
          WHERE pos.org_id = t.org_id
            AND pos.id = t.assignee_position_id
            AND pos.holder_user_id = ${ctx.me}::uuid
@@ -43,7 +43,7 @@ export function taskFields(options: { isOwner: boolean }): Record<string, FieldC
   };
 }
 
-/** Sortable SQL expressions for the `kernel.task` scope over `crove_kernel.task` aliased as `t`. */
+/** Sortable SQL expressions for the `kernel.task` scope over `ludy_kernel.task` aliased as `t`. */
 export function taskSortColumns(): Record<string, Expression<unknown>> {
   return {
     due: sql`t.due`,

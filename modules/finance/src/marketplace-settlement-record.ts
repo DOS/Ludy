@@ -93,7 +93,7 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   if (months.length === 0) throw notPostable('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: '0' });
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.legal_entity_id', '=', settlement.legal_entity_id)
@@ -218,7 +218,7 @@ async function platformParty(ctx: CommandContext, built: Built): Promise<{ id: s
   const name = platformPartyName(built.platform);
   const partyId = crypto.randomUUID();
   // The id is given and the row inserted without RETURNING: the entity link of a new party (party_link_new) is not visible to the same statement's RETURNING check (#1280).
-  await ctx.trx.insertInto('crove_kernel.party').values({ id: partyId, org_id: ctx.orgId, kind: 'organization', name, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now }).execute();
+  await ctx.trx.insertInto('ludy_kernel.party').values({ id: partyId, org_id: ctx.orgId, kind: 'organization', name, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now }).execute();
   await ctx.trx
     .insertInto('crove_finance.marketplace_party')
     .values({ org_id: ctx.orgId, legal_entity_id: built.legalEntityId, platform: built.platform, party_id: partyId, created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null })
@@ -226,7 +226,7 @@ async function platformParty(ctx: CommandContext, built: Built): Promise<{ id: s
     .execute();
   const linked = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.legal_entity_id', '=', built.legalEntityId)

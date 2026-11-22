@@ -24,6 +24,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -154,17 +155,17 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -262,7 +263,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     // An export recorded before #878 has no range: left out.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, 'user', $2, 'finance.journal.export', gen_random_uuid(), 'ok', repeat('a', 64), '{"entries": 1}')`,
         [org.orgId, viewer.userId],
       ),
@@ -370,7 +371,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     const [row] = await admin(async (c) => (await c.query('SELECT document_id, reversal_entry_id, reason, voided_by FROM crove_finance.purchase_document_void WHERE org_id = $1', [org.orgId])).rows);
     expect(row).toEqual({ document_id: firstDocument, reversal_entry_id: reversalEntry, reason: 'Ghi nhầm tài khoản chi phí', voided_by: owner.userId });
     const [audit] = await admin(
-      async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.reverse' AND outcome = 'ok'`, [org.orgId])).rows,
+      async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.reverse' AND outcome = 'ok'`, [org.orgId])).rows,
     );
     expect(audit?.detail).toMatchObject({ reversed_entry_id: firstEntry, reversal_entry_id: reversalEntry, voided_document_id: firstDocument });
   });
@@ -481,7 +482,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     expect(String.fromCharCode(bytes[0] ?? 0, bytes[1] ?? 0)).toBe('PK');
     const audits = await admin(
       async (c) =>
-        (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
+        (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' AND outcome = 'ok'`, [org.orgId])).rows,
     );
     expect(audits.map((a) => a.detail)).toContainEqual({ entries: 1, format: 'misa_sme_purchases', from: null, to: null, stockLines: 'excluded' });
   });
@@ -558,7 +559,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
       await client.query(`SELECT crove_finance.post_journal_entry('2026-10-16'::date, 'Đảo trực tiếp', 'test', $1::uuid, $2::jsonb, $3::uuid)`, [
         randomUUID(),
         JSON.stringify(mirror),
@@ -622,7 +623,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
 
   it('explains a reversal the approver cannot see in full', async () => {
     await admin((c) =>
-      c.query(`CREATE POLICY crove_test_le_scope_165 ON crove_finance.journal_line AS RESTRICTIVE FOR SELECT TO crove_tenant
+      c.query(`CREATE POLICY crove_test_le_scope_165 ON crove_finance.journal_line AS RESTRICTIVE FOR SELECT TO ludy_tenant
                USING (memo IS DISTINCT FROM '${HIDDEN}')`),
     );
     // Posts an entry as the API login role in the owner's context.
@@ -631,7 +632,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
       await client.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         const { rows } = await client.query<{ id: string }>(
           `SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'Có dòng ngoài phạm vi', 'test', $1::uuid, $2::jsonb) AS id`,
           [randomUUID(), JSON.stringify(lines)],
@@ -675,7 +676,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
   });
 
   it('voids, when the migration runs, the documents of purchase entries reversed before it', async () => {
-    const migration = readFileSync(new URL('../../../supabase/migrations/20261018000000_crove_finance_purchase_document_void.sql', import.meta.url), 'utf8');
+    const migration = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261018000000_crove_finance_purchase_document_void.sql', import.meta.url), 'utf8'));
     const document = randomUUID();
     const entry = randomUUID();
     const reversal = randomUUID();

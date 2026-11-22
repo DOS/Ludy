@@ -44,10 +44,10 @@ suite('the bank lines that name an ad platform (#3417)', () => {
     const owner = await identity(`owner-${label}`);
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${label} ${randomUUID().slice(0, 6)}`);
     const branchMember = await identity(`branch-${label}`);
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
-    const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, branchMember]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchMember, branch, owner]);
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    const branch = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, branchMember]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchMember, branch, owner]);
     const importLines = (statement: BankStatementRow[], legalEntityId?: string) =>
       rt.execute('finance.bank.import', { bankAccount: '1121', filename: `sao-ke-${randomUUID().slice(0, 6)}.xlsx`, rows: statement, ...(legalEntityId ? { legalEntityId } : {}) }, { actor: asUser(owner), orgId, idempotencyKey: randomUUID() });
     const platformLines = (user: string, input: { from: string; to: string; terms: string[]; legalEntityId?: string }) => rt.query<BankPlatformLines>('finance.bank.platform_lines', input, { actor: asUser(user), orgId });
@@ -63,9 +63,9 @@ suite('the bank lines that name an ad platform (#3417)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);

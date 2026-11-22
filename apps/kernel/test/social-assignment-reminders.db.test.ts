@@ -27,7 +27,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -53,7 +53,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const other = await person('other');
-    for (const id of [member, other]) await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, id]));
+    for (const id of [member, other]) await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, id]));
     return { orgId, owner, member, other, conn: await connection(orgId, owner), dispatched: new Set() };
   }
 
@@ -61,7 +61,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -80,7 +80,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
   // What the worker does for each new event of the org: the dispatch, in the org's system context. Returns the ids of
   // the notifications it names for push.
   async function deliver(o: Org): Promise<string[]> {
-    const events = await one<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+    const events = await one<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
     const push: string[] = [];
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -97,12 +97,12 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     return sent;
   };
   const reminders = async (o: Org, user: string) => (await list(o, user)).items.filter((i) => i.kind === 'assignment_due').map((i) => ({ postId: i.postId, stage: i.detail.stage }));
-  const events = (o: Org) => one<{ payload: { post_id: string; stage: string; assignee_user_id: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.due_reminder' ORDER BY created_at, id", [o.orgId]);
+  const events = (o: Org) => one<{ payload: { post_id: string; stage: string; assignee_user_id: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.due_reminder' ORDER BY created_at, id", [o.orgId]);
   const marks = (postId: string) => one<{ soon: boolean; overdue: boolean }>('SELECT due_soon_reminded_at IS NOT NULL AS soon, overdue_reminded_at IS NOT NULL AS overdue FROM crove_social.post WHERE id = $1', [postId]);
   type Mail = { to: string; subject: string; payload: Record<string, unknown> };
   const mails = (o: Org, kind: string) =>
     one<Mail>(
-      `SELECT m.to_address AS to, m.subject, m.payload FROM crove_kernel.mail_message m JOIN crove_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
+      `SELECT m.to_address AS to, m.subject, m.payload FROM ludy_kernel.mail_message m JOIN crove_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
        WHERE m.org_id = $1 AND m.source = 'social.notification.dispatch' AND n.kind = $2 ORDER BY m.created_at`,
       [o.orgId, kind],
     );
@@ -116,16 +116,16 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -253,18 +253,18 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     // A disabled account: the scan leaves it out and nothing is marked, so it comes once the account is enabled.
     const disabled = await post(o, 'Tài khoản bị khóa');
     await assign(o, disabled, o.other, dueIn(2));
-    await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.other]));
+    await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.other]));
     await pass(o);
     await expect(worker.execute('social.post.remind_due', { postId: disabled }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });
     expect(await marks(disabled)).toEqual([{ soon: false, overdue: false }]);
-    await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [o.other]));
+    await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [o.other]));
     await pass(o);
     expect(await reminders(o, o.other)).toEqual([{ postId: disabled, stage: 'soon' }]);
 
     // A member who left keeps the post until it is changed, but is reminded of nothing.
     const departed = await post(o, 'Người đã rời đi');
     await assign(o, departed, o.other, dueIn(-1));
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
     await pass(o);
     await expect(worker.execute('social.post.remind_due', { postId: departed }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });
     expect((await events(o)).map((e) => e.payload.post_id)).toEqual([muted, disabled]);
@@ -289,7 +289,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     await assign(o, postId, o.member, dueIn(6));
     const assignedPush = await deliver(o);
     expect(assignedPush).toHaveLength(1);
-    const memberEmail = (await one<{ email: string }>('SELECT email FROM crove_kernel.user_account WHERE id = $1', [o.member]))[0]?.email;
+    const memberEmail = (await one<{ email: string }>('SELECT email FROM ludy_kernel.user_account WHERE id = $1', [o.member]))[0]?.email;
     expect(await mails(o, 'assigned')).toEqual([{ to: memberEmail, subject: 'Bạn được giao một bài: Khai trương cửa hàng bí mật', payload: expect.objectContaining({ kind: 'assigned', post: 'Khai trương cửa hàng bí mật' }) }]);
 
     await sweep();
@@ -304,7 +304,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     const ecdh = createECDH('prime256v1');
     ecdh.generateKeys();
     await exec(o, o.member, 'social.push.subscribe', { endpoint: `https://push.example/${randomUUID()}`, p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') });
-    const slug = (await one<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [o.orgId]))[0]?.slug;
+    const slug = (await one<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [o.orgId]))[0]?.slug;
     const target = await worker.query<PushTargets | null>('social.push.targets', { notificationId: reminderPush[0] }, { actor: system, orgId: o.orgId });
     expect(target).toMatchObject({ line: 'Một bài được giao cho bạn sắp đến hạn', path: `/o/${slug}/social/${postId}`, tag: `assignment_due:${postId}` });
     expect(JSON.stringify(target)).not.toContain('Khai trương');
@@ -319,7 +319,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     await expect(exec(o, o.owner, 'social.post.remind_due', { postId })).rejects.toThrow();
     const app = new pg.Client({ connectionString: (() => {
       const u = new URL(adminUrl);
-      u.username = 'crove_app';
+      u.username = 'ludy_app';
       u.password = 'test-app-pw';
       return u.toString();
     })() });

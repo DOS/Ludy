@@ -50,7 +50,7 @@ suite('social banned words on PostgreSQL (#1055)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -58,7 +58,7 @@ suite('social banned words on PostgreSQL (#1055)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -98,15 +98,15 @@ suite('social banned words on PostgreSQL (#1055)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     db = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -141,7 +141,7 @@ suite('social banned words on PostgreSQL (#1055)', () => {
     // The same phrase as the matcher compares it, whatever its case or spacing, once per org.
     await expect(add(o, 'tốt nhất', 'warn')).rejects.toMatchObject({ code: 'BANNED_WORD_EXISTS', status: 409 });
     await expect(add(o, '​', 'warn')).rejects.toBeDefined();
-    const audited = await admin((c) => c.query<{ command: string }>("SELECT command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.banned_word.%' AND outcome = 'ok' ORDER BY id", [o.orgId]));
+    const audited = await admin((c) => c.query<{ command: string }>("SELECT command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.banned_word.%' AND outcome = 'ok' ORDER BY id", [o.orgId]));
     expect(audited.rows.map((r) => r.command)).toEqual(['social.banned_word.add', 'social.banned_word.add']);
     expect(await exec(o, o.admin, 'social.banned_word.remove', { wordId })).toEqual({ wordId });
     await expect(exec(o, o.admin, 'social.banned_word.remove', { wordId })).rejects.toMatchObject({ code: 'BANNED_WORD_NOT_FOUND' });
@@ -265,7 +265,7 @@ suite('social banned words on PostgreSQL (#1055)', () => {
     const { token } = await exec<{ token: string }>(o, o.owner, 'social.review_link.create', { postId: viaClient });
     await appPool.query('SELECT crove_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', 'approved', null]);
     const event = await admin(
-      async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id,
+      async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id,
     );
     const settled = await worker.execute<{ settled: string[] }>('social.review.client_settle', { eventId: event as string }, { actor: { type: 'system', component: 'social-banned-words-test' }, orgId: o.orgId });
     expect(settled.settled).toEqual([]);

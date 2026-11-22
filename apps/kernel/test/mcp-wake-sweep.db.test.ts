@@ -73,7 +73,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const grantId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', $6::text[], $4, now(), now() + interval '30 days', $3)`,
         [orgId, grantId, ownerId, `oauth-${grantId}`, `client-${grantId}`, scopes],
       ),
@@ -84,9 +84,9 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
   }
 
   const deliveries = (grantId: string) =>
-    admin((c) => c.query(`SELECT id, type, status, attempts, last_code, body FROM crove_kernel.agent_wake_delivery WHERE grant_id = $1 ORDER BY created_at, id`, [grantId]).then((r) => r.rows as Array<{ id: string; type: string; status: string; attempts: number; last_code: number | null; body: { data: { items?: WakeItem[]; date?: string } } }>));
+    admin((c) => c.query(`SELECT id, type, status, attempts, last_code, body FROM ludy_kernel.agent_wake_delivery WHERE grant_id = $1 ORDER BY created_at, id`, [grantId]).then((r) => r.rows as Array<{ id: string; type: string; status: string; attempts: number; last_code: number | null; body: { data: { items?: WakeItem[]; date?: string } } }>));
   const wakeRow = (grantId: string) =>
-    admin((c) => c.query(`SELECT enabled, paused_reason, consecutive_failures, failing_since, last_status, last_delivery_at, next_due_at, signals_checked_at FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0]));
+    admin((c) => c.query(`SELECT enabled, paused_reason, consecutive_failures, failing_since, last_status, last_delivery_at, next_due_at, signals_checked_at FROM ludy_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0]));
 
   const item = (n: number): WakeItem => {
     const id = `0197a1c2-7b3e-7c11-9a55-${String(n).padStart(12, '0')}`;
@@ -97,7 +97,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const evaluate: SignalEvaluator = async () => ({ items: signals(), complete: options.complete ? options.complete() : ['deal_without_invoice'] });
     return () => runWakeSweep({ runtime: options.runtime ?? worker, workerDb, send: async (job) => void sent.push(job), evaluate });
   };
-  const stampPast = (grantId: string, column: string, interval: string) => admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET ${column} = now() - interval '${interval}' WHERE grant_id = $1`, [grantId]));
+  const stampPast = (grantId: string, column: string, interval: string) => admin((c) => c.query(`UPDATE ludy_kernel.agent_grant_wake SET ${column} = now() - interval '${interval}' WHERE grant_id = $1`, [grantId]));
 
   beforeAll(async () => {
     if (!ADMIN) return;
@@ -109,15 +109,15 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(defs);
@@ -189,7 +189,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
   it('sends a line\'s event only for a registered type and only to a grant that holds its scope: the source is not asked for an unregistered type, an unlisted field fails the grant\'s turn, and a grant without the scope gets none', async () => {
     const type = 'engage.zz_test_wake_event';
     const fields = { conversation_id: 'id', channel: ['facebook', 'zalo'] };
-    await admin((c) => c.query(`INSERT INTO crove_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES ($1, 'ludy.engage.write', $2::jsonb, 'ADR-0051')`, [type, JSON.stringify(fields)]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES ($1, 'ludy.engage.write', $2::jsonb, 'ADR-0051')`, [type, JSON.stringify(fields)]));
     try {
       const registry = { [type]: { scope: 'ludy.engage.write', fields } } as const;
       const holder = await wakeUp({}, ['ludy.read', 'ludy.engage.write']);
@@ -211,7 +211,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
       // The grant without the scope was asked (the sweep does not know scopes) but the database stored nothing for it, and the sweep went on.
       expect((await deliveries(readOnly.grantId)).filter((r) => r.type === type)).toHaveLength(0);
       // The database's refusal of that grant is the sweep's normal answer, not an attempt: no refusal row is written against the org for it.
-      expect((await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.enqueue' AND outcome <> 'ok'`, [orgId]))).rows[0].n).toBe(0);
+      expect((await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.enqueue' AND outcome <> 'ok'`, [orgId]))).rows[0].n).toBe(0);
       // A source that adds a field the registry does not list fails the grant's turn: nothing is stored.
       const before = (await deliveries(holder.grantId)).length;
       const bad = [{ type, events: async () => [{ conversation_id: conversation, channel: 'zalo', customer_name: 'Nguyễn Văn A' }] }];
@@ -220,7 +220,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
       expect(done.failures).toBeGreaterThan(0);
       expect((await deliveries(holder.grantId)).length).toBe(before);
     } finally {
-      await admin((c) => c.query(`DELETE FROM crove_kernel.mcp_wake_event_type WHERE type = $1`, [type]));
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.mcp_wake_event_type WHERE type = $1`, [type]));
     }
   });
 
@@ -240,8 +240,8 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     await sweep();
     expect(await deliveries(grantId)).toEqual([]);
     // Two days late: one event for the day it was due, and the next time is counted from now.
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET next_due_at = now() - interval '2 days' WHERE grant_id = $1`, [grantId]));
-    const due = await admin((c) => c.query(`SELECT to_char(next_due_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS d FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0].d as string));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant_wake SET next_due_at = now() - interval '2 days' WHERE grant_id = $1`, [grantId]));
+    const due = await admin((c) => c.query(`SELECT to_char(next_due_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS d FROM ludy_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0].d as string));
     expect((await sweep()).schedules).toBe(1);
     const rows = await deliveries(grantId);
     expect(rows).toHaveLength(1);
@@ -261,13 +261,13 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(stored?.status).toBe('queued');
     const sweep = sweeper(() => [], sent);
     expect((await sweep()).handedOver).toBe(0);
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_wake_delivery SET queued_at = now() - interval '4 minutes' WHERE id = $1`, [stored?.id]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_wake_delivery SET queued_at = now() - interval '4 minutes' WHERE id = $1`, [stored?.id]));
     expect((await sweep()).handedOver).toBe(1);
     expect(sent).toEqual([{ orgId, id: stored?.id }]);
     // Handed over now: not again for three minutes.
     expect((await sweep()).handedOver).toBe(0);
     // One that has waited eight hours (the queue's retries are over) is failed, and counts against the wake-up.
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_wake_delivery SET created_at = now() - interval '9 hours' WHERE id = $1`, [stored?.id]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_wake_delivery SET created_at = now() - interval '9 hours' WHERE id = $1`, [stored?.id]));
     expect((await sweep()).expired).toBe(1);
     expect((await deliveries(grantId))[0]).toMatchObject({ status: 'failed' });
     // Expiry is the worker's absence, not the receiver's fault: nothing counts against the wake-up.
@@ -279,9 +279,9 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const r = await receiver(200);
     // The column only holds an https name (a CHECK), and the local receiver is plain http: this throwaway database drops that one CHECK so the job can reach it.
     await admin(async (c) => {
-      const name = (await c.query(`SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_kernel.agent_grant_wake'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%https%'`)).rows[0]?.conname as string;
-      await c.query(`ALTER TABLE crove_kernel.agent_grant_wake DROP CONSTRAINT "${name}"`);
-      await c.query(`UPDATE crove_kernel.agent_grant_wake SET url = $2, consecutive_failures = 3, failing_since = now() - interval '2 days' WHERE grant_id = $1`, [grantId, `http://wake.example.test:${r.port}/hook`]);
+      const name = (await c.query(`SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'ludy_kernel.agent_grant_wake'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%https%'`)).rows[0]?.conname as string;
+      await c.query(`ALTER TABLE ludy_kernel.agent_grant_wake DROP CONSTRAINT "${name}"`);
+      await c.query(`UPDATE ludy_kernel.agent_grant_wake SET url = $2, consecutive_failures = 3, failing_since = now() - interval '2 days' WHERE grant_id = $1`, [grantId, `http://wake.example.test:${r.port}/hook`]);
     });
     const sent: Array<{ orgId: string; id: string }> = [];
     await sweeper(() => [item(9)], sent)();
@@ -298,14 +298,14 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(await wakeRow(grantId)).toMatchObject({ consecutive_failures: 0, failing_since: null, last_status: 'sent' });
     // Neither the clear secret nor the signature is in any table, and the audit rows of the steps carry ids and codes only.
     await admin(async (c) => {
-      const tables = (await c.query(`SELECT format('%I.%I', schemaname, tablename) AS t FROM pg_catalog.pg_tables WHERE schemaname LIKE 'crove\\_%'`)).rows.map((x: { t: string }) => x.t);
+      const tables = (await c.query(`SELECT format('%I.%I', schemaname, tablename) AS t FROM pg_catalog.pg_tables WHERE schemaname LIKE 'ludy\\_%' OR schemaname LIKE 'crove\\_%'`)).rows.map((x: { t: string }) => x.t);
       for (const table of tables) {
         for (const needle of [secret, got.headers['ludy-signature'] as string]) {
           const n = (await c.query(`SELECT count(*)::int AS n FROM ${table} x WHERE x::text LIKE '%' || $1 || '%'`, [needle])).rows[0].n as number;
           expect(n, table).toBe(0);
         }
       }
-      const audit = await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.mcp.wake.%' AND detail::text LIKE '%' || $2 || '%'`, [orgId, stored?.id]);
+      const audit = await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.mcp.wake.%' AND detail::text LIKE '%' || $2 || '%'`, [orgId, stored?.id]);
       for (const row of audit.rows) expect(JSON.stringify(row.detail)).not.toMatch(/Nguy|hook|wake\.example/);
     });
   });
@@ -314,9 +314,9 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const { grantId } = await wakeUp();
     const r = await receiver(503);
     await admin(async (c) => {
-      const name = (await c.query(`SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_kernel.agent_grant_wake'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%https%'`)).rows[0]?.conname as string | undefined;
-      if (name) await c.query(`ALTER TABLE crove_kernel.agent_grant_wake DROP CONSTRAINT "${name}"`);
-      await c.query(`UPDATE crove_kernel.agent_grant_wake SET url = $2 WHERE grant_id = $1`, [grantId, `http://wake.example.test:${r.port}/hook`]);
+      const name = (await c.query(`SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'ludy_kernel.agent_grant_wake'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%https%'`)).rows[0]?.conname as string | undefined;
+      if (name) await c.query(`ALTER TABLE ludy_kernel.agent_grant_wake DROP CONSTRAINT "${name}"`);
+      await c.query(`UPDATE ludy_kernel.agent_grant_wake SET url = $2 WHERE grant_id = $1`, [grantId, `http://wake.example.test:${r.port}/hook`]);
     });
     const sent: Array<{ orgId: string; id: string }> = [];
     await sweeper(() => [item(10)], sent)();
@@ -339,7 +339,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     await sweeper(() => [item(11)], sent)();
     const [stored] = await deliveries(grantId);
     const ctx = { actor: { type: 'system' as const, component: 'test' }, orgId };
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET consecutive_failures = 3, failing_since = now() - interval '2 days' WHERE grant_id = $1`, [grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant_wake SET consecutive_failures = 3, failing_since = now() - interval '2 days' WHERE grant_id = $1`, [grantId]));
     expect(await worker.execute('kernel.mcp.wake.record', { id: stored?.id, outcome: 'sent', code: 200 }, ctx)).toMatchObject({ recorded: true });
     expect((await deliveries(grantId))[0]).toMatchObject({ status: 'sent', attempts: 1, last_code: 200 });
     expect(await wakeRow(grantId)).toMatchObject({ consecutive_failures: 0, failing_since: null, last_status: 'sent' });
@@ -351,7 +351,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     await sweeper(() => [item(11), item(12)], sent)();
     const rows = await deliveries(grantId);
     expect(rows).toHaveLength(2);
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [grantId]));
     const result = await runWakeDelivery({ runtime: worker, broker: vault }, { orgId, id: rows[1]?.id as string }, { retryCount: 0, retryLimit: WAKE_RETRY_LIMIT });
     expect(result).toBe('dropped');
     expect((await deliveries(grantId))[1]).toMatchObject({ status: 'dropped', attempts: 0 });
@@ -366,7 +366,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     await sweeper(() => [item(21)], sent)();
     const [stored] = await deliveries(grantId);
     const ctx = { actor: { type: 'system' as const, component: 'test' }, orgId };
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET failing_since = now() - interval '8 days', consecutive_failures = 50 WHERE grant_id = $1`, [grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant_wake SET failing_since = now() - interval '8 days', consecutive_failures = 50 WHERE grant_id = $1`, [grantId]));
     await worker.execute('kernel.mcp.wake.record', { id: stored?.id, outcome: 'retry', code: 503 }, ctx);
     expect(await wakeRow(grantId)).toMatchObject({ enabled: false, paused_reason: 'failing', consecutive_failures: 51, last_status: 'failed' });
     // A paused wake-up is not looked at, and its deliveries are not made.
@@ -410,7 +410,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
 
   it('loses nothing when storing an event fails: the signal fires on the next look, and the schedule is still due', async () => {
     const { grantId } = await wakeUp({ schedule: 'daily', minute: 480 });
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET next_due_at = now() - interval '1 hour' WHERE grant_id = $1`, [grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant_wake SET next_due_at = now() - interval '1 hour' WHERE grant_id = $1`, [grantId]));
     const sent: Array<{ orgId: string; id: string }> = [];
     let broken = true;
     const flaky = {
@@ -436,7 +436,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
 
   it('asks the three rules as the grant, through the worker entry, writes no refusal against the owner, and stamps the check (the real evaluator)', async () => {
     const { grantId } = await wakeUp();
-    const before = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number));
+    const before = await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_kernel.security_event`).then((r) => r.rows[0].n as number));
     const queried: string[] = [];
     const spy = {
       execute: (...a: unknown[]) => (signalWorker.execute as (...b: unknown[]) => Promise<unknown>)(...a),
@@ -449,16 +449,16 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const done = await runWakeSweep({ runtime: spy, workerDb, send: async () => undefined });
     expect(done.failures).toBe(0);
     expect(queried.filter((q) => q.startsWith('kernel.signals.')).sort()).toEqual([...WAKE_RULES].sort());
-    expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number))).toBe(before);
+    expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_kernel.security_event`).then((r) => r.rows[0].n as number))).toBe(before);
     expect((await wakeRow(grantId)).signals_checked_at).not.toBeNull();
   });
 
   it('never enters a member-bound grant: the sweep asks no rule for it and the worker entry refuses it', async () => {
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgId]));
     const grantId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3, 'member', $3)`,
         [orgId, grantId, ownerId, `oauth-${grantId}`, `client-${grantId}`],
       ),
@@ -493,7 +493,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(await worker.execute('kernel.mcp.wake.enqueue', { id, grantId, type: 'ping', body: good }, ctx)).toEqual({ id, stored: false });
     // The database refuses a row written around the command.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES ($1, $2, $3, 'ping', $4::jsonb)`, [orgId, randomUUID(), grantId, JSON.stringify({ ...good, id: randomUUID(), note: 'x' })])),
+      admin((c) => c.query(`INSERT INTO ludy_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES ($1, $2, $3, 'ping', $4::jsonb)`, [orgId, randomUUID(), grantId, JSON.stringify({ ...good, id: randomUUID(), note: 'x' })])),
     ).rejects.toThrow(/check/i);
     // A user, however privileged, runs none of the delivery steps.
     for (const [name, input] of [
@@ -514,13 +514,13 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(answer.complete).toEqual(expect.arrayContaining(['deal_without_invoice', 'receivable_with_open_deal']));
     expect(answer.items).toEqual([]);
     // The grant's wake-up switched off: the worker entry refuses, so no rule answers in full and nothing is claimed.
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET enabled = false WHERE grant_id = $1`, [grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant_wake SET enabled = false WHERE grant_id = $1`, [grantId]));
     expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId, userId: ownerId })).complete).toEqual([]);
     // A grant that never set a wake-up is no better.
     const bare = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [orgId, bare, ownerId, `oauth-${bare}`, `client-${bare}`],
       ),
@@ -529,18 +529,18 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
   });
 
   it('refuses a revoked grant and a demoted grantor at the worker entry, and writes nothing against the owner', async () => {
-    const before = async () => admin((c) => c.query(`SELECT (SELECT count(*)::int FROM crove_kernel.security_event) AS s, (SELECT count(*)::int FROM crove_kernel.audit_event) AS a`).then((r) => r.rows[0] as { s: number; a: number }));
+    const before = async () => admin((c) => c.query(`SELECT (SELECT count(*)::int FROM ludy_kernel.security_event) AS s, (SELECT count(*)::int FROM ludy_kernel.audit_event) AS a`).then((r) => r.rows[0] as { s: number; a: number }));
     // A revoked grant.
     const revoked = (await wakeUp()).grantId;
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgId, revoked]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgId, revoked]));
     expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: revoked, userId: ownerId })).complete).toEqual([]);
     // A grantor who is no longer an owner or admin of the org: a second user made admin, a grant of theirs, then demoted.
     const other = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'mcp-wake-sweep', subject: 'demoted', email: 'demoted@mcp-wake-sweep.test', name: null });
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, other]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, other]));
     const demotedGrant = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [orgId, demotedGrant, other, `oauth-${demotedGrant}`, `client-${demotedGrant}`],
       ),
@@ -550,7 +550,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const atDemoted = await before();
     expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: demotedGrant, userId: other })).complete).toEqual(expect.arrayContaining(['deal_without_invoice']));
     expect(await before()).toEqual(atDemoted);
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, other]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, other]));
     expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: demotedGrant, userId: other })).complete).toEqual([]);
     // A refusal writes no audit row. (The runtime counts each refusal in its bounded tally, as it does for the same grant asked through the API; a grant the sweep asks has standing when mcp_wake_due picks it, so this is the race alone.)
     expect((await before()).a).toBe(atDemoted.a);

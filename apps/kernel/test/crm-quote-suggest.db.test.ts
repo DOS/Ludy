@@ -47,8 +47,8 @@ suite('crm.quote.suggest_source on PostgreSQL (#2698)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
-    const party = async (name: string) => (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]))[0]!.id;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    const party = async (name: string) => (await rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]))[0]!.id;
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
     const deal = async (partyId: string, title = 'Đơn bánh Tết') => {
@@ -58,7 +58,7 @@ suite('crm.quote.suggest_source on PostgreSQL (#2698)', () => {
     // A customer's mail in the Inbox, linked to the party as a person links it.
     const mail = async (partyId: string, text: string, id = randomUUID()) => {
       await worker.execute('kernel.conversation.email_ingest', { events: [{ kind: 'email', threadId: `<${id}@mau.test>`, messageId: `<${id}@mau.test>`, direction: 'in', contact: { id: 'khach@mau.test', name: 'Khách' }, text, at: new Date().toISOString(), verified: true }] }, { actor: SYSTEM, orgId });
-      await rows('UPDATE crove_kernel.conversation SET party_id = $2 WHERE org_id = $1 AND party_id IS NULL', [orgId, partyId]);
+      await rows('UPDATE ludy_kernel.conversation SET party_id = $2 WHERE org_id = $1 AND party_id IS NULL', [orgId, partyId]);
     };
     const source = (user: string, dealId: string) => query<QuoteSuggestSource>(user, 'crm.quote.suggest_source', { dealId });
     return { orgId, owner, member, viewer, party, exec, query, deal, mail, source };
@@ -73,15 +73,15 @@ suite('crm.quote.suggest_source on PostgreSQL (#2698)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
@@ -147,7 +147,7 @@ suite('crm.quote.suggest_source on PostgreSQL (#2698)', () => {
     await expect(o.source(o.viewer, deal.id)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(other.source(other.owner, deal.id)).rejects.toMatchObject({ code: 'DEAL_NOT_FOUND' });
     await o.source(o.owner, deal.id);
-    const audits = await rows("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.suggest_source'", [o.orgId]);
+    const audits = await rows("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.suggest_source'", [o.orgId]);
     expect(audits).toEqual([]);
   });
 });

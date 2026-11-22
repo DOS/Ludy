@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Search across the transcript lines the caller reads (#2589, ADR-0047 point 2, meetings plan L2). A plain text search: no model call, no AI meter, and it works with
-// AI off. The typed words are folded in SQL the way every line was folded when it was stored (crove_kernel.search_fold: lower case, Vietnamese marks and đ removed), so
+// AI off. The typed words are folded in SQL the way every line was folded when it was stored (ludy_kernel.search_fold: lower case, Vietnamese marks and đ removed), so
 // "chiet khau" finds "chiết khấu". Which lines are found is decided twice. First by crove_meetings.search_segment_ids (migration 20261226000000), a definer that finds the
 // hits by the index and keeps the ones the caller reads (the recorder: every stage of their own meeting; any other reader: published lines of a meeting they read; an owner
 // or admin who is no reader finds nothing; a meeting past its text date is left out) and answers ids only. Then this query reads those ids under row security, which decides

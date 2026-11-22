@@ -24,7 +24,7 @@ describe('the tables the owner export contains (#3201)', () => {
     const exported = exportedTables();
     expect(exported.has('crove_finance.household_profile')).toBe(true);
     expect(exported.has('crove_finance.journal_line')).toBe(true);
-    expect(exported.has('crove_kernel.idempotency_key')).toBe(false);
+    expect(exported.has('ludy_kernel.idempotency_key')).toBe(false);
     expect(Object.keys(EXPORT_TABLES).length).toBeGreaterThan(60);
   });
 });
@@ -52,7 +52,7 @@ describe('export coverage problems (#3201)', () => {
   });
 
   it('fails a schema with org_id tables that is not covered, so a new schema cannot be forgotten', () => {
-    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects', 'crove_sign']);
+    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'ludy_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects', 'crove_sign']);
     expect(exportCoverageProblems(['crove_newline.thing', 'crove_finance.journal_line'], exported, {})).toEqual([
       'crove_newline has tables with org_id, but is not in COVERED_SCHEMAS (apps/kernel/test/org-export-coverage.ts): add it once its tables are in EXPORT_TABLES or on NOT_EXPORTED with a reason',
     ]);

@@ -2,7 +2,7 @@
 // the portal with what the accountant typed (apps/kernel/src/portal-sync.ts) and fetches the period's purchase list as
 // JSON; the rules that read it are in domain/portal-api.ts.
 // - finance.portal_sync.call / call_end (owners, admins, members; call R2 since #1577, call_end R1) record each call to the portal in
-//   crove_kernel.external_call before and after it is made (ADR-0025 decision 5): who, which step, the outcome class.
+//   ludy_kernel.external_call before and after it is made (ADR-0025 decision 5): who, which step, the outcome class.
 //   Never a password, a CAPTCHA answer, a token or a response body. The login step is refused after repeated wrong
 //   passwords for the org, so Crove never locks the client's portal account by retrying.
 // - finance.portal_sync.list (owners, admins, members; R1) files the stored JSON answer as a pending list of the
@@ -82,7 +82,7 @@ export const portalSyncCall = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới lấy được dữ liệu từ cổng thuế');
     const userId = ctx.actor.userId;
     // The portal user name is the client's tax code; a purchase list is also told apart by it (checkPortalList).
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
     const taxCode = parseTaxCode(tenant?.tax_code)?.normalized;
     if (!taxCode) {
       throw new DomainError('TAX_CODE_REQUIRED', 409, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi lấy dữ liệu từ cổng thuế');
@@ -101,11 +101,11 @@ export const portalSyncCall = defineCommand({
       // unless the portal clearly refused only the CAPTCHA: a wrong password, a locked account, an answer Crove could not
       // read, an outage, and a login still in flight may all have reached the password check.
       const recent = await ctx.trx
-        .selectFrom('crove_kernel.external_call')
+        .selectFrom('ludy_kernel.external_call')
         .select([
           sql<string>`count(*) FILTER (WHERE started_at > pg_catalog.now() - interval '1 hour')::text`.as('logins'),
           sql<string>`count(*) FILTER (WHERE state <> 'succeeded' AND coalesce(error_code, '') <> 'WRONG_CAPTCHA'
-            AND started_at > coalesce((SELECT max(s.started_at) FROM crove_kernel.external_call s
+            AND started_at > coalesce((SELECT max(s.started_at) FROM ludy_kernel.external_call s
               WHERE s.org_id = ${ctx.orgId} AND s.target = ${PORTAL_SYNC_TARGET} AND s.step = 'login' AND s.state = 'succeeded'), '-infinity'))::text`.as('failed'),
           sql<string>`count(*) FILTER (WHERE state = 'started' AND started_at > pg_catalog.now() - interval '1 minute')::text`.as('inflight'),
         ])
@@ -135,14 +135,14 @@ export const portalSyncCall = defineCommand({
     }
     // A download found started (the request that made it died) is a GET, safe to make again: it counts once more.
     const inserted = await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key, module: 'finance', target: PORTAL_SYNC_TARGET, step: input.step, retry_safety: 'safe', started_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
       .returning('id')
       .executeTakeFirst();
     if (!inserted) {
       const again = await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'started', calls: sql<number>`calls + 1`, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', key)
@@ -174,7 +174,7 @@ export const portalSyncCallEnd = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới lấy được dữ liệu từ cổng thuế');
     const ok = input.outcome === 'succeeded';
     const ended = await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set(
         ok
           ? { state: 'succeeded', external_ref: input.externalRef ?? null, finished_at: ctx.now, updated_at: ctx.now }
@@ -210,7 +210,7 @@ export const portalSyncList = defineCommand({
     // Only a portal answer the API stored: a JSON import file of this org, never a document or an uploaded sheet. Files
     // are deduplicated by content per org, so another member who fetched the same answer gets the same file.
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'source', 'content_type', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -236,7 +236,7 @@ export const portalSyncList = defineCommand({
     // The latest portal answer replaces the period's earlier synced lists (kept, never deleted); Excel imports stay.
     const synced = await ctx.trx
       .selectFrom('crove_finance.portal_invoice_list as l')
-      .innerJoin('crove_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
+      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
       .select('l.id')
       .where('l.org_id', '=', ctx.orgId)
       .where('l.legal_entity_id', '=', legalEntityId)
@@ -294,7 +294,7 @@ export const portalSyncXmlPlan = defineQuery({
   handler: async (ctx, input): Promise<PortalXmlPlan> => {
     const list = await ctx.trx
       .selectFrom('crove_finance.portal_invoice_list as l')
-      .innerJoin('crove_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
+      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
       .select(['l.id', 'l.period', 'l.status', 'l.legal_entity_id'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.listId)
@@ -333,7 +333,7 @@ export const portalSyncXmlPlan = defineQuery({
     const finished = new Set(
       (
         await ctx.trx
-          .selectFrom('crove_kernel.external_call')
+          .selectFrom('ludy_kernel.external_call')
           .select('key')
           .where('org_id', '=', ctx.orgId)
           .where('target', '=', PORTAL_SYNC_TARGET)
@@ -345,7 +345,7 @@ export const portalSyncXmlPlan = defineQuery({
     );
     const done = (
       await ctx.trx
-        .selectFrom('crove_kernel.external_call')
+        .selectFrom('ludy_kernel.external_call')
         .select(sql<string>`count(*)::text`.as('n'))
         .where('org_id', '=', ctx.orgId)
         .where('target', '=', PORTAL_SYNC_TARGET)
@@ -369,7 +369,7 @@ export const portalSyncCheck = defineQuery({
   input: z.object({}),
   access: EDITORS,
   handler: async (ctx): Promise<{ taxCode: string }> => {
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
     const taxCode = parseTaxCode(tenant?.tax_code)?.normalized;
     if (!taxCode) {
       throw new DomainError('TAX_CODE_REQUIRED', 409, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi lấy dữ liệu từ cổng thuế');

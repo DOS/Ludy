@@ -121,7 +121,7 @@ export const recordPayrollPayment = defineCommand({
     if (!sameFlag) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Cảnh báo chi tiền mặt của đề xuất không khớp bảng lương; hãy lập lại đề xuất', { what: 'checks' });
     // The person who approved the run is listed on the proposal as a co-author (the preparer writes it; a proposal row written some other way must too).
     if (expected.approvedBy) {
-      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      const own = await ctx.trx.selectFrom('ludy_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
       if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
         throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất chi lương không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
       }

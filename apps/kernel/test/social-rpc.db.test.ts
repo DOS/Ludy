@@ -198,7 +198,7 @@ suite('social posts through the API', () => {
 
     await migrate({ adminUrl, dir: MIGRATIONS });
 
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
 
@@ -212,7 +212,7 @@ suite('social posts through the API', () => {
 
     };
 
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
 
     pool = createPool({ connectionString: appUrl, max: 4 });
 

@@ -47,7 +47,7 @@ export interface RecordedArchive {
 // The audit rows of one command for the org, newest first (all years, or one).
 async function auditRows(ctx: QueryContext, command: string, year?: number) {
   let query = ctx.trx
-    .selectFrom('crove_kernel.audit_event')
+    .selectFrom('ludy_kernel.audit_event')
     .select(['occurred_at', 'detail', 'command_id'])
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', command)
@@ -85,7 +85,7 @@ async function lockedThrough(ctx: QueryContext): Promise<string | null> {
 // entry dated up to the year's end, as the caller reads them.
 async function archiveEntities(ctx: QueryContext, year: number): Promise<Array<{ id: string; isDefault: boolean }>> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity as e')
+    .selectFrom('ludy_kernel.legal_entity as e')
     .select(['e.id', 'e.is_default'])
     .where('e.org_id', '=', ctx.orgId)
     .where((eb) =>
@@ -185,14 +185,14 @@ export const yearArchiveSource = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<ArchiveSource> => {
     const tenant = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['slug', 'vat_filing_period', 'tax_code'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
     const files = await ctx.trx
       .selectFrom('crove_finance.journal_entry as j')
       .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id'))
-      .innerJoin('crove_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'd.org_id').onRef('f.id', '=', 'd.source_file_id'))
+      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'd.org_id').onRef('f.id', '=', 'd.source_file_id'))
       .select(['f.id', 'f.filename', 'f.content_type', 'f.storage_key', 'f.generation', 'f.sha256'])
       .distinct()
       .where('j.org_id', '=', ctx.orgId)

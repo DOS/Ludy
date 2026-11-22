@@ -9,9 +9,9 @@ import { resolveLegalEntity } from './legal-entity.ts';
 
 export async function wholeOrgEntity(ctx: QueryContext): Promise<string> {
   if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
-  const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
+  const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (ludy_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
   if (scope[0]?.whole !== true) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Bạn chỉ xem được một phần sổ sách nên chưa đọc được số liệu tài chính của cả tổ chức');
-  const { rows: entities } = await sql<{ n: string }>`SELECT count(*)::text AS n FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+  const { rows: entities } = await sql<{ n: string }>`SELECT count(*)::text AS n FROM ludy_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
   if (Number(entities[0]?.n ?? 0) > 1) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Tổ chức có nhiều pháp nhân nên số liệu của một pháp nhân không phải của cả tổ chức');
   return await resolveLegalEntity(ctx, undefined);
 }

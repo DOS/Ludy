@@ -108,7 +108,7 @@ describe('permissionProblems() on planted mismatches', () => {
     expect(permissionProblems(finance([]), { uses: [{ permission: 'finance.period.unlock', by: 'the approval policy (X)' }] })).toEqual([
       'the approval policy (X) names finance.period.unlock, which no manifest declares: declare it in finance.ts',
     ]);
-    expect(permissionProblems(finance([unlock]), { uses: [use, ...sqlPermissionUses('function crove_finance.f', "IF NOT crove_kernel.ctx_has_permission('finance.bank.export') THEN").uses] })).toEqual([
+    expect(permissionProblems(finance([unlock]), { uses: [use, ...sqlPermissionUses('function crove_finance.f', "IF NOT ludy_kernel.ctx_has_permission('finance.bank.export') THEN").uses] })).toEqual([
       'function crove_finance.f names finance.bank.export, which no manifest declares: declare it in finance.ts',
     ]);
     // A planted permission IN ('<undeclared>') in a function body (#1641).
@@ -119,13 +119,13 @@ describe('permissionProblems() on planted mismatches', () => {
 
   it('fails on a seeded row of an undeclared permission, or default roles that differ from the rows', () => {
     expect(permissionProblems(finance([unlock]), { uses: [use], grants: [grant, { role_key: 'finance.accountant', permission: 'finance.bank.export' }] })).toEqual([
-      'crove_kernel.role_permission (finance.accountant, finance.bank.export): no manifest declares finance.bank.export; declare it in finance.ts',
+      'ludy_kernel.role_permission (finance.accountant, finance.bank.export): no manifest declares finance.bank.export; declare it in finance.ts',
     ]);
     expect(permissionProblems(finance([unlock]), { uses: [use], grants: [grant, { role_key: 'finance.accountant', permission: 'finance.period.unlock' }] })).toEqual([
-      'crove_kernel.role_permission (finance.accountant, finance.period.unlock): finance.ts does not list finance.accountant among the default roles of finance.period.unlock',
+      'ludy_kernel.role_permission (finance.accountant, finance.period.unlock): finance.ts does not list finance.accountant among the default roles of finance.period.unlock',
     ]);
     expect(permissionProblems(finance([unlock]), { uses: [use], grants: [] })).toEqual([
-      'finance.ts: finance.period.unlock lists the default role finance.chief_accountant, but no crove_kernel.role_permission row grants it',
+      'finance.ts: finance.period.unlock lists the default role finance.chief_accountant, but no ludy_kernel.role_permission row grants it',
     ]);
   });
 
@@ -152,7 +152,7 @@ describe('permissionProblems() on planted mismatches', () => {
       expect(read.problems, text).toEqual([]);
       return read.uses.map((u) => u.permission);
     };
-    expect(keys("crove_kernel.ctx_has_permission('finance.period.unlock'::text) AND p.permission = 'finance.proposal.approve'")).toEqual([
+    expect(keys("ludy_kernel.ctx_has_permission('finance.period.unlock'::text) AND p.permission = 'finance.proposal.approve'")).toEqual([
       'finance.period.unlock',
       'finance.proposal.approve',
     ]);
@@ -168,8 +168,8 @@ describe('permissionProblems() on planted mismatches', () => {
       "  v_keys text[] DEFAULT ARRAY['a.b.d', 'a.b.e'];",
       'BEGIN',
       "  IF x THEN v_unlock := 'a.b.f'; END IF;",
-      '  IF crove_kernel.ctx_has_permission(v_unlock) THEN RETURN 1; END IF;',
-      '  PERFORM 1 FROM crove_kernel.role_permission p WHERE p.permission = ANY (v_keys);',
+      '  IF ludy_kernel.ctx_has_permission(v_unlock) THEN RETURN 1; END IF;',
+      '  PERFORM 1 FROM ludy_kernel.role_permission p WHERE p.permission = ANY (v_keys);',
       'END',
     ].join('\n');
     expect(keys(body).sort()).toEqual(['a.b.c', 'a.b.d', 'a.b.e', 'a.b.f']);
@@ -177,36 +177,36 @@ describe('permissionProblems() on planted mismatches', () => {
 
   it('fails on a permission named in a form it cannot attribute to a key (#1641)', () => {
     const problems = (by: string, text: string) => sqlPermissionUses(by, text).problems;
-    expect(problems('function crove_kernel.f', 'SELECT crove_kernel.ctx_has_permission(p_key)')).toEqual([
-      'function crove_kernel.f names a permission through ctx_has_permission(...) p_key, which this check cannot attribute to a key: write the key as a literal',
+    expect(problems('function ludy_kernel.f', 'SELECT ludy_kernel.ctx_has_permission(p_key)')).toEqual([
+      'function ludy_kernel.f names a permission through ctx_has_permission(...) p_key, which this check cannot attribute to a key: write the key as a literal',
     ]);
-    expect(problems('function crove_kernel.f', 'DECLARE v text; BEGIN SELECT k INTO v FROM t; v := lower(v); PERFORM 1 WHERE p.permission = v; END')).toHaveLength(1);
+    expect(problems('function ludy_kernel.f', 'DECLARE v text; BEGIN SELECT k INTO v FROM t; v := lower(v); PERFORM 1 WHERE p.permission = v; END')).toHaveLength(1);
     expect(problems('policy crove_finance.t.p', "p.permission LIKE 'finance.%'")).toEqual([
       'policy crove_finance.t.p matches a permission column by pattern (permission LIKE), which this check cannot attribute to a key: compare with literals',
     ]);
-    expect(problems('function crove_kernel.f', 'p.permission IN (SELECT k FROM t)')).toHaveLength(1);
+    expect(problems('function ludy_kernel.f', 'p.permission IN (SELECT k FROM t)')).toHaveLength(1);
     // A literal beside something else does not make the rest attributable.
-    expect(problems('function crove_kernel.f', "p.permission IN ('finance.period.unlock', p_key)")).toHaveLength(1);
-    expect(problems('function crove_kernel.f', "crove_kernel.ctx_has_permission(COALESCE(p_key, 'finance.period.unlock'))")).toHaveLength(1);
-    expect(problems('function crove_kernel.f', "p.permission = ANY (ARRAY['finance.period.unlock', p_key])")).toHaveLength(1);
+    expect(problems('function ludy_kernel.f', "p.permission IN ('finance.period.unlock', p_key)")).toHaveLength(1);
+    expect(problems('function ludy_kernel.f', "ludy_kernel.ctx_has_permission(COALESCE(p_key, 'finance.period.unlock'))")).toHaveLength(1);
+    expect(problems('function ludy_kernel.f', "p.permission = ANY (ARRAY['finance.period.unlock', p_key])")).toHaveLength(1);
     // A variable assigned a literal, then written by a query, a loop or a plain = assignment, is no longer known.
     for (const write of ['SELECT k INTO v FROM t;', 'FOR v IN SELECT k FROM t LOOP NULL; END LOOP;', 'v = lower(k);']) {
-      expect(problems('function crove_kernel.f', `DECLARE v text := 'finance.period.unlock'; BEGIN ${write} PERFORM crove_kernel.ctx_has_permission(v); END`), write).toHaveLength(1);
+      expect(problems('function ludy_kernel.f', `DECLARE v text := 'finance.period.unlock'; BEGIN ${write} PERFORM ludy_kernel.ctx_has_permission(v); END`), write).toHaveLength(1);
     }
     // Comparisons no form above reads: positional parameters, a subquery, IS DISTINCT FROM, CASE ... WHEN.
     for (const text of ['p.permission = $1', 'p.permission = ANY ($1)', 'p.permission = (SELECT k FROM t)', "p.permission IS DISTINCT FROM 'a.b.c'", "CASE p.permission WHEN 'a.b.c' THEN 1 END"]) {
-      expect(problems('function crove_kernel.f', text), text).toHaveLength(1);
+      expect(problems('function ludy_kernel.f', text), text).toHaveLength(1);
     }
     // The other way round, a literal is read and a parameter is not.
     expect(sqlPermissionUses('f', "'a.b.c' = p.permission")).toEqual({ uses: [{ permission: 'a.b.c', by: 'f' }], problems: [] });
-    expect(problems('function crove_kernel.f', 'p_key = p.permission')).toHaveLength(1);
+    expect(problems('function ludy_kernel.f', 'p_key = p.permission')).toHaveLength(1);
     // A comment in a function body names nothing.
-    expect(sqlPermissionUses('f', "-- crove_kernel.ctx_has_permission (the runtime gate) and a permission in (its org)\n/* p.permission = 'x.y.z' */ SELECT 1")).toEqual({
+    expect(sqlPermissionUses('f', "-- ludy_kernel.ctx_has_permission (the runtime gate) and a permission in (its org)\n/* p.permission = 'x.y.z' */ SELECT 1")).toEqual({
       uses: [],
       problems: [],
     });
     // The checker itself compares with its parameter, by design.
-    expect(problems('function crove_kernel.ctx_has_permission', 'p.permission = p_permission')).toEqual([]);
+    expect(problems('function ludy_kernel.ctx_has_permission', 'p.permission = p_permission')).toEqual([]);
   });
 });
 

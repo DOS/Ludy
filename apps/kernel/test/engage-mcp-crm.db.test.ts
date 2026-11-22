@@ -117,7 +117,7 @@ suite('the CRM MCP reads (#3860)', () => {
     const id = randomUUID();
     counter += 1;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '30 days', $3, $6, $7)`,
       [org, id, userId, `client-${counter}-${id}`, `oauth-${id}`, kind, kind === 'member' ? userId : null],
     );
@@ -155,9 +155,9 @@ suite('the CRM MCP reads (#3860)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -171,16 +171,16 @@ suite('the CRM MCP reads (#3860)', () => {
     orgA = (await createOrg(runtime, asUser('owner'), 'Org A')).orgId;
     orgB = (await createOrg(runtime, asUser('foreign'), 'Org B')).orgId;
     for (const [who, role] of [['admin', 'admin'], ['member', 'member'], ['viewer', 'viewer']] as const) {
-      await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, users[who], role]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, users[who], role]);
     }
     // The member grants of the org are on, so a member or a viewer may connect their own AI app.
-    await sqlAdmin(`UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
 
     // ---- parties: names with hidden characters; an address and an email that must not reach a quote's answer ----
     const makeParty = async (key: string, org: string, name: string, taxCode: string) => {
       party[key] = (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, $2, 'organization', $3, $5, $4) RETURNING id`,
+          `INSERT INTO ludy_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, $2, 'organization', $3, $5, $4) RETURNING id`,
           [org, name, `bimat3860-${key}@example.test`, `12 Lê Lợi ${CANARY} ${key}`, taxCode],
         )
       ).rows[0]?.id as string;
@@ -263,7 +263,7 @@ suite('the CRM MCP reads (#3860)', () => {
       if (status === 'confirmed' || status === 'cancelled') {
         eventId = randomUUID();
         await sqlAdmin(
-          `INSERT INTO crove_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, title, kind, status, created_by, cancelled_at)
+          `INSERT INTO ludy_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, title, kind, status, created_by, cancelled_at)
            VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', $6, 'booking', $7, $3, $8)`,
           [org, eventId, host, start.toISOString(), end.toISOString(), `${CANARY} sự kiện ${key}`, status === 'cancelled' ? 'cancelled' : 'active', status === 'cancelled' ? new Date().toISOString() : null],
         );

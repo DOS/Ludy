@@ -59,9 +59,9 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 12 });
     pools.push(pool);
@@ -71,7 +71,7 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     });
     for (const key of ['owner', 'recorder']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'tlock', subject: key, email: `${key}@tlock.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Khóa bản ghi')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.recorder]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.recorder]);
   }, 300_000);
 
   afterAll(async () => {

@@ -59,7 +59,7 @@ async function payableParties(ctx: QueryContext, entity: string, today: string, 
   const rows = await ctx.trx
     .selectFrom('crove_finance.journal_line as l')
     .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select(sql<string>`sum(l.credit - l.debit)`.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
@@ -97,7 +97,7 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
     .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select(kept.as('party_id'))
     .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency'])
@@ -122,7 +122,7 @@ async function approvedPayments(ctx: QueryContext, entity: string, today: string
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
     .selectFrom('crove_finance.supplier_payment as p')
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'p.org_id').onRef('x.id', '=', 'p.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'p.org_id').onRef('x.id', '=', 'p.party_id'))
     .select(kept.as('party_id'))
     .select(['p.purchase_document_id', 'p.amount'])
     .select(sql<string | null>`pg_catalog.to_char(p.payable_after AT TIME ZONE ${VIETNAM_TIME_ZONE}::text, 'YYYY-MM-DD')`.as('payable_on'))
@@ -139,7 +139,7 @@ async function approvedPayments(ctx: QueryContext, entity: string, today: string
 
 // The tax due dates of the horizon as markers with no amount: the tax calendar's own window (the next 30 days, so fewer than the 90 days), of this entity; none when the org has not set its VAT filing period.
 async function taxMarkers(ctx: QueryContext, entity: string, today: string): Promise<CashForecastTaxMarker[]> {
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const kind = (org?.vat_filing_period as VatFilingPeriod | null | undefined) ?? null;
   if (kind === null) return [];
   const last = addDays(today, CASH_FORECAST_DAYS);

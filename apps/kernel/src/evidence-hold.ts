@@ -1,6 +1,6 @@
 // Retention holds on evidence files (issue #1009, ADR-0013). The original file of a posted invoice is held in the bucket
 // for EVIDENCE_LOCK_DAYS from its posting, as an S3 Object Lock retention in GOVERNANCE mode on the version its file
-// row records. Posting writes nothing for it: crove_kernel.evidence_hold_due finds the files whose hold is missing or
+// row records. Posting writes nothing for it: ludy_kernel.evidence_hold_due finds the files whose hold is missing or
 // too short, and this job, outside any transaction, asks the store to hold each one and records the outcome with
 // kernel.file.hold.record. A failure never touches the posting: the file keeps held_until null (or its shorter hold),
 // the reason goes to hold_error, the job logs an ALERT and tries again with a backoff (5 minutes, doubling, at least
@@ -48,7 +48,7 @@ export async function runEvidenceHolds(
   const holds = deps.store.holds;
   if (days <= 0 || !holds) return out;
   const { rows } = await sql<{ org_id: string; file_id: string; storage_key: string; generation: string | null; sha256: string; retain_until: Date }>`
-    SELECT org_id, file_id, storage_key, generation, sha256, retain_until FROM crove_kernel.evidence_hold_due(${days}::int, ${BATCH}::int)`.execute(deps.workerDb);
+    SELECT org_id, file_id, storage_key, generation, sha256, retain_until FROM ludy_kernel.evidence_hold_due(${days}::int, ${BATCH}::int)`.execute(deps.workerDb);
   if (rows.length === 0) return out;
   if (!(await holds.available())) {
     out.waiting = rows.length;
@@ -75,6 +75,6 @@ export async function runEvidenceHolds(
     await deps.runtime.execute('kernel.file.hold.record', { fileId: row.file_id, heldUntil: heldUntil.toISOString() }, scope);
     out.held += 1;
   }
-  if (out.failed > 0) opsAlert(`[evidence-hold] ALERT ${out.failed} retention hold(s) failed; see hold_error on crove_kernel.file (docs/runbooks/evidence-holds.md)`);
+  if (out.failed > 0) opsAlert(`[evidence-hold] ALERT ${out.failed} retention hold(s) failed; see hold_error on ludy_kernel.file (docs/runbooks/evidence-holds.md)`);
   return out;
 }

@@ -167,9 +167,9 @@ export const publishingHoldGet = defineQuery({
   handler: async (ctx): Promise<PublishHoldView> => {
     const live = await liveHold(ctx.trx, ctx.orgId);
     if (!live) return { held: false, hold: null };
-    // The name while they are a member (crove_kernel.member_profiles answers only members of the org).
+    // The name while they are a member (ludy_kernel.member_profiles answers only members of the org).
     const { rows } = await sql<{ email: string; display_name: string | null }>`
-      SELECT email, display_name FROM crove_kernel.member_profiles(${[live.held_by]}::uuid[])`.execute(ctx.trx);
+      SELECT email, display_name FROM ludy_kernel.member_profiles(${[live.held_by]}::uuid[])`.execute(ctx.trx);
     const who = rows[0];
     return { held: true, hold: { id: live.id, reason: live.reason, heldBy: live.held_by, heldByName: who ? (who.display_name ?? who.email) : null, heldAt: live.held_at.toISOString() } };
   },

@@ -20,7 +20,7 @@
 // A copy taken twice (a retry after the command committed) counts once: the command runs with the failed job's id as
 // its idempotency key, so the second take replays the first's answer.
 //
-// The daily retention run prunes old items (pruneInboxItems): the active orgs crove_kernel.inbox_item_prune_due names,
+// The daily retention run prunes old items (pruneInboxItems): the active orgs ludy_kernel.inbox_item_prune_due names,
 // page by page, each in its own system context through kernel.inbox.prune.
 import { sql } from 'kysely';
 import type { JobWithMetadata } from 'pg-boss';
@@ -114,7 +114,7 @@ export async function pruneInboxItems(deps: { runtime: Runtime; workerDb: Db }):
   let after: string | null = null;
   for (let page = 0; page < INBOX_PRUNE_PAGES; page++) {
     const { rows }: { rows: Array<{ org_id: string }> } = await sql<{ org_id: string }>`
-      SELECT org_id FROM crove_kernel.inbox_item_prune_due(${after}::uuid, ${dismissedBefore}::timestamptz, ${raisedBefore}::timestamptz, ${INBOX_PRUNE_PAGE}::int)`.execute(
+      SELECT org_id FROM ludy_kernel.inbox_item_prune_due(${after}::uuid, ${dismissedBefore}::timestamptz, ${raisedBefore}::timestamptz, ${INBOX_PRUNE_PAGE}::int)`.execute(
       deps.workerDb,
     );
     for (const row of rows) {

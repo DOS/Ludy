@@ -45,7 +45,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'member' | 'viewer', string> = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -54,7 +54,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -73,9 +73,9 @@ suite('social client review links on PostgreSQL (#589)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -120,8 +120,8 @@ suite('social client review links on PostgreSQL (#589)', () => {
     const leaks = await admin(async (c) =>
       (
         await c.query<{ n: string }>(
-          `SELECT (SELECT count(*) FROM crove_kernel.audit_event a WHERE a.detail::text LIKE '%' || $1 || '%')
-                + (SELECT count(*) FROM crove_kernel.outbox_event e WHERE e.payload::text LIKE '%' || $1 || '%') AS n`,
+          `SELECT (SELECT count(*) FROM ludy_kernel.audit_event a WHERE a.detail::text LIKE '%' || $1 || '%')
+                + (SELECT count(*) FROM ludy_kernel.outbox_event e WHERE e.payload::text LIKE '%' || $1 || '%') AS n`,
           [made.token],
         )
       ).rows[0]?.n,
@@ -194,7 +194,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
             t,
             (
               await c.query<{ p: string }>(
-                "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = $1 ORDER BY 1",
+                "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = $1 ORDER BY 1",
                 [t],
               )
             ).rows.map((r) => r.p),
@@ -205,7 +205,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     expect(grants).toEqual({ review_link: ['INSERT', 'SELECT'], review_feedback: ['SELECT'] });
 
     const fns = ['crove_social.review_link_view(text)', 'crove_social.review_feedback_add(text,text,text,text)', 'crove_social.review_link_by_token(text,boolean)', 'crove_social.review_link_media(text)', 'crove_social.review_link_file(text,uuid)'];
-    const roles = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'public'];
+    const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'public'];
     const matrix = await admin(async (c) => {
       const { rows } = await c.query<{ fn: string; role: string; can: boolean }>(
         `SELECT f AS fn, r AS role, has_function_privilege(r, f, 'EXECUTE') AS can FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r`,
@@ -214,11 +214,11 @@ suite('social client review links on PostgreSQL (#589)', () => {
       return Object.fromEntries(fns.map((f) => [f, roles.filter((r) => rows.some((row) => row.fn === f && row.role === r && row.can))]));
     });
     expect(matrix).toEqual({
-      'crove_social.review_link_view(text)': ['crove_app'],
-      'crove_social.review_feedback_add(text,text,text,text)': ['crove_app'],
+      'crove_social.review_link_view(text)': ['ludy_app'],
+      'crove_social.review_feedback_add(text,text,text,text)': ['ludy_app'],
       'crove_social.review_link_by_token(text,boolean)': [],
-      'crove_social.review_link_media(text)': ['crove_app'],
-      'crove_social.review_link_file(text,uuid)': ['crove_app'],
+      'crove_social.review_link_media(text)': ['ludy_app'],
+      'crove_social.review_link_file(text,uuid)': ['ludy_app'],
     });
   });
 
@@ -230,7 +230,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
       const sha = createHash('sha256').update(bytes).digest('hex');
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
            VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', $6, 'social')`,
           [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, bytes.byteLength],
         ),

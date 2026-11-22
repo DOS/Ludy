@@ -208,10 +208,10 @@ export const pushTargets = defineQuery({
       .where('id', '=', input.notificationId)
       .executeTakeFirst();
     if (!n || n.read_at !== null || !PUSHED_KINDS.has(n.kind)) return null;
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return null;
     // A member now, with an account that is not disabled.
-    const { rows: active } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_emails(${[n.user_id]}::uuid[])`.execute(ctx.trx);
+    const { rows: active } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_emails(${[n.user_id]}::uuid[])`.execute(ctx.trx);
     if (active.length === 0) return null;
     const subscriptions = await ctx.trx
       .selectFrom('crove_social.push_subscription')

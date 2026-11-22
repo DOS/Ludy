@@ -65,8 +65,8 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
     const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@meet.test`, name: null });
     const host = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `host-${randomUUID().slice(0, 8)}@meet.test`, name: null });
     const { orgId } = await createOrg(app, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, host]);
-    const slug = (await rows<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))[0]?.slug as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, host]);
+    const slug = (await rows<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))[0]?.slug as string;
     await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor: asUser(host), orgId });
     return { orgId, slug, owner, host };
   }
@@ -124,11 +124,11 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
     const id = (await rows<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id LIMIT 1', [o.orgId]))[0]?.id as string;
     const confirmed = await worker.execute<{ status: string }>('crm.booking.confirm', { bookingId: id }, { actor: SYSTEM, orgId: o.orgId });
     const state = () => rows<{ meeting_state: string; meeting_url: string | null; calendar_event_id: string }>('SELECT meeting_state, meeting_url, calendar_event_id FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0] as { meeting_state: string; meeting_url: string | null; calendar_event_id: string });
-    const mails = () => rows<{ recipient: string }>("SELECT payload->>'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.confirmed' AND source_id = $2 ORDER BY payload->>'recipient'", [o.orgId, id]).then((r) => r.map((m) => m.recipient));
+    const mails = () => rows<{ recipient: string }>("SELECT payload->>'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.confirmed' AND source_id = $2 ORDER BY payload->>'recipient'", [o.orgId, id]).then((r) => r.map((m) => m.recipient));
     return { id, day, confirmed, state, mails };
   }
   const settle = (o: Org, input: Record<string, unknown>) => worker.execute<{ settled: boolean; state?: string }>('crm.booking.meeting_settle', input, { actor: SYSTEM, orgId: o.orgId });
-  const eventConference = async (eventId: string) => (await rows<{ conference: boolean }>('SELECT conference FROM crove_kernel.calendar_event WHERE id = $1', [eventId]))[0]?.conference;
+  const eventConference = async (eventId: string) => (await rows<{ conference: boolean }>('SELECT conference FROM ludy_kernel.calendar_event WHERE id = $1', [eventId]))[0]?.conference;
   const mailData = (o: Org, bookingId: string) => worker.execute<BookingMailData>('crm.booking.mail_data', { bookingId, revision: 0 }, { actor: SYSTEM, orgId: o.orgId });
 
   beforeAll(async () => {
@@ -140,15 +140,15 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 6 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 6 });
     app = register(createDb(appPool));
     worker = register(createDb(workerPool));
   });
@@ -204,7 +204,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       expect(await eventConference(pending.calendar_event_id)).toBe(true);
       expect(await b.mails()).toEqual([]);
       // The relay hands the delayed job its event.
-      expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>$3 = $4', [o.orgId, 'crm.booking.meeting_pending', 'booking_id', b.id])).length).toBe(1);
+      expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>$3 = $4', [o.orgId, 'crm.booking.meeting_pending', 'booking_id', b.id])).length).toBe(1);
       // The write-back plan asks the worker for the conference.
       const plan = await worker.query<{ actions: WriteBackAction[] }>('kernel.calendar.writeback_plan', { connectionId }, { actor: SYSTEM, orgId: o.orgId });
       expect(plan.actions).toEqual([expect.objectContaining({ eventId: pending.calendar_event_id, kind: 'upsert', conference: true })]);
@@ -268,7 +268,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       const b = await book(o);
       const mailsOf = (source: string) =>
         rows<{ revision: string; startsAt: string; recipient: string }>(
-          `SELECT payload->>'revision' AS revision, payload->>'startsAt' AS "startsAt", payload->>'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = $3 ORDER BY payload->>'recipient'`,
+          `SELECT payload->>'revision' AS revision, payload->>'startsAt' AS "startsAt", payload->>'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = $3 ORDER BY payload->>'recipient'`,
           [o.orgId, b.id, source],
         );
       const newStart = at(b.day, 600);
@@ -296,7 +296,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       const startsAt = new Date((await rows<{ starts_at: Date }>('SELECT starts_at FROM crove_crm.booking WHERE id = $1', [b.id]))[0]?.starts_at as Date).toISOString();
       const remind = () => worker.execute<{ sent: boolean }>('crm.booking.remind', { bookingId: b.id, startsAt, lead: '1h' }, { actor: SYSTEM, orgId: o.orgId });
       expect(await remind()).toEqual({ sent: false });
-      expect(await rows("SELECT 1 FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h' AND source_id = $2", [o.orgId, b.id])).toEqual([]);
+      expect(await rows("SELECT 1 FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h' AND source_id = $2", [o.orgId, b.id])).toEqual([]);
       await settle(o, { bookingId: b.id, url: MEET });
       expect(await remind()).toEqual({ sent: true });
     });

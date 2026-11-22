@@ -44,7 +44,7 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer };
   }
 
@@ -54,7 +54,7 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_at)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, 'image/jpeg', 120000, $7, coalesce($8::timestamptz, now()))`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename, options.source ?? 'social', options.at ?? null],
       ),
@@ -76,9 +76,9 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -103,7 +103,7 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     expect((await list(o)).items.map((i) => i.tags)).toEqual([['Áo dài', 'Khách A', 'Mùa hè', 'Tết']]);
 
     expect((await untag(o, f, ['tết', 'không có'])).tags).toEqual(['Áo dài', 'Khách A', 'Mùa hè']);
-    const audit = await admin((c) => c.query("SELECT command, target_type, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.media.%' ORDER BY occurred_at, id", [o.orgId]));
+    const audit = await admin((c) => c.query("SELECT command, target_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.media.%' ORDER BY occurred_at, id", [o.orgId]));
     expect(audit.rows.map((r) => [r.command, r.target_type, r.detail.file_id, r.detail.added ?? r.detail.removed])).toEqual([
       ['social.media.tag', 'kernel.file', f, 3],
       ['social.media.tag', 'kernel.file', f, 1],
@@ -199,7 +199,7 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     const kept = await file(o, 'giu.jpg');
     await tag(o, gone, ['Tết', 'Khách A']);
     await tag(o, kept, ['Tết']);
-    await admin((c) => c.query('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, gone]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, gone]));
     const rows = await admin((c) => c.query('SELECT file_id, tag FROM crove_social.media_tag WHERE org_id = $1 ORDER BY tag', [o.orgId]));
     expect(rows.rows).toEqual([{ file_id: kept, tag: 'Tết' }]);
     expect((await tags(o)).map((x) => [x.tag, x.files])).toEqual([['Tết', 1]]);

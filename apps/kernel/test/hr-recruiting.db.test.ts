@@ -83,7 +83,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const viewer = await person('viewer');
     const { orgId, slug } = await createOrg(rt, asUser(owner), `HR Recruiting ${tag}`);
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [
         orgId,
         admin,
         member,
@@ -150,9 +150,9 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appConn = new URL(adminUrl);
-    appConn.username = 'crove_app';
+    appConn.username = 'ludy_app';
     appConn.password = 'test-app-pw';
     appUrl = appConn.toString();
     pool = createPool({ connectionString: appUrl, max: 6 });
@@ -259,7 +259,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const calendarRow = await withAdmin(async (c) =>
       (
         await c.query<{ title: string | null; kind: string; status: string }>(
-          `SELECT title, kind, status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT title, kind, status FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, scheduled.eventId],
         )
       ).rows[0],
@@ -290,7 +290,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       endsAt: slot2.endIso,
     });
     const oldStatus = await withAdmin(async (c) =>
-      (await c.query<{ status: string }>(`SELECT status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`, [o.orgId, scheduled.eventId])).rows[0]?.status,
+      (await c.query<{ status: string }>(`SELECT status FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`, [o.orgId, scheduled.eventId])).rows[0]?.status,
     );
     expect(oldStatus).toBe('cancelled');
     expect(rescheduled.eventId).not.toBe(scheduled.eventId);
@@ -364,7 +364,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const compMoveDetail = await withAdmin(async (c) =>
       (
         await c.query<{ detail: { warnings?: string[] } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.move_stage' AND target_id = $2 ORDER BY id DESC LIMIT 1`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.move_stage' AND target_id = $2 ORDER BY id DESC LIMIT 1`,
           [o.orgId, competitor.candidateId],
         )
       ).rows[0]?.detail,
@@ -552,7 +552,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const auditRows = await withAdmin(async (c) =>
       (
         await c.query<{ command: string; detail: Record<string, unknown>; row: string }>(
-          `SELECT command, detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.%' ORDER BY id`,
+          `SELECT command, detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.%' ORDER BY id`,
           [o.orgId],
         )
       ).rows,
@@ -567,7 +567,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const afterCandidateRead = await withAdmin(async (c) =>
       (
         await c.query<{ command: string; row: string }>(
-          `SELECT command, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.get'`,
+          `SELECT command, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.get'`,
           [o.orgId],
         )
       ).rows,
@@ -728,7 +728,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const oldOwnerEvent = await withAdmin(async (c) =>
       (
         await c.query<{ status: string; cancelled_by: string | null }>(
-          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT status, cancelled_by FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, ownerBooked1.eventId],
         )
       ).rows[0],
@@ -754,7 +754,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const rejectedEvent = await withAdmin(async (c) =>
       (
         await c.query<{ status: string; cancelled_by: string | null }>(
-          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT status, cancelled_by FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, ownerBooked2.eventId],
         )
       ).rows[0],
@@ -787,7 +787,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     });
     // Before erase, the interview event on a hired candidate was still active.
     const beforeEraseStatus = await withAdmin(async (c) =>
-      (await c.query<{ status: string }>(`SELECT status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`, [o.orgId, ownerBooked3.eventId])).rows[0]?.status,
+      (await c.query<{ status: string }>(`SELECT status FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`, [o.orgId, ownerBooked3.eventId])).rows[0]?.status,
     );
     expect(beforeEraseStatus).toBe('active');
 
@@ -795,7 +795,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const afterEraseEvent = await withAdmin(async (c) =>
       (
         await c.query<{ status: string; cancelled_by: string | null }>(
-          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT status, cancelled_by FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, ownerBooked3.eventId],
         )
       ).rows[0],
@@ -805,7 +805,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const eraseAuditDetail = await withAdmin(async (c) =>
       (
         await c.query<{ detail: { cancelledInterviewEventId?: string | null } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.erase' AND target_id = $2 ORDER BY id DESC LIMIT 1`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.erase' AND target_id = $2 ORDER BY id DESC LIMIT 1`,
           [o.orgId, cand3.candidateId],
         )
       ).rows[0]?.detail,
@@ -1004,14 +1004,14 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       ).rows;
       const eventRow = (
         await c.query<{ status: string; cancelled_by: string | null }>(
-          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT status, cancelled_by FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, booked.eventId],
         )
       ).rows[0];
       const auditRow = (
         await c.query<{ detail: { cancelledInterviewEventId?: string | null }; row: string }>(
           `SELECT detail, audit_event::text AS row
-           FROM crove_kernel.audit_event
+           FROM ludy_kernel.audit_event
            WHERE org_id = $1 AND command = 'hr.recruiting.candidate.erase' AND target_id = $2
            ORDER BY id DESC LIMIT 1`,
           [o.orgId, hiredWithInterview.candidateId],
@@ -1061,7 +1061,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     });
     const other = await org({ owner: 'Chủ Công Ty Khác' });
 
-    // Also add a second member with `name: null` to verify email fallback in crove_kernel.member_profiles enrichment.
+    // Also add a second member with `name: null` to verify email fallback in ludy_kernel.member_profiles enrichment.
     const memberEmailFallback = await upsertIdentity(createDb(pool), {
       issuer: 'hrrec',
       subject: `member-noname-${randomUUID().slice(0, 8)}`,
@@ -1069,7 +1069,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       name: null,
     });
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, memberEmailFallback]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, memberEmailFallback]),
     );
 
     // 1. `hr.recruiting.interviewers.list`: managers-only, returns owner/admin/member with profile names, excludes viewer and other org.
@@ -1197,7 +1197,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const memberEventRow = await withAdmin(async (c) =>
       (
         await c.query<{ user_id: string; created_by: string; title: string | null; status: string }>(
-          `SELECT user_id, created_by, title, status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT user_id, created_by, title, status FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, bookedMember.eventId],
         )
       ).rows[0],
@@ -1260,7 +1260,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const oldMemberEvent = await withAdmin(async (c) =>
       (
         await c.query<{ status: string; cancelled_by: string | null }>(
-          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT status, cancelled_by FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, bookedMember.eventId],
         )
       ).rows[0],
@@ -1311,7 +1311,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const cancelledEventRow = await withAdmin(async (c) =>
       (
         await c.query<{ status: string; cancelled_by: string | null }>(
-          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          `SELECT status, cancelled_by FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
           [o.orgId, sameInterviewerOverlap.eventId],
         )
       ).rows[0],
@@ -1346,7 +1346,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       (
         await c.query<{ outcome: string; detail: Record<string, unknown>; row: string }>(
           `SELECT outcome, detail, audit_event::text AS row
-           FROM crove_kernel.audit_event
+           FROM ludy_kernel.audit_event
            WHERE org_id = $1 AND command = 'hr.recruiting.candidate.cancel_interview' AND target_id = $2
              AND outcome = 'ok'
            ORDER BY id ASC`,

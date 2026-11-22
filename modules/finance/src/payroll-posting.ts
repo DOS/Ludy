@@ -170,7 +170,7 @@ export const recordPayrollPosting = defineCommand({
     }
     // The person who approved the run is a co-author of its posting (four-eyes): a proposal that does not list them was not made by the preparer, so it is refused.
     if (expected.approvedBy) {
-      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      const own = await ctx.trx.selectFrom('ludy_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
       if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
         throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
       }

@@ -112,7 +112,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 120000, 'social')`,
         [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`],
       ),
@@ -129,15 +129,15 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -193,7 +193,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     // The second channel went out with an image that has been removed since.
     const own = await image(o.orgId);
     await admin((c) => c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE post_id = $1 AND position = 1', [postId, JSON.stringify([own])]));
-    await admin((c) => c.query('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, own.fileId]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, own.fileId]));
     const { postId: copy } = await exec<{ postId: string }>(o, 'social.post.repost', { postId });
     const view = await get(o, copy);
     expect([view.body, view.title, view.linkUrl]).toEqual([body, null, null]);
@@ -218,11 +218,11 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     // A draft with a planned time and a channel disconnected since: the copy has no time and only the other channel.
     const [a, b] = [await connect(o), await connect(o)];
     const { postId } = await exec<{ postId: string }>(o, 'social.post.create', { body: 'Nháp', scheduledAt: new Date(Date.now() + 86_400_000).toISOString(), channels: [{ connectionId: a }, { connectionId: b }] });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [b]));
     const second = await get(o, (await exec<{ postId: string }>(o, 'social.post.duplicate', { postId })).postId);
     expect([second.scheduledAt, second.variants.map((v) => v.connectionId)]).toEqual([null, [a]]);
 
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
     await expect(exec(o, 'social.post.duplicate', { postId })).rejects.toMatchObject({ code: 'NOTHING_TO_DUPLICATE' });
   });
 
@@ -284,12 +284,12 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     const o = await org();
     const { postId, connections } = await published(o);
     await exec(o, 'social.post.set_evergreen', { postId, days: 7 });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [connections]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [connections]));
     await agePublished(postId, 8);
     await sweep();
     expect(await reposts(postId)).toEqual([]);
     expect((await get(o, postId)).evergreenDays).toBe(7);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE id = ANY($1::uuid[])", [connections]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE id = ANY($1::uuid[])", [connections]));
     await sweep();
     expect(await reposts(postId)).toHaveLength(1);
   });

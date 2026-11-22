@@ -92,7 +92,7 @@ export async function acceptInboundEmail(
   try {
     queued = await deps.runtime.orgless(async (db) => {
       const { rows } = await sql<{ queued: boolean }>`
-        SELECT crove_kernel.inbound_enqueue(${blobId}, ${sha256}, ${raw.byteLength}::bigint, ${recipient}) AS queued`.execute(db);
+        SELECT ludy_kernel.inbound_enqueue(${blobId}, ${sha256}, ${raw.byteLength}::bigint, ${recipient}) AS queued`.execute(db);
       return rows[0]?.queued === true;
     });
   } finally {
@@ -102,11 +102,11 @@ export async function acceptInboundEmail(
 }
 
 // Counts a message dropped for an unknown recipient against the org whose address it was, when the token is an
-// address that org retired less than 30 days ago; any other token changes nothing (crove_kernel.inbound_drop_record).
+// address that org retired less than 30 days ago; any other token changes nothing (ludy_kernel.inbound_drop_record).
 // Best effort: the message is dropped either way, so a failure to count is logged and does not retry the job.
 async function countDrop(runtime: Runtime, token: string): Promise<void> {
   try {
-    await runtime.orgless((db) => sql`SELECT crove_kernel.inbound_drop_record(${token})`.execute(db));
+    await runtime.orgless((db) => sql`SELECT ludy_kernel.inbound_drop_record(${token})`.execute(db));
   } catch (error) {
     console.error('[inbound] could not count a dropped message', error);
   }
@@ -184,12 +184,12 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   // The Inbox's own address (#2439) is a token of its own, so it is tried first and a mail to it never reaches the invoice reader.
   let toConversation = false;
   const orgId = await deps.runtime.orgless(async (db) => {
-    const inbox = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_conversation_token(${token}) AS org_id`.execute(db);
+    const inbox = await sql<{ org_id: string | null }>`SELECT ludy_kernel.org_by_conversation_token(${token}) AS org_id`.execute(db);
     if (inbox.rows[0]?.org_id) {
       toConversation = true;
       return inbox.rows[0].org_id;
     }
-    const documents = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${token}) AS org_id`.execute(db);
+    const documents = await sql<{ org_id: string | null }>`SELECT ludy_kernel.org_by_inbound_token(${token}) AS org_id`.execute(db);
     return documents.rows[0]?.org_id ?? null;
   });
   if (!orgId) {
@@ -504,7 +504,7 @@ async function processBounceReport(deps: InboundProcessDeps, raw: Uint8Array, ra
   }
   const mail = await deps.runtime.orgless(async (db) => {
     const { rows } = await sql<{ org_id: string; message_id: string; message_id_header: string }>`
-      SELECT org_id, message_id, message_id_header FROM crove_kernel.mail_message_by_bounce_token(${token})`.execute(db);
+      SELECT org_id, message_id, message_id_header FROM ludy_kernel.mail_message_by_bounce_token(${token})`.execute(db);
     return rows[0] ?? null;
   });
   if (!mail) throw new DomainError('UNKNOWN_BOUNCE', 404, 'Báo cáo trạng thái gửi không ứng với thư nào');

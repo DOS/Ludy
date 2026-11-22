@@ -142,12 +142,12 @@ export const resubmitProposal = defineCommand({
     // Locked, so two requests to ask for it again serialize and the second finds the first's proposal.
     // A proposal read from a file: the file row first, as kernel.file.reextract locks it before the file's proposal, so
     // asking again and reading again in another entity (#1764) serialize instead of one waiting on the other's reading.
-    const fileOf = await ctx.trx.selectFrom('crove_kernel.proposal').select('source_file_id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const fileOf = await ctx.trx.selectFrom('ludy_kernel.proposal').select('source_file_id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     if (fileOf?.source_file_id) {
-      await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileOf.source_file_id).forUpdate().execute();
+      await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileOf.source_file_id).forUpdate().execute();
     }
     const old = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -156,7 +156,7 @@ export const resubmitProposal = defineCommand({
     if (!old) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy đề xuất');
     if (old.status !== 'expired') throw new DomainError('PROPOSAL_NOT_EXPIRED', 409, 'Chỉ gửi lại được đề xuất đã hết hạn');
     const again = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('resubmitted_from', '=', old.id)
@@ -205,7 +205,7 @@ export const resubmitProposal = defineCommand({
     } else {
       // Only the file's newest proposal is asked for again, as kernel.file.reextract acts on it alone.
       const newest = await ctx.trx
-        .selectFrom('crove_kernel.proposal')
+        .selectFrom('ludy_kernel.proposal')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('source_file_id', '=', old.source_file_id)
@@ -239,7 +239,7 @@ export const resubmitProposal = defineCommand({
       };
     }
     const created = await ctx.trx
-      .insertInto('crove_kernel.proposal')
+      .insertInto('ludy_kernel.proposal')
       .values({
         org_id: ctx.orgId,
         ...content,

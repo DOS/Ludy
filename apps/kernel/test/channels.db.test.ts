@@ -116,17 +116,17 @@ suite('channel connections through the API (ADR-0025)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
@@ -197,10 +197,10 @@ suite('channel connections through the API (ADR-0025)', () => {
     const dump = await admin(async (c) => {
       const parts: string[] = [];
       for (const q of [
-        'SELECT detail::text || coalesce(input_sha256, \'\') AS t FROM crove_kernel.audit_event WHERE org_id = $1',
-        'SELECT payload::text AS t FROM crove_kernel.outbox_event WHERE org_id = $1',
-        "SELECT coalesce(response::text, '') AS t FROM crove_kernel.idempotency_key WHERE org_id = $1",
-        'SELECT row_to_json(c)::text AS t FROM crove_kernel.channel_connection c WHERE org_id = $1',
+        'SELECT detail::text || coalesce(input_sha256, \'\') AS t FROM ludy_kernel.audit_event WHERE org_id = $1',
+        'SELECT payload::text AS t FROM ludy_kernel.outbox_event WHERE org_id = $1',
+        "SELECT coalesce(response::text, '') AS t FROM ludy_kernel.idempotency_key WHERE org_id = $1",
+        'SELECT row_to_json(c)::text AS t FROM ludy_kernel.channel_connection c WHERE org_id = $1',
       ]) {
         const { rows } = await c.query<{ t: string }>(q, [org.orgId]);
         parts.push(...rows.map((r) => r.t));
@@ -280,10 +280,10 @@ suite('channel connections through the API (ADR-0025)', () => {
       const dump = await admin(async (c) => {
         const parts: string[] = [];
         for (const q of [
-          "SELECT detail::text || coalesce(input_sha256, '') AS t FROM crove_kernel.audit_event WHERE org_id = $1",
-          'SELECT payload::text AS t FROM crove_kernel.outbox_event WHERE org_id = $1',
-          "SELECT coalesce(response::text, '') AS t FROM crove_kernel.idempotency_key WHERE org_id = $1",
-          'SELECT row_to_json(c)::text AS t FROM crove_kernel.channel_connection c WHERE org_id = $1',
+          "SELECT detail::text || coalesce(input_sha256, '') AS t FROM ludy_kernel.audit_event WHERE org_id = $1",
+          'SELECT payload::text AS t FROM ludy_kernel.outbox_event WHERE org_id = $1',
+          "SELECT coalesce(response::text, '') AS t FROM ludy_kernel.idempotency_key WHERE org_id = $1",
+          'SELECT row_to_json(c)::text AS t FROM ludy_kernel.channel_connection c WHERE org_id = $1',
         ]) {
           const { rows } = await c.query<{ t: string }>(q, [org.orgId]);
           parts.push(...rows.map((r) => r.t));

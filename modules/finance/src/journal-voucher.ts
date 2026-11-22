@@ -58,7 +58,7 @@ export async function checkJournalVoucherLines(ctx: QueryContext, lines: Readonl
   const ids = [...new Set(lines.flatMap((l) => (l.partyId ? [l.partyId] : [])))];
   const parties = new Map<string, { id: string; name: string; tax_code: string | null }>();
   if (ids.length > 0) {
-    let query = ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', 'in', ids);
+    let query = ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', 'in', ids);
     if (lock) query = query.forShare();
     for (const p of await query.execute()) parties.set(p.id, p);
   }

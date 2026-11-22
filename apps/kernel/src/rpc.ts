@@ -3227,7 +3227,7 @@ export function createRpcHandler(
           const made = await runtime.execute<{ accountId: string; events: ConversationEvent[] }>('kernel.conversation.sandbox_comment', input, { actor, orgId });
           const body = sandboxNoticeBody({ ...made, connectionId: input.connectionId });
           await runtime.orgless(async (db) => {
-            await sql`SELECT crove_kernel.conversation_inbound_enqueue('sandbox', ${body})`.execute(db);
+            await sql`SELECT ludy_kernel.conversation_inbound_enqueue('sandbox', ${body})`.execute(db);
           });
           return { queued: true as const };
         }),

@@ -70,10 +70,10 @@ async function singleVideo(trx: Trx, orgId: string, variantId: string): Promise<
   const { rows } = await sql<{ types: string[] | null }>`
     SELECT CASE WHEN jsonb_typeof(v.media) = 'array' THEN (
              SELECT array_agg(f.content_type) FROM jsonb_array_elements(v.media) x(e)
-             JOIN crove_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
+             JOIN ludy_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
            ) ELSE (
              SELECT array_agg(f.content_type) FROM crove_social.post_media m
-             JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
+             JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
              WHERE m.org_id = v.org_id AND m.post_id = v.post_id
            ) END AS types
     FROM crove_social.post_variant v WHERE v.org_id = ${orgId} AND v.id = ${variantId}`.execute(trx);
@@ -252,7 +252,7 @@ async function totalsWhere(trx: Trx, orgId: string, published: RawBuilder<unknow
   const outside = outsidePublished
     ? sql`, x AS (
       SELECT e.channel_connection_id AS conn, c.provider, e.metrics FROM crove_social.external_post e
-      JOIN crove_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
+      JOIN ludy_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
       WHERE e.org_id = ${orgId} AND ${outsidePublished}
         AND NOT crove_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)
     )`
@@ -426,7 +426,7 @@ export const metricsExport = defineCommand({
     const names = new Map(
       ids.length === 0
         ? []
-        : (await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute()).map((c) => [c.id, c.display_name] as const),
+        : (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute()).map((c) => [c.id, c.display_name] as const),
     );
     const labels = await labelsOfPosts(ctx.trx, ctx.orgId, [...new Set(rows.map((r) => r.postId))]);
     const labelNames = new Map([...labels].map(([postId, list]) => [postId, list.map((l) => l.name)] as const));
@@ -477,10 +477,10 @@ export const metricsInsights = defineQuery({
              v.published_at, v.external_url, v.settings->>'postType' AS post_type,
              CASE WHEN jsonb_typeof(v.media) = 'array' THEN (
                SELECT array_agg(f.content_type ORDER BY x.n) FROM jsonb_array_elements(v.media) WITH ORDINALITY x(e, n)
-               JOIN crove_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
+               JOIN ludy_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
              ) ELSE (
                SELECT array_agg(f.content_type ORDER BY m.position) FROM crove_social.post_media m
-               JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
+               JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
                WHERE m.org_id = v.org_id AND m.post_id = v.post_id
              ) END AS media_types,
              (SELECT array_agg(pl.label_id) FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id) AS label_ids,

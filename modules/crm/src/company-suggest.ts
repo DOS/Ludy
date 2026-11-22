@@ -64,7 +64,7 @@ export const companyCandidates = defineQuery({
   access: WRITERS,
   handler: async (ctx, input): Promise<CompanyCandidates> => {
     const { rows } = await sql<{ kind: string; name: string; email: string | null; company_id: string | null }>`
-      SELECT p.kind, p.name, p.email, p.company_id FROM crove_kernel.party p
+      SELECT p.kind, p.name, p.email, p.company_id FROM ludy_kernel.party p
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${input.partyId}::uuid AND p.duplicate_of IS NULL`.execute(ctx.trx);
     const person = rows[0];
     if (!person) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy đối tác');
@@ -74,8 +74,8 @@ export const companyCandidates = defineQuery({
     // 1. Tax codes the person wrote in their conversations (what the customer sent, the newest messages first), as they are, or the same enterprise by its branch.
     const written = await sql<{ body: string }>`
       SELECT pg_catalog.left(m.body, 2000) AS body
-      FROM crove_kernel.conversation_message m
-      JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
+      FROM ludy_kernel.conversation_message m
+      JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.party_id = ${input.partyId}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL
       ORDER BY m.id DESC LIMIT 40`.execute(ctx.trx);
     const codes: string[] = [];
@@ -86,7 +86,7 @@ export const companyCandidates = defineQuery({
         ? []
         : (
             await sql<{ id: string; name: string }>`
-              SELECT p.id, p.name FROM crove_kernel.party p
+              SELECT p.id, p.name FROM ludy_kernel.party p
               WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.duplicate_of IS NULL AND p.id <> ${input.partyId}::uuid
                 AND (p.tax_code = ANY(${codes}::text[]) OR pg_catalog.split_part(p.tax_code, '-', 1) = ANY(${bases}::text[]))
               ORDER BY p.name, p.id LIMIT ${GROUP_MAX}`.execute(ctx.trx)
@@ -99,7 +99,7 @@ export const companyCandidates = defineQuery({
         ? []
         : (
             await sql<{ id: string; name: string }>`
-              SELECT p.id, p.name FROM crove_kernel.party p
+              SELECT p.id, p.name FROM ludy_kernel.party p
               WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.duplicate_of IS NULL AND p.email IS NOT NULL
                 AND pg_catalog.lower(pg_catalog.split_part(p.email, '@', 2)) = ${domain}
               ORDER BY p.name, p.id LIMIT ${GROUP_MAX}`.execute(ctx.trx)
@@ -112,10 +112,10 @@ export const companyCandidates = defineQuery({
         ? []
         : (
             await sql<{ id: string; name: string }>`
-              SELECT p.id, p.name FROM crove_kernel.party p
+              SELECT p.id, p.name FROM ludy_kernel.party p
               WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.duplicate_of IS NULL AND p.search @@ pg_catalog.to_tsquery('pg_catalog.simple', ${label})
-                AND pg_catalog.strpos(' ' || crove_kernel.search_fold(p.name) || ' ', ' ' || ${label} || ' ') > 0
-              ORDER BY pg_catalog.array_length(pg_catalog.string_to_array(crove_kernel.search_fold(p.name), ' '), 1), p.name, p.id LIMIT ${NAMES_MAX + 4}`.execute(ctx.trx)
+                AND pg_catalog.strpos(' ' || ludy_kernel.search_fold(p.name) || ' ', ' ' || ${label} || ' ') > 0
+              ORDER BY pg_catalog.array_length(pg_catalog.string_to_array(ludy_kernel.search_fold(p.name), ' '), 1), p.name, p.id LIMIT ${NAMES_MAX + 4}`.execute(ctx.trx)
           ).rows;
 
     // Each company once, under the first rule that found it.

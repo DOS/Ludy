@@ -3,7 +3,7 @@
 // 1) task_checklist_valid / task_checklist_shape constraint checks (including missing keys).
 // 2) kernel.task.create/update/get/list, projects.task.create/projects.board, notes.my_work,
 //    audit PII markers (never leaking raw text), taint preservation, TASK_CHECKED_OUT lock, and org export.
-// 3) PDPL find + erase + short-number guard on crove_kernel.task.checklist.
+// 3) PDPL find + erase + short-number guard on ludy_kernel.task.checklist.
 // Security tests (AGENT_TASK_FIELD, task_before_insert, cross-org RLS, viewer, le_scope) live in test/invariant/task-checklist.db.test.ts.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -114,14 +114,14 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const uApp = new URL(adminUrl);
-    uApp.username = 'crove_app';
+    uApp.username = 'ludy_app';
     uApp.password = 'test-app-pw';
 
     const uWorker = new URL(adminUrl);
-    uWorker.username = 'crove_worker';
+    uWorker.username = 'ludy_worker';
     uWorker.password = 'test-worker-pw';
 
     const appPool = createPool({ connectionString: uApp.toString(), max: 4 });
@@ -154,7 +154,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     const owner = await newPerson('owner');
     const org = await createOrg(appRt, asUser(owner.userId), 'Checklist Co');
 
-    // Direct SQL check constraint validation via crove_kernel.task_checklist_valid (including missing keys)
+    // Direct SQL check constraint validation via ludy_kernel.task_checklist_valid (including missing keys)
     const invalidJsonPayloads = [
       'null',
       '{}',
@@ -171,7 +171,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
       await expect(
         withAdmin((c) =>
           c.query(
-            `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, checklist)
+            `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, checklist)
              VALUES ($1, 'Bad', 'human', 'user', $2::jsonb)`,
             [org.orgId, bad],
           ),
@@ -209,7 +209,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
       assigneePositionId: null,
       checklist: [{ text: 'Kiểm tra mã số thuế', done: false }],
     });
-    await withAdmin((c) => c.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, kernelTaskId]));
+    await withAdmin((c) => c.query(`UPDATE ludy_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, kernelTaskId]));
 
     await exec<{ taskId: string }>(owner.userId, org.orgId, 'kernel.task.update', {
       id: kernelTaskId,
@@ -236,7 +236,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     // Audit facts mark checklist as redacted pii, never storing raw text in audit_event
     const auditRows = await withAdmin((c) =>
       c.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.task.update' AND outcome = 'ok' ORDER BY id ASC`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.task.update' AND outcome = 'ok' ORDER BY id ASC`,
         [org.orgId],
       ),
     );
@@ -246,7 +246,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     expect(serializedAudit).not.toContain('Lưu bản scan có dấu');
     expect(serializedAudit).not.toContain('Kiểm tra mã số thuế');
 
-    // Org export includes crove_kernel.task rows with checklist intact
+    // Org export includes ludy_kernel.task rows with checklist intact
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exportRecord = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, org.orgId, { now: () => generatedAt });
     const taskPart = exportRecord.parts.find((p) => p.table === 'kernel.task');
@@ -326,7 +326,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
       { value: '1234567890' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(splitFind.matches.some((m) => m.column === 'crove_kernel.task.checklist')).toBe(false);
+    expect(splitFind.matches.some((m) => m.column === 'ludy_kernel.task.checklist')).toBe(false);
 
     // Email match + redaction
     const emailFind = await appRt.execute<PersonalDataResult>(
@@ -334,14 +334,14 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
       { value: 'alice@checklist.test' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(emailFind.matches.some((m) => m.column === 'crove_kernel.task.checklist')).toBe(true);
+    expect(emailFind.matches.some((m) => m.column === 'ludy_kernel.task.checklist')).toBe(true);
 
     const emailErase = await appRt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: 'alice@checklist.test' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(emailErase.erased).toEqual(expect.arrayContaining([{ column: 'crove_kernel.task.checklist', rows: 1 }]));
+    expect(emailErase.erased).toEqual(expect.arrayContaining([{ column: 'ludy_kernel.task.checklist', rows: 1 }]));
 
     // Phone (10 digits) match + redaction
     const phoneErase = await appRt.execute<PersonalDataErasure>(
@@ -349,7 +349,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
       { value: '0901234567' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(phoneErase.erased).toEqual(expect.arrayContaining([{ column: 'crove_kernel.task.checklist', rows: 1 }]));
+    expect(phoneErase.erased).toEqual(expect.arrayContaining([{ column: 'ludy_kernel.task.checklist', rows: 1 }]));
 
     const afterErase = await query<TaskDetail>(owner.userId, org.orgId, 'kernel.task.get', { id: piiTaskId });
     expect(afterErase.task.checklist).toEqual([
@@ -366,7 +366,7 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     );
     expect(shortErase.kept).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ column: 'crove_kernel.task.checklist', reason: ACTIVITY_SHORT_NUMBER_REASON }),
+        expect.objectContaining({ column: 'ludy_kernel.task.checklist', reason: ACTIVITY_SHORT_NUMBER_REASON }),
       ]),
     );
     const shortTaskAfter = await query<TaskDetail>(owner.userId, org.orgId, 'kernel.task.get', { id: splitDigitsTaskId });

@@ -50,7 +50,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -58,7 +58,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
   async function connection(o: Org, name = 'Kênh thử') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -86,7 +86,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
   const plans = (o: Org) => rt.query<ReviewPlanLinkView[]>('social.review_link.list_plans', {}, { actor: asUser(o.member), orgId: o.orgId });
   const links = (o: Org, postId: string) => rt.query<{ links: ReviewLinkView[]; feedback: ReviewFeedbackView[] }>('social.review_link.list', { postId }, { actor: asUser(o.member), orgId: o.orgId });
   const settle = async (o: Org) => {
-    const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id);
+    const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id);
     return worker.execute<{ settled: string[]; verdict: string | null }>('social.review.client_settle', { eventId: event as string }, { actor: system, orgId: o.orgId });
   };
   const seen = (p: PostView) => p.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash }));
@@ -100,16 +100,16 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -144,8 +144,8 @@ suite('social plan review links on PostgreSQL (#902)', () => {
       Number(
         (
           await c.query<{ n: string }>(
-            `SELECT (SELECT count(*) FROM crove_kernel.audit_event a WHERE a.detail::text LIKE '%' || $1 || '%')
-                  + (SELECT count(*) FROM crove_kernel.outbox_event e WHERE e.payload::text LIKE '%' || $1 || '%') AS n`,
+            `SELECT (SELECT count(*) FROM ludy_kernel.audit_event a WHERE a.detail::text LIKE '%' || $1 || '%')
+                  + (SELECT count(*) FROM ludy_kernel.outbox_event e WHERE e.payload::text LIKE '%' || $1 || '%') AS n`,
             [made.token],
           )
         ).rows[0]?.n,
@@ -246,7 +246,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const fileId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', $6, 'social')`,
         [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, bytes.byteLength],
       ),
@@ -294,14 +294,14 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ p: string }>(
-          "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'review_link_post' ORDER BY 1",
+          "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'review_link_post' ORDER BY 1",
         )
       ).rows.map((r) => r.p),
     );
     // The tenant role reads a plan's posts; only review_plan_posts_add adds them, once (#930).
     expect(grants).toEqual(['SELECT']);
     const fns = ['crove_social.review_plan_feedback_add(text,uuid,text,text,text)', 'crove_social.review_plan_page(crove_social.review_link)', 'crove_social.review_feedback_in_link()'];
-    const roles = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'public'];
+    const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'public'];
     const matrix = await admin(async (c) => {
       const { rows } = await c.query<{ fn: string; role: string; can: boolean }>(
         `SELECT f AS fn, r AS role, has_function_privilege(r, f, 'EXECUTE') AS can FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r`,
@@ -310,7 +310,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
       return Object.fromEntries(fns.map((f) => [f, roles.filter((r) => rows.some((row) => row.fn === f && row.role === r && row.can))]));
     });
     expect(matrix).toEqual({
-      'crove_social.review_plan_feedback_add(text,uuid,text,text,text)': ['crove_app'],
+      'crove_social.review_plan_feedback_add(text,uuid,text,text,text)': ['ludy_app'],
       'crove_social.review_plan_page(crove_social.review_link)': [],
       'crove_social.review_feedback_in_link()': [],
     });
@@ -344,7 +344,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const mine = await plan(o, o.admin, { postIds: [postId] });
     const theirs = await plan(o, o.owner, { postIds: [postId] });
     await rt.execute('kernel.member.change_role', { userId: o.admin, role: 'member' }, { actor: asMfa(o.owner), orgId: o.orgId });
-    const eventId = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.role_changed' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id as string);
+    const eventId = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.role_changed' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id as string);
     expect(await worker.execute('social.links.revoke_for_member', { eventId }, { actor: system, orgId: o.orgId })).toMatchObject({ review: 1 });
     expect(await view(mine.token)).toBeNull();
     expect(await view(theirs.token)).not.toBeNull();

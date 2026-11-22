@@ -65,14 +65,14 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
 
   await test.step('with no warning left they are clean, and the Inbox groups them under the rule', async () => {
     exec(
-      `UPDATE crove_kernel.proposal p
+      `UPDATE ludy_kernel.proposal p
           SET payload = jsonb_set(
                 jsonb_set(p.payload, '{signature}', '{"status":"verified","reason":null}'::jsonb),
                 '{checks}',
                 (SELECT jsonb_agg(CASE WHEN c ->> 'id' = 'signature' THEN c || '{"status":"pass","code":"signature.verified"}'::jsonb
                                   WHEN c ->> 'status' = 'warn' THEN c || '{"status":"pass"}'::jsonb ELSE c END)
                    FROM jsonb_array_elements(p.payload -> 'checks') c))
-         FROM crove_kernel.tenant t
+         FROM ludy_kernel.tenant t
         WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending' AND p.kind = 'finance.purchase'`,
       { slug },
     );
@@ -105,7 +105,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     // Both left the pending list.
     await expect(page.getByRole('link', { name: SELLER })).toHaveCount(0);
     const documents = sql<{ n: number }>(
-      `SELECT count(*) AS n FROM crove_finance.purchase_document d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+      `SELECT count(*) AS n FROM crove_finance.purchase_document d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(documents[0]?.n).toBe(3);

@@ -65,7 +65,7 @@ test('a firm adds a client company by tax code, then opens the form again for th
     await expect(page.getByRole('definition').getByText(TAX_CODE, { exact: true })).toBeVisible();
     await expect(page.getByText('Số 1 Phố Huế, Hà Nội', { exact: true })).toBeVisible();
     const [org] = sql<{ name: string; tax_code: string; address: string }>(
-      "SELECT name, tax_code, address FROM crove_kernel.tenant WHERE slug = :'slug'",
+      "SELECT name, tax_code, address FROM ludy_kernel.tenant WHERE slug = :'slug'",
       { slug },
     );
     expect(org).toEqual({ name: 'Công ty TNHH Khách hàng Một', tax_code: TAX_CODE, address: 'Số 1 Phố Huế, Hà Nội' });

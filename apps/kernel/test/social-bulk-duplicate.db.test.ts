@@ -44,7 +44,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
   async function connection(o: { orgId: string; owner: string }, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         provider,
@@ -60,7 +60,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
     const base = { orgId, owner };
     return { ...base, member, a: await connection(base), b: await connection(base) };
   }
@@ -69,7 +69,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
   const get = (o: Org, postId: string, user = o.owner) => rt.query<PostView>('social.post.get', { postId }, { actor: asUser(user), orgId: o.orgId });
   const duplicate = (o: Org, user: string, postId: string, scheduledAt?: string | null) => exec<DuplicateResult>(o, user, 'social.post.duplicate', { postId, ...(scheduledAt === undefined ? {} : { scheduledAt }) });
   const copiesOf = (o: Org, postId: string) =>
-    admin(async (c) => (await c.query<{ post_id: string }>("SELECT detail->>'post_id' AS post_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.duplicate' AND outcome = 'ok' AND detail->>'copy_of' = $2", [o.orgId, postId])).rows.map((r) => r.post_id));
+    admin(async (c) => (await c.query<{ post_id: string }>("SELECT detail->>'post_id' AS post_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.duplicate' AND outcome = 'ok' AND detail->>'copy_of' = $2", [o.orgId, postId])).rows.map((r) => r.post_id));
   const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const approveAll = async (o: Org, postId: string) => {
     const view = await get(o, postId);
@@ -85,9 +85,9 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -159,14 +159,14 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
 
     // Channel A disconnected: B is still connected, but not the member's, so nothing is copied.
     const before = await postCount(o);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.a]));
     await expect(duplicate(o, o.member, both.postId, new Date(Date.now() + WEEK).toISOString())).rejects.toMatchObject({ code: 'NOTHING_TO_DUPLICATE', status: 409 });
     // A post on B alone is not theirs to copy at all.
     const onB = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Chỉ kênh B', channels: [{ connectionId: o.b }] });
     await expect(duplicate(o, o.member, onB.postId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED', status: 403 });
     expect(await postCount(o)).toBe(before + 1);
     // Every channel gone for everyone.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.b]));
     await expect(duplicate(o, o.owner, onB.postId)).rejects.toMatchObject({ code: 'NOTHING_TO_DUPLICATE' });
     expect(await postCount(o)).toBe(before + 1);
   });

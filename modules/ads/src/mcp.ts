@@ -218,7 +218,7 @@ export const mcpAdsPages = defineQuery({
   handler: async (ctx): Promise<{ pages: McpAdsPage[]; truncated: boolean }> => {
     requireGrant(ctx);
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'display_name'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', 'facebook_page')

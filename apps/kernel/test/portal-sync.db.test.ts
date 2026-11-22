@@ -143,10 +143,10 @@ suite('assisted tax portal sync (#325)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = (() => {
       const url = new URL(adminUrl);
-      url.username = 'crove_app';
+      url.username = 'ludy_app';
       url.password = 'test-app-pw';
       return url.toString();
     })();
@@ -155,7 +155,7 @@ suite('assisted tax portal sync (#325)', () => {
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registry);
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     workerRuntime = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -237,7 +237,7 @@ suite('assisted tax portal sync (#325)', () => {
     // Filed, not recorded: the worker records it, with the same command as an uploaded list.
     const waiting = await rpc('portalSync/fetchXml', member, { period: PERIOD, session: logged.body.session, listId: list.body.listId });
     expect(waiting.body).toEqual({ downloaded: 0, duplicates: 0, failed: 0, remaining: 0, done: false, waiting: true });
-    const requested = await admin((c) => c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.portal_list.import_requested'", [org.orgId]));
+    const requested = await admin((c) => c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.portal_list.import_requested'", [org.orgId]));
     expect(requested.rows[0]?.n).toBe('1');
     expect(await importPortalList({ runtime: workerRuntime, store, extract: NO_SANDBOX }, org.orgId, list.body.listId)).toEqual({ rows: 5 });
     const reconciled = await rpc('portalList/reconcile', member, { period: PERIOD });
@@ -251,14 +251,14 @@ suite('assisted tax portal sync (#325)', () => {
     expect(xml.body).toEqual({ downloaded: 3, duplicates: 0, failed: 0, remaining: 0, done: true, waiting: false });
     expect(portal.state.xmlDownloads).toBe(3);
     // Stored as the member's uploads: the worker reads them like any upload (and opens the ZIP in the sandbox).
-    const files = await admin((c) => c.query<{ content_type: string; source: string; created_by: string; filename: string }>("SELECT content_type, source, created_by, filename FROM crove_kernel.file WHERE org_id = $1 ORDER BY filename", [org.orgId]));
+    const files = await admin((c) => c.query<{ content_type: string; source: string; created_by: string; filename: string }>("SELECT content_type, source, created_by, filename FROM ludy_kernel.file WHERE org_id = $1 ORDER BY filename", [org.orgId]));
     expect(files.rows.filter((f) => f.source === 'upload').map((f) => [f.content_type, f.created_by])).toEqual([
       ['application/zip', member.userId],
       ['application/zip', member.userId],
       ['application/zip', member.userId],
     ]);
     expect(files.rows.filter((f) => f.source === 'import').map((f) => f.content_type)).toEqual(['application/json']);
-    const events = await admin((c) => c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested'", [org.orgId]));
+    const events = await admin((c) => c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested'", [org.orgId]));
     expect(Number(events.rows[0]?.n)).toBe(3);
 
     // The same answer again: no new list, nothing downloaded twice.
@@ -270,14 +270,14 @@ suite('assisted tax portal sync (#325)', () => {
     expect(portal.state.xmlDownloads).toBe(3);
 
     // Every call is in the ledger with its outcome class; the audit rows name the member.
-    const calls = await admin((c) => c.query<{ step: string; state: string; n: string }>("SELECT step, state, count(*)::text AS n FROM crove_kernel.external_call WHERE org_id = $1 AND target = 'gdt_einvoice' GROUP BY step, state ORDER BY step, state", [org.orgId]));
+    const calls = await admin((c) => c.query<{ step: string; state: string; n: string }>("SELECT step, state, count(*)::text AS n FROM ludy_kernel.external_call WHERE org_id = $1 AND target = 'gdt_einvoice' GROUP BY step, state ORDER BY step, state", [org.orgId]));
     expect(calls.rows).toEqual([
       { step: 'captcha', state: 'succeeded', n: '1' },
       { step: 'list', state: 'succeeded', n: '2' },
       { step: 'login', state: 'succeeded', n: '1' },
       { step: 'xml', state: 'succeeded', n: '3' },
     ]);
-    const audit = await admin((c) => c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.portal_sync.%' AND command <> 'finance.portal_sync.call_end' ORDER BY occurred_at", [org.orgId]));
+    const audit = await admin((c) => c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.portal_sync.%' AND command <> 'finance.portal_sync.call_end' ORDER BY occurred_at", [org.orgId]));
     expect(audit.rows.map((r) => r.command)).toContain('finance.portal_sync.list');
     expect(JSON.stringify(audit.rows)).toContain('"consent":true');
   });
@@ -286,7 +286,7 @@ suite('assisted tax portal sync (#325)', () => {
     const secrets = [FAKE_PORTAL_PASSWORD, ...portal.state.tokens];
     const found = await admin(async (c) => {
       const tables = await c.query<{ schema: string; name: string }>(
-        "SELECT n.nspname AS schema, c.relname AS name FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND (n.nspname LIKE 'crove%' OR n.nspname = 'pgboss')",
+        "SELECT n.nspname AS schema, c.relname AS name FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND (n.nspname LIKE 'ludy%' OR n.nspname LIKE 'crove%' OR n.nspname = 'pgboss')",
       );
       const hits: string[] = [];
       for (const t of tables.rows) {
@@ -303,7 +303,7 @@ suite('assisted tax portal sync (#325)', () => {
       for (const secret of secrets) expect(text.includes(secret)).toBe(false);
     }
     // The CAPTCHA answer was sent to the portal, and is in no audit row.
-    const audit = await admin((c) => c.query<{ detail: unknown }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]));
+    const audit = await admin((c) => c.query<{ detail: unknown }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1', [org.orgId]));
     expect(JSON.stringify(audit.rows)).not.toContain(FAKE_CAPTCHA_ANSWER);
   });
 
@@ -356,7 +356,7 @@ suite('assisted tax portal sync (#325)', () => {
     expect(guardedLogin.body.code).toBe('PORTAL_PASSWORD_GUARD');
     // Refused before the portal saw it.
     expect(portal.state.logins.length).toBe(logins);
-    const failed = await admin((c) => c.query<{ error_code: string; error_kind: string }>("SELECT error_code, error_kind FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'login' ORDER BY started_at", [guarded.orgId]));
+    const failed = await admin((c) => c.query<{ error_code: string; error_kind: string }>("SELECT error_code, error_kind FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'login' ORDER BY started_at", [guarded.orgId]));
     expect(failed.rows).toEqual([
       { error_code: 'WRONG_CAPTCHA', error_kind: 'bad_request' },
       { error_code: 'WRONG_PASSWORD', error_kind: 'permission' },
@@ -380,11 +380,11 @@ suite('assisted tax portal sync (#325)', () => {
     } finally {
       portal.options.outage = null;
     }
-    const open = await admin((c) => c.query<{ state: string; error_code: string }>("SELECT state, error_code FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'xml' AND key LIKE $2", [org.orgId, `%:${list.body.listId}:%`]));
+    const open = await admin((c) => c.query<{ state: string; error_code: string }>("SELECT state, error_code FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'xml' AND key LIKE $2", [org.orgId, `%:${list.body.listId}:%`]));
     expect(open.rows).toEqual([{ state: 'ambiguous', error_code: 'UNAVAILABLE' }]);
     const again = await rpc('portalSync/fetchXml', owner, { period, session: logged.body.session, listId: list.body.listId });
     expect(again.body).toEqual({ downloaded: 3, duplicates: 0, failed: 0, remaining: 0, done: true, waiting: false });
-    const calls = await admin((c) => c.query<{ state: string; calls: number }>("SELECT state, calls FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'xml' AND key LIKE $2 ORDER BY calls DESC", [org.orgId, `%:${list.body.listId}:%`]));
+    const calls = await admin((c) => c.query<{ state: string; calls: number }>("SELECT state, calls FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'xml' AND key LIKE $2 ORDER BY calls DESC", [org.orgId, `%:${list.body.listId}:%`]));
     expect(calls.rows.map((r) => [r.state, r.calls])).toEqual([
       ['succeeded', 2],
       ['succeeded', 1],
@@ -462,7 +462,7 @@ suite('assisted tax portal sync (#325)', () => {
     expect(list.body.code).toBe('PORTAL_STEP_TIMEOUT');
     expect(Date.now() - started).toBeLessThan(10_000);
     // Nothing was filed, and the call stays open to be made again.
-    const call = await admin((c) => c.query<{ state: string; error_code: string }>("SELECT state, error_code FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'list' ORDER BY started_at DESC LIMIT 1", [org.orgId]));
+    const call = await admin((c) => c.query<{ state: string; error_code: string }>("SELECT state, error_code FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'list' ORDER BY started_at DESC LIMIT 1", [org.orgId]));
     expect(call.rows[0]).toEqual({ state: 'ambiguous', error_code: 'TOO_SLOW' });
   });
 
@@ -493,7 +493,7 @@ suite('assisted tax portal sync (#325)', () => {
       },
     };
     const hugeApp = appWith({ client: huge });
-    const files = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.file WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
+    const files = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.file WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
     const before = await files();
     const captcha = await rpc('portalSync/captcha', owner, { period: PERIOD }, org.slug, hugeApp);
     const logged = await rpc('portalSync/login', owner, { period: PERIOD, challenge: captcha.body.challenge, captcha: FAKE_CAPTCHA_ANSWER, password: FAKE_PORTAL_PASSWORD, consent: true }, org.slug, hugeApp);
@@ -515,7 +515,7 @@ suite('assisted tax portal sync (#325)', () => {
       },
     };
     const cappedApp = appWith({ client: capped });
-    const files = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.file WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
+    const files = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.file WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
     const before = await files();
     const captcha = await rpc('portalSync/captcha', owner, { period: PERIOD }, org.slug, cappedApp);
     const logged = await rpc('portalSync/login', owner, { period: PERIOD, challenge: captcha.body.challenge, captcha: FAKE_CAPTCHA_ANSWER, password: FAKE_PORTAL_PASSWORD, consent: true }, org.slug, cappedApp);

@@ -47,7 +47,7 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
   const party = (name: string) =>
     admin(async (c) => {
       const id = randomUUID();
-      await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [orgA, id, name]);
+      await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [orgA, id, name]);
       return id;
     });
   // One entry by the superuser: lines are [account, debit, credit, party]; a reversal names the entry it reverses.
@@ -77,9 +77,9 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: process.env.CROVE_CONTEXT_TOKEN_KEY ?? null }).register({
@@ -92,7 +92,7 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     stranger = await person('stranger');
     ({ orgId: orgA } = await createOrg(rt, actor(owner), 'Công ty A'));
     ({ orgId: orgB } = await createOrg(rt, actor(stranger), 'Công ty B'));
-    entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgA]))).rows[0]?.id as string;
+    entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgA]))).rows[0]?.id as string;
     shopee = await party('Shopee');
     tiktok = await party('TikTok Shop');
     customer = await party('Khách lẻ');
@@ -163,7 +163,7 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     // Another org with a platform and lines of its own: it sees its own figures only, and this org sees none of them.
     const other = randomUUID();
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Shopee B')", [orgB, other]);
+      await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Shopee B')", [orgB, other]);
       await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgB, other]);
     });
     await post([['131', 42_000, 0, other], ['511', 0, 42_000, null]], null, orgB);

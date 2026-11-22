@@ -129,10 +129,10 @@ describe('configuration guards', () => {
       expect(() => loadConfig(sample(name, 'r4nd0m-Pa55-0123456789abcdef'))).not.toThrow();
     }
     // The password may also come as a query parameter, which node-postgres reads.
-    expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://crove_app@db:5432/postgres?password=local-app-password' })).toThrow(/DATABASE_URL carries a database password/);
+    expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://ludy_app@db:5432/postgres?password=local-app-password' })).toThrow(/DATABASE_URL carries a database password/);
     // Locally the compose fallbacks are the documented default.
-    expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://crove_app:local-app-password@db:5432/postgres' })).not.toThrow();
-    expect(() => loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', DATABASE_URL: 'postgres://crove_app:local-app-password@db:5432/postgres' })).not.toThrow();
+    expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://ludy_app:local-app-password@db:5432/postgres' })).not.toThrow();
+    expect(() => loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', DATABASE_URL: 'postgres://ludy_app:local-app-password@db:5432/postgres' })).not.toThrow();
     // No password in the URL, or no URL at all (the connection fails on its own later), is not a sample password.
     expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://localhost/x' })).not.toThrow();
   });
@@ -154,7 +154,7 @@ describe('configuration guards', () => {
 
   // #2133: keeping the worker's all-org login out of the API does not rest on how the container was composed.
   it('refuses the api role on a public PUBLIC_URL when it holds WORKER_DATABASE_URL, and only then', () => {
-    const worker = { WORKER_DATABASE_URL: 'postgres://crove_worker:worker-ref@db:5432/postgres' };
+    const worker = { WORKER_DATABASE_URL: 'postgres://ludy_worker:worker-ref@db:5432/postgres' };
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
     expect(() => assertSplitRoles(publicConfig(worker), 'api')).toThrow(/api role must not hold WORKER_DATABASE_URL/);
     // The message names the setting and never its value.
@@ -173,8 +173,8 @@ describe('configuration guards', () => {
   it('refuses the api role on a public PUBLIC_URL when it holds the admin login, or a LISTEN url on the worker login, and only then', () => {
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
     const admin = { ADMIN_DATABASE_URL: 'postgres://postgres:admin-ref@db:5432/postgres' };
-    const listenWorker = { DATABASE_LISTEN_URL: 'postgres://crove_worker:listen-ref@db:5432/postgres' };
-    const listenApp = { DATABASE_LISTEN_URL: 'postgres://crove_app:listen-ref@db:5432/postgres' };
+    const listenWorker = { DATABASE_LISTEN_URL: 'postgres://ludy_worker:listen-ref@db:5432/postgres' };
+    const listenApp = { DATABASE_LISTEN_URL: 'postgres://ludy_app:listen-ref@db:5432/postgres' };
     expect(() => assertSplitRoles(publicConfig(admin), 'api')).toThrow(/api role must not hold ADMIN_DATABASE_URL/);
     expect(() => assertSplitRoles(publicConfig(listenWorker), 'api')).toThrow(/api role must not hold a DATABASE_LISTEN_URL on the worker login/);
     // The message names the setting and never a value.
@@ -589,7 +589,7 @@ describe('GET /version', () => {
     expect(midway.status).toBe(503);
     expect(await midway.json()).toEqual({ build: 'v1.2.3', migrationsMissing: null });
     // A database no migration has run on misses every migration.
-    const fresh = Object.assign(new Error('relation "crove_meta.schema_migrations" does not exist'), { code: '42P01' });
+    const fresh = Object.assign(new Error('relation "ludy_meta.schema_migrations" does not exist'), { code: '42P01' });
     const empty = { connect: async () => ({ query: async () => Promise.reject(fresh), release: () => undefined }) } as unknown as Partial<pg.Pool>;
     expect(await (await app({}, empty).request('/version')).json()).toEqual({
       build: 'dev',

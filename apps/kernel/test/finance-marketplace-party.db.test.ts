@@ -59,7 +59,7 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
   const party = (kind: string, orgId: string = orgA) =>
     admin(async (c) => {
       const id = randomUUID();
-      await c.query('INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, $3, $4)', [orgId, id, kind, `Platform ${id.slice(0, 6)}`]);
+      await c.query('INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, $3, $4)', [orgId, id, kind, `Platform ${id.slice(0, 6)}`]);
       return id;
     });
   const link = (platform: string, partyId: string) =>
@@ -74,9 +74,9 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -91,7 +91,7 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
     ({ orgId: orgA } = await createOrg(rt, { type: 'user', userId: owner, aal: 'aal1' }, 'Công ty A'));
     ({ orgId: orgB } = await createOrg(rt, { type: 'user', userId: stranger, aal: 'aal1' }, 'Công ty B'));
     org.id = orgA;
-    org.entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgA]))).rows[0]?.id as string;
+    org.entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgA]))).rows[0]?.id as string;
   }, 120_000);
 
   afterAll(async () => {
@@ -123,7 +123,7 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
     await expect(link('lazada', person)).rejects.toMatchObject({ message: expect.stringContaining('MARKETPLACE_PARTY_KIND') });
     const target = await party('organization');
     const merged = await party('organization');
-    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [orgA, merged, target]));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [orgA, merged, target]));
     await expect(link('lazada', merged)).rejects.toMatchObject({ message: expect.stringContaining('MARKETPLACE_PARTY_KIND') });
     const p = await party('organization');
     for (const bad of ['', 'S', 'Shopee', '1shopee', 'shop-ee', 'x'.repeat(32)]) {

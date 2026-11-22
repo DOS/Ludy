@@ -25,7 +25,7 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -51,12 +51,12 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
     const roles = { member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const role = { member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     const conn = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, conn, 'sandbox', `acct-${conn.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -68,7 +68,7 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
   async function channel(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, o.owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, o.owner]),
     );
     return id;
   }
@@ -85,12 +85,12 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
   const timeline = async (o: Org, postId: string, kind: string) =>
     (await rt.query<{ items: ActivityItem[] }>('social.post.activity', { postId }, { actor: asUser(o.viewer), orgId: o.orgId })).items.filter((i) => i.kind === kind);
   const audits = (o: Org, command: string, outcome = 'ok') =>
-    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
+    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
   const sorted = (ids: readonly string[]) => [...ids].sort();
 
   // What the worker does for each new event of the org: the dispatch, in the org's system context.
   async function deliver(o: Org) {
-    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
       o.dispatched.add(e.id);
@@ -108,16 +108,16 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -249,7 +249,7 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
     expect((await notifications(o, o.member)).items.filter((i) => i.kind === 'assigned')).toEqual([]);
     // Each post's own event says it was part of a bulk assignment; the bulk command's event names the posts.
     const events = (type: string) =>
-      admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [o.orgId, type])).rows.map((e) => e.payload));
+      admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [o.orgId, type])).rows.map((e) => e.payload));
     expect(await events('social.post.assigned')).toEqual([
       { post_id: mine, assignee_user_id: o.other, by: o.member, bulk: true },
       { post_id: ownerPost, assignee_user_id: o.other, by: o.owner, bulk: true },
@@ -280,7 +280,7 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
     const foreign = await org();
     await expect(exec(o, o.owner, 'social.post.bulk_assign', { postIds: [a], assigneeUserId: foreign.member, dueAt: null })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_MEMBER' });
     // Nor is one who has left.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
     await expect(exec(o, o.owner, 'social.post.bulk_assign', { postIds: [a], assigneeUserId: o.other })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_MEMBER' });
     expect(await get(o, o.owner, a)).toMatchObject({ assigneeUserId: null });
     expect(await audits(o, 'social.post.assign')).toEqual([]);
@@ -318,7 +318,7 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
     const a = await post(o, o.owner, 'Bài A');
     const b = await post(o, o.owner, 'Bài B');
     await exec(o, o.owner, 'social.post.bulk_assign', { postIds: [a, b], assigneeUserId: o.other });
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
     const due = new Date(Date.now() + 2 * 86_400_000).toISOString();
     const kept = await exec<BulkEditResult>(o, o.owner, 'social.post.bulk_assign', { postIds: [a, b], assigneeUserId: o.other, dueAt: due });
     expect(sorted(kept.done)).toEqual(sorted([a, b]));

@@ -50,12 +50,12 @@ suite('the assignee suggested for an action item (#3921)', () => {
   }
   async function seedPosition(who: string, title: string): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[who]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[who]]);
     return id;
   }
   async function member(key: string, name: string | null): Promise<void> {
     users[key] = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'assignee', subject: key, email: `${key}@assignee.test`, name });
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [orgId, users[key]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [orgId, users[key]]);
   }
   type Suggestion = { userId: string; name: string; source: 'attendee' | 'member'; positions: Array<{ id: string; title: string }> } | null;
   type Items = { items: Array<{ id: string; who: string; whoUserId: string | null; suggestion: Suggestion }> };
@@ -76,9 +76,9 @@ suite('the assignee suggested for an action item (#3921)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -120,12 +120,12 @@ suite('the assignee suggested for an action item (#3921)', () => {
   it('lists the seats the suggested person holds now, and stores nothing of the suggestion', async () => {
     const meetingId = await seedMeeting('recorder', ['reader']);
     const seatA = await seedPosition('quan', 'Kế toán');
-    const before = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1`, [orgId]);
+    const before = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1`, [orgId]);
     const got = await suggestionsFor(meetingId, ['Quân']);
     expect(got.Quân?.positions).toEqual([{ id: seatA, title: 'Kế toán' }]);
     const stored = await sqlAdmin<{ who_parsed: string | null }>(`SELECT who_parsed FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
     expect(stored.rows.every((r) => r.who_parsed === null)).toBe(true);
-    const after = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1`, [orgId]);
+    const after = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1`, [orgId]);
     expect(after.rows[0]?.n).toBe(before.rows[0]?.n);
   });
 

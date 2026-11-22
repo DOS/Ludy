@@ -53,7 +53,7 @@ suite('editing a party (#887)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'admin' | 'member' | 'viewer', string> = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -61,7 +61,7 @@ suite('editing a party (#887)', () => {
   async function party(orgId: string, values: { name: string; taxCode?: string | null; address?: string | null }) {
     const { rows } = await admin((c) =>
       c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.party (org_id, name, tax_code, address, source_trust) VALUES ($1, $2, $3, $4, 'external') RETURNING id`,
+        `INSERT INTO ludy_kernel.party (org_id, name, tax_code, address, source_trust) VALUES ($1, $2, $3, $4, 'external') RETURNING id`,
         [orgId, values.name, values.taxCode ?? null, values.address ?? null],
       ),
     );
@@ -69,7 +69,7 @@ suite('editing a party (#887)', () => {
   }
 
   const stored = (orgId: string, id: string) =>
-    admin(async (c) => (await c.query('SELECT name, tax_code, address, email, phone, version, source_trust FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [orgId, id])).rows[0]);
+    admin(async (c) => (await c.query('SELECT name, tax_code, address, email, phone, version, source_trust FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [orgId, id])).rows[0]);
 
   const edit = (o: { orgId: string }, user: string, input: Edit) =>
     rt.execute<{ partyId: string; version: number }>('kernel.party.update', input, { actor: asUser(user), orgId: o.orgId });
@@ -85,9 +85,9 @@ suite('editing a party (#887)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -125,7 +125,7 @@ suite('editing a party (#887)', () => {
     });
     const [audit] = await admin(
       async (c) =>
-        (await c.query<{ actor_id: string; detail: Record<string, unknown> }>(`SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.update' AND outcome = 'ok'`, [o.orgId]))
+        (await c.query<{ actor_id: string; detail: Record<string, unknown> }>(`SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.update' AND outcome = 'ok'`, [o.orgId]))
           .rows,
     );
     expect(audit?.actor_id).toBe(o.member);
@@ -140,7 +140,7 @@ suite('editing a party (#887)', () => {
     expect(JSON.stringify(audit?.detail)).not.toContain('ketoan@mau.example');
     expect(JSON.stringify(audit?.detail)).not.toContain('1234 5678');
     const activity = await admin(
-      async (c) => (await c.query(`SELECT kind, summary, actor_id FROM crove_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2`, [o.orgId, id])).rows,
+      async (c) => (await c.query(`SELECT kind, summary, actor_id FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2`, [o.orgId, id])).rows,
     );
     expect(activity).toEqual([{ kind: 'party.updated', summary: 'Đổi tên', actor_id: o.member }]);
   });
@@ -157,7 +157,7 @@ suite('editing a party (#887)', () => {
     const o = await org();
     const id = await party(o.orgId, { name: 'Công ty Mẫu' });
     expect(await edit(o, o.owner, base(id))).toEqual({ partyId: id, version: 1 });
-    const activity = await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2`, [o.orgId, id])).rowCount);
+    const activity = await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2`, [o.orgId, id])).rowCount);
     expect(activity).toBe(0);
   });
 

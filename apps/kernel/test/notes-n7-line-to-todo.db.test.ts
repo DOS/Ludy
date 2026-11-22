@@ -58,7 +58,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -87,7 +87,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
     const partyId = await withAdmin(async (c) => {
       const branchId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
           [orgId, owner],
         )
@@ -100,16 +100,16 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
         [viewer, 'viewer'],
         [limited, 'member'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, u, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, u, role]);
       }
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [orgId, limited, branchId, owner],
       );
       return (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.party (org_id, id, name)
+          `INSERT INTO ludy_kernel.party (org_id, id, name)
            VALUES ($1, $2, 'Công ty Hoa Mai') RETURNING id`,
           [orgId, randomUUID()],
         )
@@ -131,7 +131,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -139,9 +139,9 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     const appPool = createPool({ connectionString: appUrl, max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     pools.push(appPool, workerPool);
     db = createDb(appPool);
 
@@ -215,7 +215,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
     // Audit row keeps sourceNoteId ID only with PII redacted; no note or to-do text enters audit or outbox.
     const audit = await withAdmin((c) =>
       c.query<{ command: string; detail: Record<string, unknown> }>(
-        `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.create' ORDER BY occurred_at DESC LIMIT 1`,
+        `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.create' ORDER BY occurred_at DESC LIMIT 1`,
         [o.orgId],
       ),
     );
@@ -225,7 +225,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
     expect(serializedAudit).not.toContain(SHARED_BODY);
     expect(serializedAudit).not.toContain(TODO_TITLE);
 
-    const outbox = await withAdmin((c) => c.query<{ payload: unknown }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1`, [o.orgId]));
+    const outbox = await withAdmin((c) => c.query<{ payload: unknown }>(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1`, [o.orgId]));
     expect(JSON.stringify(outbox.rows)).not.toContain(TODO_TITLE);
 
     // Author also turns a line of their own private note into a private to-do; nobody else reads either item.
@@ -385,7 +385,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
     const positionId = await withAdmin(async (c) =>
       (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id, status)
+          `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id, status)
            VALUES ($1, 'Kế toán viên', 'kernel', 'staff', $2, 'active') RETURNING id`,
           [o.orgId, o.other],
         )
@@ -399,7 +399,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
       description: '',
     });
     const taskRow = await withAdmin((c) =>
-      c.query<{ tainted: boolean }>('SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2', [o.orgId, handed.taskId]),
+      c.query<{ tainted: boolean }>('SELECT tainted FROM ludy_kernel.task WHERE org_id = $1 AND id = $2', [o.orgId, handed.taskId]),
     );
     expect(taskRow.rows[0]?.tainted).toBe(true);
   });

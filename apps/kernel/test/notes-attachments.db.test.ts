@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Files attached to a note on PostgreSQL 17 (Notes v2 E2, #3561, owner decision A3, ADR-0037): the bytes go through
 // POST /api/notes/:noteId/attachments into the blob store under notes/<org>/<attachment> and a crove_notes.attachment row,
-// never crove_kernel.file; GET /api/notes/attachments/:id serves them only to whoever reads the parent note, with nosniff,
+// never ludy_kernel.file; GET /api/notes/attachments/:id serves them only to whoever reads the parent note, with nosniff,
 // no-store, a sandbox CSP, inline only for raster images, PDF and safe audio, and one uniform 404 for an id that is foreign,
 // unknown, unreadable or in the trash. The worker extracts text through crove-extract (a stand-in here) and the note's search
 // finds it, an edit of the note keeping it. Every deletion path queues the blob for the worker's sweep. Set
@@ -107,14 +107,14 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const author = await person('author');
     const other = await person('other');
     const viewer = await person('viewer');
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
       orgId,
       adm.id,
       author.id,
       other.id,
       viewer.id,
     ]);
-    const [slug] = await rows<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]);
+    const [slug] = await rows<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]);
     return { orgId, slug: (slug as { slug: string }).slug, owner, admin: adm, author, other, viewer };
   }
 
@@ -153,7 +153,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
   const doomed = async (o: Org) =>
     (await rows<{ storage_key: string }>('SELECT storage_key FROM crove_notes.attachment_blob_doomed WHERE storage_key LIKE $1 ORDER BY 1', [`notes/${o.orgId}/%`])).map((r) => r.storage_key);
   const blobsOf = (o: Org) => [...store.blobs.keys()].filter((k) => k.startsWith(`notes/${o.orgId}/`)).sort();
-  const fileRows = async (o: Org) => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1', [o.orgId]))[0]?.n);
+  const fileRows = async (o: Org) => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.file WHERE org_id = $1', [o.orgId]))[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -164,17 +164,17 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
@@ -193,7 +193,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await root.end();
   });
 
-  it('stores a pasted screenshot and a PDF under notes/<org>/<id>, never in crove_kernel.file, and lists them on the note', async () => {
+  it('stores a pasted screenshot and a PDF under notes/<org>/<id>, never in ludy_kernel.file, and lists them on the note', async () => {
     const o = await org();
     const noteId = await createNote(o, o.author, 'private');
     const shot = await attached(o, o.author, noteId, png(), 'image.png');
@@ -205,10 +205,10 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const note = await rt.query<Note>('notes.note.get', { noteId }, { actor: asUser(o.author.id), orgId: o.orgId });
     expect(note.attachments?.map((a) => a.id)).toEqual([shot.id, doc.id]);
     // The PDF asks the worker for its text; the screenshot does not.
-    const events = await rows<{ payload: { attachmentId: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'notes.attachment.extract_queued'", [o.orgId]);
+    const events = await rows<{ payload: { attachmentId: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'notes.attachment.extract_queued'", [o.orgId]);
     expect(events.map((e) => e.payload.attachmentId)).toEqual([doc.id]);
     // No file name or byte reaches the audit trail of a private note.
-    const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.attachment.%'", [o.orgId]));
+    const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.attachment.%'", [o.orgId]));
     expect(audit).not.toContain('hợp đồng');
   });
 
@@ -338,7 +338,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(mine[0]?.key).toEqual(expect.stringContaining(waiting.id));
     expect(sent.some((s) => [fresh.id, inTrash.id].includes((s.data as { attachmentId: string }).attachmentId))).toBe(false);
     // The app login may not list them.
-    await expect(admin((c) => c.query('SET ROLE crove_app').then(() => c.query('SELECT * FROM crove_notes.attachment_extract_due(10)')))).rejects.toThrow();
+    await expect(admin((c) => c.query('SET ROLE ludy_app').then(() => c.query('SELECT * FROM crove_notes.attachment_extract_due(10)')))).rejects.toThrow();
   });
 
   it('queues the blob on attachment delete, on the trash purge and on a note delete, and the sweep removes it from the store', async () => {
@@ -377,7 +377,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const extToken = newExtensionToken();
     const tokenId = randomUUID();
     await rows(
-      `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+      `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
        VALUES ($1, $2, $3, $4, 'Clipper', ARRAY['notes'], now(), now() + interval '7 days', $3)`,
       [o.orgId, tokenId, o.author.id, hashExtensionSecret(extToken.value)],
     );
@@ -417,13 +417,13 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
 
     // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob.
     await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
-    const [notifiedEvent] = await rows<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]);
+    const [notifiedEvent] = await rows<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]);
     await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
-      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
       await c.query('COMMIT');
     });
     await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -436,13 +436,13 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const keptAtt = await attached(o, o.author, sharedTwo, png(), 'giu-lai.png');
     await rt.execute('kernel.member.remove', { userId: o.author.id }, { actor: asMfa(o.owner.id), orgId: o.orgId });
     const [removedEvt] = await rows<{ id: string }>(
-      `SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
       [o.orgId, o.author.id],
     );
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '35 days' WHERE org_id = $1 AND command = 'kernel.member.remove'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '35 days' WHERE org_id = $1 AND command = 'kernel.member.remove'`, [o.orgId]);
       await c.query('COMMIT');
     });
     expect(await worker.execute('notes.member_items.purge', { userId: o.author.id, eventId: removedEvt?.id }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 2 });

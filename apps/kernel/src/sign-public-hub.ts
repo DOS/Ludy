@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Orgless HTTP edge helpers for the public self-service eSign template hub (Slice 4d, #3820, docs/plan/esign.md).
 // Resolves only templates explicitly opted in via template_direct_link.listed_on_public_hub = true, checks
-// crove_kernel.org_app_on + billing entitlements before returning data (yielding an identical opaque 404 across
+// ludy_kernel.org_app_on + billing entitlements before returning data (yielding an identical opaque 404 across
 // unknown/inactive/disabled/unentitled orgs and orgs with zero public hub forms), never exposes raw or hashed
 // direct-link capability tokens outside PostgreSQL, and enforces per-IP + per-template/email rate limits without CAPTCHA (#203).
 import { sql } from 'kysely';

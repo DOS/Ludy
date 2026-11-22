@@ -256,7 +256,7 @@ export const prepareRunPosting = defineCommand({
     const { payrollRun, date, regime, result } = built;
     // One proposal per run: another still open ends it, and one already posted is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', PAYROLL_POSTING_COMMAND)

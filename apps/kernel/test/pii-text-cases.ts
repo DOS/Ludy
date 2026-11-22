@@ -1,5 +1,5 @@
 // One case table for the free-text matcher (notes step N9, #1678, shared with #1948), run against the database functions
-// crove_kernel.text_mentions and text_redact through the finder's probe (personal-data.db.test.ts): a text, the value
+// ludy_kernel.text_mentions and text_redact through the finder's probe (personal-data.db.test.ts): a text, the value
 // a person gave, and the text after redaction, the same as the text when the value does not match. A value that is not
 // an email, a phone or an ID gives no probe, so nothing matches.
 export interface PiiTextCase {

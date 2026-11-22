@@ -83,11 +83,11 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const member = await identity('member');
     const adminUser = twoApprovers ? await identity('admin') : null;
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
-      if (adminUser) await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
+      if (adminUser) await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]);
     });
     const supplier = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
     return { orgId, owner, admin: adminUser, member, supplier };
   }
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true) => rt.execute<T>(name, input, { actor: user(who, fresh), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -129,9 +129,9 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -156,11 +156,11 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
   const refusalOf = async (promise: Promise<unknown>) => promise.then(() => ({ code: 'accepted', paymentId: undefined as string | undefined }), (error: { code?: string; details?: { paymentId?: string } }) => ({ code: error.code, paymentId: error.details?.paymentId }));
   // The hold passed (arranged as only the database owner can), so the payment is one a file may carry.
   const released = (o: Org, id: string) => unguarded((c) => c.query('UPDATE crove_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [o.orgId, id]));
-  const auditRows = (o: Org, command: string) => rows<{ detail: unknown; facts: unknown }>('SELECT to_jsonb(a) - \'org_id\' AS detail, to_jsonb(a) AS facts FROM crove_kernel.audit_event a WHERE a.org_id = $1 AND a.command = $2', [o.orgId, command]);
+  const auditRows = (o: Org, command: string) => rows<{ detail: unknown; facts: unknown }>('SELECT to_jsonb(a) - \'org_id\' AS detail, to_jsonb(a) AS facts FROM ludy_kernel.audit_event a WHERE a.org_id = $1 AND a.command = $2', [o.orgId, command]);
   // A second supplier of the org with its own account and a received invoice.
   async function otherSupplier(o: Org, number: string, holder: string, total = '220'): Promise<{ party: string; doc: string }> {
     const party = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thứ hai')", [o.orgId, party]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thứ hai')", [o.orgId, party]));
     await execute(o, 'finance.supplier_bank_account.add', { partyId: party, bankName: 'ACB', accountHolder: holder, accountNumber: number });
     const doc = randomUUID();
     const entry = randomUUID();
@@ -301,7 +301,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     try {
       await c.query('BEGIN');
       await enterUser(c, o.owner, o.orgId);
-      await c.query('SELECT crove_kernel.subject_key_shred(ARRAY[$1]::text[])', [`supplier:${o.supplier}`]);
+      await c.query('SELECT ludy_kernel.subject_key_shred(ARRAY[$1]::text[])', [`supplier:${o.supplier}`]);
       await c.query('COMMIT');
     } finally {
       c.release();

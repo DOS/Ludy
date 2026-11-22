@@ -13,7 +13,7 @@ import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { assertOrgTaxCodeFree, defaultKindForTaxCode, onWrite, setDefaultEntityTaxCode } from './legal-entities.ts';
 import { kernelManifest } from './manifest.ts';
 
-const TENANT = kernelManifest.tables.crove_kernel.tenant;
+const TENANT = kernelManifest.tables.ludy_kernel.tenant;
 
 export const setTaxCode = defineCommand({
   name: 'kernel.org.set_tax_code',
@@ -26,12 +26,12 @@ export const setTaxCode = defineCommand({
     if (input.taxCode && !taxCode) {
       throw new DomainError('INVALID_TAX_CODE', 422, 'Mã số thuế không hợp lệ: 10 chữ số, 10 chữ số kèm 3 chữ số đơn vị phụ thuộc, hoặc 12 chữ số');
     }
-    const before = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const before = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     await assertOrgTaxCodeFree(ctx, taxCode);
     if (before.tax_code !== taxCode) {
       // The database writes the new code to the default entity too (tenant_default_entity_tax_code); its unique index
       // refuses a code another entity took after the check above.
-      await ctx.trx.updateTable('crove_kernel.tenant').set({ tax_code: taxCode }).where('org_id', '=', ctx.orgId).execute().catch(onWrite(taxCode));
+      await ctx.trx.updateTable('ludy_kernel.tenant').set({ tax_code: taxCode }).where('org_id', '=', ctx.orgId).execute().catch(onWrite(taxCode));
       // Members see the change in the activity feed: it decides which invoices are read as sales from now on.
       await ctx.activity('kernel.tenant', ctx.orgId, 'org.tax_code_changed', taxCode ? 'Đặt mã số thuế của tổ chức' : 'Xóa mã số thuế của tổ chức');
     }
@@ -62,10 +62,10 @@ export const setVatFilingPeriod = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin'],
   handler: async (ctx, input) => {
-    const before = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const before = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const next = input.vatFilingPeriod;
     if (before.vat_filing_period !== next) {
-      await ctx.trx.updateTable('crove_kernel.tenant').set({ vat_filing_period: next }).where('org_id', '=', ctx.orgId).execute();
+      await ctx.trx.updateTable('ludy_kernel.tenant').set({ vat_filing_period: next }).where('org_id', '=', ctx.orgId).execute();
       const summary =
         next === 'month' ? 'Chọn kỳ khai thuế GTGT theo tháng' : next === 'quarter' ? 'Chọn kỳ khai thuế GTGT theo quý' : 'Bỏ chọn kỳ khai thuế GTGT';
       await ctx.activity('kernel.tenant', ctx.orgId, 'org.vat_filing_period_changed', summary);

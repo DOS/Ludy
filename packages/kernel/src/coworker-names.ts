@@ -22,8 +22,8 @@ export async function coworkerNames(ctx: Pick<QueryContext, 'orgId' | 'trx'>): P
   const names = defaultCoworkers();
   const { rows } = await sql<{ module: string; name: string }>`
     SELECT t.module, a.display_name AS name
-    FROM crove_kernel.agent a
-    JOIN crove_kernel.agent_template t ON t.key = a.template_key
+    FROM ludy_kernel.agent a
+    JOIN ludy_kernel.agent_template t ON t.key = a.template_key
     WHERE a.org_id = ${ctx.orgId}::uuid AND a.kind = 'org_chart' AND a.status <> 'retired'
       AND t.module IN (${sql.join(MODULES)})
     ORDER BY a.created_at, a.id

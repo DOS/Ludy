@@ -156,9 +156,9 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     appUrlText = appUrl.toString();
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
@@ -211,7 +211,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(first.status).toBe(200);
     expect(first.code).toMatch(/^crc_[A-Za-z0-9_-]{43}$/);
     // Only the code's hash is stored, never the code, and the challenge, scopes and device name come with it.
-    const stored = await admin(async (c) => (await c.query<{ code_hash: Buffer; device_name: string; scopes: string[] }>('SELECT code_hash, device_name, scopes FROM crove_kernel.extension_auth_code WHERE org_id = $1', [orgId])).rows);
+    const stored = await admin(async (c) => (await c.query<{ code_hash: Buffer; device_name: string; scopes: string[] }>('SELECT code_hash, device_name, scopes FROM ludy_kernel.extension_auth_code WHERE org_id = $1', [orgId])).rows);
     expect(stored.some((r) => r.code_hash.equals(createHash('sha256').update(first.code).digest()))).toBe(true);
     expect(JSON.stringify(stored)).not.toContain(first.code);
     // A wrong verifier, a malformed code, an unknown code: the same 400 and body.
@@ -233,12 +233,12 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(days).toBeLessThanOrEqual(90);
     expect(await exchange(first.code, first.verifier)).toEqual({ status: 400, body: wrong.body });
     // The exchange is audited, ids only: the member, the token that did it, the code it came from.
-    const audit = await admin(async (c) => (await c.query<{ actor_id: string; detail: Record<string, unknown> }>(`SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extension.token.exchanged' AND outcome = 'ok'`, [orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ actor_id: string; detail: Record<string, unknown> }>(`SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extension.token.exchanged' AND outcome = 'ok'`, [orgId])).rows);
     const mine = audit.find((r) => r.detail.extensionToken === done.body.tokenId);
     expect(mine?.detail.codeId).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(mine?.detail)).not.toContain(first.code);
     // The token is stored as its hash only.
-    const hashes = await admin(async (c) => (await c.query<{ token_hash: Buffer }>('SELECT token_hash FROM crove_kernel.extension_token WHERE org_id = $1', [orgId])).rows);
+    const hashes = await admin(async (c) => (await c.query<{ token_hash: Buffer }>('SELECT token_hash FROM ludy_kernel.extension_token WHERE org_id = $1', [orgId])).rows);
     expect(hashes.some((r) => r.token_hash.equals(createHash('sha256').update(String(done.body.token)).digest()))).toBe(true);
   });
 
@@ -258,7 +258,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     };
     const a = await issue(EXT_ID);
     // The id is stored with the code.
-    const bound = await admin(async (c) => (await c.query<{ extension_id: string | null }>('SELECT extension_id FROM crove_kernel.extension_auth_code WHERE code_hash = $1', [createHash('sha256').update(a.code).digest()])).rows[0]?.extension_id);
+    const bound = await admin(async (c) => (await c.query<{ extension_id: string | null }>('SELECT extension_id FROM ludy_kernel.extension_auth_code WHERE code_hash = $1', [createHash('sha256').update(a.code).digest()])).rows[0]?.extension_id);
     expect(bound).toBe(EXT_ID);
     // Every refusal is the same flat 400, and none spends the code.
     const refusals = [
@@ -271,7 +271,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     ];
     for (const refused of refusals) expect(refused.status).toBe(400);
     for (const refused of refusals) expect(refused.body).toEqual(refusals[0]!.body);
-    const unspent = await admin(async (c) => (await c.query<{ consumed_at: Date | null; failed_attempts: number }>('SELECT consumed_at, failed_attempts FROM crove_kernel.extension_auth_code WHERE code_hash = $1', [createHash('sha256').update(a.code).digest()])).rows[0]);
+    const unspent = await admin(async (c) => (await c.query<{ consumed_at: Date | null; failed_attempts: number }>('SELECT consumed_at, failed_attempts FROM ludy_kernel.extension_auth_code WHERE code_hash = $1', [createHash('sha256').update(a.code).digest()])).rows[0]);
     expect(unspent).toEqual({ consumed_at: null, failed_attempts: 0 });
     // The code's own extension still gets its token, once.
     const done = await exchange(a.code, a.verifier, originOf(EXT_ID), twoIds);
@@ -290,7 +290,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const unboundCode = `crc_${randomBytes(32).toString('base64url')}`;
     await admin(async (c) =>
       c.query(
-        `INSERT INTO crove_kernel.extension_auth_code (org_id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+        `INSERT INTO ludy_kernel.extension_auth_code (org_id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
          VALUES ($1, $2, $3, $4, 'S256', ARRAY['meetings'], 'Chrome', now(), now() + interval '5 minutes')`,
         [orgId, await userIdOf('recorder'), createHash('sha256').update(unboundCode).digest(), challengeOf(verifier)],
       ),
@@ -447,7 +447,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const first = await row(silent);
     expect(first).toMatchObject({ ended: true, secs: 90, reason: 'mic_lost' });
     // The audit row holds ids and codes only (the token's id is stamped on every extension audit row).
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.meeting.recording_stopped' AND target_id = $1`, [silent])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.meeting.recording_stopped' AND target_id = $1`, [silent])).rows);
     expect(audit).toHaveLength(1);
     expect(audit[0]!.detail).toEqual({ meetingId: silent, changed: true, reason: 'mic_lost', extensionToken: expect.any(String) });
     // A second call, even with other words, changes nothing.
@@ -529,16 +529,16 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const { token } = await signedIn('leaver');
     expect((await app.request('/api/extension/me', { headers: asToken(token) })).status).toBe(200);
     const email = accounts.get('leaver')?.email;
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = (SELECT id FROM crove_kernel.user_account WHERE email = $2)', [orgId, email]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = (SELECT id FROM ludy_kernel.user_account WHERE email = $2)', [orgId, email]));
     expect((await app.request('/api/extension/me', { headers: asToken(token) })).status).toBe(401);
   });
 
   // ---- Token lifecycle (#2740) ----------------------------------------------------------------------------------------
-  const live = (tokenId: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.extension_token WHERE id = $1 AND revoked_at IS NULL', [tokenId])).rowCount === 1);
+  const live = (tokenId: string) => admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.extension_token WHERE id = $1 AND revoked_at IS NULL', [tokenId])).rowCount === 1);
   const me = async (token: string) => (await app.request('/api/extension/me', { headers: asToken(token) })).status;
-  const userIdOf = (name: string) => admin(async (c) => (await c.query('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get(name)?.email])).rows[0].id as string);
+  const userIdOf = (name: string) => admin(async (c) => (await c.query('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get(name)?.email])).rows[0].id as string);
   const autoRevokeRows = (tokenId: string) =>
-    admin(async (c) => (await c.query(`SELECT actor_type, actor_id, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.auto_revoked' AND target_id = $1`, [tokenId])).rows as Array<{ actor_type: string; actor_id: string | null; outcome: string; target_type: string; target_id: string; detail: Record<string, unknown> }>);
+    admin(async (c) => (await c.query(`SELECT actor_type, actor_id, outcome, target_type, target_id, detail FROM ludy_kernel.audit_event WHERE command = 'kernel.extension.token.auto_revoked' AND target_id = $1`, [tokenId])).rows as Array<{ actor_type: string; actor_id: string | null; outcome: string; target_type: string; target_id: string; detail: Record<string, unknown> }>);
 
   it('refuses a code for an extension id outside the allow-list, and one without an id', async () => {
     const outside = await connect('recorder', slug, ['meetings'], OTHER_EXT_ID);
@@ -581,11 +581,11 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const { token, tokenId } = await signedIn('demoted');
     const userId = await userIdOf('demoted');
     expect(await me(token)).toBe(200);
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
     expect(await me(token)).toBe(401);
     expect(await live(tokenId)).toBe(false);
     // Restoring the role does not bring the device back.
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
     expect(await me(token)).toBe(401);
     const rows = await autoRevokeRows(tokenId);
     expect(rows).toHaveLength(1);
@@ -593,11 +593,11 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(rows[0]!.detail).toEqual({ tokenId, userId, reason: 'role_change' });
     // A change between roles that all hold the feature voids nothing.
     const second = await signedIn('demoted');
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
     expect(await me(second.token)).toBe(200);
     expect(await autoRevokeRows(second.tokenId)).toHaveLength(0);
     expect(await live(second.tokenId)).toBe(true);
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
   });
 
   it('voids the tokens of a member whose role is changed through the runtime command, and of one who is removed', async () => {
@@ -622,7 +622,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(await me(first.token)).toBe(401);
     const third = await signedIn('changed');
     expect(await me(third.token)).toBe(200);
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, userId]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, userId]));
     expect(await live(third.tokenId)).toBe(false);
     const removed = await autoRevokeRows(third.tokenId);
     expect(removed).toHaveLength(1);
@@ -642,8 +642,8 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       await holder.connect();
       try {
         await holder.query('BEGIN');
-        if (kind === 'demotion') await holder.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]);
-        else await holder.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [userId]);
+        if (kind === 'demotion') await holder.query(`UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]);
+        else await holder.query('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [userId]);
         const exchanging = exchange(first.code, first.verifier);
         // Give the exchange time to reach its lock wait; it must not have finished while the change is uncommitted.
         const early = await Promise.race([exchanging.then(() => 'finished'), new Promise((r) => setTimeout(() => r('waiting'), 600))]);
@@ -654,9 +654,9 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       } finally {
         await holder.end().catch(() => undefined);
       }
-      const live = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.extension_token WHERE user_id = $1 AND revoked_at IS NULL', [userId])).rows[0].n as number);
+      const live = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.extension_token WHERE user_id = $1 AND revoked_at IS NULL', [userId])).rows[0].n as number);
       expect(live, `no live token after a ${kind} that raced the exchange`).toBe(0);
-      if (kind === 'disable') await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [userId]));
+      if (kind === 'disable') await admin((c) => c.query('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [userId]));
     }
   });
 
@@ -667,17 +667,17 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     // The user-disable role: the worker login, no org context. Its session is not staff, so the audit row is written under
     // the plain rules of the table.
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const worker = new pg.Client({ connectionString: workerUrl.toString() });
     await worker.connect();
     try {
-      await worker.query(`SELECT * FROM crove_kernel.user_set_disabled($1, true, 'test')`, [accounts.get('disabled')?.email]);
+      await worker.query(`SELECT * FROM ludy_kernel.user_set_disabled($1, true, 'test')`, [accounts.get('disabled')?.email]);
     } finally {
       await worker.end();
     }
     expect(await me(token)).toBe(401);
-    await admin((c) => c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [userId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [userId]));
     expect(await me(token)).toBe(401);
     expect(await live(tokenId)).toBe(false);
     const rows = await autoRevokeRows(tokenId);
@@ -712,7 +712,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(revoked.status).toBe(200);
     expect(revoked.body).toMatchObject({ tokenId: device.tokenId, userId: await userIdOf('recorder'), revoked: true });
     expect(await me(device.token)).toBe(401);
-    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.revoke_member' AND outcome = 'ok' AND detail->>'tokenId' = $1`, [device.tokenId])).rows as Array<{ detail: Record<string, unknown> }>);
+    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.extension.token.revoke_member' AND outcome = 'ok' AND detail->>'tokenId' = $1`, [device.tokenId])).rows as Array<{ detail: Record<string, unknown> }>);
     expect(audit).toHaveLength(1);
     expect(audit[0]!.detail).toMatchObject({ tokenId: device.tokenId, userId: await userIdOf('recorder') });
     expect(JSON.stringify(audit[0]!.detail)).not.toMatch(/crx_|hash|Chrome/i);
@@ -754,7 +754,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const response = await broken.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json', origin: originOf(EXT_ID) }, body: JSON.stringify({ code, codeVerifier: verifier }) });
     expect(response.status).toBeGreaterThanOrEqual(400);
     expect(JSON.stringify(await response.json())).not.toMatch(/crx_/);
-    const rows = await admin(async (c) => (await c.query('SELECT id, revoked_at FROM crove_kernel.extension_token WHERE user_id = $1', [userId])).rows as Array<{ id: string; revoked_at: Date | null }>);
+    const rows = await admin(async (c) => (await c.query('SELECT id, revoked_at FROM ludy_kernel.extension_token WHERE user_id = $1', [userId])).rows as Array<{ id: string; revoked_at: Date | null }>);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.revoked_at).not.toBeNull();
     const audit = await autoRevokeRows(rows[0]!.id);
@@ -813,8 +813,8 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const token = (await signedIn('recorder')).token;
     const email = String(accounts.get('recorder')?.email);
     const tokenHash = createHash('sha256').update(token).digest();
-    const row = () => admin(async (c) => (await c.query<{ last_used_at: Date | null; revoked_at: Date | null }>('SELECT last_used_at, revoked_at FROM crove_kernel.extension_token WHERE token_hash = $1', [tokenHash])).rows[0]);
-    const audits = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1', [orgId])).rows[0]?.n));
+    const row = () => admin(async (c) => (await c.query<{ last_used_at: Date | null; revoked_at: Date | null }>('SELECT last_used_at, revoked_at FROM ludy_kernel.extension_token WHERE token_hash = $1', [tokenHash])).rows[0]);
+    const audits = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [orgId])).rows[0]?.n));
     const appWith = (list: string | undefined) => {
       const config = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID, ...(list === undefined ? {} : { AUTH_ALLOWED_EMAILS: list }) });
       return createHttpApp({ config, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false, extensionTokenLimit: new RateLimiter({ perMinute: 40 }), extensionBearerLimit: new RateLimiter({ perMinute: 1000 }) });
@@ -852,14 +852,14 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
 
     // Standing is not loosened: a revoked token of a listed account is refused 401 by the verify, as before.
     const second = await signedIn('recorder');
-    await admin((c) => c.query('UPDATE crove_kernel.extension_token SET revoked_at = now() WHERE token_hash = $1', [createHash('sha256').update(second.token).digest()]));
+    await admin((c) => c.query('UPDATE ludy_kernel.extension_token SET revoked_at = now() WHERE token_hash = $1', [createHash('sha256').update(second.token).digest()]));
     expect((await me(appWith('@ext-http.test'), second.token)).status).toBe(401);
 
     // The list unset: today's behavior, exactly (no account read, the token works).
     expect((await me(appWith(undefined))).status).toBe(200);
 
     // The definer answers the owner's email for a known hash and NULL for an unknown one, to the API login only.
-    const ask = async (hash: Buffer) => (await pool.query<{ email: string | null }>('SELECT crove_kernel.extension_token_account_email($1::bytea) AS email', [hash])).rows[0]?.email;
+    const ask = async (hash: Buffer) => (await pool.query<{ email: string | null }>('SELECT ludy_kernel.extension_token_account_email($1::bytea) AS email', [hash])).rows[0]?.email;
     expect(await ask(tokenHash)).toBe(email);
     expect(await ask(randomBytes(32))).toBeNull();
     expect(await ask(randomBytes(31))).toBeNull();

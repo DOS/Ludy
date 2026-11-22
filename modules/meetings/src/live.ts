@@ -113,7 +113,7 @@ export const meetingLiveChunk = defineCommand({
 
     const fileId = randomUUID();
     await ctx.trx
-      .insertInto('crove_kernel.file')
+      .insertInto('ludy_kernel.file')
       .values({
         org_id: ctx.orgId,
         id: fileId,

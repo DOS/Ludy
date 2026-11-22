@@ -35,10 +35,10 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   const writerContext = await browser.newContext({ baseURL: new URL(page.url()).origin, locale: 'vi-VN', timezoneId: TIME_ZONE });
   const writerPage = await writerContext.newPage();
   await signInNewUser(writerPage, writer);
-  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
+  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: writer },
   );

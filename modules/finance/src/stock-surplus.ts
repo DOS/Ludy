@@ -57,7 +57,7 @@ async function countSurplus(ctx: Ctx, countId: string, lock: boolean): Promise<C
 export async function surplusStanding(ctx: Ctx, countId: string, ownProposalId?: string): Promise<{ voucherId: string | null; proposalId: string | null }> {
   const voucher = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('surplus_count_id', '=', countId).executeTakeFirst();
   let query = ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', JOURNAL_VOUCHER_KIND)
@@ -157,7 +157,7 @@ export const surplusSource = defineQuery({
         SELECT d.party_id::text AS party_id, p.name, m.move_date::text AS received
         FROM crove_finance.stock_move m
         JOIN crove_finance.purchase_document d ON d.org_id = m.org_id AND d.id = m.document_id
-        JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+        JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
         WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${count.legalEntityId}::uuid AND m.source_type = 'document_line' AND m.quantity > 0 AND d.direction = 'purchase'
           AND m.item_id = ANY (${itemIds}::uuid[]) AND m.move_date <= ${count.countDate}::date
           AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)

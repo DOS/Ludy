@@ -384,7 +384,7 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
         }));
       }
       if (query.sql.includes('archive_series_misfits()')) return misfits.map((ref) => ({ ref }));
-      const fn = /crove_kernel\.(archive_\w+_hashes)\(/.exec(query.sql)?.[1];
+      const fn = /ludy_kernel\.(archive_\w+_hashes)\(/.exec(query.sql)?.[1];
       if (fn) {
         const [from, to] = query.parameters as [string, string];
         ranges.push({ fn, from, to });

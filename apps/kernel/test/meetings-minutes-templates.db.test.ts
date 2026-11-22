@@ -76,7 +76,7 @@ suite('minutes templates an organization writes (#3578)', () => {
     const client = await appPool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [users[who], org]);
+      await client.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [users[who], org]);
       await fn((statement, params = []) => client.query(statement, params));
     } finally {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -93,14 +93,14 @@ suite('minutes templates an organization writes (#3578)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = new URL(adminUrl);
-    login.username = 'crove_app';
+    login.username = 'ludy_app';
     login.password = 'test-app-pw';
     appPool = createPool({ connectionString: login.toString(), max: 4 });
     pools.push(appPool);
     const workerLogin = new URL(adminUrl);
-    workerLogin.username = 'crove_worker';
+    workerLogin.username = 'ludy_worker';
     workerLogin.password = 'test-worker-pw';
     workerUrl = workerLogin.toString();
     const workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -112,7 +112,7 @@ suite('minutes templates an organization writes (#3578)', () => {
     for (const key of ['owner', 'adm', 'rec', 'viewer', 'ownerB']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'minutes-templates', subject: key, email: `${key}@templates.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Mẫu')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('ownerB'), 'Công ty Khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.adm, users.rec, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.adm, users.rec, users.viewer]);
     // A live agent (the way apps/kernel/test/ads-switch-agent.db.test.ts sets one up): installed from a template, with a run started through a task that wakes it.
     const mfa = { ...asUser('owner'), aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) };
     const { agentId, positionId } = await runtime.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: 'finance.chief_accountant', reportsTo: null }, { actor: mfa, orgId });
@@ -148,7 +148,7 @@ suite('minutes templates an organization writes (#3578)', () => {
     expect(await refuses(query('viewer', 'meetings.template.list'))).not.toBeNull();
     expect((await stored(second.templateId))?.name).toBe('Phỏng vấn tuyển dụng');
     // The audit row carries the id and the number of sections, never a name or a hint.
-    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.template.create' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.template.create' AND outcome = 'ok' ORDER BY occurred_at`, [orgId]);
     expect(audit.rows.map((r) => r.detail)).toEqual([
       expect.objectContaining({ templateId: first.templateId, sectionCount: 3 }),
       expect.objectContaining({ templateId: second.templateId, sectionCount: 2 }),
@@ -355,8 +355,8 @@ suite('minutes templates an organization writes (#3578)', () => {
       const inAgent = async (statement: string, params: unknown[]) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agent.agentId, agent.runId]);
-          expect((await c.query<{ actor: string }>('SELECT crove_kernel.ctx_actor_type() AS actor')).rows[0]?.actor).toBe('agent');
+          await c.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agent.agentId, agent.runId]);
+          expect((await c.query<{ actor: string }>('SELECT ludy_kernel.ctx_actor_type() AS actor')).rows[0]?.actor).toBe('agent');
           return await c.query(statement, params);
         } finally {
           await c.query('ROLLBACK').catch(() => undefined);

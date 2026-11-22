@@ -41,11 +41,11 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
       await c.end();
     }
   };
-  const run = async (runId: string) => (await sqlAdmin<{ status: string; error: string | null; private_read: boolean }>('SELECT status, error, private_read FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, runId]))[0];
-  const result = async (runId: string) => (await sqlAdmin<{ status: string; error_code: string | null }>('SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, runId]))[0];
+  const run = async (runId: string) => (await sqlAdmin<{ status: string; error: string | null; private_read: boolean }>('SELECT status, error, private_read FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, runId]))[0];
+  const result = async (runId: string) => (await sqlAdmin<{ status: string; error_code: string | null }>('SELECT status, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, runId]))[0];
   // The gap of a background run: its text is stored (ready) and the worker has not closed the run yet.
   const storedNotClosed = (runId: string, privateRead = true) =>
-    sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'x', private_read = $3 WHERE org_id = $1 AND run_id = $2`, [orgId, runId, privateRead]);
+    sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET status = 'ready', body = 'x', private_read = $3 WHERE org_id = $1 AND run_id = $2`, [orgId, runId, privateRead]);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -56,15 +56,15 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 3 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 6 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 3 });
     pools.push(appPool, workerPool);
     const build = (db: ReturnType<typeof createDb>) => new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
     runtime = build(createDb(appPool));
@@ -74,7 +74,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
     }
     orgId = (await createOrg(runtime, asUser(users.owner), 'Vy ready gap')).orgId;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`,
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`,
       [orgId, users.alice, users.bob, users.carol, users.dave, users.erin, users.frank],
     );
   }, 300_000);
@@ -103,7 +103,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
   });
 
   it('writes nothing else when it closes a stored run: the usage was counted at call time and is neither added nor removed, and no run row is left open', async () => {
-    const usage = async (who: string) => Number((await sqlAdmin<{ n: string; total: string }>(`SELECT count(*)::text AS n, COALESCE(sum(amount), 0)::text AS total FROM crove_kernel.org_usage u JOIN crove_kernel.agent a ON a.org_id = u.org_id AND a.id = u.agent_id WHERE u.org_id = $1 AND a.member_user_id = $2`, [orgId, who]))[0]?.n);
+    const usage = async (who: string) => Number((await sqlAdmin<{ n: string; total: string }>(`SELECT count(*)::text AS n, COALESCE(sum(amount), 0)::text AS total FROM ludy_kernel.org_usage u JOIN ludy_kernel.agent a ON a.org_id = u.org_id AND a.id = u.agent_id WHERE u.org_id = $1 AND a.member_user_id = $2`, [orgId, who]))[0]?.n);
     const stored = await start(users.alice, 'meetings.transcribe');
     // The meter records each model call when it is made (kernel.member_vy.meter.record), long before the run is closed.
     await exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'meetings.transcribe', inputTokens: 0, outputTokens: 0, cost: '0.250000' });
@@ -135,7 +135,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
 
   it('supersedes a run whose result failed, and leaves that result as it was', async () => {
     const failedRun = await start(users.carol, 'notes.todo_suggest');
-    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failedRun.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failedRun.runId]);
     await start(users.carol, 'notes.todo_suggest');
     expect(await run(failedRun.runId)).toMatchObject({ status: 'cancelled', error: 'RUN_SUPERSEDED' });
     expect(await result(failedRun.runId)).toEqual({ status: 'failed', error_code: 'MODEL_FAILED' });
@@ -148,7 +148,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
       const other = await start(who, 'meetings.summary');
       const failed = await start(who, 'notes.summary');
       await storedNotClosed(stored.runId, true);
-      await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failed.runId]);
+      await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failed.runId]);
       await trigger();
       expect(await run(stored.runId), 'the stored run').toMatchObject({ status: 'succeeded', error: null, private_read: true });
       expect(await result(stored.runId)).toEqual({ status: 'ready', error_code: null });
@@ -174,7 +174,7 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
     const working = await start(users.frank, 'meetings.summary');
     await storedNotClosed(stored.runId);
     // Every other live run of the org is ended first, so the count is this member's alone.
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running' AND id NOT IN ($2, $3)`, [orgId, stored.runId, working.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running' AND id NOT IN ($2, $3)`, [orgId, stored.runId, working.runId]);
     const engaged = await exec<{ killSwitchId: string; stoppedRuns: number }>(users.owner, 'kernel.agent.kill_switch.engage', { scope: 'module', target: 'meetings' });
     expect(engaged.stoppedRuns).toBe(1);
     await runtime.execute('kernel.agent.kill_switch.release', { id: engaged.killSwitchId }, { actor: asMfa(users.owner), orgId });

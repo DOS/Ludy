@@ -126,21 +126,21 @@ suite('bulk approval through the API (#315)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
     const defs = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
     const config = loadConfig({
-      DATABASE_URL: login('crove_app', 'test-app-pw'),
+      DATABASE_URL: login('ludy_app', 'test-app-pw'),
       AUTH_JWT_SECRET: SECRET,
       AUTH_ISSUER: ISSUER,
       AUTH_SESSION_CHECK: 'off',
@@ -260,7 +260,7 @@ suite('bulk approval through the API (#315)', () => {
       // The batches that listed this proposal, oldest first.
       const batches = (
         await admin.query<{ command_id: string; actor_id: string }>(
-          `SELECT command_id, actor_id FROM crove_kernel.audit_event
+          `SELECT command_id, actor_id FROM ludy_kernel.audit_event
             WHERE org_id = $1 AND command = 'kernel.proposal.approve_many' AND outcome = 'ok'
               AND detail -> 'items' @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id', $2::text))
             ORDER BY id`,
@@ -272,7 +272,7 @@ suite('bulk approval through the API (#315)', () => {
       const history = (
         await admin.query<{ actor_id: string; outcome: string; code: string | null; rule: string | null; parent: string | null }>(
           `SELECT actor_id, outcome, detail ->> 'code' AS code, detail ->> 'rule' AS rule, detail ->> 'parentCommandId' AS parent
-             FROM crove_kernel.audit_event
+             FROM ludy_kernel.audit_event
             WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND target_type = 'kernel.proposal' AND target_id = $2
             ORDER BY id`,
           [orgId, id],
@@ -333,7 +333,7 @@ suite('bulk approval through the API (#315)', () => {
     try {
       const approvals = (
         await admin.query<{ target_id: string; detail: Record<string, unknown> }>(
-          `SELECT target_id, detail FROM crove_kernel.audit_event
+          `SELECT target_id, detail FROM ludy_kernel.audit_event
             WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' AND target_id = ANY($2::uuid[])`,
           [orgId, [id, other]],
         )
@@ -344,7 +344,7 @@ suite('bulk approval through the API (#315)', () => {
       }
       const batch = (
         await admin.query<{ detail: { items: unknown[] } }>(
-          `SELECT detail FROM crove_kernel.audit_event
+          `SELECT detail FROM ludy_kernel.audit_event
             WHERE org_id = $1 AND command = 'kernel.proposal.approve_many' AND outcome = 'ok'
               AND detail -> 'items' @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id', $2::text))`,
           [orgId, other],
@@ -365,7 +365,7 @@ suite('bulk approval through the API (#315)', () => {
     const admin = new pg.Client({ connectionString: adminUrl });
     await admin.connect();
     try {
-      await admin.query(`UPDATE crove_kernel.proposal SET payload = payload - 'signature' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+      await admin.query(`UPDATE ludy_kernel.proposal SET payload = payload - 'signature' WHERE org_id = $1 AND id = $2`, [orgId, id]);
     } finally {
       await admin.end();
     }

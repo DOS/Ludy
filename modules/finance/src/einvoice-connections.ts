@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // An org's connection to an e-invoice provider (#2501, ADR-0044 point 2, plan einvoice-issue.md section 7):
 // - finance.einvoice_connection.connect (owners and admins; R2): runs kernel.channel.connect (provider `einvoice_<adapter>`, the credential sealed in
-//   crove_kernel.credential) and files the connection under a legal entity and the seller's tax code in ONE transaction. It sees no credential: the sealing is the API edge's,
+//   ludy_kernel.credential) and files the connection under a legal entity and the seller's tax code in ONE transaction. It sees no credential: the sealing is the API edge's,
 //   and the worker alone opens it.
 // - finance.einvoice_connection.record_test (same; R1): records the state the connection test came back with and adds the templates and series the provider listed to the
 //   connection's entity. The test itself (the provider calls) is the API's for the offline provider and the worker's for a real one; this command takes only a state.
@@ -36,14 +36,14 @@ type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 // the entity has one. The API asks this before it seals anything, so no credential is made for an account the entity cannot use; the link command asks it again.
 async function resolveSeller(ctx: Ctx, requestedEntity: string | null, requestedTaxCode: string | null): Promise<{ legalEntityId: string; sellerTaxCode: string }> {
   const legalEntityId = await resolveLegalEntity(ctx, requestedEntity);
-  const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('tax_code').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirstOrThrow();
+  const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('tax_code').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirstOrThrow();
   const sellerTaxCode = requestedTaxCode ?? entity.tax_code;
   if (!sellerTaxCode) throw new DomainError('EINVOICE_TAX_CODE_NEEDED', 422, 'Hãy nhập mã số thuế cho pháp nhân này trước khi kết nối nhà cung cấp hóa đơn điện tử');
   if (entity.tax_code && entity.tax_code !== sellerTaxCode) throw new DomainError('EINVOICE_TAX_CODE_MISMATCH', 422, 'Mã số thuế người bán phải là mã số thuế của pháp nhân đã chọn');
   // An entity with no tax code of its own takes the one typed, but never another entity's: invoices of one taxpayer are not issued under another's.
   if (!entity.tax_code) {
     const other = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('tax_code', '=', sellerTaxCode)
@@ -134,7 +134,7 @@ export const einvoiceConnectionRecordTest = defineCommand({
   handler: async (ctx, input): Promise<EInvoiceConnectionTested> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.einvoice_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.legal_entity_id', 'c.provider', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -168,7 +168,7 @@ export const einvoiceConnectionUnlink = defineCommand({
     // Only a connection that is no longer live: the credential goes first (the API revokes the channel connection before this), so no live credential is left without its row.
     const live = await ctx.trx
       .selectFrom('crove_finance.einvoice_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('c.id')
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -220,7 +220,7 @@ export const einvoiceConnectionList = defineQuery({
   handler: async (ctx): Promise<EInvoiceConnection[]> => {
     const rows = await ctx.trx
       .selectFrom('crove_finance.einvoice_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.channel_connection_id', 'c.legal_entity_id', 'c.provider', 'c.seller_tax_code', 'c.last_test_state', 'c.last_tested_at', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')

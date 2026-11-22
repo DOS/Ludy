@@ -90,7 +90,7 @@ type Ctx = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 // (#1081), one that is not active, and one whose channel lists nothing.
 async function listedChannel(ctx: Ctx, connectionId: string): Promise<SocialChannelOptionKind> {
   await refuseChannels(ctx, [connectionId]);
-  const connection = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+  const connection = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
   if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
   if (connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này cần được kết nối lại trước');
   const kind = isProvider(connection.provider) ? CHANNEL_OPTION_KIND_OF[connection.provider] : undefined;
@@ -177,7 +177,7 @@ export const channelOptionLoad = defineQuery({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới thực hiện được việc này');
     const row = await ctx.trx
       .selectFrom('crove_social.channel_option as o')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'o.org_id').onRef('c.id', '=', 'o.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'o.org_id').onRef('c.id', '=', 'o.channel_connection_id'))
       .select(['o.channel_connection_id', 'o.kind', 'o.status', 'c.provider', 'c.status as connection_status'])
       .where('o.org_id', '=', ctx.orgId)
       .where('o.id', '=', input.optionId)

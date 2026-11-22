@@ -1,8 +1,8 @@
 // The kernel module's manifest (plan §5.2, #1588, #1599): the tables it owns and the class of every column. A migration
 // that adds or drops a table or column of these schemas changes this list in the same PR; apps/kernel/test/manifest.db.test.ts
 // checks it against the catalog. A column is internal unless the second argument of columns() classifies it.
-// crove_meta is the migration runner's bookkeeping, and crove_jobs the vendored pg-boss schema (its partitions are left
-// out: pg-boss creates one per queue at runtime). The control-plane tables of crove_kernel (plan §3.6) are not listed
+// ludy_meta is the migration runner's bookkeeping, and ludy_jobs the vendored pg-boss schema (its partitions are left
+// out: pg-boss creates one per queue at runtime). The control-plane tables of ludy_kernel (plan §3.6) are not listed
 // here: no source may name them (the control-plane-reads invariant), so the manifest test declares them itself.
 import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
@@ -10,7 +10,7 @@ export const kernelManifest = defineModule({
   id: 'kernel',
   dependsOn: [],
   tables: {
-    crove_kernel: {
+    ludy_kernel: {
       activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id', 'actor_origin'], { summary: 'pii' }),
       agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
@@ -131,12 +131,12 @@ export const kernelManifest = defineModule({
       usage_deferral: columns(['org_id', 'id', 'metric', 'subject_type', 'subject_id', 'retry_at', 'notified', 'created_at']),
       worker_heartbeat: columns(['instance', 'beat_at', 'modules', 'build', 'build_time']),
     },
-    crove_meta: {
+    ludy_meta: {
       deployment: columns(['key', 'value', 'updated_at']),
       pipeline_session: columns(['pid', 'backend_start', 'step', 'marked_at']),
       schema_migrations: columns(['version', 'name', 'sha256', 'applied_at']),
     },
-    crove_jobs: {
+    ludy_jobs: {
       bam: columns(['id', 'name', 'version', 'status', 'queue', 'table_name', 'command', 'error', 'created_on', 'started_on', 'completed_on']),
       instance: columns(['id', 'name', 'host', 'pid', 'version', 'node_version', 'application_name', 'heartbeat_seconds', 'supervise', 'schedule', 'migrate', 'persist_queue_stats', 'persist_warnings', 'pool_max', 'pool_total', 'pool_idle', 'pool_waiting', 'workers', 'metrics', 'config', 'crash_restarts', 'crash_restarts_since', 'started_on', 'heartbeat_on', 'stopped_on']),
       job: columns(['id', 'name', 'priority', 'state', 'retry_limit', 'retry_count', 'retry_delay', 'retry_backoff', 'retry_delay_max', 'expire_seconds', 'deletion_seconds', 'singleton_key', 'singleton_on', 'group_id', 'group_tier', 'start_after', 'created_on', 'started_on', 'completed_on', 'keep_until', 'dead_letter', 'policy', 'heartbeat_on', 'heartbeat_seconds', 'blocked', 'blocking', 'pending_dependencies', 'source_name', 'source_id', 'source_created_on', 'source_retry_count', 'source_root_id', 'trace_context', 'upsert_by_key'], { data: 'pii', output: 'pii', source_output: 'pii' }),

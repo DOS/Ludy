@@ -45,7 +45,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      if (system) await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      if (system) await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       const out = await fn(c);
       await c.query('COMMIT');
       return out;
@@ -54,8 +54,8 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
       await c.end();
     }
   }
-  const purge = (user: string) => asWorker(true, async (c) => (await c.query<{ n: string }>('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, user])).rows[0]?.n);
-  const due = () => asWorker(false, async (c) => (await c.query<{ org_id: string; user_id: string; recorded: boolean }>('SELECT * FROM crove_kernel.member_vy_former_members_due(1000)')).rows.filter((r) => r.org_id === orgId));
+  const purge = (user: string) => asWorker(true, async (c) => (await c.query<{ n: string }>('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, user])).rows[0]?.n);
+  const due = () => asWorker(false, async (c) => (await c.query<{ org_id: string; user_id: string; recorded: boolean }>('SELECT * FROM ludy_kernel.member_vy_former_members_due(1000)')).rows.filter((r) => r.org_id === orgId));
   const translationsOf = async (user: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.translation WHERE org_id = $1 AND member_user_id = $2', [orgId, user])).rows[0]?.n);
 
   async function meeting(recorder: string = users.owner): Promise<string> {
@@ -79,7 +79,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - make_interval(days => $3::int) WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [orgId, user, days]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - make_interval(days => $3::int) WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [orgId, user, days]);
       await c.query('COMMIT');
     });
 
@@ -92,22 +92,22 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    workerUrl = login('crove_worker', 'test-worker-pw');
-    appUrl = login('crove_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     const appPool = createPool({ connectionString: appUrl, max: 4 });
     pools.push(appPool);
     const db = createDb(appPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     for (const key of Object.keys(users) as Array<keyof typeof users>) users[key] = await upsertIdentity(db, { issuer: 'translation-purge', subject: key, email: `${key}@tpurge.test`, name: key });
     orgId = (await createOrg(runtime, { type: 'user', userId: users.owner, aal: 'aal1' }, 'Công ty Dịch')).orgId;
-    for (const key of ['staying', 'gone', 'recent', 'back', 'rec', 'late'] as const) await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users[key]]);
+    for (const key of ['staying', 'gone', 'recent', 'back', 'rec', 'late'] as const) await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users[key]]);
   }, 300_000);
 
   afterAll(async () => {
@@ -152,7 +152,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
   it('removes nothing of a user whose exit is not recorded, or whose translation is newer than their latest recorded exit', async () => {
     const m = await meeting();
     // A member gone with no removal in the audit trail at all: listed as not recorded, and the purge keeps the row.
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.staying]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.staying]);
     await translate(m, users.staying, 'summary', 'vi', 40);
     expect((await due()).find((r) => r.user_id === users.staying)).toMatchObject({ recorded: false });
     expect(await purge(users.staying)).toBe('0');
@@ -160,9 +160,9 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     // Removed long ago through the command, back in the org, translated again, and gone without a record: the translation is newer than the old removal, so nothing is purged.
     await runtime.execute('kernel.member.remove', { userId: users.back }, { actor: asMfa(users.owner), orgId });
     await backdateRemoval(users.back, 40);
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.back]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.back]);
     await translate(m, users.back, 'summary');
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.back]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.back]);
     expect((await due()).find((r) => r.user_id === users.back)).toMatchObject({ recorded: false });
     expect(await purge(users.back)).toBe('0');
     expect(await translationsOf(users.back)).toBe(1);
@@ -215,15 +215,15 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
         await c.end();
       }
     };
-    const asUser = (userId: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+    const asUser = (userId: string) => (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
     expect(await ask(asUser(users.owner), appUrl)).toBeGreaterThan(0);
     // A plain member of the org (still one at this point), who sees only their own translations in the table, is refused the per-member numbers; so is a login with no context.
     expect(await ask(asUser(users.late), appUrl)).toBe('42501');
     expect(await ask(async () => undefined, appUrl)).toBe('42501');
     // The worker with no context, and the app login in the system context (the worker login only), are refused too.
     expect(await ask(async () => undefined, workerUrl)).toBe('42501');
-    expect(await ask((c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]), appUrl)).toBe('42501');
-    expect(await ask((c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]), workerUrl)).toBeGreaterThan(0);
+    expect(await ask((c) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]), appUrl)).toBe('42501');
+    expect(await ask((c) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]), workerUrl)).toBeGreaterThan(0);
   });
 
   it('removes a removed recorder\'s preview lines in the purge, keeps the meeting and the lines of other recorders, and a line newer than the last recorded exit stops it', async () => {
@@ -246,10 +246,10 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     // A recorder removed long ago, back, who recorded again and is gone with no record: the new line is newer than the old removal, so nothing is removed.
     await runtime.execute('kernel.member.remove', { userId: users.late }, { actor: asMfa(users.owner), orgId });
     await backdateRemoval(users.late, 40);
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.late]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.late]);
     const later = await meeting(users.late);
     await liveLines(later, 1, 0);
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.late]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.late]);
     expect((await due()).find((r) => r.user_id === users.late)).toMatchObject({ recorded: false });
     expect(await purge(users.late)).toBe('0');
     expect(await liveLinesIn(later)).toBe(1);

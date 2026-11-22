@@ -116,7 +116,7 @@ function headline(alert: Alert): string {
   if (alert.kind === 'resolved') {
     const after = duration ? ` after ${duration}` : '';
     if (alert.previous?.length === 1 && alert.previous[0] === 'probe') {
-      return `[Ludy] RESOLVED on ${alert.instance}: the prober reads crove_kernel.health() again${after}.`;
+      return `[Ludy] RESOLVED on ${alert.instance}: the prober reads ludy_kernel.health() again${after}.`;
     }
     const was = alert.previous?.length ? ` (${alert.previous.join(', ')})` : '';
     return `[Ludy] RESOLVED on ${alert.instance}: the failing health checks pass again${after}${was}.`;

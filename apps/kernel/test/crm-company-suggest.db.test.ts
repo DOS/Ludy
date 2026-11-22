@@ -46,7 +46,7 @@ suite('the company a person may work at (#2438, PR 3)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await identity('member');
     const viewer = await identity('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -59,14 +59,14 @@ suite('the company a person may work at (#2438, PR 3)', () => {
     const connection = randomUUID();
     const conversation = randomUUID();
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [o.orgId, connection, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
-      await c.query("INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, party_id) VALUES ($1, $2, $3, $4, $5, $6)", [o.orgId, conversation, connection, kind, `t-${randomUUID().slice(0, 8)}`, partyId]);
+      await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [o.orgId, connection, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
+      await c.query("INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, party_id) VALUES ($1, $2, $3, $4, $5, $6)", [o.orgId, conversation, connection, kind, `t-${randomUUID().slice(0, 8)}`, partyId]);
       let seq = 0;
       for (const m of messages) {
         seq += 1;
         const out = m.direction === 'out';
         await c.query(
-          'INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, author_user_id, send_state, body) VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10)',
+          'INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, author_user_id, send_state, body) VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10)',
           [o.orgId, conversation, connection, kind, seq, out ? 'out' : 'in', out ? 'member' : 'contact', out ? o.owner : null, out ? 'sent' : null, m.body],
         );
       }
@@ -82,9 +82,9 @@ suite('the company a person may work at (#2438, PR 3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -186,11 +186,11 @@ suite('the company a person may work at (#2438, PR 3)', () => {
     const o = await org();
     await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.test' });
     const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.test' });
-    const before = Number((await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]))).rows[0]?.n);
+    const before = Number((await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId]))).rows[0]?.n);
     await expect(found(o, nam.partyId, o.viewer)).rejects.toMatchObject({ status: 403 });
     expect((await found(o, nam.partyId, o.member)).emailDomain).toHaveLength(1);
-    const after = Number((await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]))).rows[0]?.n);
+    const after = Number((await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId]))).rows[0]?.n);
     expect(after).toBe(before);
-    expect((await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [nam.partyId]))).rows[0]?.company_id).toBeNull();
+    expect((await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM ludy_kernel.party WHERE id = $1', [nam.partyId]))).rows[0]?.company_id).toBeNull();
   });
 });

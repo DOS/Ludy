@@ -26,7 +26,7 @@ const OFFERED_MAX = 200;
 // Whether an order has a settlement line that a payout proposal (waiting, approved or executed) names as carrier compensation. A rejected, failed or expired proposal does not count. `orderId` is an
 // SQL expression of the order's id.
 const compensatedOn = (orgId: string, orderId: RawBuilder<unknown>): RawBuilder<boolean> => sql<boolean>`EXISTS (
-  SELECT 1 FROM crove_kernel.proposal p
+  SELECT 1 FROM ludy_kernel.proposal p
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'adjustments') = 'array' THEN p.payload -> 'adjustments' ELSE '[]'::jsonb END) AS a
   JOIN crove_finance.channel_settlement_line sl ON sl.org_id = p.org_id AND sl.id::text = lower(a ->> 'lineId')
   WHERE p.org_id = ${orgId}::uuid AND p.command = 'finance.marketplace_payout.record'

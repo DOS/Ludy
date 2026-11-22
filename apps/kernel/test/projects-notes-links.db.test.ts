@@ -114,11 +114,11 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     const { orgId } = await createOrg(app, asUser(owner), `Projects Notes ${tag}`);
     const ids = await withAdmin(async (c) => {
       const entityA = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])
       ).rows[0]?.id as string;
       const entityB = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Branch B', 'branch', $2) RETURNING id`,
           [orgId, owner],
         )
@@ -130,16 +130,16 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
         [viewer, 'viewer'],
         [limited, 'member'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, u, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, u, role]);
       }
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [orgId, limited, entityB, owner],
       );
       const positionId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id, status)
+          `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id, status)
            VALUES ($1, 'Operations lead', 'kernel', 'staff', $2, 'active') RETURNING id`,
           [orgId, other],
         )
@@ -158,14 +158,14 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     const { a: taskId, b: taskBId } = await withAdmin(async (c) => {
       const a = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Reconcile ledger', 'human', 'user', $2) RETURNING id`,
           [orgId, ids.entityA],
         )
       ).rows[0]?.id as string;
       const b = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Branch inventory check', 'human', 'user', $2) RETURNING id`,
           [orgId, ids.entityB],
         )
@@ -214,15 +214,15 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const uApp = new URL(adminUrl);
-    uApp.username = 'crove_app';
+    uApp.username = 'ludy_app';
     uApp.password = 'test-app-pw';
     appUrl = uApp.toString();
 
     const uWorker = new URL(adminUrl);
-    uWorker.username = 'crove_worker';
+    uWorker.username = 'ludy_worker';
     uWorker.password = 'test-worker-pw';
     workerUrl = uWorker.toString();
 
@@ -300,12 +300,12 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
 
     // Raw SQL RLS on crove_notes.link and crove_notes.todo isolates the link row to the owner only.
     const sqlActors = [
-      { name: 'other member', url: appUrl, enter: (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.other, o.orgId)]) },
-      { name: 'owner', url: appUrl, enter: (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]) },
-      { name: 'admin', url: appUrl, enter: (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.adminUser, o.orgId)]) },
-      { name: 'viewer', url: appUrl, enter: (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.viewer, o.orgId)]) },
-      { name: 'agent', url: workerUrl, enter: (c: pg.Client) => c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [o.orgId, o.agent.agentId, o.agent.runId]) },
-      { name: 'system', url: workerUrl, enter: (c: pg.Client) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]) },
+      { name: 'other member', url: appUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.other, o.orgId)]) },
+      { name: 'owner', url: appUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]) },
+      { name: 'admin', url: appUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.adminUser, o.orgId)]) },
+      { name: 'viewer', url: appUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.viewer, o.orgId)]) },
+      { name: 'agent', url: workerUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [o.orgId, o.agent.agentId, o.agent.runId]) },
+      { name: 'system', url: workerUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]) },
     ];
     for (const actor of sqlActors) {
       const seen = await inSqlContext(actor.url, actor.enter, async (c) => ({
@@ -317,7 +317,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
 
     const authorSql = await inSqlContext(
       appUrl,
-      (c) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.author, o.orgId)]),
+      (c) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.author, o.orgId)]),
       async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_notes.link WHERE todo_id = $1', [todoId])).rowCount,
     );
     expect(authorSql).toBe(2);
@@ -362,7 +362,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     expect((await o.query<NoteRecordPanel>(o.author, 'notes.record.panel', { targetType: 'kernel.task', targetId: o.taskId })).todos.map((t) => t.id)).toEqual([todoId]);
 
     // Deleting the linked task cascades on crove_notes.link without deleting the personal to-do.
-    await withAdmin((c) => c.query('DELETE FROM crove_kernel.task WHERE org_id = $1 AND id = $2', [o.orgId, o.taskId]));
+    await withAdmin((c) => c.query('DELETE FROM ludy_kernel.task WHERE org_id = $1 AND id = $2', [o.orgId, o.taskId]));
     expect((await o.query<Todo>(o.author, 'notes.todo.get', { todoId })).links).toEqual([]);
 
     // Audit rows for private to-dos keep target='private' and omit title, targetType, and targetId (ADR-0037 §3).
@@ -370,7 +370,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
       async (c) =>
         (
           await c.query<{ command: string; detail: Record<string, unknown> }>(
-            `SELECT command, detail FROM crove_kernel.audit_event
+            `SELECT command, detail FROM ludy_kernel.audit_event
              WHERE org_id = $1 AND command IN ('notes.todo.create', 'notes.todo.link_add', 'notes.todo.link_remove')
                AND detail ->> 'todoId' = $2
              ORDER BY occurred_at, id`,
@@ -475,7 +475,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
       async (c) =>
         (
           await c.query<{ detail: Record<string, unknown> }>(
-            `SELECT detail FROM crove_kernel.audit_event
+            `SELECT detail FROM ludy_kernel.audit_event
              WHERE org_id = $1 AND command = 'notes.todo.hand_over' AND detail ->> 'todoId' = $2`,
             [o.orgId, todoId],
           )
@@ -492,7 +492,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     const countTasks = () =>
       withAdmin(
         async (c) =>
-          (await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1', [o.orgId])).rows[0]?.n,
+          (await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1', [o.orgId])).rows[0]?.n,
       );
     const beforeTasks = await countTasks();
 

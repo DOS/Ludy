@@ -53,7 +53,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     const viewer = await user('viewer');
     const { orgId } = await createOrg(app, asUser(owner), `Mẫu ghi chú ${tag}`);
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [
         orgId,
         adminUser,
         author,
@@ -81,7 +81,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
@@ -90,8 +90,8 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] });
     };
-    app = runtimeFor('crove_app', 'test-app-pw');
-    worker = runtimeFor('crove_worker', 'test-worker-pw');
+    app = runtimeFor('ludy_app', 'test-app-pw');
+    worker = runtimeFor('ludy_worker', 'test-worker-pw');
   }, 300_000);
 
   afterAll(async () => {
@@ -168,7 +168,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
       [1, 'Chốt giá 10 triệu'],
     ]);
     const audit = await admin((c) =>
-      c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.note.restore_version'`, [o.orgId]),
+      c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.note.restore_version'`, [o.orgId]),
     );
     expect(audit.rows[0]?.detail).toMatchObject({ noteId, revision: 3, restoredVersionId: versionId, restoredFromRevision: 1, changed: ['body'] });
     expect(JSON.stringify(audit.rows)).not.toContain('10 triệu');
@@ -218,7 +218,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     await o.exec(o.owner, 'notes.template.delete', { templateId: shared.templateId });
     expect(await names(o.author)).toEqual(['Mẫu riêng']);
     // Audit rows keep markers, never template text.
-    const audits = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.template.%'`, [o.orgId]));
+    const audits = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.template.%'`, [o.orgId]));
     expect(audits.rows.length).toBeGreaterThanOrEqual(4);
     for (const secret of ['Mẫu riêng', 'Gọi khách', 'Hỏi nhu cầu', 'Quyết định']) expect(JSON.stringify(audits.rows)).not.toContain(secret);
   });
@@ -263,19 +263,19 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     const notice = (
       await admin((c) =>
         c.query<{ detail: { notes?: string[] } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
           [o.orgId],
         ),
       )
     ).rows[0];
     expect(notice?.detail.notes ?? []).toEqual([`${priv.noteId}:3`]);
-    const eventId = (await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]))).rows[0]?.id;
+    const eventId = (await admin((c) => c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]))).rows[0]?.id;
     await worker.execute('kernel.notification.dispatch', { eventId }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId });
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
-      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
       await c.query('COMMIT');
     });
 

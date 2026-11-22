@@ -17,7 +17,7 @@
 // the booking's revision, which ends every link minted before it.
 //
 // Confirmations and moves of one host run one at a time (an advisory lock), so the slot check sees every earlier
-// booking; the exclusion constraint on crove_kernel.calendar_event stays the last line against any other writer.
+// booking; the exclusion constraint on ludy_kernel.calendar_event stays the last line against any other writer.
 //
 // Team types (#1373, step C8): a round-robin booking lands on one free host of the type (the one with the fewest
 // upcoming bookings of it, ties by member id); a collective booking holds an event on every host's calendar, the
@@ -59,7 +59,7 @@ function wallTime(timeZone: string, at: number): string {
 async function partyFor(ctx: CommandContext, name: string, email: string, phone: string | null): Promise<string> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_crm.party:${ctx.orgId}:${email.toLowerCase()}`}, 0))`.execute(ctx.trx);
   const existing = await ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where((eb) => eb(eb.fn('lower', ['email']), '=', email.toLowerCase()))
@@ -68,9 +68,9 @@ async function partyFor(ctx: CommandContext, name: string, email: string, phone:
     .limit(1)
     .executeTakeFirst();
   if (existing) return existing.id;
-  // The id is given here and the row inserted without RETURNING (see crove_kernel.party_link_new, #1280).
+  // The id is given here and the row inserted without RETURNING (see ludy_kernel.party_link_new, #1280).
   const created = { id: randomUUID() };
-  await ctx.trx.insertInto('crove_kernel.party').values({ id: created.id, org_id: ctx.orgId, kind: 'person', name, email, phone, source_trust: 'external' }).execute();
+  await ctx.trx.insertInto('ludy_kernel.party').values({ id: created.id, org_id: ctx.orgId, kind: 'person', name, email, phone, source_trust: 'external' }).execute();
   await ctx.activity('kernel.party', created.id, 'party.created', 'Thêm khách hàng từ trang đặt lịch');
   return created.id;
 }
@@ -85,7 +85,7 @@ async function hostsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, type: EventTy
   if (!type.active) return [];
   const ids = type.assignment === 'single' ? [type.host_user_id] : [type.host_user_id, ...type.co_host_user_ids];
   const members = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', 'in', ids)
@@ -98,7 +98,7 @@ async function hostsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, type: EventTy
 // connection; nothing of it but this yes or no is used.
 async function meetReady(ctx: CommandContext, userId: string): Promise<boolean> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.calendar_connection')
+    .selectFrom('ludy_kernel.calendar_connection')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
@@ -115,7 +115,7 @@ async function meetReady(ctx: CommandContext, userId: string): Promise<boolean> 
 async function leastBooked(ctx: CommandContext, type: EventType, free: readonly string[]): Promise<string> {
   const counts = await ctx.trx
     .selectFrom('crove_crm.booking as b')
-    .innerJoin('crove_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
+    .innerJoin('ludy_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
     .select(['ev.user_id', (eb) => eb.fn.countAll<string>().as('n')])
     .where('b.org_id', '=', ctx.orgId)
     .where('b.event_type_id', '=', type.id)
@@ -218,13 +218,13 @@ async function queueBookingMails(
   toHost = true,
 ): Promise<void> {
   if (!booking.email || !booking.visitor_name) return;
-  const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   // The hosts' addresses while they are members (the worker's member_emails: no name, no other account column). Only
   // the worker mails the hosts: a change a host made in the app mails the visitor alone.
   const emails = toHost
     ? new Map(
         (
-          await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.member_emails(${hosts.map((h) => h.userId)}::uuid[])`.execute(ctx.trx)
+          await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM ludy_kernel.member_emails(${hosts.map((h) => h.userId)}::uuid[])`.execute(ctx.trx)
         ).rows.map((r) => [r.user_id, r.email]),
       )
     : new Map<string, string | null>();
@@ -339,7 +339,7 @@ export const bookingConfirm = defineCommand({
     const held: Held[] = [];
     for (const host of holding) {
       const event = await ctx.trx
-        .insertInto('crove_kernel.calendar_event')
+        .insertInto('ludy_kernel.calendar_event')
         .values({
           org_id: ctx.orgId,
           user_id: host.userId,
@@ -451,7 +451,7 @@ export const bookingMeetingSettle = defineCommand({
     // The event stops asking for a conference either way: a failed one makes none, and a ready one keeps the Meet Google made (a later write of the event, a move,
     // leaves its conference data alone), so the request is not sent again.
     if (found.calendar_event_id) {
-      await ctx.trx.updateTable('crove_kernel.calendar_event').set({ conference: false }).where('org_id', '=', ctx.orgId).where('id', '=', found.calendar_event_id).execute();
+      await ctx.trx.updateTable('ludy_kernel.calendar_event').set({ conference: false }).where('org_id', '=', ctx.orgId).where('id', '=', found.calendar_event_id).execute();
     }
     const type = await eventTypeOf(ctx, found.event_type_id);
     const held = await holdHosts(ctx, await eventsOf(ctx, { calendar_event_id: found.calendar_event_id, hold_event_ids: found.hold_event_ids }));
@@ -481,7 +481,7 @@ const changeable = (ctx: CommandContext, b: NonNullable<Awaited<ReturnType<typeo
 async function eventsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, booking: { calendar_event_id: string | null; hold_event_ids: string[] }): Promise<Omit<Held, 'hours'>[]> {
   if (booking.calendar_event_id === null) return [];
   const ids = [booking.calendar_event_id, ...booking.hold_event_ids];
-  const events = await ctx.trx.selectFrom('crove_kernel.calendar_event').select(['id', 'user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  const events = await ctx.trx.selectFrom('ludy_kernel.calendar_event').select(['id', 'user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
   const owner = new Map(events.map((e) => [e.id, e.user_id]));
   return ids.flatMap((eventId) => {
     const userId = owner.get(eventId);
@@ -503,7 +503,7 @@ async function holdHosts(ctx: CommandContext, events: readonly Omit<Held, 'hours
 async function cancelHeld(ctx: CommandContext, booking: HeldBooking, type: EventType, held: readonly Held[], by: ChangedBy): Promise<void> {
   const hours = (held[0] as Held).hours;
   await ctx.trx
-    .updateTable('crove_kernel.calendar_event')
+    .updateTable('ludy_kernel.calendar_event')
     .set({ status: 'cancelled', cancelled_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', held.map((h) => h.eventId))
@@ -553,7 +553,7 @@ async function moveHeld(
   const endsAt = new Date(end);
   for (const h of held) {
     await ctx.trx
-      .updateTable('crove_kernel.calendar_event')
+      .updateTable('ludy_kernel.calendar_event')
       .set({ starts_at: startsAt, ends_at: endsAt, time_zone: h.hours.timeZone })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', h.eventId)
@@ -744,7 +744,7 @@ export const bookingRemind = defineCommand({
     if (booking.meeting_state === 'pending') return { sent: false };
     const source = `crm.booking.remind_${input.lead}`;
     const earlier = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', source)
@@ -754,7 +754,7 @@ export const bookingRemind = defineCommand({
     if (earlier) return { sent: false };
     const type = await eventTypeOf(ctx, booking.event_type_id);
     if (!booking.email || !booking.visitor_name) return { sent: false };
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const mail = await createMailMessage(ctx, {
       stream: 'transactional',
       source,
@@ -801,7 +801,7 @@ async function loadBookings(
     .selectFrom('crove_crm.booking as b')
     .innerJoin('crove_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
     // Confirmed and cancelled bookings always hold their event (booking_confirmed_event).
-    .innerJoin('crove_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
+    .innerJoin('ludy_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
     // The linked deal, when there is one (#3103).
     .leftJoin('crove_crm.deal as dl', (j) => j.onRef('dl.org_id', '=', 'b.org_id').onRef('dl.id', '=', 'b.deal_id'))
     .leftJoin('crove_crm.pipeline_stage as ds', (j) => j.onRef('ds.org_id', '=', 'dl.org_id').onRef('ds.id', '=', 'dl.stage_id'))
@@ -828,7 +828,7 @@ async function loadBookings(
       'e.title',
       'e.active',
       'ev.user_id as host_user_id',
-      sql<string[]>`coalesce((SELECT array_agg(h.user_id ORDER BY array_position(b.hold_event_ids, h.id)) FROM crove_kernel.calendar_event h
+      sql<string[]>`coalesce((SELECT array_agg(h.user_id ORDER BY array_position(b.hold_event_ids, h.id)) FROM ludy_kernel.calendar_event h
         WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids)), '{}')`.as('hold_user_ids'),
     ])
     .where('b.org_id', '=', ctx.orgId)
@@ -838,7 +838,7 @@ async function loadBookings(
         eb.or([
           eb('e.host_user_id', '=', userId),
           eb('ev.user_id', '=', userId),
-          sql<boolean>`EXISTS (SELECT 1 FROM crove_kernel.calendar_event h WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids) AND h.user_id = ${userId})`,
+          sql<boolean>`EXISTS (SELECT 1 FROM ludy_kernel.calendar_event h WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids) AND h.user_id = ${userId})`,
         ]),
       ),
     );

@@ -86,7 +86,7 @@ export const reportScheduleSave = defineCommand({
     const recipients = [...new Set(input.recipients.map((r) => r.trim().toLowerCase()))];
     const ids = [...new Set(input.connectionIds)];
     if (ids.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
       if (found.length !== ids.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     }
     const spec: ReportScheduleSpec = { cadence: input.cadence, weekday, monthDay, sendHour: input.sendHour, timeZone };
@@ -252,7 +252,7 @@ async function queueRun(ctx: CommandContext, s: ScheduleRow, kind: 'scheduled' |
   const goals = s.label_id === null && shows(s, 'goals') ? await reportGoals(ctx.trx, ctx.orgId, start, end, s.connection_ids, ctx.now.getTime()) : null;
   const note = shows(s, 'note') && s.note ? s.note : null;
   // The sending org, named in the mail's footer.
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const run = await ctx.trx
     .insertInto('crove_social.report_schedule_run')
     .values({ org_id: ctx.orgId, schedule_id: s.id, kind, period_start: start, period_end: end, created_by: createdBy, created_at: ctx.now })
@@ -343,7 +343,7 @@ export const reportScheduleTest = defineCommand({
       .where('created_at', '>', new Date(ctx.now.getTime() - 3_600_000))
       .executeTakeFirstOrThrow();
     if (Number(recent.n) >= TEST_SENDS_PER_HOUR) throw new DomainError('REPORT_TEST_LIMIT', 429, 'Đã gửi thử nhiều lần trong một giờ; hãy thử lại sau');
-    const { rows } = await sql<{ email: string | null }>`SELECT email FROM crove_kernel.member_profiles(${[userId]}::uuid[])`.execute(ctx.trx);
+    const { rows } = await sql<{ email: string | null }>`SELECT email FROM ludy_kernel.member_profiles(${[userId]}::uuid[])`.execute(ctx.trx);
     const email = rows[0]?.email;
     if (!email) throw new DomainError('NO_EMAIL', 422, 'Tài khoản của bạn chưa có email để nhận thư thử');
     const done = await queueRun(ctx, s, 'test', reportPeriodAt(s.period, ctx.now.getTime(), s.time_zone), [email], userId);
@@ -365,7 +365,7 @@ export const reportScheduleMintLink = defineCommand({
   handler: async (ctx, input) => {
     requireSystem(ctx);
     const mail = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['source_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
@@ -488,7 +488,7 @@ export const reportScheduleList = defineQuery({
       runs.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_kernel.mail_message')
+            .selectFrom('ludy_kernel.mail_message')
             .select(['source_id', 'to_address', 'status', 'error_code'])
             .where('org_id', '=', ctx.orgId)
             .where('source', '=', MAIL_SOURCE)

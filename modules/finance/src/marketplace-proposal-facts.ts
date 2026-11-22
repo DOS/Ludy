@@ -194,7 +194,7 @@ export const marketplaceProposalFactsQuery = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<MarketplaceProposalFacts | null> => {
     const { rows } = await sql<{ command: string | null; status: string; payload: unknown }>`
-      SELECT command, status, payload FROM crove_kernel.proposal WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.proposalId}::uuid`.execute(ctx.trx);
+      SELECT command, status, payload FROM ludy_kernel.proposal WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.proposalId}::uuid`.execute(ctx.trx);
     const row = rows[0];
     if (!row) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy đề xuất');
     // A decided proposal (approved, rejected, expired or failed) has nothing left to approve: no note, so no model call for it.

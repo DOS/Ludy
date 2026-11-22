@@ -16,7 +16,7 @@ export const recordImageSize = defineCommand({
   handler: async (ctx, input) => {
     // Only a Social image still without a size: a size already read (at upload or by an earlier pass) stays as it is.
     const { rows } = await sql<{ id: string }>`
-      UPDATE crove_kernel.file SET image_width = ${input.width}, image_height = ${input.height}
+      UPDATE ludy_kernel.file SET image_width = ${input.width}, image_height = ${input.height}
       WHERE org_id = ${ctx.orgId} AND id = ${input.fileId} AND source = 'social'
         AND content_type IN ('image/jpeg', 'image/png', 'image/webp') AND image_width IS NULL AND image_height IS NULL
       RETURNING id`.execute(ctx.trx);

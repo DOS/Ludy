@@ -124,7 +124,7 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const { orgId, slug } = await createOrg(rt, asUser(owner), `Sổ Lao Động ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
 
     const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
@@ -262,8 +262,8 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 6 });
@@ -338,7 +338,7 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
     expect((await getExport('labor_register.json', 'period=2026-04-31', o.owner)).status).toBe(422);
 
     // Export audit row recorded with months: [] and zero PII
-    const auditRows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    const auditRows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
     expect(auditRows).toHaveLength(2);
     expect(JSON.parse(auditRows[0]!.detail)).toMatchObject({ kind: 'labor_register', period: '2026-06-20', months: [], rows: 3, via: 'view' });
     expect(JSON.parse(auditRows[1]!.detail)).toMatchObject({ kind: 'labor_register', period: '2026-09-01', months: [], rows: 3, via: 'xlsx' });
@@ -503,7 +503,7 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
         async (c) =>
           (
             await c.query<{ command: string; detail: string; row: string }>(
-              `SELECT command, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('hr.payroll.labor_check.read', 'hr.payroll.labor_check.audit') ORDER BY id`,
+              `SELECT command, detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('hr.payroll.labor_check.read', 'hr.payroll.labor_check.audit') ORDER BY id`,
               [o.orgId],
             )
           ).rows,

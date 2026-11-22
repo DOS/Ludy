@@ -3,7 +3,7 @@
 #
 # One run writes <BACKUP_DIR>/<run id>/ (the run id is the UTC start time, 20261017T020000Z):
 #   db.dump       pg_dump --format=custom of the whole database: every Crove schema, Supabase Auth's `auth` schema,
-#                 the crove_jobs queue and the migration ledger. The rows of crove_kernel.context_key are left out:
+#                 the ludy_jobs queue and the migration ledger. The rows of ludy_kernel.context_key are left out:
 #                 a restore makes a new key (docs/runbooks/context-key-rotation.md).
 #   roles.sql     the cluster's roles, memberships and role settings, without passwords (migrate sets them again)
 #   counts.tsv    the row count of every table, read in the same snapshot as the dump
@@ -177,10 +177,10 @@ db_psql -d postgres <<SQL
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT pg_catalog.pg_export_snapshot() AS snapshot, pg_catalog.to_char(pg_catalog.clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS snapshot_at \gset
 \setenv CROVE_SNAPSHOT :snapshot
-\! pg_dump -U postgres -d postgres --format=custom --snapshot="\$CROVE_SNAPSHOT" --exclude-table-data=crove_kernel.context_key --file=/tmp/crove-backup/db.dump && touch /tmp/crove-backup/dump.ok
+\! pg_dump -U postgres -d postgres --format=custom --snapshot="\$CROVE_SNAPSHOT" --exclude-table-data=ludy_kernel.context_key --exclude-table-data=crove_kernel.context_key --file=/tmp/crove-backup/db.dump && touch /tmp/crove-backup/dump.ok
 $COUNTS_SQL \g /tmp/crove-backup/counts.tsv
 $FILE_REFS_SQL \g /tmp/crove-backup/file-refs.tsv
-COPY (SELECT (SELECT max(version) FROM crove_meta.schema_migrations), pg_catalog.current_setting('server_version'), :'snapshot_at') TO STDOUT \g /tmp/crove-backup/versions.tsv
+COPY (SELECT (SELECT max(version) FROM ludy_meta.schema_migrations), pg_catalog.current_setting('server_version'), :'snapshot_at') TO STDOUT \g /tmp/crove-backup/versions.tsv
 COMMIT;
 SQL
 dc exec -T db test -f /tmp/crove-backup/dump.ok
@@ -195,9 +195,9 @@ for f in db.dump counts.tsv file-refs.tsv versions.tsv; do
 done
 dc exec -T db rm -rf /tmp/crove-backup
 IFS=$'\t' read -r schema_version postgres_version snapshot_at <"$TMP/versions.tsv"
-[[ "$schema_version" =~ ^[0-9]{14}$ ]] || { STEP="database dump: no schema version in crove_meta.schema_migrations"; false; }
+[[ "$schema_version" =~ ^[0-9]{14}$ ]] || { STEP="database dump: no schema version in ludy_meta.schema_migrations"; false; }
 dc exec -T db pg_dumpall -U postgres --roles-only --no-role-passwords >"$PARTIAL/roles.sql"
-grep -q 'CREATE ROLE crove_app' "$PARTIAL/roles.sql" || { STEP="roles dump (no crove_app role)"; false; }
+grep -Eq 'CREATE ROLE (ludy|crove)_app' "$PARTIAL/roles.sql" || { STEP="roles dump (no ludy_app role)"; false; }
 dump_size="$(du -h "$PARTIAL/db.dump" | cut -f1)"
 tables="$(wc -l <"$PARTIAL/counts.tsv")"
 file_rows="$(wc -l <"$PARTIAL/file-refs.tsv")"

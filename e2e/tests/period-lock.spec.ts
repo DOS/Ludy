@@ -72,7 +72,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
   await test.step('the audit rows record the lock and the unlock with its reason and second factor', async () => {
     const rows = sql<{ command: string; month: string; reason: string | null; aal: string | null }>(
       `SELECT a.command, a.detail->>'month' AS month, a.detail->>'reason' AS reason, a.detail->>'aal' AS aal
-       FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t ON t.org_id = a.org_id
+       FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
        WHERE t.slug = :'slug' AND a.command LIKE 'finance.period.%' AND a.outcome = 'ok' ORDER BY a.occurred_at`,
       { slug },
     );

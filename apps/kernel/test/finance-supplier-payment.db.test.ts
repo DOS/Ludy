@@ -66,11 +66,11 @@ suite('payments to a supplier (#3113 S2)', () => {
     const member = await identity('member');
     const adminUser = twoApprovers ? await identity('admin') : null;
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
-      if (adminUser) await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
+      if (adminUser) await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]);
     });
     const supplier = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
     return { orgId, owner, admin: adminUser, member, supplier };
   }
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true) => rt.execute<T>(name, input, { actor: user(who, fresh), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -113,9 +113,9 @@ suite('payments to a supplier (#3113 S2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -292,7 +292,7 @@ suite('payments to a supplier (#3113 S2)', () => {
     const proposal = randomUUID();
     await unguarded((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers)
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers)
          VALUES ($1, $2, 'finance.supplier_payment', 'finance.supplier_payment.record', 'approved', 'Chi nhà cung cấp', '{}'::jsonb, $3::jsonb, $4::uuid[])`,
         [o.orgId, proposal, JSON.stringify(authors.map((id) => ({ type: 'user', id }))), [o.owner, ...(o.admin ? [o.admin] : [])]],
       ),
@@ -323,7 +323,7 @@ suite('payments to a supplier (#3113 S2)', () => {
     const proposal = randomUUID();
     await unguarded((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers, co_authors)
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers, co_authors)
          VALUES ($1, $2, 'finance.supplier_payment', 'finance.supplier_payment.record', 'approved', 'Chi nhà cung cấp', '{}'::jsonb, $3::jsonb, $4::uuid[], $5::uuid[])`,
         [o.orgId, proposal, JSON.stringify([{ type: 'user', id: o.member }]), [o.owner, o.admin], [o.admin]],
       ),

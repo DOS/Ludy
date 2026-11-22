@@ -61,7 +61,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   // A connection of a member: the grant either carries the events-read scope or not; the switch is the member's, through the module's command.
   async function connection(who: string, scopes: string[] = ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_READ_SCOPE], account = `${who}-${randomUUID().slice(0, 6)}@gmail.test`, provider = 'google'): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes) VALUES ($1, $2, $3, $6, $4, $4, $5)`, [orgId, id, users[who], account, scopes, provider]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes) VALUES ($1, $2, $3, $6, $4, $4, $5)`, [orgId, id, users[who], account, scopes, provider]);
     return id;
   }
   const on = (who: string, connectionId: string) => exec(who, 'meetings.agenda.set_read_events', { connectionId, enabled: true });
@@ -112,27 +112,27 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries, rowsQuery, systemRowsQuery] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'admin', 'lan', 'nam', 'outsider']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'agenda', subject: key, email: `${key}@agenda.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Lịch')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.lan, users.nam]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.lan, users.nam]);
   }, 300_000);
 
   // Each test starts without the members' connections and caches: the list and the suggestion look at all of a member's own events.
   beforeEach(async () => {
-    await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE org_id = $1', [orgId]);
     // The card hides an event a meeting of the member covers, so meetings of earlier tests would hide this test's events.
     await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
   });
@@ -151,7 +151,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await query<AgendaList>('lan', 'meetings.agenda.list')).toEqual({ enabled: false, events: [] });
     expect(await sweep(c, [event('e1', 30)])).toEqual({ connectionId: c, written: 0 });
     expect(await cached(c)).toEqual([]);
-    const view = (await sqlAdmin<{ read_events: boolean }>('SELECT read_events FROM crove_kernel.calendar_connection WHERE id = $1', [c])).rows[0];
+    const view = (await sqlAdmin<{ read_events: boolean }>('SELECT read_events FROM ludy_kernel.calendar_connection WHERE id = $1', [c])).rows[0];
     expect(view?.read_events).toBe(false);
   });
 
@@ -161,11 +161,11 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     const mine = await connection('lan');
     // Another member (an admin included) cannot switch it: it is not found for them.
     for (const who of ['nam', 'admin', 'owner']) expect(await refuses(on(who, mine)), who).toBe('CALENDAR_NOT_FOUND');
-    expect((await sqlAdmin<{ read_events: boolean }>('SELECT read_events FROM crove_kernel.calendar_connection WHERE id = ANY($1)', [[withoutScope, mine]])).rows.every((r) => r.read_events === false)).toBe(true);
+    expect((await sqlAdmin<{ read_events: boolean }>('SELECT read_events FROM ludy_kernel.calendar_connection WHERE id = ANY($1)', [[withoutScope, mine]])).rows.every((r) => r.read_events === false)).toBe(true);
     // An expired connection (Google refused the grant) must be connected again first.
-    await sqlAdmin("UPDATE crove_kernel.calendar_connection SET status = 'expired' WHERE id = $1", [mine]);
+    await sqlAdmin("UPDATE ludy_kernel.calendar_connection SET status = 'expired' WHERE id = $1", [mine]);
     expect(await refuses(on('lan', mine))).toBe('CALENDAR_NOT_ACTIVE');
-    await sqlAdmin("UPDATE crove_kernel.calendar_connection SET status = 'active' WHERE id = $1", [mine]);
+    await sqlAdmin("UPDATE ludy_kernel.calendar_connection SET status = 'active' WHERE id = $1", [mine]);
     expect(await on('lan', mine)).toEqual({ connectionId: mine, readEvents: true });
     expect((await query<AgendaList>('lan', 'meetings.agenda.list')).enabled).toBe(true);
     // The kernel's own view of it: the switch and the grant together.
@@ -274,7 +274,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await exec('lan', 'meetings.agenda.clear', { connectionId: c })).toMatchObject({ cleared: 1 });
     await sweep(c, [event('d', 30)]);
     expect((await cached(c)).length).toBe(1);
-    await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE id = $1', [c]);
+    await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE id = $1', [c]);
     expect(await sqlAdmin('SELECT 1 FROM crove_meetings.calendar_agenda WHERE connection_id = $1', [c]).then((r) => r.rowCount)).toBe(0);
   });
 
@@ -283,11 +283,11 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     await on('lan', c);
     await sweep(c, [todayAt('a', 10)]);
     expect((await query<AgendaList>('lan', 'meetings.agenda.list')).events.length).toBeGreaterThan(0);
-    await sqlAdmin("UPDATE crove_kernel.calendar_connection SET status = 'disconnecting' WHERE id = $1", [c]);
+    await sqlAdmin("UPDATE ludy_kernel.calendar_connection SET status = 'disconnecting' WHERE id = $1", [c]);
     expect((await query<AgendaList>('lan', 'meetings.agenda.list')).events.filter((e) => e.title === 'Họp a')).toEqual([]);
     expect(await sweep(c, [event('z', 30)])).toMatchObject({ written: 0 });
-    await sqlAdmin("UPDATE crove_kernel.calendar_connection SET status = 'active' WHERE id = $1", [c]);
-    await sqlAdmin('UPDATE crove_kernel.calendar_connection SET read_events = false WHERE id = $1', [c]);
+    await sqlAdmin("UPDATE ludy_kernel.calendar_connection SET status = 'active' WHERE id = $1", [c]);
+    await sqlAdmin('UPDATE ludy_kernel.calendar_connection SET read_events = false WHERE id = $1', [c]);
     expect((await query<AgendaList>('lan', 'meetings.agenda.list')).events.filter((e) => e.title === 'Họp a')).toEqual([]);
   });
 
@@ -401,8 +401,8 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       await client.connect();
       try {
         await client.query('BEGIN');
-        if (context === 'system') await client.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
-        if (context === 'user') await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [users.lan, 'aal1']).catch(() => undefined);
+        if (context === 'system') await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+        if (context === 'user') await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [users.lan, 'aal1']).catch(() => undefined);
         await client.query('SELECT crove_meetings.agenda_replace($1::uuid, now(), $2::jsonb)', [c, JSON.stringify(rows)]);
         await client.query('COMMIT');
         return 'ok';
@@ -412,14 +412,14 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         await client.end().catch(() => undefined);
       }
     };
-    expect(await call('crove_app', 'test-app-pw', 'system')).toMatch(/permission denied/);
-    expect(await call('crove_worker', 'test-worker-pw', 'none')).toMatch(/MEETINGS_SYSTEM_CONTEXT|NO_CONTEXT|permission denied/);
+    expect(await call('ludy_app', 'test-app-pw', 'system')).toMatch(/permission denied/);
+    expect(await call('ludy_worker', 'test-worker-pw', 'none')).toMatch(/MEETINGS_SYSTEM_CONTEXT|NO_CONTEXT|permission denied/);
     // A list with an event that has no usable id is refused whole, before anything is written.
     for (const bad of [{ ...event('x', 30), id: undefined }, { ...event('x', 30), id: '' }, { ...event('x', 30), id: 7 }]) {
-      expect(await call('crove_worker', 'test-worker-pw', 'system', [event('keep', 30), bad])).toMatch(/AGENDA_INVALID/);
+      expect(await call('ludy_worker', 'test-worker-pw', 'system', [event('keep', 30), bad])).toMatch(/AGENDA_INVALID/);
     }
     expect(await cached(c)).toEqual([]);
-    expect(await call('crove_worker', 'test-worker-pw', 'system')).toBe('ok');
+    expect(await call('ludy_worker', 'test-worker-pw', 'system')).toBe('ok');
     expect((await cached(c)).map((r) => r.external_id)).toEqual(['hand']);
   });
 
@@ -430,7 +430,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     async function token(who: string, scopes: string[]): Promise<string> {
       const id = randomUUID();
       await sqlAdmin(
-        `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $4, 'Test device', $5, now(), now() + interval '30 days', $3)`,
         [orgId, id, users[who], createHash('sha256').update(randomBytes(32)).digest(), scopes],
       );
@@ -530,7 +530,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       }
       // The read leaves an audit row naming the token.
       await next('lan', agendaToken);
-      const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.agenda.next' AND org_id = $1", [orgId])).rows;
+      const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE command = 'meetings.agenda.next' AND org_id = $1", [orgId])).rows;
       expect(audit.length).toBeGreaterThan(0);
       expect(audit.some((r) => r.detail.extensionToken === agendaToken)).toBe(true);
     });
@@ -539,7 +539,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       const t = await token('lan', ['agenda']);
       expect((await next('lan', t)).events).toEqual([]);
       expect(await refuses(next('nam', t))).toBe('EXTENSION_TOKEN_INVALID');
-      await sqlAdmin('UPDATE crove_kernel.extension_token SET revoked_at = now() WHERE id = $1', [t]);
+      await sqlAdmin('UPDATE ludy_kernel.extension_token SET revoked_at = now() WHERE id = $1', [t]);
       expect(await refuses(next('lan', t))).toBe('EXTENSION_TOKEN_INVALID');
     });
 
@@ -551,7 +551,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       expect(await issue(['agenda', 'meetings'])).toMatchObject({ expiresInSeconds: 300 });
       expect(await refuses(issue(['nope']))).toBe('VALIDATION');
       // The database refuses an unknown scope even when the application's own check is bypassed.
-      const direct = await sqlAdmin("INSERT INTO crove_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by) VALUES ($1, $2, $3, 'x', ARRAY['nope'], now(), now() + interval '1 day', $2)", [orgId, users.lan, createHash('sha256').update(randomBytes(32)).digest()]).then(() => 'inserted', (e: { code?: string }) => e.code);
+      const direct = await sqlAdmin("INSERT INTO ludy_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by) VALUES ($1, $2, $3, 'x', ARRAY['nope'], now(), now() + interval '1 day', $2)", [orgId, users.lan, createHash('sha256').update(randomBytes(32)).digest()]).then(() => 'inserted', (e: { code?: string }) => e.code);
       expect(direct).toBe('23514');
     });
   });

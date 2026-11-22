@@ -76,7 +76,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
     fn: (c: pg.Client) => Promise<T>,
   ): Promise<T> {
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const c = new pg.Client({ connectionString: url.toString() });
     await c.connect();
@@ -135,7 +135,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
     const { orgId } = await createOrg(app, asUser(owner.userId), `Notes N8 ${tag}`);
 
     await sqlAdmin(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`,
       [orgId, adminUser.userId, alice.userId, carol.userId, viewer.userId],
     );
@@ -170,12 +170,12 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
 
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, {
-      crove_app: 'test-app-pw',
-      crove_worker: 'test-worker-pw',
+      ludy_app: 'test-app-pw',
+      ludy_worker: 'test-worker-pw',
     });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -463,7 +463,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('NOTES_TAINT_AUTHOR_ONLY') });
 
-      // Author CAN set tainted false -> true under crove_tenant (trigger allows author false -> true).
+      // Author CAN set tainted false -> true under ludy_tenant (trigger allows author false -> true).
       await expect(
         withTenantUser(orgId, alice.userId, (c) =>
           c.query(`UPDATE crove_notes.note SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, untaintedNoteId]),
@@ -554,7 +554,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       expect(firstTodoDetail.sourceNoteId).toBe(privateNoteId);
       expect(firstTodoDetail.remindAt).toBeTruthy();
 
-      // Manual edit on suggested to-do preserves tainted = true, and crove_tenant still cannot UPDATE tainted directly.
+      // Manual edit on suggested to-do preserves tainted = true, and ludy_tenant still cannot UPDATE tainted directly.
       await exec(alice.userId, 'notes.todo.update', {
         todoId: acceptedTodos.todoIds[0]!,
         revision: firstTodoDetail.revision,
@@ -582,8 +582,8 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       expect(await query<TodoSummary[]>(owner.userId, 'notes.todo.list', { view: 'open' })).toEqual([]);
 
       // Zero note, summary, or to-do text in console logs, audit events, or outbox events!
-      const auditRows = await sqlAdmin(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1`, [orgId]);
-      const outboxRows = await sqlAdmin(`SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1`, [orgId]);
+      const auditRows = await sqlAdmin(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1`, [orgId]);
+      const outboxRows = await sqlAdmin(`SELECT * FROM ludy_kernel.outbox_event WHERE org_id = $1`, [orgId]);
       const leaksBlob = JSON.stringify({
         logs: logLines,
         audits: auditRows.rows,
@@ -719,7 +719,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
     // Org, module:notes, and member_vy agent kill switches stop Vy while manual notes & todos keep working.
     const aliceAgentId = (
       await sqlAdmin<{ id: string }>(
-        `SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
+        `SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
         [orgId, alice.userId],
       )
     ).rows[0]!.id;
@@ -731,7 +731,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
     ] as const) {
       const ksId = (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+          `INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`,
           [orgId, scope, target, owner.userId],
         )
       ).rows[0]!.id;
@@ -745,14 +745,14 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
           code: 'AI_PAUSED',
         });
       } finally {
-        await sqlAdmin(`DELETE FROM crove_kernel.kill_switch WHERE id = $1`, [ksId]);
+        await sqlAdmin(`DELETE FROM ludy_kernel.kill_switch WHERE id = $1`, [ksId]);
       }
     }
 
     // Budget exhausted on module:notes -> reason 'budget' with reset date YYYY-MM-01, while manual notes/to-dos work.
     await sqlAdmin(
-      `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
-       VALUES ($1, 'module', 'notes', crove_kernel.ai_budget_spent($1::uuid, 'module', 'notes'), true, $2)`,
+      `INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by)
+       VALUES ($1, 'module', 'notes', ludy_kernel.ai_budget_spent($1::uuid, 'module', 'notes'), true, $2)`,
       [orgId, owner.userId],
     );
     try {
@@ -769,7 +769,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       });
       expect(manualTodo.todoId).toBeTruthy();
     } finally {
-      await sqlAdmin(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
     }
 
     // Revoking vy.use stops Carol; pausing Alice's member_vy agent stops Alice without calling model.
@@ -824,7 +824,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       body: 'Carol tong hop tai lieu hop dong truoc thu Sau.',
       visibility: 'private',
     });
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
       orgId,
       carol.userId,
     ]);
@@ -894,7 +894,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
     });
     const staleRevokedRows = await sqlAdmin<{ body: string | null; status: string; error_code: string | null }>(
       `SELECT r.body, r.status, r.error_code
-         FROM crove_kernel.member_vy_result r
+         FROM ludy_kernel.member_vy_result r
         WHERE r.org_id = $1 AND r.subject_id = $2
         ORDER BY r.created_at DESC LIMIT 2`,
       [orgId, sharedNoteId],

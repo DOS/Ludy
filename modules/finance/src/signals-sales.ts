@@ -26,12 +26,12 @@ export const financeSalesSignals = defineQuery({
   handler: async (ctx, input): Promise<FinanceSalesSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     // The whole org or nothing: the scope is the one the sealed context carries, read as the row policies of the books read it.
-    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
+    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (ludy_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
     if (scope[0]?.whole !== true) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Bạn chỉ xem được một phần sổ sách nên chưa kiểm tra được hóa đơn bán hàng');
     const { rows } = await sql<{ party_id: string; last_sale_on: string; sales: string }>`
       SELECT a.id AS party_id, to_char(max(d.invoice_date), 'YYYY-MM-DD') AS last_sale_on, count(*)::text AS sales
-      FROM crove_kernel.party a
-      JOIN crove_kernel.party x ON x.org_id = a.org_id AND coalesce(x.duplicate_of, x.id) = coalesce(a.duplicate_of, a.id)
+      FROM ludy_kernel.party a
+      JOIN ludy_kernel.party x ON x.org_id = a.org_id AND coalesce(x.duplicate_of, x.id) = coalesce(a.duplicate_of, a.id)
       JOIN crove_finance.purchase_document d ON d.org_id = x.org_id AND d.party_id = x.id
       LEFT JOIN crove_finance.purchase_document_void v ON v.org_id = d.org_id AND v.document_id = d.id
       WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(input.partyIds.map((id) => sql`${id}::uuid`))})

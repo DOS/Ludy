@@ -94,9 +94,9 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 2 });
     const db = createDb(pool);
@@ -130,7 +130,7 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
     ];
     let first = '';
     await inTransaction(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Ghi lại', '0101234564')`, [orgId, party]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Ghi lại', '0101234564')`, [orgId, party]);
       await c.query(
         `INSERT INTO crove_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
          VALUES ($1, $2, 'purchase', $3, 'C26TLR', '501', '2026-09-10', 100000, 10000, 110000)`,

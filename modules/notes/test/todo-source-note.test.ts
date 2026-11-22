@@ -214,7 +214,7 @@ describe('todo source notes (#1676)', () => {
             },
             executeTakeFirst: async () => {
               if (table === 'crove_notes.todo') return todoRows[0];
-              if (table === 'crove_kernel.position') return undefined;
+              if (table === 'ludy_kernel.position') return undefined;
               return undefined;
             },
             executeTakeFirstOrThrow: async () => ({ n: '1' }),

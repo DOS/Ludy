@@ -1208,7 +1208,7 @@ export const signerCorrectRecipient = defineCommand({
     if (res.signerRole !== 'cc' && res.signerStatus === 'pending') {
       if (res.deliveryMode === 'email' && res.email) {
         const tenant = await ctx.trx
-          .selectFrom('crove_kernel.tenant')
+          .selectFrom('ludy_kernel.tenant')
           .select('name')
           .where('org_id', '=', ctx.orgId)
           .executeTakeFirstOrThrow();
@@ -1359,7 +1359,7 @@ export const envelopeRemind = defineCommand({
       if (s.delivery_mode === 'email' && s.email) {
         if (remindOrgName === null) {
           const tenant = await ctx.trx
-            .selectFrom('crove_kernel.tenant')
+            .selectFrom('ludy_kernel.tenant')
             .select('name')
             .where('org_id', '=', ctx.orgId)
             .executeTakeFirstOrThrow();
@@ -1637,13 +1637,13 @@ export const envelopeSealComplete = defineCommand({
 
     const [sealedFile, certFile] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_kernel.file')
+        .selectFrom('ludy_kernel.file')
         .select(['id', 'source', 'storage_key', 'generation', 'sha256'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.sealedFileId)
         .executeTakeFirst(),
       ctx.trx
-        .selectFrom('crove_kernel.file')
+        .selectFrom('ludy_kernel.file')
         .select(['id', 'source', 'storage_key', 'generation', 'sha256'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.certificateFileId)
@@ -1717,7 +1717,7 @@ export const envelopeSealComplete = defineCommand({
       ? recipientRows.filter((r) => r.delivery_mode === 'email')
       : recipientRows;
     const { rows: senderProfiles } = await sql<{ email: string | null }>`
-      SELECT email FROM crove_kernel.member_emails(${[row.created_by]}::uuid[])`.execute(ctx.trx);
+      SELECT email FROM ludy_kernel.member_emails(${[row.created_by]}::uuid[])`.execute(ctx.trx);
     const signerCount = Math.max(1, recipientRows.filter((r) => r.signer_role !== 'cc').length);
     const seenEmails = new Set<string>();
     const emailRecipients = [
@@ -1732,7 +1732,7 @@ export const envelopeSealComplete = defineCommand({
       });
     if (emailRecipients.length > 0) {
       const tenant = await ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select('name')
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();

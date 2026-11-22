@@ -161,7 +161,7 @@ export async function memberProfilesMap(trx: Trx, userIds: readonly string[]): P
   if (unique.length === 0) return map;
   const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
     SELECT user_id, email, display_name
-      FROM crove_kernel.member_profiles(${unique}::uuid[])`.execute(trx);
+      FROM ludy_kernel.member_profiles(${unique}::uuid[])`.execute(trx);
   for (const r of rows) {
     map.set(r.user_id, { displayName: r.display_name, email: r.email });
   }
@@ -170,7 +170,7 @@ export async function memberProfilesMap(trx: Trx, userIds: readonly string[]): P
 
 export async function loadOrgMembers(trx: Trx, orgId: string): Promise<Array<{ userId: string; role: MemberRole }>> {
   const rows = await trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
     .orderBy('created_at', 'asc')
@@ -184,7 +184,7 @@ export async function assertOrgMembers(trx: Trx, orgId: string, userIds: readonl
   const map = new Map<string, MemberRole>();
   if (unique.length === 0) return map;
   const rows = await trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
     .where('user_id', 'in', unique)
@@ -210,14 +210,14 @@ export function ownerDisplayName(profiles: ReadonlyMap<string, MemberProfile>, o
 type SeatStatus = ProjectSeat['status'];
 
 export async function countHiddenProjectTasks(trx: Trx, orgId: string, projectId: string): Promise<number> {
-  // Compare project_task against le_scope-filtered crove_kernel.task without SECURITY DEFINER.
+  // Compare project_task against le_scope-filtered ludy_kernel.task without SECURITY DEFINER.
   const { rows } = await sql<{ count: string }>`
     SELECT pg_catalog.count(*)::text AS count
       FROM crove_projects.project_task pt
      WHERE pt.org_id = ${orgId}::uuid
        AND pt.project_id = ${projectId}::uuid
        AND NOT EXISTS (
-         SELECT 1 FROM crove_kernel.task t
+         SELECT 1 FROM ludy_kernel.task t
           WHERE t.org_id = pt.org_id AND t.id = pt.task_id
        )`.execute(trx);
   return Number(rows[0]?.count ?? 0);
@@ -243,14 +243,14 @@ export async function loadProjectSeatsAndProfiles(
   const { rows: usedPositionRows } = await sql<{ id: string }>`
     SELECT DISTINCT t.assignee_position_id AS id
       FROM crove_projects.project_task pt
-      JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+      JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
      WHERE pt.org_id = ${orgId}::uuid
        AND pt.project_id = ${projectId}::uuid
        AND t.assignee_position_id IS NOT NULL`.execute(trx);
   const usedPositionIds = usedPositionRows.map((p) => p.id);
 
   const positionRows = await trx
-    .selectFrom('crove_kernel.position')
+    .selectFrom('ludy_kernel.position')
     .select(['id', 'title', 'status', 'holder_user_id', 'holder_agent_id'])
     .where('org_id', '=', orgId)
     .where((eb) =>
@@ -268,7 +268,7 @@ export async function loadProjectSeatsAndProfiles(
   const agentNames = new Map<string, string>();
   if (agentIds.length > 0) {
     const agents = await trx
-      .selectFrom('crove_kernel.agent')
+      .selectFrom('ludy_kernel.agent')
       .select(['id', 'display_name'])
       .where('org_id', '=', orgId)
       .where('id', 'in', agentIds)
@@ -324,14 +324,14 @@ export async function loadProjectTaskCounts(
   const [{ rows: counts }, { rows: blockerRows }, { rows: blockingRows }] = await Promise.all([
     sql<{ task_id: string; n: string }>`
       SELECT task_id, pg_catalog.count(*)::text AS n
-        FROM crove_kernel.task_comment
+        FROM ludy_kernel.task_comment
        WHERE org_id = ${orgId}::uuid
          AND task_id = ANY(${[...taskIds]}::uuid[])
        GROUP BY task_id`.execute(trx),
     sql<{ task_id: string; n: string }>`
       SELECT d.blocked_task_id AS task_id, pg_catalog.count(*)::text AS n
         FROM crove_projects.task_dependency d
-        JOIN crove_kernel.task bt
+        JOIN ludy_kernel.task bt
           ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
        WHERE d.org_id = ${orgId}::uuid
          AND d.project_id = ${projectId}::uuid
@@ -341,9 +341,9 @@ export async function loadProjectTaskCounts(
     sql<{ task_id: string; n: string }>`
       SELECT d.blocker_task_id AS task_id, pg_catalog.count(*)::text AS n
         FROM crove_projects.task_dependency d
-        JOIN crove_kernel.task bt
+        JOIN ludy_kernel.task bt
           ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
-        JOIN crove_kernel.task dt
+        JOIN ludy_kernel.task dt
           ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
        WHERE d.org_id = ${orgId}::uuid
          AND d.project_id = ${projectId}::uuid

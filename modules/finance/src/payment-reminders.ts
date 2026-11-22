@@ -100,7 +100,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   let balances = ctx.trx
     .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select(sql<string>`sum(l.debit - l.credit)`.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
@@ -119,10 +119,10 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   const owed = await balances.execute();
   if (owed.length === 0) return [];
   const ids = owed.map((r) => r.party_id);
-  const parties = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  const parties = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
   const invoiceRows = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
     .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select(kept.as('party_id'))
     .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency'])
@@ -156,7 +156,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   // terms are the kept party's, else a duplicate's, and the pause is the latest of the group (the same rule as the customer's own screen: mergeGroupRows).
   const rows = await ctx.trx
     .selectFrom('crove_finance.customer_collection as c')
-    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
+    .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
     .select([kept.as('group_id'), 'c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
@@ -189,7 +189,7 @@ async function lastReminders(ctx: QueryContext, entity: string, partyIds: readon
   const out = new Map<string, { at: string; level: NoticeLevel }>();
   if (partyIds.length === 0) return out;
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.mail_message')
+    .selectFrom('ludy_kernel.mail_message')
     .select(['source', 'source_id', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('source', 'like', `${PAYMENT_REMINDER_SOURCE}%`)
@@ -209,7 +209,7 @@ async function lastReminders(ctx: QueryContext, entity: string, partyIds: readon
 
 // The currency every amount of the books is in.
 export async function bookCurrency(ctx: QueryContext): Promise<string> {
-  const row = await ctx.trx.selectFrom('crove_kernel.tenant').select('base_currency').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const row = await ctx.trx.selectFrom('ludy_kernel.tenant').select('base_currency').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   return row.base_currency;
 }
 
@@ -266,16 +266,16 @@ async function payToOptions(ctx: QueryContext, entity: string): Promise<Array<{ 
     .orderBy('id')
     .execute();
   if (rows.length === 0) return [];
-  const holder = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
+  const holder = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
   const accounts = await chartAccounts(ctx, [...new Set(rows.map((r) => r.bank_account))]);
   return rows.map((r) => ({ id: r.id, bank: accounts.get(r.bank_account)?.name ?? r.bank_account, number: r.account_number, holder: holder?.name ?? '' }));
 }
 
 export async function orgName(ctx: QueryContext, entity: string): Promise<string> {
   // The seller named in the mail is the legal entity whose books the invoices are in.
-  const row = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
   if (row) return oneLine(row.name);
-  const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   return oneLine(tenant.name);
 }
 
@@ -348,7 +348,7 @@ export const paymentReminderSend = defineCommand({
     const source = `${PAYMENT_REMINDER_SOURCE}${level}`;
     const since = new Date(ctx.now.getTime() - REMINDER_REPEAT_DAYS * DAY_MS);
     const recent = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select('created_at')
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', source)

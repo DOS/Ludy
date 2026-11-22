@@ -126,15 +126,15 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     workerDb = createDb(workerPool);
     // A command that only this test has: the recorder's own insert of a post row, with the columns the worker alone may set, to see the database refuse it (the policy of chat_post).
@@ -157,15 +157,15 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'viewer', 'outsider']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'chat', subject: key, email: `${key}@chat.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Chat')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [orgId, users.admin, users.recorder, users.attendee, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [orgId, users.admin, users.recorder, users.attendee, users.viewer]);
   }, 300_000);
 
   beforeEach(async () => {
     sent = [];
     next = { status: 200 };
     await sqlAdmin('DELETE FROM crove_meetings.chat_channel WHERE org_id = $1', [orgId]);
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
   });
 
   afterAll(async () => {
@@ -195,8 +195,8 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const stored = await sqlAdmin<{ envelope: Buffer }>('SELECT envelope FROM crove_meetings.chat_channel_target WHERE org_id = $1', [orgId]);
     expect(stored.rows).toHaveLength(2);
     for (const row of stored.rows) for (const bit of SECRET_BITS) expect(row.envelope.toString('latin1')).not.toContain(bit);
-    const audit = await sqlAdmin<{ text: string }>(`SELECT (a::text) AS text FROM crove_kernel.audit_event a WHERE org_id = $1`, [orgId]);
-    const events = await sqlAdmin<{ text: string }>(`SELECT (e::text) AS text FROM crove_kernel.outbox_pending e WHERE org_id = $1`, [orgId]);
+    const audit = await sqlAdmin<{ text: string }>(`SELECT (a::text) AS text FROM ludy_kernel.audit_event a WHERE org_id = $1`, [orgId]);
+    const events = await sqlAdmin<{ text: string }>(`SELECT (e::text) AS text FROM ludy_kernel.outbox_pending e WHERE org_id = $1`, [orgId]);
     for (const row of [...audit.rows, ...events.rows]) for (const bit of SECRET_BITS) expect(row.text).not.toContain(bit);
   });
 
@@ -239,7 +239,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     // The log holds hashes and ids: no word of the minutes in any column of any post row, and the audit names ids and counts.
     const row = await sqlAdmin<{ text: string }>('SELECT (p::text) AS text FROM crove_meetings.chat_post p WHERE org_id = $1', [orgId]);
     expect(row.rows[0]?.text).not.toMatch(/Chốt báo giá|Giữ giá cũ|Họp giao ban/);
-    const audit = await sqlAdmin<{ text: string }>(`SELECT (a::text) AS text FROM crove_kernel.audit_event a WHERE org_id = $1 AND (a::text) LIKE '%meetings.chat%'`, [orgId]);
+    const audit = await sqlAdmin<{ text: string }>(`SELECT (a::text) AS text FROM ludy_kernel.audit_event a WHERE org_id = $1 AND (a::text) LIKE '%meetings.chat%'`, [orgId]);
     expect(audit.rows.length).toBeGreaterThan(0);
     for (const r of audit.rows) {
       expect(r.text).not.toMatch(/Chốt báo giá|Giữ giá cũ|BẢN GHI/);
@@ -395,7 +395,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const meeting = await seedMeeting(true);
     const { id: channel } = await saveChannel('admin', 'slack', SLACK_URL);
     const queued = await post(meeting, channel);
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
     expect(await refuses(post(meeting, channel, { confirmRepeat: true }))).toBe('CHAT_CHANNEL_OWNER_LEFT');
     // The queued post is dropped by the job: no address is handed to it, nothing is sent, and the message is deleted.
     expect(await work()).toEqual({ [queued.postId]: 'dropped' });
@@ -407,10 +407,10 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const again = await post(meeting, channel);
     expect(await work()).toEqual({ [again.postId]: 'sent' });
     // A saver who is disabled: the address is not handed out and the post drops.
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
     const other = await saveChannel('admin', 'slack', SLACK_URL, 'Kênh của admin');
     const third = await post(meeting, other.id);
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.admin]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.admin]);
     const before = sent.length;
     expect(await work()).toEqual({ [third.postId]: 'dropped' });
     expect(sent).toHaveLength(before);
@@ -424,22 +424,22 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     // A user's own request never reaches it (no system context): the query is the worker's alone.
     expect(await refuses(runtime.query('meetings.chat.target', { channelId: channel }, { actor: asUser('owner'), orgId }))).not.toBeNull();
     // A saver who was demoted, then restored, then disabled, then enabled again: the address is handed out only while the saver stands.
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
     expect(await target()).toBeNull();
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
     expect(await target()).not.toBeNull();
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.admin]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.admin]);
     expect(await target()).toBeNull();
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
     expect(await target()).not.toBeNull();
     // An org that is not active (offboarding or closed) hands out nothing.
-    const status = (await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.status;
-    await sqlAdmin(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [orgId]);
+    const status = (await sqlAdmin<{ status: string }>('SELECT status FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.status;
+    await sqlAdmin(`UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [orgId]);
     try {
       // The runtime may refuse to enter an org that is not active at all, or the definer hands out nothing: either way no address.
       expect(await target().catch(() => null)).toBeNull();
     } finally {
-      await sqlAdmin('UPDATE crove_kernel.tenant SET status = $2 WHERE org_id = $1', [orgId, status]);
+      await sqlAdmin('UPDATE ludy_kernel.tenant SET status = $2 WHERE org_id = $1', [orgId, status]);
     }
     expect(await target()).not.toBeNull();
     // A removed channel is gone with its address.
@@ -605,7 +605,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
       u.password = password;
       return u.toString();
     };
-    for (const [user, password] of [['crove_app', 'test-app-pw'], ['crove_worker', 'test-worker-pw']] as const) {
+    for (const [user, password] of [['ludy_app', 'test-app-pw'], ['ludy_worker', 'test-worker-pw']] as const) {
       const c = new pg.Client({ connectionString: url(user, password) });
       await c.connect();
       try {
@@ -614,15 +614,15 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
         const callable = async (sql: string, params: unknown[]) => c.query(sql, sql.includes('$1') ? params : []).then(() => true, (e: Error) => !/permission denied/.test(e.message));
         const uuid = randomUUID();
         // The API's two: sealing an address in and storing the message of the recorder's own click.
-        expect(await callable('SELECT crove_meetings.chat_target_put($1::uuid, $2, $3)', [uuid, 'k', Buffer.from('x')]), `${user} chat_target_put`).toBe(user === 'crove_app');
-        expect(await callable('SELECT crove_meetings.chat_post_enqueue($1::uuid, $2::jsonb)', [uuid, '{}']), `${user} chat_post_enqueue`).toBe(user === 'crove_app');
+        expect(await callable('SELECT crove_meetings.chat_target_put($1::uuid, $2, $3)', [uuid, 'k', Buffer.from('x')]), `${user} chat_target_put`).toBe(user === 'ludy_app');
+        expect(await callable('SELECT crove_meetings.chat_post_enqueue($1::uuid, $2::jsonb)', [uuid, '{}']), `${user} chat_post_enqueue`).toBe(user === 'ludy_app');
         // The worker's: reading the address and the message out, the sweep, the outcome, the rotation pass.
-        expect(await callable('SELECT * FROM crove_meetings.chat_target_get($1::uuid)', [uuid]), `${user} chat_target_get`).toBe(user === 'crove_worker');
-        expect(await callable('SELECT * FROM crove_meetings.chat_post_get($1::uuid, $2::uuid)', [uuid, uuid]), `${user} chat_post_get`).toBe(user === 'crove_worker');
-        expect(await callable('SELECT * FROM crove_meetings.chat_open(5)', []), `${user} chat_open`).toBe(user === 'crove_worker');
-        expect(await callable('SELECT crove_meetings.chat_touch($1::uuid)', [uuid]), `${user} chat_touch`).toBe(user === 'crove_worker');
-        expect(await callable('SELECT crove_meetings.chat_record($1::uuid, $2, NULL, NULL)', [uuid, 'sent']), `${user} chat_record`).toBe(user === 'crove_worker');
-        expect(await callable('SELECT * FROM crove_meetings.chat_target_key_counts()', []), `${user} chat_target_key_counts`).toBe(user === 'crove_worker');
+        expect(await callable('SELECT * FROM crove_meetings.chat_target_get($1::uuid)', [uuid]), `${user} chat_target_get`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM crove_meetings.chat_post_get($1::uuid, $2::uuid)', [uuid, uuid]), `${user} chat_post_get`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM crove_meetings.chat_open(5)', []), `${user} chat_open`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT crove_meetings.chat_touch($1::uuid)', [uuid]), `${user} chat_touch`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT crove_meetings.chat_record($1::uuid, $2, NULL, NULL)', [uuid, 'sent']), `${user} chat_record`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM crove_meetings.chat_target_key_counts()', []), `${user} chat_target_key_counts`).toBe(user === 'ludy_worker');
         // No login role runs the helpers that only the others call.
         for (const call of ['crove_meetings.chat_standing($1::uuid, $1::uuid)', 'crove_meetings.chat_system()', 'crove_meetings.chat_drop_queued($1::uuid, $1::uuid)']) expect(await callable(`SELECT ${call}`, [uuid]), `${user} ${call}`).toBe(false);
       } finally {
@@ -634,7 +634,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
   it('reseals a minutes channel\'s address after a credential key rotation, only for a channel whose saver is still an owner or admin', async () => {
     const { id: stands } = await saveChannel('owner', 'slack', SLACK_URL, 'Còn hiệu lực');
     const { id: demoted } = await saveChannel('admin', 'slack', SLACK_URL, 'Của admin');
-    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
     const oldKey = parseVaultKey(randomBytes(32).toString('base64'));
     const oldVault = new CredentialVault([oldKey]);
     // Seal both under the old key.

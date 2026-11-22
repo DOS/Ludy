@@ -43,7 +43,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
   const audit = (orgId: string, actorId: string, command: string, outcome: string, detail: Record<string, unknown> = {}, agoSeconds = 10) =>
     admin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, now() - make_interval(secs => $2), 'user', $3, $4, gen_random_uuid(), $5, repeat('0', 64), $6) RETURNING id`,
         [orgId, agoSeconds, actorId, command, outcome, JSON.stringify(detail)],
       );
@@ -78,15 +78,15 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 2 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -139,7 +139,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
   it('alerts once on a refusal spike across the deployment', async () => {
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.refusal_tally (org_id, window_start, actor_key, command, code, refusals, last_at)
+        `INSERT INTO ludy_kernel.refusal_tally (org_id, window_start, actor_key, command, code, refusals, last_at)
          VALUES ($1, date_trunc('hour', now()), 'user:' || $2, 'kernel.inbox.list', 'FORBIDDEN', 60, now())`,
         [orgs[0], probe],
       ),

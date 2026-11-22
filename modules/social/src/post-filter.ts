@@ -28,12 +28,12 @@ const NOBODY = '00000000-0000-0000-0000-000000000000';
 // The user a member filter names: the viewer for 'me' (nobody outside a user context), else the id given.
 const memberOf = (ctx: Pick<QueryContext, 'actor'>, value: string) => (value !== 'me' ? value : ctx.actor.type === 'user' ? ctx.actor.userId : NOBODY);
 
-// The member ids of the filter that are not members of the org (crove_kernel.member_profiles answers for members
+// The member ids of the filter that are not members of the org (ludy_kernel.member_profiles answers for members
 // only), so the list refuses a filter on someone else's org or a stranger. 'me' needs no check.
 export async function membersOutside(ctx: Pick<QueryContext, 'trx'>, input: Pick<PostFilter, 'assignee' | 'author'>): Promise<string[]> {
   const ids = [...new Set([input.assignee, input.author].filter((v): v is string => v !== undefined && v !== 'me'))];
   if (ids.length === 0) return [];
-  const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+  const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
   const members = new Set(rows.map((r) => r.user_id));
   return ids.filter((id) => !members.has(id));
 }

@@ -48,11 +48,11 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, user(owner), `Công ty Chi ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = [await identity('admin'), await identity('member'), await identity('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]);
     const supplier = await party(orgId, 'Nhà cung cấp thử');
     return { orgId, owner, admin: adminUser, member, viewer, supplier };
   }
-  const party = (orgId: string, name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', $2) RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+  const party = (orgId: string, name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', $2) RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner) => rt.execute<T>(name, input, { actor: user(who), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, who = o.owner) => rt.query<T>(name, input, { actor: user(who), orgId: o.orgId });
   const addAccount = (o: Org, partyId = o.supplier, number = NUMBER) => execute<{ id: string }>(o, 'finance.supplier_bank_account.add', { partyId, bankName: 'Vietcombank', accountHolder: HOLDER, accountNumber: number });
@@ -82,9 +82,9 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);

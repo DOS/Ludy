@@ -241,7 +241,7 @@ export const chatPost = defineCommand({
     const channel = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(['kind', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.channelId).executeTakeFirst();
     if (!channel) throw new DomainError('CHAT_CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     // The address belongs to the member who saved it: while they are not an owner or admin any more, nothing is posted to it (the database checks again, and also that they are not disabled).
-    const saver = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', channel.created_by).executeTakeFirst();
+    const saver = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', channel.created_by).executeTakeFirst();
     if (!saver || (saver.role !== 'owner' && saver.role !== 'admin')) {
       throw new DomainError('CHAT_CHANNEL_OWNER_LEFT', 409, 'Người đã thêm kênh này không còn là chủ sở hữu hoặc quản trị viên; hãy nhờ chủ sở hữu hoặc quản trị viên dán lại địa chỉ');
     }

@@ -68,7 +68,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     const other = await makeUser('other');
     const { orgId } = await createOrg(app, asUser(owner), `Recurring ${tag}`);
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [
         orgId,
         adminUser,
         mine,
@@ -89,9 +89,9 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -217,11 +217,11 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     // Audit & outbox hold IDs/dates/status only, never title/details/steps.
     await admin(async (c) => {
       const audits = await c.query<{ command: string; detail: Record<string, unknown> }>(
-        `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`,
+        `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`,
         [o.orgId],
       );
       const outbox = await c.query<{ type: string; payload: Record<string, unknown> }>(
-        `SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'notes.todo.%'`,
+        `SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'notes.todo.%'`,
         [o.orgId],
       );
       const blob = JSON.stringify({ audits: audits.rows, outbox: outbox.rows });
@@ -311,7 +311,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     // Audit for reschedule contains IDs and dates only across both ok and rejected attempts, never titles.
     await admin(async (c) => {
       const rows = await c.query<{ outcome: string; detail: Record<string, unknown> }>(
-        `SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.reschedule'`,
+        `SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.reschedule'`,
         [o.orgId],
       );
       const okRows = rows.rows.filter((r) => r.outcome === 'ok');
@@ -454,7 +454,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     });
     const linkNext = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: linkRoot.todoId });
     const targetTask = await admin(async (c) =>
-      (await c.query<{ id: string }>(`INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Ref task', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Ref task', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
     );
     await o.exec(o.mine, 'notes.todo.link_add', { todoId: linkNext.nextTodoId as string, targetType: 'kernel.task', targetId: targetTask.id });
     await expect(

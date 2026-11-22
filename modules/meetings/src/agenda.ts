@@ -64,7 +64,7 @@ const toEvent = (r: AgendaRow): AgendaEvent => ({
 function agendaOf(trx: Trx, orgId: string, userId: string) {
   return trx
     .selectFrom('crove_meetings.calendar_agenda as a')
-    .innerJoin('crove_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
+    .innerJoin('ludy_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
     .select(['a.id', 'a.title', 'a.starts_at', 'a.ends_at', 'a.time_zone', 'a.join_url', 'a.invitee_count', 'a.meeting_id', 'a.series_id'])
     .where('a.org_id', '=', orgId)
     .where('a.user_id', '=', userId)
@@ -83,7 +83,7 @@ export const agendaList = defineQuery({
 // The body of `meetings.agenda.list`, for the Today view (#3955) to read the same events under the same rules: an empty, disabled answer when no calendar of the member reads events.
 export async function todaysAgenda(trx: Trx, orgId: string, userId: string): Promise<AgendaList> {
   const enabled = await trx
-    .selectFrom('crove_kernel.calendar_connection')
+    .selectFrom('ludy_kernel.calendar_connection')
     .select('id')
     .where('org_id', '=', orgId)
     .where('user_id', '=', userId)
@@ -125,7 +125,7 @@ export const agendaNext = defineQuery({
   handler: async (ctx): Promise<AgendaNext> => {
     const userId = userOf(ctx.actor);
     const enabled = await ctx.trx
-      .selectFrom('crove_kernel.calendar_connection')
+      .selectFrom('ludy_kernel.calendar_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)

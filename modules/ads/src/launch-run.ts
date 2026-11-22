@@ -139,7 +139,7 @@ export async function launchAccountOf(ctx: Db, adAccountId: string) {
     .executeTakeFirst();
   if (!account) return null;
   const connection = account.write_connection_id
-    ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', account.write_connection_id).executeTakeFirst()
+    ? await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', account.write_connection_id).executeTakeFirst()
     : undefined;
   return { account, connection: connection ?? null };
 }
@@ -194,7 +194,7 @@ export async function launchCapsProblems(
 // platform, so a launch that ends keeps its commitment against the caps until it is wound down, and what it made is paused from the queue.
 export async function activationEverBegun(ctx: Db, launchId: string): Promise<boolean> {
   const { rows } = await sql<{ n: number }>`
-    SELECT count(*)::int AS n FROM crove_kernel.external_call WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`}`.execute(ctx.trx);
+    SELECT count(*)::int AS n FROM ludy_kernel.external_call WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`}`.execute(ctx.trx);
   return (rows[0]?.n ?? 0) > 0;
 }
 
@@ -275,7 +275,7 @@ export const adsLaunchBegin = defineCommand({
 
     // Page the ads run as (every ad needs one), as a connection of the org that is active.
     const page = drafted?.pageConnectionId
-      ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status', 'external_account_id']).where('org_id', '=', ctx.orgId).where('id', '=', drafted.pageConnectionId).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['provider', 'status', 'external_account_id']).where('org_id', '=', ctx.orgId).where('id', '=', drafted.pageConnectionId).executeTakeFirst()
       : undefined;
 
     if (launch.state === 'queued') {
@@ -337,7 +337,7 @@ export const adsLaunchBegin = defineCommand({
 
     // The ledger row of the step's call.
     const callKey = launchCallKey(launch.id, launch.attempt, next);
-    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'updated_at', 'started_at', 'calls', 'error_code']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'updated_at', 'started_at', 'calls', 'error_code']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).forUpdate().executeTakeFirst();
     // A step that stays unclear is not asked about for ever: an unclear row that has already had an answer that could not be told (a code is recorded), once it has
     // been called three times or began an hour ago, tells a person (the launch needs attention) and nothing more is asked or made.
     if (row?.state === 'ambiguous' && row.error_code !== null && (row.calls >= UNCLEAR_MAX_CALLS || (ctx.now.getTime() - row.started_at.getTime()) / 1000 >= UNCLEAR_GIVE_UP_SECONDS)) {
@@ -351,7 +351,7 @@ export const adsLaunchBegin = defineCommand({
     let earlierUnsettled = false;
     if (!row && launch.attempt > 1) {
       const { rows: calls } = await sql<{ id: string; key: string; state: string; updated_at: Date }>`
-        SELECT id, key, state, updated_at FROM crove_kernel.external_call
+        SELECT id, key, state, updated_at FROM ludy_kernel.external_call
         WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launch.id}:%:${next}`} AND state IN ('started', 'ambiguous') FOR UPDATE`.execute(ctx.trx);
       const earlier = unsettledEarlier(calls, launch.id, launch.attempt, next);
       if (earlier.some((e) => e.state === 'started' && (ctx.now.getTime() - e.updated_at.getTime()) / 1000 < STARTED_STALE_SECONDS)) return none('in_flight');
@@ -359,7 +359,7 @@ export const adsLaunchBegin = defineCommand({
         earlierUnsettled = true;
         for (const e of earlier) {
           await ctx.trx
-            .updateTable('crove_kernel.external_call')
+            .updateTable('ludy_kernel.external_call')
             .set({ state: 'failed', error_kind: 'unknown', error_code: 'SUPERSEDED', finished_at: ctx.now, updated_at: ctx.now })
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', e.id)
@@ -375,13 +375,13 @@ export const adsLaunchBegin = defineCommand({
     }
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
     if (action === 'call' || earlierUnsettled) {
-      await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: next, retry_safety: 'reconcile_only', started_at: ctx.now }).execute();
+      await ctx.trx.insertInto('ludy_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: next, retry_safety: 'reconcile_only', started_at: ctx.now }).execute();
       // The row of a retry's reconcile is unclear from the start: the job asks the platform before anything is made.
-      if (earlierUnsettled) await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
+      if (earlierUnsettled) await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
     } else if (row) {
       // A reconcile: the row is taken by this run. A call begun and never settled, and old enough to be lost, is unclear now, and an unclear one is touched, so a
       // job that begins at the same moment finds it young and waits: only one job reconciles a step, and only it may make the call again if the object is missing.
-      await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     }
 
     const level = stepLevel(next);
@@ -465,7 +465,7 @@ export const adsLaunchRecord = defineCommand({
     const steps = launchSteps(plan.variants.length);
     const step = parsed.step;
     if (!steps.includes(step)) return dropped('stale');
-    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
     if (!row) return dropped('stale');
     if (row.state === 'succeeded' || row.state === 'failed') return dropped('settled');
     const running = launch.state === 'launching';
@@ -478,7 +478,7 @@ export const adsLaunchRecord = defineCommand({
       finished_at?: Date;
     }
     const settle = (values: CallUpdate) =>
-      ctx.trx.updateTable('crove_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      ctx.trx.updateTable('ludy_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
 
     if (result.kind === 'accepted' || result.kind === 'found') {
       await ctx.trx

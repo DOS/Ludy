@@ -65,7 +65,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
       await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
       await c.query('COMMIT');
     } finally {
@@ -79,7 +79,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     const account = randomUUID();
     const connection = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`, [orgId, connection, external, owner]);
+      await c.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`, [orgId, connection, external, owner]);
       await c.query(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, granted_by_hash) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản khác', '2025-10-01', $5)`, [
         orgId,
         account,
@@ -111,12 +111,12 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
       await rows<{ id: string; state: string; kind: string; reason: string; attempts: number; how_done: string | null; give_up: string | null; last_error_kind: string | null; last_error_code: string | null; seals: string; credentials: string }>(
         `SELECT r.id, r.state, r.kind, r.reason, r.attempts, r.how_done, r.give_up, r.last_error_kind, r.last_error_code,
                 (SELECT count(*)::text FROM crove_ads.ad_token_seal s WHERE s.org_id = r.org_id AND s.revoke_id = r.id) AS seals,
-                (SELECT count(*)::text FROM crove_kernel.credential k WHERE k.org_id = r.org_id AND k.connection_id = r.connection_id) AS credentials
+                (SELECT count(*)::text FROM ludy_kernel.credential k WHERE k.org_id = r.org_id AND k.connection_id = r.connection_id) AS credentials
          FROM crove_ads.ad_token_revoke r WHERE r.org_id = $1 AND r.connection_id = $2`,
         [orgId, connectionId],
       )
     )[0];
-  const status = async (connectionId: string) => (await rows<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0];
+  const status = async (connectionId: string) => (await rows<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0];
   // Makes every pending obligation due at once (the policy's waits are minutes and hours; the database's clock is not moved).
   const dueNow = async () => {
     await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
@@ -153,14 +153,14 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     const runtimeFor = (url: string): { db: Db; runtime: Runtime } => {
       const pool = createPool({ connectionString: url, max: 4 });
       pools.push(pool);
@@ -169,20 +169,20 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     };
     const api = runtimeFor(appUrl);
     app = api.runtime;
-    const w = runtimeFor(login('crove_worker', 'test-worker-pw'));
+    const w = runtimeFor(login('ludy_worker', 'test-worker-pw'));
     worker = w.runtime;
     workerDb = w.db;
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     owner = await upsertIdentity(api.db, { issuer: 'ads-revoke', subject: 'owner', email: 'owner@ads-revoke.test', name: null });
     member = await upsertIdentity(api.db, { issuer: 'ads-revoke', subject: 'member', email: 'member@ads-revoke.test', name: null });
     orgId = (await createOrg(app, asUser(owner), 'Ads revoke')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, member]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, member]));
     // An ad account read by a sandbox read connection (as the RLS matrix seeds one), and the org's switches, off.
     adAccountId = randomUUID();
     readConnection = randomUUID();
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`,
+        `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`,
         [orgId, readConnection, ACCOUNT, owner],
       );
       await c.query(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản thử', '2025-10-01')`, [
@@ -538,7 +538,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     expect(state.tokenRevokes.some((r) => r.state === 'gave_up')).toBe(true);
     // A viewer may not read it at all (the query is for owners and admins).
     const viewer = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'ads-revoke', subject: 'viewer', email: 'viewer@ads-revoke.test', name: null });
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')`, [orgId, viewer]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')`, [orgId, viewer]));
     await expect(app.query('ads.write.state', {}, { actor: asUser(viewer), orgId })).rejects.toMatchObject({ status: 403 });
   });
 
@@ -565,11 +565,11 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
   });
 
   it('records ids, states and codes only: no token and no envelope in an audit row, an event, an idempotency key or a job', async () => {
-    const audit = await rows<{ command: string; detail: unknown; input_sha256: string }>(`SELECT command, detail, input_sha256 FROM crove_kernel.audit_event WHERE org_id = $1 ORDER BY occurred_at`, [orgId]);
+    const audit = await rows<{ command: string; detail: unknown; input_sha256: string }>(`SELECT command, detail, input_sha256 FROM ludy_kernel.audit_event WHERE org_id = $1 ORDER BY occurred_at`, [orgId]);
     expect(audit.some((a) => a.command === 'ads.token_revoke.record')).toBe(true);
-    const events = await rows<{ event: unknown }>(`SELECT to_jsonb(e) AS event FROM crove_kernel.outbox_event e WHERE e.org_id = $1`, [orgId]);
-    const keys = await rows<{ key: unknown }>(`SELECT to_jsonb(k) AS key FROM crove_kernel.idempotency_key k WHERE k.org_id = $1`, [orgId]);
-    const jobs = await rows<{ job: unknown }>(`SELECT to_jsonb(j) AS job FROM crove_jobs.job j WHERE j.name = 'ads-revoke'`).catch(() => [] as Array<{ job: unknown }>);
+    const events = await rows<{ event: unknown }>(`SELECT to_jsonb(e) AS event FROM ludy_kernel.outbox_event e WHERE e.org_id = $1`, [orgId]);
+    const keys = await rows<{ key: unknown }>(`SELECT to_jsonb(k) AS key FROM ludy_kernel.idempotency_key k WHERE k.org_id = $1`, [orgId]);
+    const jobs = await rows<{ job: unknown }>(`SELECT to_jsonb(j) AS job FROM ludy_jobs.job j WHERE j.name = 'ads-revoke'`).catch(() => [] as Array<{ job: unknown }>);
     const everything = JSON.stringify({ audit, events, keys, jobs });
     expect(secrets.length).toBeGreaterThan(0);
     for (const secret of secrets) expect(everything.includes(secret), secret.slice(0, 12)).toBe(false);

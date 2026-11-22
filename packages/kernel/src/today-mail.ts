@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The daily "Hôm nay cần bạn" brief by email (issue #2406, follow-up of #2383), opt-in per member. A member turns it on and off in
-// their own notification settings (kernel.today_mail.set: an opted-in member has a row in crove_kernel.today_mail, turning it off
-// deletes it, nobody touches another member's). The worker's sweep (crove_kernel.today_mail_due, then kernel.today_mail.send per org)
+// their own notification settings (kernel.today_mail.set: an opted-in member has a row in ludy_kernel.today_mail, turning it off
+// deletes it, nobody touches another member's). The worker's sweep (ludy_kernel.today_mail_due, then kernel.today_mail.send per org)
 // queues one mail per opted-in member whose day has not been sent yet.
 //
 // What the mail says is counts and a link to Home, never an amount, a name or a message: the proposals the member may approve, the
@@ -54,7 +54,7 @@ export const todayMailGet = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<TodayMailSetting> => {
     if (ctx.actor.type !== 'user') return { enabled: false };
-    const row = await ctx.trx.selectFrom('crove_kernel.today_mail').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', ctx.actor.userId).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.today_mail').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', ctx.actor.userId).executeTakeFirst();
     return { enabled: row !== undefined };
   },
 });
@@ -70,19 +70,19 @@ export const todayMailSet = defineCommand({
     if (input.enabled) {
       // Already on keeps its row, and with it the day of its last mail; naming another language replaces the row (the language is
       // not a column a member may update), which also puts the next mail on the morning after, never twice in one day.
-      const row = await ctx.trx.selectFrom('crove_kernel.today_mail').select(['id', 'language']).where('org_id', '=', ctx.orgId).where('user_id', '=', me).executeTakeFirst();
+      const row = await ctx.trx.selectFrom('ludy_kernel.today_mail').select(['id', 'language']).where('org_id', '=', ctx.orgId).where('user_id', '=', me).executeTakeFirst();
       if (row && input.language !== undefined && row.language !== input.language) {
-        await ctx.trx.deleteFrom('crove_kernel.today_mail').where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+        await ctx.trx.deleteFrom('ludy_kernel.today_mail').where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
       }
       if (!row || (input.language !== undefined && row.language !== input.language)) {
         await ctx.trx
-          .insertInto('crove_kernel.today_mail')
+          .insertInto('ludy_kernel.today_mail')
           .values({ org_id: ctx.orgId, user_id: me, created_at: ctx.now, language: input.language ?? null })
           .onConflict((oc) => oc.columns(['org_id', 'user_id']).doNothing())
           .execute();
       }
     } else {
-      await ctx.trx.deleteFrom('crove_kernel.today_mail').where('org_id', '=', ctx.orgId).where('user_id', '=', me).execute();
+      await ctx.trx.deleteFrom('ludy_kernel.today_mail').where('org_id', '=', ctx.orgId).where('user_id', '=', me).execute();
     }
     ctx.audit({ enabled: input.enabled });
     return { enabled: input.enabled };
@@ -119,17 +119,17 @@ async function countsFor(ctx: CommandContext, members: ReadonlyArray<{ user_id: 
     // notifications carry an entity, and the row-level policy that hides another entity's from the member does not apply to the
     // system context, so the counts apply it here.
     const { rows: assigned } = await sql<{ legal_entity_id: string | null }>`
-      SELECT DISTINCT legal_entity_id FROM crove_kernel.role_assignment WHERE org_id = ${ctx.orgId}::uuid AND user_id = ${m.user_id}::uuid`.execute(ctx.trx);
+      SELECT DISTINCT legal_entity_id FROM ludy_kernel.role_assignment WHERE org_id = ${ctx.orgId}::uuid AND user_id = ${m.user_id}::uuid`.execute(ctx.trx);
     const everyEntity = m.role === 'owner' || m.role === 'admin' || assigned.length === 0 || assigned.some((a) => a.legal_entity_id === null);
     const entities = assigned.flatMap((a) => (a.legal_entity_id === null ? [] : [a.legal_entity_id]));
     const inScope = (column: string) => sql`(${everyEntity}::boolean OR ${sql.ref(column)}::uuid = ANY (${entities}::uuid[]))`;
     const proposals = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM crove_kernel.proposal p
+      SELECT count(*)::int AS n FROM ludy_kernel.proposal p
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'pending' AND ${m.role !== 'viewer'}::boolean AND p.eligible_approvers @> ARRAY[${m.user_id}::uuid]
         AND NOT (pg_catalog.split_part(p.command, '.', 1) = ANY (${off}::text[])) AND ${inScope('p.legal_entity_id')}`.execute(ctx.trx);
     const notifications = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
-        SELECT 1 FROM crove_kernel.notification n
+        SELECT 1 FROM ludy_kernel.notification n
         WHERE n.org_id = ${ctx.orgId}::uuid AND n.user_id = ${m.user_id}::uuid AND n.read_at IS NULL AND n.kind <> ${APPROVAL_WAITING}
           AND ${inScope('n.legal_entity_id')}
         LIMIT ${NOTIFICATION_UNREAD_CAP}
@@ -138,12 +138,12 @@ async function countsFor(ctx: CommandContext, members: ReadonlyArray<{ user_id: 
     if (m.role !== 'viewer') {
       const admin = m.role === 'owner' || m.role === 'admin';
       const { rows } = await sql<{ n: number }>`
-        SELECT count(*)::int AS n FROM crove_kernel.conversation c
+        SELECT count(*)::int AS n FROM ludy_kernel.conversation c
         WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${m.user_id}::uuid)
           AND (${admin}::boolean OR (
             c.kind = 'comment_thread'
-            AND (NOT EXISTS (SELECT 1 FROM crove_kernel.channel_access a WHERE a.org_id = c.org_id AND a.user_id = ${m.user_id}::uuid)
-                 OR EXISTS (SELECT 1 FROM crove_kernel.channel_access a WHERE a.org_id = c.org_id AND a.user_id = ${m.user_id}::uuid AND a.channel_connection_id = c.channel_connection_id))))`.execute(ctx.trx);
+            AND (NOT EXISTS (SELECT 1 FROM ludy_kernel.channel_access a WHERE a.org_id = c.org_id AND a.user_id = ${m.user_id}::uuid)
+                 OR EXISTS (SELECT 1 FROM ludy_kernel.channel_access a WHERE a.org_id = c.org_id AND a.user_id = ${m.user_id}::uuid AND a.channel_connection_id = c.channel_connection_id))))`.execute(ctx.trx);
       messages = rows[0]?.n ?? 0;
     }
     out.set(m.user_id, { proposals: proposals.rows[0]?.n ?? 0, notifications: notifications.rows[0]?.n ?? 0, messages });
@@ -164,12 +164,12 @@ export const todayMailSend = defineCommand({
     const now = await vietnamNow(ctx);
     const none = { day: now.day, members: 0, mails: 0, suppressed: 0 };
     if (now.minute < SEND_FROM_MINUTE) return { state: 'not_due', ...none };
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return { state: 'not_due', ...none };
     // The claim: one statement takes every opted-in member whose day is not today and marks it, so a second command (a retry, a
     // second worker) finds none left and sends nothing twice. It commits with the mails below or not at all.
     const claimed = await ctx.trx
-      .updateTable('crove_kernel.today_mail')
+      .updateTable('ludy_kernel.today_mail')
       .set({ last_sent_day: now.day })
       .where('org_id', '=', ctx.orgId)
       .where((eb) => eb.or([eb('last_sent_day', 'is', null), eb('last_sent_day', '<', now.day)]))
@@ -181,8 +181,8 @@ export const todayMailSend = defineCommand({
     if (claimed.length === 0) return { state: 'not_due', ...none };
     const ids = claimed.map((c) => c.user_id).sort();
     const { rows: roles } = await sql<{ user_id: string; role: string }>`
-      SELECT user_id, role FROM crove_kernel.tenant_member WHERE org_id = ${ctx.orgId}::uuid AND user_id = ANY (${ids}::uuid[]) ORDER BY user_id`.execute(ctx.trx);
-    const { rows: people } = await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.today_mail_recipients(${ids}::uuid[], ${input.upstream === true}::boolean)`.execute(ctx.trx);
+      SELECT user_id, role FROM ludy_kernel.tenant_member WHERE org_id = ${ctx.orgId}::uuid AND user_id = ANY (${ids}::uuid[]) ORDER BY user_id`.execute(ctx.trx);
+    const { rows: people } = await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM ludy_kernel.today_mail_recipients(${ids}::uuid[], ${input.upstream === true}::boolean)`.execute(ctx.trx);
     const emails = new Map(people.filter((p) => p.email).map((p) => [p.user_id, p.email as string]));
     const rowOf = new Map(claimed.map((c) => [c.user_id, c]));
     const counts = await countsFor(ctx, roles);
@@ -238,7 +238,7 @@ export async function sweepTodayMail(deps: { runtime: Runtime; workerDb: Db }): 
   let sent = 0;
   const upstream = upstreamAuth(deps.runtime.sessionMode);
   for (let page = 0; page < TODAY_MAIL_MAX_PAGES; page++) {
-    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.today_mail_due(${after}::uuid, ${TODAY_MAIL_PAGE}::int)`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_kernel.today_mail_due(${after}::uuid, ${TODAY_MAIL_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         const done = await deps.runtime.execute<{ state: TodayMailState }>('kernel.today_mail.send', { upstream }, { actor: ACTOR, orgId: row.org_id });

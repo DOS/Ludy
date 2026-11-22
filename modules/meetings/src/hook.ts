@@ -7,7 +7,7 @@
 //   fields, never the address, the secret or any text.
 // - The body is built only by meetingHookBody (packages/kernel-contract/src/meeting-hook-body.ts), here from rows the recorder reads under row security, and checked again by the database
 //   (crove_meetings.hook_body_ok). The system context cannot read meetings, so the body is built at publish and kept only while the delivery is queued.
-// - The owner's switch (crove_kernel.tenant.meeting_hooks, off by default) gates all of it; turning it off drops every queued delivery in the same transaction.
+// - The owner's switch (ludy_kernel.tenant.meeting_hooks, off by default) gates all of it; turning it off drops every queued delivery in the same transaction.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import {
@@ -111,7 +111,7 @@ export const meetingHookGet = defineQuery({
   access: ROLES,
   handler: async (ctx): Promise<MeetingHookStateRead> => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được địa chỉ nhận biên bản');
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['meeting_hooks']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['meeting_hooks']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     return { switchOn: tenant?.meeting_hooks === true, hook: await readHook(ctx.trx) };
   },
 });
@@ -199,9 +199,9 @@ export const meetingHooksSwitchSet = defineCommand({
   handler: async (ctx, input) => {
     userOnly(ctx, 'bật hoặc tắt được việc gửi biên bản tới địa chỉ riêng');
     stepUp(ctx, 'đổi cài đặt này');
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['meeting_hooks']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['meeting_hooks']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     const previous = tenant?.meeting_hooks === true;
-    await ctx.trx.updateTable('crove_kernel.tenant').set({ meeting_hooks: input.on }).where('org_id', '=', ctx.orgId).execute().catch(hookError);
+    await ctx.trx.updateTable('ludy_kernel.tenant').set({ meeting_hooks: input.on }).where('org_id', '=', ctx.orgId).execute().catch(hookError);
     let dropped = 0;
     if (!input.on) {
       const { rows } = await sql<{ n: number }>`SELECT crove_meetings.hooks_drop_all() AS n`.execute(ctx.trx).catch(hookError);

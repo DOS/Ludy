@@ -141,7 +141,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'tpl-app-pw', crove_worker: 'tpl-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'tpl-app-pw', ludy_worker: 'tpl-worker-pw' });
 
     const loginUrl = (user: string, pw: string) => {
       const u = new URL(adminUrl);
@@ -151,8 +151,8 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     };
 
     adminPool = createPool({ connectionString: adminUrl, max: 2 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'tpl-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'tpl-worker-pw'), max: 3 });
+    appPool = createPool({ connectionString: loginUrl('ludy_app', 'tpl-app-pw'), max: 6 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'tpl-worker-pw'), max: 3 });
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);
@@ -174,7 +174,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     orgB = (await createOrg(runtime, asUser(ownerB), 'Cong ty Mau B')).orgId;
 
     await adminPool.query(
-      "INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'viewer')",
+      "INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'viewer')",
       [orgA, viewerA],
     );
   }, 120_000);
@@ -217,7 +217,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
 
     // Outbox emitted sign.template.inspect_queued.
     const queued = await adminPool!.query<{ type: string }>(
-      "SELECT type FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'sign.template.inspect_queued'",
+      "SELECT type FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'sign.template.inspect_queued'",
       [orgA],
     );
     expect(queued.rows.length).toBeGreaterThanOrEqual(1);
@@ -666,11 +666,11 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     expect(afterRotate.rows[1]!.token_sha256).toBe(hashSigningToken(rotated.token!));
 
     // App disabled in SQL definer fails closed (org_app_on check).
-    await adminPool!.query("UPDATE crove_kernel.tenant SET apps_off = ARRAY['sign'] WHERE org_id = $1", [orgA]);
+    await adminPool!.query("UPDATE ludy_kernel.tenant SET apps_off = ARRAY['sign'] WHERE org_id = $1", [orgA]);
     const c = await appPool!.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
         mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
@@ -689,7 +689,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     } finally {
       await c.query('ROLLBACK').catch(() => {});
       c.release();
-      await adminPool!.query("UPDATE crove_kernel.tenant SET apps_off = '{}' WHERE org_id = $1", [orgA]);
+      await adminPool!.query("UPDATE ludy_kernel.tenant SET apps_off = '{}' WHERE org_id = $1", [orgA]);
     }
 
     // Adding a second non-CC role automatically revokes active direct link.
@@ -856,7 +856,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       const c = await appPool!.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
           orgA,
           mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
             userId: ownerA,
@@ -939,7 +939,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     const inheritBypassClient = await appPool!.connect();
     try {
       await inheritBypassClient.query('BEGIN');
-      await inheritBypassClient.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+      await inheritBypassClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
         mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
@@ -1001,7 +1001,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     const trigClient = await appPool!.connect();
     try {
       await trigClient.query('BEGIN');
-      await trigClient.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+      await trigClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
         mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
@@ -1246,7 +1246,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
         mfaAt: null,
       });
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
       await expect(
         client.query("UPDATE crove_sign.template SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
           orgA,
@@ -1256,7 +1256,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await client.query('ROLLBACK');
 
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
       await expect(
         client.query("UPDATE crove_sign.envelope SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
           orgA,
@@ -1291,7 +1291,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     const completedRecipientsFor = async (envelopeId: string) => {
       const { rows } = await adminPool!.query<{ to_address: string; signer_count: number }>(
         `SELECT to_address, (payload->>'signerCount')::integer AS signer_count
-         FROM crove_kernel.mail_message
+         FROM ludy_kernel.mail_message
          WHERE org_id = $1 AND template_key = 'sign.completed' AND source_id = $2
          ORDER BY to_address ASC`,
         [orgA, envelopeId],
@@ -1639,9 +1639,9 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     try {
       await adminClient.query('BEGIN');
       await adminClient.query('SET LOCAL session_replication_role = replica');
-      await adminClient.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [orgB]);
+      await adminClient.query("UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [orgB]);
       await adminClient.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, $2, 'user', $3, 'kernel.org.offboard', $4, 'ok', $5, '{}'::jsonb),
                 ($1, $6, 'system', NULL, 'kernel.org.export.record', $7, 'ok', $5, '{"format":"crove.org-export.v2","file_count":1}'::jsonb)`,
         [
@@ -1657,9 +1657,9 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await adminClient.query('COMMIT');
 
       await adminClient.query('BEGIN');
-      await adminClient.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgB]);
+      await adminClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgB]);
       const purgeRes = await adminClient.query<{ outcome: string }>(
-        'SELECT outcome FROM crove_kernel.org_purge(30)',
+        'SELECT outcome FROM ludy_kernel.org_purge(30)',
       );
       await adminClient.query('COMMIT');
       expect(purgeRes.rows[0]?.outcome).toBe('ok');

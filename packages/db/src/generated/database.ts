@@ -3,11 +3,11 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings, crove_projects, crove_sign that crove_tenant may read. */
-export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveProjectsSchema & CroveSignSchema & CroveSocialSchema;
+/** Every table of ludy_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings, crove_projects, crove_sign that ludy_tenant may read. */
+export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveMeetingsSchema & CroveNotesSchema & CroveProjectsSchema & CroveSignSchema & CroveSocialSchema & LudyKernelSchema;
 
 /**
- * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
+ * The insert or update type of a column ludy_tenant may not insert or update: no value but undefined, which
  * Kysely leaves out of the statement, so a write of the column fails typecheck.
  */
 export type NotGranted = undefined;
@@ -130,84 +130,6 @@ export interface CroveHrSchema {
   'crove_hr.payroll_run': HrPayrollRunTable;
 }
 
-export interface CroveKernelSchema {
-  'crove_kernel.activity': KernelActivityTable;
-  'crove_kernel.agent': KernelAgentTable;
-  'crove_kernel.agent_template': KernelAgentTemplateTable;
-  'crove_kernel.agent_wakeup': KernelAgentWakeupTable;
-  'crove_kernel.ai_run': KernelAiRunTable;
-  'crove_kernel.approval_preset': KernelApprovalPresetTable;
-  'crove_kernel.audit_event': KernelAuditEventTable;
-  'crove_kernel.availability_rule': KernelAvailabilityRuleTable;
-  'crove_kernel.budget_policy': KernelBudgetPolicyTable;
-  'crove_kernel.calendar_connection': KernelCalendarConnectionTable;
-  'crove_kernel.calendar_event': KernelCalendarEventTable;
-  'crove_kernel.calendar_event_link': KernelCalendarEventLinkTable;
-  'crove_kernel.channel_access': KernelChannelAccessTable;
-  'crove_kernel.channel_connection': KernelChannelConnectionTable;
-  'crove_kernel.conversation': KernelConversationTable;
-  'crove_kernel.conversation_attachment': KernelConversationAttachmentTable;
-  'crove_kernel.conversation_composing': KernelConversationComposingTable;
-  'crove_kernel.conversation_draft': KernelConversationDraftTable;
-  'crove_kernel.conversation_identity': KernelConversationIdentityTable;
-  'crove_kernel.conversation_message': KernelConversationMessageTable;
-  'crove_kernel.conversation_note': KernelConversationNoteTable;
-  'crove_kernel.conversation_read': KernelConversationReadTable;
-  'crove_kernel.conversation_setting': KernelConversationSettingTable;
-  'crove_kernel.currency': KernelCurrencyTable;
-  'crove_kernel.external_call': KernelExternalCallTable;
-  'crove_kernel.extraction': KernelExtractionTable;
-  'crove_kernel.file': KernelFileTable;
-  'crove_kernel.file_upload': KernelFileUploadTable;
-  'crove_kernel.idempotency_key': KernelIdempotencyKeyTable;
-  'crove_kernel.inbound_message': KernelInboundMessageTable;
-  'crove_kernel.inbox_item': KernelInboxItemTable;
-  'crove_kernel.kill_switch': KernelKillSwitchTable;
-  'crove_kernel.legal_entity': KernelLegalEntityTable;
-  'crove_kernel.mail_event': KernelMailEventTable;
-  'crove_kernel.mail_message': KernelMailMessageTable;
-  'crove_kernel.mail_suppression': KernelMailSuppressionTable;
-  'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
-  'crove_kernel.mcp_proposal_command': KernelMcpProposalCommandTable;
-  'crove_kernel.mcp_wake_event_type': KernelMcpWakeEventTypeTable;
-  'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
-  'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
-  'crove_kernel.member_availability': KernelMemberAvailabilityTable;
-  'crove_kernel.member_invite': KernelMemberInviteTable;
-  'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
-  'crove_kernel.member_vy_memory': KernelMemberVyMemoryTable;
-  'crove_kernel.member_vy_result': KernelMemberVyResultTable;
-  'crove_kernel.member_vy_table': KernelMemberVyTableTable;
-  'crove_kernel.notification': KernelNotificationTable;
-  'crove_kernel.notification_mute': KernelNotificationMuteTable;
-  'crove_kernel.number_allocation': KernelNumberAllocationTable;
-  'crove_kernel.number_series': KernelNumberSeriesTable;
-  'crove_kernel.number_series_policy': KernelNumberSeriesPolicyTable;
-  'crove_kernel.number_void': KernelNumberVoidTable;
-  'crove_kernel.org_usage': KernelOrgUsageTable;
-  'crove_kernel.outbox_event': KernelOutboxEventTable;
-  'crove_kernel.party': KernelPartyTable;
-  'crove_kernel.permission_catalog': KernelPermissionCatalogTable;
-  'crove_kernel.permission_default': KernelPermissionDefaultTable;
-  'crove_kernel.position': KernelPositionTable;
-  'crove_kernel.proposal': KernelProposalTable;
-  'crove_kernel.proposal_policy': KernelProposalPolicyTable;
-  'crove_kernel.record_le': KernelRecordLeTable;
-  'crove_kernel.role': KernelRoleTable;
-  'crove_kernel.role_assignment': KernelRoleAssignmentTable;
-  'crove_kernel.role_permission': KernelRolePermissionTable;
-  'crove_kernel.saved_reply': KernelSavedReplyTable;
-  'crove_kernel.saved_view': KernelSavedViewTable;
-  'crove_kernel.task': KernelTaskTable;
-  'crove_kernel.task_comment': KernelTaskCommentTable;
-  'crove_kernel.tax_obligation_done': KernelTaxObligationDoneTable;
-  'crove_kernel.tax_profile': KernelTaxProfileTable;
-  'crove_kernel.tenant': KernelTenantTable;
-  'crove_kernel.tenant_member': KernelTenantMemberTable;
-  'crove_kernel.today_mail': KernelTodayMailTable;
-  'crove_kernel.usage_deferral': KernelUsageDeferralTable;
-}
-
 export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
@@ -323,6 +245,84 @@ export interface CroveSocialSchema {
   'crove_social.short_link_click': SocialShortLinkClickTable;
   'crove_social.snippet': SocialSnippetTable;
   'crove_social.watermark': SocialWatermarkTable;
+}
+
+export interface LudyKernelSchema {
+  'ludy_kernel.activity': KernelActivityTable;
+  'ludy_kernel.agent': KernelAgentTable;
+  'ludy_kernel.agent_template': KernelAgentTemplateTable;
+  'ludy_kernel.agent_wakeup': KernelAgentWakeupTable;
+  'ludy_kernel.ai_run': KernelAiRunTable;
+  'ludy_kernel.approval_preset': KernelApprovalPresetTable;
+  'ludy_kernel.audit_event': KernelAuditEventTable;
+  'ludy_kernel.availability_rule': KernelAvailabilityRuleTable;
+  'ludy_kernel.budget_policy': KernelBudgetPolicyTable;
+  'ludy_kernel.calendar_connection': KernelCalendarConnectionTable;
+  'ludy_kernel.calendar_event': KernelCalendarEventTable;
+  'ludy_kernel.calendar_event_link': KernelCalendarEventLinkTable;
+  'ludy_kernel.channel_access': KernelChannelAccessTable;
+  'ludy_kernel.channel_connection': KernelChannelConnectionTable;
+  'ludy_kernel.conversation': KernelConversationTable;
+  'ludy_kernel.conversation_attachment': KernelConversationAttachmentTable;
+  'ludy_kernel.conversation_composing': KernelConversationComposingTable;
+  'ludy_kernel.conversation_draft': KernelConversationDraftTable;
+  'ludy_kernel.conversation_identity': KernelConversationIdentityTable;
+  'ludy_kernel.conversation_message': KernelConversationMessageTable;
+  'ludy_kernel.conversation_note': KernelConversationNoteTable;
+  'ludy_kernel.conversation_read': KernelConversationReadTable;
+  'ludy_kernel.conversation_setting': KernelConversationSettingTable;
+  'ludy_kernel.currency': KernelCurrencyTable;
+  'ludy_kernel.external_call': KernelExternalCallTable;
+  'ludy_kernel.extraction': KernelExtractionTable;
+  'ludy_kernel.file': KernelFileTable;
+  'ludy_kernel.file_upload': KernelFileUploadTable;
+  'ludy_kernel.idempotency_key': KernelIdempotencyKeyTable;
+  'ludy_kernel.inbound_message': KernelInboundMessageTable;
+  'ludy_kernel.inbox_item': KernelInboxItemTable;
+  'ludy_kernel.kill_switch': KernelKillSwitchTable;
+  'ludy_kernel.legal_entity': KernelLegalEntityTable;
+  'ludy_kernel.mail_event': KernelMailEventTable;
+  'ludy_kernel.mail_message': KernelMailMessageTable;
+  'ludy_kernel.mail_suppression': KernelMailSuppressionTable;
+  'ludy_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'ludy_kernel.mcp_proposal_command': KernelMcpProposalCommandTable;
+  'ludy_kernel.mcp_wake_event_type': KernelMcpWakeEventTypeTable;
+  'ludy_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
+  'ludy_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
+  'ludy_kernel.member_availability': KernelMemberAvailabilityTable;
+  'ludy_kernel.member_invite': KernelMemberInviteTable;
+  'ludy_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
+  'ludy_kernel.member_vy_memory': KernelMemberVyMemoryTable;
+  'ludy_kernel.member_vy_result': KernelMemberVyResultTable;
+  'ludy_kernel.member_vy_table': KernelMemberVyTableTable;
+  'ludy_kernel.notification': KernelNotificationTable;
+  'ludy_kernel.notification_mute': KernelNotificationMuteTable;
+  'ludy_kernel.number_allocation': KernelNumberAllocationTable;
+  'ludy_kernel.number_series': KernelNumberSeriesTable;
+  'ludy_kernel.number_series_policy': KernelNumberSeriesPolicyTable;
+  'ludy_kernel.number_void': KernelNumberVoidTable;
+  'ludy_kernel.org_usage': KernelOrgUsageTable;
+  'ludy_kernel.outbox_event': KernelOutboxEventTable;
+  'ludy_kernel.party': KernelPartyTable;
+  'ludy_kernel.permission_catalog': KernelPermissionCatalogTable;
+  'ludy_kernel.permission_default': KernelPermissionDefaultTable;
+  'ludy_kernel.position': KernelPositionTable;
+  'ludy_kernel.proposal': KernelProposalTable;
+  'ludy_kernel.proposal_policy': KernelProposalPolicyTable;
+  'ludy_kernel.record_le': KernelRecordLeTable;
+  'ludy_kernel.role': KernelRoleTable;
+  'ludy_kernel.role_assignment': KernelRoleAssignmentTable;
+  'ludy_kernel.role_permission': KernelRolePermissionTable;
+  'ludy_kernel.saved_reply': KernelSavedReplyTable;
+  'ludy_kernel.saved_view': KernelSavedViewTable;
+  'ludy_kernel.task': KernelTaskTable;
+  'ludy_kernel.task_comment': KernelTaskCommentTable;
+  'ludy_kernel.tax_obligation_done': KernelTaxObligationDoneTable;
+  'ludy_kernel.tax_profile': KernelTaxProfileTable;
+  'ludy_kernel.tenant': KernelTenantTable;
+  'ludy_kernel.tenant_member': KernelTenantMemberTable;
+  'ludy_kernel.today_mail': KernelTodayMailTable;
+  'ludy_kernel.usage_deferral': KernelUsageDeferralTable;
 }
 
 /** crove_ads.ad_account */
@@ -2204,7 +2204,7 @@ export interface HrPayrollRunTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.activity */
+/** ludy_kernel.activity */
 export interface KernelActivityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2219,7 +2219,7 @@ export interface KernelActivityTable {
   actor_origin: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_kernel.agent */
+/** ludy_kernel.agent */
 export interface KernelAgentTable {
   org_id: string;
   id: Generated<string>;
@@ -2237,7 +2237,7 @@ export interface KernelAgentTable {
   member_user_id: string | null;
 }
 
-/** crove_kernel.agent_template */
+/** ludy_kernel.agent_template */
 export interface KernelAgentTemplateTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   module: ColumnType<string, NotGranted, NotGranted>;
@@ -2249,7 +2249,7 @@ export interface KernelAgentTemplateTable {
   daily_run_cap: ColumnType<number, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.agent_wakeup */
+/** ludy_kernel.agent_wakeup */
 export interface KernelAgentWakeupTable {
   org_id: string;
   id: Generated<string>;
@@ -2264,7 +2264,7 @@ export interface KernelAgentWakeupTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.ai_run */
+/** ludy_kernel.ai_run */
 export interface KernelAiRunTable {
   org_id: string;
   id: Generated<string>;
@@ -2282,13 +2282,13 @@ export interface KernelAiRunTable {
   feature: string | null;
 }
 
-/** crove_kernel.approval_preset */
+/** ludy_kernel.approval_preset */
 export interface KernelApprovalPresetTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   ledger_chief_accountant_only: ColumnType<boolean, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.audit_event */
+/** ludy_kernel.audit_event */
 export interface KernelAuditEventTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2305,7 +2305,7 @@ export interface KernelAuditEventTable {
   detail: ColumnType<unknown, string | null | undefined, NotGranted>;
 }
 
-/** crove_kernel.availability_rule */
+/** ludy_kernel.availability_rule */
 export interface KernelAvailabilityRuleTable {
   org_id: string;
   id: Generated<string>;
@@ -2318,7 +2318,7 @@ export interface KernelAvailabilityRuleTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.budget_policy */
+/** ludy_kernel.budget_policy */
 export interface KernelBudgetPolicyTable {
   org_id: string;
   id: Generated<string>;
@@ -2331,7 +2331,7 @@ export interface KernelBudgetPolicyTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.calendar_connection */
+/** ludy_kernel.calendar_connection */
 export interface KernelCalendarConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2350,7 +2350,7 @@ export interface KernelCalendarConnectionTable {
   read_events: Generated<boolean>;
 }
 
-/** crove_kernel.calendar_event_link */
+/** ludy_kernel.calendar_event_link */
 export interface KernelCalendarEventLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2365,7 +2365,7 @@ export interface KernelCalendarEventLinkTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.calendar_event */
+/** ludy_kernel.calendar_event */
 export interface KernelCalendarEventTable {
   org_id: string;
   id: Generated<string>;
@@ -2385,7 +2385,7 @@ export interface KernelCalendarEventTable {
   conference: Generated<boolean>;
 }
 
-/** crove_kernel.channel_access */
+/** ludy_kernel.channel_access */
 export interface KernelChannelAccessTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2395,7 +2395,7 @@ export interface KernelChannelAccessTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.channel_connection */
+/** ludy_kernel.channel_connection */
 export interface KernelChannelConnectionTable {
   org_id: string;
   id: Generated<string>;
@@ -2430,7 +2430,7 @@ export interface KernelChannelConnectionTable {
   chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
-/** crove_kernel.conversation_attachment */
+/** ludy_kernel.conversation_attachment */
 export interface KernelConversationAttachmentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2453,7 +2453,7 @@ export interface KernelConversationAttachmentTable {
   source_ref: string | null;
 }
 
-/** crove_kernel.conversation_composing */
+/** ludy_kernel.conversation_composing */
 export interface KernelConversationComposingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2465,7 +2465,7 @@ export interface KernelConversationComposingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.conversation_draft */
+/** ludy_kernel.conversation_draft */
 export interface KernelConversationDraftTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2486,7 +2486,7 @@ export interface KernelConversationDraftTable {
   decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.conversation_identity */
+/** ludy_kernel.conversation_identity */
 export interface KernelConversationIdentityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2501,7 +2501,7 @@ export interface KernelConversationIdentityTable {
   profile_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.conversation_message */
+/** ludy_kernel.conversation_message */
 export interface KernelConversationMessageTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2532,7 +2532,7 @@ export interface KernelConversationMessageTable {
   sender_verified: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
-/** crove_kernel.conversation_note */
+/** ludy_kernel.conversation_note */
 export interface KernelConversationNoteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2544,7 +2544,7 @@ export interface KernelConversationNoteTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_kernel.conversation_read */
+/** ludy_kernel.conversation_read */
 export interface KernelConversationReadTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2554,7 +2554,7 @@ export interface KernelConversationReadTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.conversation_setting */
+/** ludy_kernel.conversation_setting */
 export interface KernelConversationSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2568,7 +2568,7 @@ export interface KernelConversationSettingTable {
   wake_quote_days: Generated<number>;
 }
 
-/** crove_kernel.conversation */
+/** ludy_kernel.conversation */
 export interface KernelConversationTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2597,13 +2597,13 @@ export interface KernelConversationTable {
   sender_unverified: Generated<boolean>;
 }
 
-/** crove_kernel.currency */
+/** ludy_kernel.currency */
 export interface KernelCurrencyTable {
   code: ColumnType<string, NotGranted, NotGranted>;
   minor_units: ColumnType<number, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.external_call */
+/** ludy_kernel.external_call */
 export interface KernelExternalCallTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2623,7 +2623,7 @@ export interface KernelExternalCallTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.extraction */
+/** ludy_kernel.extraction */
 export interface KernelExtractionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2644,7 +2644,7 @@ export interface KernelExtractionTable {
   original_differs: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
-/** crove_kernel.file */
+/** ludy_kernel.file */
 export interface KernelFileTable {
   org_id: string;
   id: Generated<string>;
@@ -2669,7 +2669,7 @@ export interface KernelFileTable {
   original_deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.file_upload */
+/** ludy_kernel.file_upload */
 export interface KernelFileUploadTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2682,7 +2682,7 @@ export interface KernelFileUploadTable {
   purpose: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_kernel.idempotency_key */
+/** ludy_kernel.idempotency_key */
 export interface KernelIdempotencyKeyTable {
   org_id: string;
   actor_key: string;
@@ -2693,7 +2693,7 @@ export interface KernelIdempotencyKeyTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.inbound_message */
+/** ludy_kernel.inbound_message */
 export interface KernelInboundMessageTable {
   org_id: string;
   id: Generated<string>;
@@ -2705,7 +2705,7 @@ export interface KernelInboundMessageTable {
   body_text: string | null;
 }
 
-/** crove_kernel.inbox_item */
+/** ludy_kernel.inbox_item */
 export interface KernelInboxItemTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2717,7 +2717,7 @@ export interface KernelInboxItemTable {
   dismissed_by: string | null;
 }
 
-/** crove_kernel.kill_switch */
+/** ludy_kernel.kill_switch */
 export interface KernelKillSwitchTable {
   org_id: string;
   id: Generated<string>;
@@ -2730,7 +2730,7 @@ export interface KernelKillSwitchTable {
   released_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.legal_entity */
+/** ludy_kernel.legal_entity */
 export interface KernelLegalEntityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2745,7 +2745,7 @@ export interface KernelLegalEntityTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.mail_event */
+/** ludy_kernel.mail_event */
 export interface KernelMailEventTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2758,7 +2758,7 @@ export interface KernelMailEventTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.mail_message */
+/** ludy_kernel.mail_message */
 export interface KernelMailMessageTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2783,7 +2783,7 @@ export interface KernelMailMessageTable {
   sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.mail_suppression */
+/** ludy_kernel.mail_suppression */
 export interface KernelMailSuppressionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2798,14 +2798,14 @@ export interface KernelMailSuppressionTable {
   lift_reason: string | null;
 }
 
-/** crove_kernel.mcp_member_table */
+/** ludy_kernel.mcp_member_table */
 export interface KernelMcpMemberTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.mcp_proposal_command */
+/** ludy_kernel.mcp_proposal_command */
 export interface KernelMcpProposalCommandTable {
   command: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
@@ -2813,7 +2813,7 @@ export interface KernelMcpProposalCommandTable {
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.mcp_wake_event_type */
+/** ludy_kernel.mcp_wake_event_type */
 export interface KernelMcpWakeEventTypeTable {
   type: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
@@ -2821,7 +2821,7 @@ export interface KernelMcpWakeEventTypeTable {
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.meeting_platform_connection */
+/** ludy_kernel.meeting_platform_connection */
 export interface KernelMeetingPlatformConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2838,7 +2838,7 @@ export interface KernelMeetingPlatformConnectionTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.meeting_platform_recording */
+/** ludy_kernel.meeting_platform_recording */
 export interface KernelMeetingPlatformRecordingTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2861,7 +2861,7 @@ export interface KernelMeetingPlatformRecordingTable {
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.member_availability */
+/** ludy_kernel.member_availability */
 export interface KernelMemberAvailabilityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2871,7 +2871,7 @@ export interface KernelMemberAvailabilityTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.member_invite */
+/** ludy_kernel.member_invite */
 export interface KernelMemberInviteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2891,7 +2891,7 @@ export interface KernelMemberInviteTable {
   role_scope: ColumnType<string | null, never, NotGranted>;
 }
 
-/** crove_kernel.member_permission_override */
+/** ludy_kernel.member_permission_override */
 export interface KernelMemberPermissionOverrideTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2903,7 +2903,7 @@ export interface KernelMemberPermissionOverrideTable {
   set_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.member_vy_memory */
+/** ludy_kernel.member_vy_memory */
 export interface KernelMemberVyMemoryTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2913,7 +2913,7 @@ export interface KernelMemberVyMemoryTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.member_vy_result */
+/** ludy_kernel.member_vy_result */
 export interface KernelMemberVyResultTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2932,14 +2932,14 @@ export interface KernelMemberVyResultTable {
   expires_at: ColumnType<Date, Date | string, NotGranted>;
 }
 
-/** crove_kernel.member_vy_table */
+/** ludy_kernel.member_vy_table */
 export interface KernelMemberVyTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.notification_mute */
+/** ludy_kernel.notification_mute */
 export interface KernelNotificationMuteTable {
   org_id: ColumnType<string, string, NotGranted>;
   user_id: ColumnType<string, string, NotGranted>;
@@ -2947,7 +2947,7 @@ export interface KernelNotificationMuteTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.notification */
+/** ludy_kernel.notification */
 export interface KernelNotificationTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2963,7 +2963,7 @@ export interface KernelNotificationTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_kernel.number_allocation */
+/** ludy_kernel.number_allocation */
 export interface KernelNumberAllocationTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2976,7 +2976,7 @@ export interface KernelNumberAllocationTable {
   allocated_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.number_series_policy */
+/** ludy_kernel.number_series_policy */
 export interface KernelNumberSeriesPolicyTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2988,7 +2988,7 @@ export interface KernelNumberSeriesPolicyTable {
   schedule: ColumnType<unknown, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.number_series */
+/** ludy_kernel.number_series */
 export interface KernelNumberSeriesTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3000,7 +3000,7 @@ export interface KernelNumberSeriesTable {
   last_doc_date: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.number_void */
+/** ludy_kernel.number_void */
 export interface KernelNumberVoidTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3011,7 +3011,7 @@ export interface KernelNumberVoidTable {
   voided_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.org_usage */
+/** ludy_kernel.org_usage */
 export interface KernelOrgUsageTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3025,7 +3025,7 @@ export interface KernelOrgUsageTable {
   output_tokens: ColumnType<number | null, number | null, NotGranted>;
 }
 
-/** crove_kernel.outbox_event */
+/** ludy_kernel.outbox_event */
 export interface KernelOutboxEventTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3039,7 +3039,7 @@ export interface KernelOutboxEventTable {
   agent_run: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.party */
+/** ludy_kernel.party */
 export interface KernelPartyTable {
   org_id: string;
   id: Generated<string>;
@@ -3062,20 +3062,20 @@ export interface KernelPartyTable {
   tainted: Generated<boolean>;
 }
 
-/** crove_kernel.permission_catalog */
+/** ludy_kernel.permission_catalog */
 export interface KernelPermissionCatalogTable {
   permission: ColumnType<string, NotGranted, NotGranted>;
   grantable_to_viewer: ColumnType<boolean, NotGranted, NotGranted>;
   entity_roles_count: ColumnType<boolean, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.permission_default */
+/** ludy_kernel.permission_default */
 export interface KernelPermissionDefaultTable {
   base_role: ColumnType<string, NotGranted, NotGranted>;
   permission: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.position */
+/** ludy_kernel.position */
 export interface KernelPositionTable {
   org_id: string;
   id: Generated<string>;
@@ -3093,7 +3093,7 @@ export interface KernelPositionTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.proposal_policy */
+/** ludy_kernel.proposal_policy */
 export interface KernelProposalPolicyTable {
   org_id: string;
   id: Generated<string>;
@@ -3105,7 +3105,7 @@ export interface KernelProposalPolicyTable {
   expire_after_days: number | null;
 }
 
-/** crove_kernel.proposal */
+/** ludy_kernel.proposal */
 export interface KernelProposalTable {
   org_id: string;
   id: Generated<string>;
@@ -3145,7 +3145,7 @@ export interface KernelProposalTable {
   approvers_told_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.record_le */
+/** ludy_kernel.record_le */
 export interface KernelRecordLeTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3156,7 +3156,7 @@ export interface KernelRecordLeTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.role_assignment */
+/** ludy_kernel.role_assignment */
 export interface KernelRoleAssignmentTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3168,20 +3168,20 @@ export interface KernelRoleAssignmentTable {
   granted_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.role_permission */
+/** ludy_kernel.role_permission */
 export interface KernelRolePermissionTable {
   role_key: ColumnType<string, NotGranted, NotGranted>;
   permission: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.role */
+/** ludy_kernel.role */
 export interface KernelRoleTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   module: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.saved_reply */
+/** ludy_kernel.saved_reply */
 export interface KernelSavedReplyTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3194,7 +3194,7 @@ export interface KernelSavedReplyTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.saved_view */
+/** ludy_kernel.saved_view */
 export interface KernelSavedViewTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3208,7 +3208,7 @@ export interface KernelSavedViewTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.task_comment */
+/** ludy_kernel.task_comment */
 export interface KernelTaskCommentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3221,7 +3221,7 @@ export interface KernelTaskCommentTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.task */
+/** ludy_kernel.task */
 export interface KernelTaskTable {
   org_id: string;
   id: Generated<string>;
@@ -3250,7 +3250,7 @@ export interface KernelTaskTable {
   checklist: ColumnType<unknown, string | undefined, string>;
 }
 
-/** crove_kernel.tax_obligation_done */
+/** ludy_kernel.tax_obligation_done */
 export interface KernelTaxObligationDoneTable {
   org_id: string;
   id: Generated<string>;
@@ -3261,7 +3261,7 @@ export interface KernelTaxObligationDoneTable {
   legal_entity_id: string;
 }
 
-/** crove_kernel.tax_profile */
+/** ludy_kernel.tax_profile */
 export interface KernelTaxProfileTable {
   org_id: string;
   id: Generated<string>;
@@ -3273,7 +3273,7 @@ export interface KernelTaxProfileTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.tenant_member */
+/** ludy_kernel.tenant_member */
 export interface KernelTenantMemberTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   user_id: ColumnType<string, NotGranted, NotGranted>;
@@ -3281,7 +3281,7 @@ export interface KernelTenantMemberTable {
   created_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.tenant */
+/** ludy_kernel.tenant */
 export interface KernelTenantTable {
   org_id: Generated<string>;
   slug: string;
@@ -3309,7 +3309,7 @@ export interface KernelTenantTable {
   apps_version: Generated<number>;
 }
 
-/** crove_kernel.today_mail */
+/** ludy_kernel.today_mail */
 export interface KernelTodayMailTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3319,7 +3319,7 @@ export interface KernelTodayMailTable {
   language: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_kernel.usage_deferral */
+/** ludy_kernel.usage_deferral */
 export interface KernelUsageDeferralTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;

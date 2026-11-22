@@ -1300,7 +1300,7 @@ export const todoList = defineQuery({
     userOf(ctx.actor);
     let q = applyTodoFilters(ctx.trx.selectFrom('crove_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId), input);
     // Words typed without Vietnamese marks find them ("hoa don" finds "hóa đơn"), each as a prefix.
-    if (input.q !== undefined) q = q.where(sql<boolean>`search @@ crove_kernel.search_query(${input.q})`);
+    if (input.q !== undefined) q = q.where(sql<boolean>`search @@ ludy_kernel.search_query(${input.q})`);
     if (input.view === 'trash') q = q.where('deleted_at', 'is not', null).orderBy('deleted_at', 'desc');
     else {
       q = q.where('deleted_at', 'is', null);
@@ -1366,12 +1366,12 @@ export const myWork = defineQuery({
       todoQ.orderBy('sort_key').orderBy('id').limit(MY_WORK_LIMIT).execute(),
       ctx.query<{ tasks: KernelTask[] }>('kernel.task.list', { mine: true, status: [...OPEN_TASK_STATUSES] }),
       ctx.trx
-        .selectFrom('crove_kernel.tenant_member')
+        .selectFrom('ludy_kernel.tenant_member')
         .select((eb) => eb.fn.countAll<string>().as('n'))
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow(),
       ctx.trx
-        .selectFrom('crove_kernel.position')
+        .selectFrom('ludy_kernel.position')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('holder_user_id', '=', userId)

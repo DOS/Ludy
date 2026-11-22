@@ -63,11 +63,11 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const member = await identity('member');
     const adminUser = twoApprovers ? await identity('admin') : null;
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
-      if (adminUser) await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
+      if (adminUser) await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]);
     });
     const supplier = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, supplier]));
     return { orgId, owner, admin: adminUser, member, supplier };
   }
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true) => rt.execute<T>(name, input, { actor: user(who, fresh), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -108,9 +108,9 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -164,7 +164,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const { proposalId } = await ask(o, payment.id, line);
     // The request is the voucher the server builds from the payment and the line: Dr 331 with the supplier, Cr the bank, the invoice in the words.
     const [stored] = await rows<{ payload: { type: string; cashAccount: string; lines: Array<{ account: string; amount: string }>; party: { id: string }; description: string; supplierPayment: { paymentId: string } } }>(
-      'SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2',
+      'SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2',
       [o.orgId, proposalId],
     );
     expect(stored?.payload).toMatchObject({ type: 'bank_debit', cashAccount: '1121', lines: [{ account: '331', amount: '110' }], party: { id: o.supplier }, supplierPayment: { paymentId: payment.id } });
@@ -211,13 +211,13 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const day = await fileDay(o, payment.id);
     const wrong = await bankLine(o, '-110', day, '9988776655');
     expect(await codeOf(ask(o, payment.id, wrong))).toBe('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH');
-    expect(await rows('SELECT 1 FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2', [o.orgId, SETTLE])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.proposal WHERE org_id = $1 AND command = $2', [o.orgId, SETTLE])).toHaveLength(0);
     // The right number (the statement keeps digits only, so the file's spaces are gone): the same account.
     const right = await bankLine(o, '-110', day, '012345678901');
     // A line with no number says nothing either way and is settled on the amount and the file.
     const none = await bankLine(o, '-110', day);
     expect(await codeOf(ask(o, payment.id, none))).toBe('accepted');
-    const [open] = await rows<{ id: string }>('SELECT id FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2', [o.orgId, SETTLE]);
+    const [open] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.proposal WHERE org_id = $1 AND command = $2', [o.orgId, SETTLE]);
     expect(await codeOf(execute(o, 'kernel.proposal.reject', { id: open?.id, reason: 'test' }, o.admin as string))).toBe('accepted');
     const second = await ask(o, payment.id, right);
     await approve(o, second.proposalId, o.admin as string);

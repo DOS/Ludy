@@ -83,7 +83,7 @@ export const supplierPaymentBankFileGet = defineQuery({
         LEFT JOIN crove_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
         LEFT JOIN crove_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
         LEFT JOIN crove_finance.purchase_document_void v ON v.org_id = p.org_id AND v.document_id = p.purchase_document_id
-        LEFT JOIN crove_kernel.proposal q ON q.org_id = p.org_id AND q.id = p.proposal_id AND q.command = ${SUPPLIER_PAYMENT_COMMAND}
+        LEFT JOIN ludy_kernel.proposal q ON q.org_id = p.org_id AND q.id = p.proposal_id AND q.command = ${SUPPLIER_PAYMENT_COMMAND}
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY (${ids}::uuid[])`.execute(ctx.trx);
     const byId = new Map(rows.map((r) => [r.id, r]));
     // The order the caller named the payments in is the file's order before it is sorted for the bank; a missing one is named.

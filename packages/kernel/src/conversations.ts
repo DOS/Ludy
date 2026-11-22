@@ -2,12 +2,12 @@
 // The conversation core (issue #2303, plan docs/plan/conversations.md, ADR-0041): comments under the org's posts and private
 // messages on a connected channel, in one store, with the commands that take them in and answer them.
 //
-// Who may do what (the database holds the same rules, crove_kernel.conversation_access):
+// Who may do what (the database holds the same rules, ludy_kernel.conversation_access):
 // - the worker, as the system, takes platform events in (kernel.conversation.ingest) and settles the calls a reply or a hide
 //   makes (reply_begin, reply_record, hide_begin, hide_record); the org of an event comes from the stored connection;
 // - owners, admins and members read and answer a comment thread of a channel they may use; a viewer only reads; a private
 //   message is read and answered only by owners, admins and holders of kernel.conversation.direct.read, and the channel limit
-//   (crove_kernel.channel_access) applies to every member; an agent reads and writes none.
+//   (ludy_kernel.channel_access) applies to every member; an agent reads and writes none.
 //
 // A reply is a message (queued) and, before the platform is called, an external_call row written by reply_begin in its own
 // transaction and committed first, so a worker that dies mid-call leaves a row that says the call may have gone through. No
@@ -184,7 +184,7 @@ const CONVERSATION_COLUMNS = [
 // The thread, locked. A thread the caller may not read is not found (row-level security hides it).
 async function lockConversation(ctx: CommandContext, conversationId: string): Promise<ConversationRow> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.conversation')
+    .selectFrom('ludy_kernel.conversation')
     .select(CONVERSATION_COLUMNS)
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', conversationId)
@@ -218,7 +218,7 @@ const MESSAGE_COLUMNS = [
 
 async function lockMessage(ctx: CommandContext, messageId: string): Promise<MessageRow> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message')
+    .selectFrom('ludy_kernel.conversation_message')
     .select(MESSAGE_COLUMNS)
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', messageId)
@@ -239,7 +239,7 @@ interface ConnectionRow {
 // A YouTube connection's quota counters (#3134), as the pure functions of the contract read them.
 async function youtubeQuotaRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, lock = false) {
   const query = ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select(['provider', 'status', 'scopes', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_idle_polls', 'history_synced_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', connectionId);
@@ -264,7 +264,7 @@ async function refuseWhileYoutubeQuotaSpent(ctx: Pick<QueryContext, 'trx' | 'org
 // after the disconnect committed reads it as revoked and is ignored. Key-share locks do not block each other or ordinary updates of the row.
 async function connectionOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, lock = false): Promise<ConnectionRow | null> {
   let query = ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select(['id', 'provider', 'status', 'display_name', 'scopes', 'updated_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', connectionId);
@@ -292,7 +292,7 @@ const BUSINESS_THREAD = /^b:-?\d{1,20}:(.+)$/;
 async function businessReplyBlock(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, provider: string, threadId: string, replyWindowUntil: Date | null, now: number): Promise<BusinessReplyBlock | null> {
   if (provider !== 'telegram' || !threadId.startsWith('b:')) return null;
   const via = BUSINESS_THREAD.exec(threadId)?.[1];
-  const stored = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+  const stored = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
   const account = via ? parseBusinessAccounts(stored?.chat_business).find((a) => a.id === via) : undefined;
   if (!account || !account.enabled || !account.approved) return 'business_stopped';
   if (!account.canReply) return 'business_read_only';
@@ -337,7 +337,7 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
   }
   // A YouTube channel whose owner did not opt in to reading comments (#3134) has none stored.
   if (connection.provider === 'youtube') {
-    const on = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('comments_enabled').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    const on = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('comments_enabled').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
     if (!on?.comments_enabled) {
       out.ignored = inputEvents.length;
       ctx.audit({ connection_id: connectionId, ...out });
@@ -346,7 +346,7 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
   }
   // A Threads profile that did not opt in to reading replies (#3133) has none stored, whatever the platform pushes for the app.
   if (connection.provider === 'threads') {
-    const scopes = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    const scopes = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
     if (!scopes?.scopes.includes('threads_read_replies')) {
       out.ignored = inputEvents.length;
       ctx.audit({ connection_id: connectionId, ...out });
@@ -358,7 +358,7 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
   // one stores nothing, and a chat of the business account with itself (the contact is the account's own user) is nobody's customer.
   let ownerUserId: string | null = null;
   if (businessConnectionId !== undefined) {
-    const stored = connection.provider === 'telegram' ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst() : undefined;
+    const stored = connection.provider === 'telegram' ? await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst() : undefined;
     const account = parseBusinessAccounts(stored?.chat_business).find((a) => a.id === businessConnectionId && a.enabled && a.approved);
     if (!account) {
       out.ignored = inputEvents.length;
@@ -372,7 +372,7 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
   // connection keeps its row and its date; a number connected again after a disconnect is a new row, so its date is the start of this holder.
   let notBefore: number | null = null;
   if (connection.provider === 'whatsapp') {
-    const since = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('connected_at').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    const since = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('connected_at').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
     notBefore = since ? new Date(since.connected_at).getTime() : null;
   }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
@@ -399,7 +399,7 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
 async function emailConnectionId(ctx: CommandContext): Promise<string> {
   const find = () =>
     ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', EMAIL_PROVIDER)
@@ -409,9 +409,9 @@ async function emailConnectionId(ctx: CommandContext): Promise<string> {
       .executeTakeFirst();
   const existing = await find();
   if (existing) return existing.id;
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('created_by').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('created_by').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   await ctx.trx
-    .insertInto('crove_kernel.channel_connection')
+    .insertInto('ludy_kernel.channel_connection')
     .values({ org_id: ctx.orgId, provider: EMAIL_PROVIDER, external_account_id: 'inbox', display_name: 'Email', status: 'active', connected_by: org.created_by, connected_at: ctx.now, updated_at: ctx.now })
     .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_account_id']).where('status', '<>', 'revoked').doNothing())
     .execute();
@@ -430,7 +430,7 @@ export const conversationAddressIssue = defineCommand({
   access: ['owner', 'admin'],
   handler: async (ctx): Promise<{ issued: boolean }> => {
     requireUser(ctx);
-    const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.conversation_address_issue() AS token`.execute(ctx.trx);
+    const { rows } = await sql<{ token: string | null }>`SELECT ludy_kernel.conversation_address_issue() AS token`.execute(ctx.trx);
     if (!rows[0]?.token) throw new DomainError('INTERNAL', 500, 'Không tạo được địa chỉ email của Hộp thư');
     return { issued: true };
   },
@@ -448,10 +448,10 @@ export const conversationEmailIngest = defineCommand({
     requireSystem(ctx);
     const result = await ingestEvents(ctx, await emailConnectionId(ctx), input.events);
     // What the org used of its daily limit of customer mail: a mail kept counts, a redelivery counts nothing; the invoice reader's limit is its own.
-    if (result.stored > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'conversation_emails', amount: String(result.stored) }).execute();
+    if (result.stored > 0) await ctx.trx.insertInto('ludy_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'conversation_emails', amount: String(result.stored) }).execute();
     // The bytes of the images a new mail reserved count against the org's day of attachment bytes (#2758): a published address must not fill the store.
     const imageBytes = result.stored > 0 ? input.events.reduce((sum, event) => sum + (event.mailImageBytes ?? 0), 0) : 0;
-    if (imageBytes > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'attachment_bytes', amount: String(imageBytes) }).execute();
+    if (imageBytes > 0) await ctx.trx.insertInto('ludy_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'attachment_bytes', amount: String(imageBytes) }).execute();
     return result;
   },
 });
@@ -461,7 +461,7 @@ async function staleDrafts(ctx: CommandContext, conversationId: string | readonl
   const ids = typeof conversationId === 'string' ? [conversationId] : [...conversationId];
   if (ids.length === 0) return;
   await ctx.trx
-    .updateTable('crove_kernel.conversation_draft')
+    .updateTable('ludy_kernel.conversation_draft')
     .set({ state: 'stale', body: null, decided_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('conversation_id', 'in', ids)
@@ -474,7 +474,7 @@ async function staleDrafts(ctx: CommandContext, conversationId: string | readonl
 // in the same life (cleared when the bytes are stored, deleted at six days).
 async function addAttachments(ctx: CommandContext, messageId: string, connectionId: string, kind: ConversationKind, images: ReadonlyArray<{ url: string } | { mediaRef: string }>): Promise<void> {
   await ctx.trx
-    .insertInto('crove_kernel.conversation_attachment')
+    .insertInto('ludy_kernel.conversation_attachment')
     .values(
       images.map((a) => ({
         org_id: ctx.orgId,
@@ -502,8 +502,8 @@ const customerLock = (ctx: CommandContext, provider: string, externalUserId: str
 async function nestedThreadId(ctx: CommandContext, connectionId: string, provider: string, event: ConversationEvent): Promise<string> {
   if (provider !== 'threads' || event.kind !== 'comment_thread' || event.threadId === event.messageId) return event.threadId;
   const row = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message as m')
-    .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .selectFrom('ludy_kernel.conversation_message as m')
+    .innerJoin('ludy_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
     .select('c.external_thread_id')
     .where('m.org_id', '=', ctx.orgId)
     .where('m.channel_connection_id', '=', connectionId)
@@ -518,9 +518,9 @@ async function emailThreadId(ctx: CommandContext, connectionId: string, event: C
   // A sender the receiving server did not vouch for may be anyone writing as the customer: the mail opens a thread of its own.
   if (refs.length === 0 || event.verified !== true) return event.messageId;
   const row = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message as m')
-    .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
-    .innerJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
+    .selectFrom('ludy_kernel.conversation_message as m')
+    .innerJoin('ludy_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .innerJoin('ludy_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
     .select('c.external_thread_id')
     .where('m.org_id', '=', ctx.orgId)
     .where('m.channel_connection_id', '=', connectionId)
@@ -542,7 +542,7 @@ type MailImageSlot = { attachmentId: string; storageKey: string };
 // key of its own, as for a platform's image, and the worker writes the bytes under it and records them (attachment_record).
 async function reserveMailImages(ctx: CommandContext, messageId: string, connectionId: string, count: number): Promise<MailImageSlot[]> {
   const rows = await ctx.trx
-    .insertInto('crove_kernel.conversation_attachment')
+    .insertInto('ludy_kernel.conversation_attachment')
     .values(
       // Each row is a millisecond after the one before it: the thread and a redelivery order the images by created_at, and ids made in one
       // millisecond are not in order.
@@ -567,7 +567,7 @@ async function reserveMailImages(ctx: CommandContext, messageId: string, connect
 // one a button may send again.
 async function applyDeliveryFailed(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const message = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message')
+    .selectFrom('ludy_kernel.conversation_message')
     .select(['id', 'direction', 'author_kind', 'send_state'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -578,7 +578,7 @@ async function applyDeliveryFailed(ctx: CommandContext, connectionId: string, ev
   if (message.send_state === 'failed') return 'duplicates';
   if (message.send_state !== 'sent') return 'ignored';
   await ctx.trx
-    .updateTable('crove_kernel.conversation_message')
+    .updateTable('ludy_kernel.conversation_message')
     .set({ send_state: 'failed', send_error_code: event.deliveryFailed?.code ?? 'FAILED' })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', message.id)
@@ -602,7 +602,7 @@ async function ingestEvent(
       ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) }
       : { ...original, threadId: await nestedThreadId(ctx, connectionId, provider, original) };
   const existing = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message')
+    .selectFrom('ludy_kernel.conversation_message')
     .select(['id', 'conversation_id', 'body', 'direction', 'hidden_at', 'platform_removed_at', 'author_identity_id', 'sender_verified'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -612,19 +612,19 @@ async function ingestEvent(
     // The platform says it was removed: the body goes (plan section 10), once.
     if (event.removed && !existing.platform_removed_at) {
       await ctx.trx
-        .updateTable('crove_kernel.conversation_message')
+        .updateTable('ludy_kernel.conversation_message')
         .set({ body: '', attachments: sql`'{}'::uuid[]`, platform_removed_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
         .execute();
       // The images go with the body (their blobs are queued for deletion by the delete trigger).
-      await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).execute();
+      await ctx.trx.deleteFrom('ludy_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).execute();
       // A draft Vy wrote from what the person has now removed goes stale with its text.
       await staleDrafts(ctx, existing.conversation_id);
     } else if (!event.removed && !existing.platform_removed_at) {
       if (event.edited && existing.direction === 'in' && event.text !== '' && event.text !== existing.body) {
         await ctx.trx
-          .updateTable('crove_kernel.conversation_message')
+          .updateTable('ludy_kernel.conversation_message')
           .set({ body: event.text })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing.id)
@@ -633,7 +633,7 @@ async function ingestEvent(
       }
       if (event.hidden !== undefined && existing.direction === 'in' && (event.hidden ? existing.hidden_at === null : existing.hidden_at !== null)) {
         await ctx.trx
-          .updateTable('crove_kernel.conversation_message')
+          .updateTable('ludy_kernel.conversation_message')
           .set({ hidden_at: event.hidden ? ctx.now : null, ...(event.hidden ? {} : { hidden_by: null }), hide_request: null, hide_error_code: null })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing.id)
@@ -642,7 +642,7 @@ async function ingestEvent(
       if (existing.direction === 'in' && event.attachments && event.attachments.length > 0) {
         // The message was stored before its notice brought the images (the history read stores the text alone): the images are added once, when
         // the message has none, so a redelivery does not add them again.
-        const has = await ctx.trx.selectFrom('crove_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
+        const has = await ctx.trx.selectFrom('ludy_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
         if (!has) await addAttachments(ctx, existing.id, connectionId, event.kind, event.attachments);
       }
     }
@@ -653,10 +653,10 @@ async function ingestEvent(
       event.kind === 'email' &&
       existing.author_identity_id !== null &&
       existing.sender_verified === (event.verified === true) &&
-      (await ctx.trx.selectFrom('crove_kernel.conversation_identity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', existing.author_identity_id).where('external_user_id', '=', event.contact.id).executeTakeFirst()) !== undefined;
+      (await ctx.trx.selectFrom('ludy_kernel.conversation_identity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', existing.author_identity_id).where('external_user_id', '=', event.contact.id).executeTakeFirst()) !== undefined;
     if (sameSender && event.mailImages && existing.direction === 'in' && !existing.platform_removed_at) {
       const waiting = await ctx.trx
-        .selectFrom('crove_kernel.conversation_attachment')
+        .selectFrom('ludy_kernel.conversation_attachment')
         .select(['id', 'storage_key'])
         .where('org_id', '=', ctx.orgId)
         .where('message_id', '=', existing.id)
@@ -684,9 +684,9 @@ async function ingestEvent(
   else event = { ...original, threadId: await nestedThreadId(ctx, connectionId, provider, original) };
   // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
   // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
-  const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
+  const hashed = await sql<{ h: string }>`SELECT ludy_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
   const tomb = await ctx.trx
-    .selectFrom('crove_kernel.conversation_identity')
+    .selectFrom('ludy_kernel.conversation_identity')
     .select('erased_at')
     .where('org_id', '=', ctx.orgId)
     .where('provider', '=', provider)
@@ -699,7 +699,7 @@ async function ingestEvent(
   if (event.removed) {
     const findThread = async () =>
       (await ctx.trx
-        .selectFrom('crove_kernel.conversation')
+        .selectFrom('ludy_kernel.conversation')
         .select(CONVERSATION_COLUMNS)
         .where('org_id', '=', ctx.orgId)
         .where('channel_connection_id', '=', connectionId)
@@ -708,7 +708,7 @@ async function ingestEvent(
         .forUpdate()
         .executeTakeFirst()) as ConversationRow | undefined;
     const who = await ctx.trx
-      .insertInto('crove_kernel.conversation_identity')
+      .insertInto('ludy_kernel.conversation_identity')
       .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
       .returning(['id'])
@@ -718,7 +718,7 @@ async function ingestEvent(
       // No thread yet: it is made, already resolved (a thread of one removed message needs no answer), so the add that arrives later
       // finds the tombstone and the body is never stored. A later real message reopens it as usual.
       await ctx.trx
-        .insertInto('crove_kernel.conversation')
+        .insertInto('ludy_kernel.conversation')
         .values({
           org_id: ctx.orgId,
           channel_connection_id: connectionId,
@@ -739,7 +739,7 @@ async function ingestEvent(
     if (!thread) return 'ignored';
     const next = thread.last_seq + 1;
     await ctx.trx
-      .insertInto('crove_kernel.conversation_message')
+      .insertInto('ludy_kernel.conversation_message')
       .values({
         org_id: ctx.orgId,
         conversation_id: thread.id,
@@ -758,17 +758,17 @@ async function ingestEvent(
         author_identity_id: event.direction === 'in' ? who.id : null,
       })
       .execute();
-    await ctx.trx.updateTable('crove_kernel.conversation').set({ last_seq: next, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', thread.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation').set({ last_seq: next, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', thread.id).execute();
     return 'stored';
   }
 
   const identity = await ctx.trx
-    .insertInto('crove_kernel.conversation_identity')
+    .insertInto('ludy_kernel.conversation_identity')
     .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
     .onConflict((oc) =>
       oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({
         // A name an unverified sender wrote does not replace the one the customer's verified mail gave: the name belongs to the address, which the sender may be forging.
-        display_name: event.kind === 'email' && event.verified !== true ? sql<string | null>`crove_kernel.conversation_identity.display_name` : sql<string | null>`COALESCE(excluded.display_name, crove_kernel.conversation_identity.display_name)`,
+        display_name: event.kind === 'email' && event.verified !== true ? sql<string | null>`ludy_kernel.conversation_identity.display_name` : sql<string | null>`COALESCE(excluded.display_name, ludy_kernel.conversation_identity.display_name)`,
         updated_at: ctx.now,
       }),
     )
@@ -781,7 +781,7 @@ async function ingestEvent(
   // an empty ghost thread under the PSID and works even when the original comment had no `from.id`.
   if (event.direction === 'out' && event.kind === 'direct') {
     const privateConvs = await ctx.trx
-      .selectFrom('crove_kernel.conversation')
+      .selectFrom('ludy_kernel.conversation')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', connectionId)
@@ -790,7 +790,7 @@ async function ingestEvent(
       .execute();
     if (privateConvs.length > 0) {
       const privateOurs = await ctx.trx
-        .selectFrom('crove_kernel.conversation_message')
+        .selectFrom('ludy_kernel.conversation_message')
         .select(['id', 'send_attempt'])
         .where('org_id', '=', ctx.orgId)
         .where('conversation_id', 'in', privateConvs.map((pc) => pc.id))
@@ -806,7 +806,7 @@ async function ingestEvent(
         .executeTakeFirst();
       if (privateOurs) {
         const againPrivate = await ctx.trx
-          .selectFrom('crove_kernel.conversation_message')
+          .selectFrom('ludy_kernel.conversation_message')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('channel_connection_id', '=', connectionId)
@@ -814,13 +814,13 @@ async function ingestEvent(
           .executeTakeFirst();
         if (againPrivate) return 'duplicates';
         await ctx.trx
-          .updateTable('crove_kernel.conversation_message')
+          .updateTable('ludy_kernel.conversation_message')
           .set({ external_message_id: event.messageId, send_state: 'sent', send_error_code: null, sent_at: sentAt })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', privateOurs.id)
           .execute();
         await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('key', '=', replyCallKey(privateOurs.id, privateOurs.send_attempt))
@@ -834,7 +834,7 @@ async function ingestEvent(
   // The thread, made on first sight. A person's link of this customer's other threads of the same kind (never of the other kind: a
   // private message's contact is not shown on a public comment) brings its party to the new thread.
   const linked = await ctx.trx
-    .selectFrom('crove_kernel.conversation')
+    .selectFrom('ludy_kernel.conversation')
     .select('party_id')
     .where('org_id', '=', ctx.orgId)
     .where('identity_id', '=', identity.id)
@@ -844,7 +844,7 @@ async function ingestEvent(
     .limit(1)
     .executeTakeFirst();
   await ctx.trx
-    .insertInto('crove_kernel.conversation')
+    .insertInto('ludy_kernel.conversation')
     .values({
       org_id: ctx.orgId,
       channel_connection_id: connectionId,
@@ -863,7 +863,7 @@ async function ingestEvent(
     .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'kind', 'external_thread_id']).doNothing())
     .execute();
   const conversation = (await ctx.trx
-    .selectFrom('crove_kernel.conversation')
+    .selectFrom('ludy_kernel.conversation')
     .select(CONVERSATION_COLUMNS)
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -874,7 +874,7 @@ async function ingestEvent(
 
   // The same message may have been stored by a notice redelivered at the same time, between the first check and this lock.
   const again = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message')
+    .selectFrom('ludy_kernel.conversation_message')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -886,7 +886,7 @@ async function ingestEvent(
   // is a message written outside Crove.
   if (event.direction === 'out') {
     const ours = await ctx.trx
-      .selectFrom('crove_kernel.conversation_message')
+      .selectFrom('ludy_kernel.conversation_message')
       .select(['id', 'send_attempt'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', conversation.id)
@@ -903,14 +903,14 @@ async function ingestEvent(
       .executeTakeFirst();
     if (ours) {
       await ctx.trx
-        .updateTable('crove_kernel.conversation_message')
+        .updateTable('ludy_kernel.conversation_message')
         .set({ external_message_id: event.messageId, send_state: 'sent', send_error_code: null, sent_at: sentAt })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', ours.id)
         .execute();
       // The platform has the message, so the call that may or may not have gone through did: nothing is left unfinished or ambiguous.
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', replyCallKey(ours.id, ours.send_attempt))
@@ -922,7 +922,7 @@ async function ingestEvent(
 
   const seq = conversation.last_seq + 1;
   const stored = await ctx.trx
-    .insertInto('crove_kernel.conversation_message')
+    .insertInto('ludy_kernel.conversation_message')
     .values({
       org_id: ctx.orgId,
       conversation_id: conversation.id,
@@ -947,7 +947,7 @@ async function ingestEvent(
     .executeTakeFirstOrThrow();
   // A mail the receiving server vouched for proves its sender controls the address: the thread's mark goes.
   if (event.kind === 'email' && event.direction === 'in' && event.verified === true && conversation.sender_unverified) {
-    await ctx.trx.updateTable('crove_kernel.conversation').set({ sender_unverified: false }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation').set({ sender_unverified: false }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
   }
   // The images a customer's message carries (CV5c, #2357): a pending row each, with the platform's address (personal data, cleared when the
   // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
@@ -973,7 +973,7 @@ async function ingestEvent(
   const predatesResolution = inbound && event.kind !== 'email' && conversation.status === 'resolved' && conversation.resolved_at !== null && sentAt.getTime() <= conversation.resolved_at.getTime();
   const status = inbound ? (predatesResolution ? 'resolved' : 'new') : conversation.status === 'new' ? 'pending' : conversation.status;
   await ctx.trx
-    .updateTable('crove_kernel.conversation')
+    .updateTable('ludy_kernel.conversation')
     .set({
       last_seq: seq,
       last_message_at: newest,
@@ -1037,16 +1037,16 @@ const summarySelect = (orgId: string, viewer: string | null) => sql`
   SELECT c.id, c.kind, c.status, c.channel_connection_id, ch.provider, ch.display_name AS channel_name, c.external_post_id,
          c.identity_id, i.display_name AS identity_name, i.external_user_id, c.party_id, p.name AS party_name,
          c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent, c.subject, c.sender_unverified,
-         (SELECT m.body FROM crove_kernel.conversation_message m
+         (SELECT m.body FROM ludy_kernel.conversation_message m
           WHERE m.org_id = c.org_id AND m.conversation_id = c.id ORDER BY m.seq DESC LIMIT 1) AS preview,
          r.last_read_seq AS read_seq,
-         (SELECT pg_catalog.array_agg(x.user_id ORDER BY x.updated_at, x.user_id) FROM crove_kernel.conversation_composing x
+         (SELECT pg_catalog.array_agg(x.user_id ORDER BY x.updated_at, x.user_id) FROM ludy_kernel.conversation_composing x
           WHERE x.org_id = c.org_id AND x.conversation_id = c.id AND x.expires_at > now() AND x.user_id IS DISTINCT FROM ${viewer}::uuid) AS composing
-  FROM crove_kernel.conversation c
-  JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
-  LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
-  LEFT JOIN crove_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id
-  LEFT JOIN crove_kernel.conversation_read r ON r.org_id = c.org_id AND r.conversation_id = c.id AND r.user_id = ${viewer}::uuid
+  FROM ludy_kernel.conversation c
+  JOIN ludy_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
+  LEFT JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+  LEFT JOIN ludy_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id
+  LEFT JOIN ludy_kernel.conversation_read r ON r.org_id = c.org_id AND r.conversation_id = c.id AND r.user_id = ${viewer}::uuid
   WHERE c.org_id = ${orgId}::uuid`;
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
@@ -1094,11 +1094,11 @@ export const conversationList = defineQuery({
       // The customer's name, the contact's name, or any message of the thread, ignoring case, Vietnamese marks and punctuation (search_fold, as the
       // contacts' search does). Text that folds to nothing (only punctuation) is no search: every thread stays. The folded text is matched with LIKE's own
       // characters escaped, so a fold that keeps one cannot widen the match.
-      const needle = sql`'%' || replace(replace(replace(crove_kernel.search_fold(${input.q}), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
-      where.push(sql`(crove_kernel.search_fold(${input.q}) = '' OR crove_kernel.search_fold(COALESCE(i.display_name, '')) LIKE ${needle} ESCAPE '\\'
-        OR crove_kernel.search_fold(COALESCE(p.name, '')) LIKE ${needle} ESCAPE '\\'
-        OR EXISTS (SELECT 1 FROM crove_kernel.conversation_message sm WHERE sm.org_id = c.org_id AND sm.conversation_id = c.id
-                   AND crove_kernel.search_fold(sm.body) LIKE ${needle} ESCAPE '\\'))`);
+      const needle = sql`'%' || replace(replace(replace(ludy_kernel.search_fold(${input.q}), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
+      where.push(sql`(ludy_kernel.search_fold(${input.q}) = '' OR ludy_kernel.search_fold(COALESCE(i.display_name, '')) LIKE ${needle} ESCAPE '\\'
+        OR ludy_kernel.search_fold(COALESCE(p.name, '')) LIKE ${needle} ESCAPE '\\'
+        OR EXISTS (SELECT 1 FROM ludy_kernel.conversation_message sm WHERE sm.org_id = c.org_id AND sm.conversation_id = c.id
+                   AND ludy_kernel.search_fold(sm.body) LIKE ${needle} ESCAPE '\\'))`);
     }
     if (input.posts) {
       const pairs = input.posts.map((p) => sql`(c.channel_connection_id = ${p.connectionId}::uuid AND c.external_post_id = ${p.externalPostId})`);
@@ -1134,8 +1134,8 @@ export const conversationCounts = defineQuery({
     }
     const { rows } = await sql<{ status: string; n: string; unread: string }>`
       SELECT c.status, count(*)::text AS n, count(*) FILTER (WHERE c.last_seq > COALESCE(r.last_read_seq, 0))::text AS unread
-      FROM crove_kernel.conversation c
-      LEFT JOIN crove_kernel.conversation_read r ON r.org_id = c.org_id AND r.conversation_id = c.id AND r.user_id = ${me}::uuid
+      FROM ludy_kernel.conversation c
+      LEFT JOIN ludy_kernel.conversation_read r ON r.org_id = c.org_id AND r.conversation_id = c.id AND r.user_id = ${me}::uuid
       WHERE ${sql.join(filters, sql` AND `)} GROUP BY c.status`.execute(ctx.trx);
     const counted: ConversationCounted = { new: 0, pending: 0, resolved: 0, unread: 0 };
     for (const row of rows) {
@@ -1157,7 +1157,7 @@ export const conversationPostCounts = defineQuery({
     const pairs = [...new Map(input.posts.map((p) => [`${p.connectionId}\n${p.externalPostId}`, p])).values()];
     const { rows } = await sql<{ connection_id: string; external_post_id: string; n: string }>`
       SELECT c.channel_connection_id AS connection_id, c.external_post_id, count(*)::text AS n
-      FROM crove_kernel.conversation c
+      FROM ludy_kernel.conversation c
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.kind = 'comment_thread' AND c.status = 'new'
         AND (c.channel_connection_id, c.external_post_id) IN (${sql.join(pairs.map((p) => sql`(${p.connectionId}::uuid, ${p.externalPostId})`), sql`, `)})
       GROUP BY c.channel_connection_id, c.external_post_id`.execute(ctx.trx);
@@ -1175,7 +1175,7 @@ export const conversationGet = defineQuery({
     const row = rows[0];
     if (!row) throw notFound();
     const messages = await ctx.trx
-      .selectFrom('crove_kernel.conversation_message')
+      .selectFrom('ludy_kernel.conversation_message')
       .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'author_identity_id', 'external_message_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
@@ -1185,7 +1185,7 @@ export const conversationGet = defineQuery({
     const privateReplies = new Map<string, string>();
     if (row.kind === 'comment_thread' && messages.length > 0) {
       const children = await ctx.trx
-        .selectFrom('crove_kernel.conversation')
+        .selectFrom('ludy_kernel.conversation')
         .select(['id', 'external_thread_id'])
         .where('org_id', '=', ctx.orgId)
         .where('parent_conversation_id', '=', input.conversationId)
@@ -1201,7 +1201,7 @@ export const conversationGet = defineQuery({
     const authorIds = [...new Set(messages.map((m) => m.author_identity_id).filter((id): id is string => id !== null))];
     const authors = new Map<string, { name: string | null; tail: string }>();
     if (authorIds.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['id', 'display_name', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.conversation_identity').select(['id', 'display_name', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
       for (const a of found) authors.set(a.id, { name: a.display_name, tail: a.external_user_id.slice(-4) });
     }
     // The stored images of these messages, as the reader's own rule shows them (row-level security: the image is read by those who read its
@@ -1209,7 +1209,7 @@ export const conversationGet = defineQuery({
     const images = new Map<string, ConversationAttachmentView[]>();
     if (messages.length > 0) {
       const found = await ctx.trx
-        .selectFrom('crove_kernel.conversation_attachment')
+        .selectFrom('ludy_kernel.conversation_attachment')
         .select(['id', 'message_id', 'content_type', 'width', 'height'])
         .where('org_id', '=', ctx.orgId)
         .where('state', '=', 'stored')
@@ -1224,7 +1224,7 @@ export const conversationGet = defineQuery({
       }
     }
     const notes = await ctx.trx
-      .selectFrom('crove_kernel.conversation_note')
+      .selectFrom('ludy_kernel.conversation_note')
       .select(['id', 'author_user_id', 'body', 'created_at', 'actor_origin', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
@@ -1232,7 +1232,7 @@ export const conversationGet = defineQuery({
       .orderBy('id')
       .execute();
     const parent = await ctx.trx
-      .selectFrom('crove_kernel.conversation')
+      .selectFrom('ludy_kernel.conversation')
       .select(['parent_conversation_id', 'external_thread_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.conversationId)
@@ -1240,7 +1240,7 @@ export const conversationGet = defineQuery({
     let parentId: string | null = null;
     if (parent?.parent_conversation_id) {
       // The parent only when the reader may see it (row-level security).
-      const seen = await ctx.trx.selectFrom('crove_kernel.conversation').select('id').where('org_id', '=', ctx.orgId).where('id', '=', parent.parent_conversation_id).executeTakeFirst();
+      const seen = await ctx.trx.selectFrom('ludy_kernel.conversation').select('id').where('org_id', '=', ctx.orgId).where('id', '=', parent.parent_conversation_id).executeTakeFirst();
       parentId = seen?.id ?? null;
     }
     const conversation = toSummary(row);
@@ -1256,12 +1256,12 @@ export const conversationGet = defineQuery({
     let gap: ConversationDetail['gap'] = null;
     const lastAt = row.last_message_at;
     if (connection && lastAt) {
-      const g = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['gap_from', 'gap_to']).where('org_id', '=', ctx.orgId).where('id', '=', row.channel_connection_id).executeTakeFirst();
+      const g = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['gap_from', 'gap_to']).where('org_id', '=', ctx.orgId).where('id', '=', row.channel_connection_id).executeTakeFirst();
       if (g?.gap_from && g.gap_to && lastAt.getTime() >= g.gap_from.getTime()) gap = { from: g.gap_from.toISOString(), to: g.gap_to.toISOString() };
     }
     // Vy's draft in play for the last customer message, and the saved replies that answer its words (offered beside it, at most three).
     const draftRow = await ctx.trx
-      .selectFrom('crove_kernel.conversation_draft')
+      .selectFrom('ludy_kernel.conversation_draft')
       .select(['id', 'state', 'source', 'body'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
@@ -1272,8 +1272,8 @@ export const conversationGet = defineQuery({
     // The customer's other threads that this reader may read (row-level security), for the contact panel: what they are and where they stand.
     const otherRows = row.identity_id
       ? await ctx.trx
-          .selectFrom('crove_kernel.conversation as o')
-          .innerJoin('crove_kernel.channel_connection as oc', (j) => j.onRef('oc.org_id', '=', 'o.org_id').onRef('oc.id', '=', 'o.channel_connection_id'))
+          .selectFrom('ludy_kernel.conversation as o')
+          .innerJoin('ludy_kernel.channel_connection as oc', (j) => j.onRef('oc.org_id', '=', 'o.org_id').onRef('oc.id', '=', 'o.channel_connection_id'))
           .select(['o.id', 'o.kind', 'o.status', 'o.channel_connection_id', 'oc.provider', 'oc.display_name', 'o.last_message_at'])
           .where('o.org_id', '=', ctx.orgId)
           .where('o.identity_id', '=', row.identity_id)
@@ -1333,11 +1333,11 @@ export const conversationGet = defineQuery({
 // Marks a thread read by its viewer up to a seq (never backwards, never past the last message).
 async function markRead(ctx: CommandContext, conversationId: string, userId: string, seq: number): Promise<void> {
   await ctx.trx
-    .insertInto('crove_kernel.conversation_read')
+    .insertInto('ludy_kernel.conversation_read')
     .values({ org_id: ctx.orgId, conversation_id: conversationId, user_id: userId, last_read_seq: seq, updated_at: ctx.now })
     .onConflict((oc) =>
       oc.columns(['org_id', 'conversation_id', 'user_id']).doUpdateSet({
-        last_read_seq: sql<number>`GREATEST(crove_kernel.conversation_read.last_read_seq, excluded.last_read_seq)`,
+        last_read_seq: sql<number>`GREATEST(ludy_kernel.conversation_read.last_read_seq, excluded.last_read_seq)`,
         updated_at: ctx.now,
       }),
     )
@@ -1387,7 +1387,7 @@ export const conversationReply = defineCommand({
     }
     const seq = conversation.last_seq + 1;
     const message = await ctx.trx
-      .insertInto('crove_kernel.conversation_message')
+      .insertInto('ludy_kernel.conversation_message')
       .values({
         org_id: ctx.orgId,
         conversation_id: conversation.id,
@@ -1407,7 +1407,7 @@ export const conversationReply = defineCommand({
       .returning('id')
       .executeTakeFirstOrThrow();
     await ctx.trx
-      .updateTable('crove_kernel.conversation')
+      .updateTable('ludy_kernel.conversation')
       .set({
         last_seq: seq,
         last_message_at: ctx.now,
@@ -1423,11 +1423,11 @@ export const conversationReply = defineCommand({
       .execute();
     await markRead(ctx, conversation.id, me, seq);
     // The replier is no longer typing: their "is replying" marker goes with the send.
-    await ctx.trx.deleteFrom('crove_kernel.conversation_composing').where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('user_id', '=', me).execute();
+    await ctx.trx.deleteFrom('ludy_kernel.conversation_composing').where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('user_id', '=', me).execute();
     // The drafts of the thread end with this reply: the one it began from is used (its length, the length sent and the size of the edit are kept, never the
     // text), any other is discarded; a saved reply it began from is counted.
     const open = await ctx.trx
-      .selectFrom('crove_kernel.conversation_draft')
+      .selectFrom('ludy_kernel.conversation_draft')
       .select(['id', 'state', 'body'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', conversation.id)
@@ -1439,17 +1439,17 @@ export const conversationReply = defineCommand({
       if (d.id === input.draftId && d.state === 'live' && d.body !== null) {
         usedDraft = true;
         await ctx.trx
-          .updateTable('crove_kernel.conversation_draft')
+          .updateTable('ludy_kernel.conversation_draft')
           .set({ state: 'used', body: null, draft_length: d.body.length, final_length: input.body.length, edit_size: editSize(d.body, input.body), decided_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', d.id)
           .execute();
       } else {
-        await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'discarded', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', d.id).execute();
+        await ctx.trx.updateTable('ludy_kernel.conversation_draft').set({ state: 'discarded', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', d.id).execute();
       }
     }
     if (input.savedReplyId) {
-      await ctx.trx.updateTable('crove_kernel.saved_reply').set({ use_count: sql<number>`use_count + 1` }).where('org_id', '=', ctx.orgId).where('id', '=', input.savedReplyId).execute();
+      await ctx.trx.updateTable('ludy_kernel.saved_reply').set({ use_count: sql<number>`use_count + 1` }).where('org_id', '=', ctx.orgId).where('id', '=', input.savedReplyId).execute();
     }
     if (conversation.kind === 'email') await queueEmailReply(ctx, conversation, message.id, input.body);
     else await ctx.emit(REPLY_QUEUED, { conversationId: conversation.id, messageId: message.id, connectionId: conversation.channel_connection_id });
@@ -1473,7 +1473,7 @@ export const conversationReplyPrivately = defineCommand({
     const me = requireUser(ctx);
     refuseUnfilledPlaceholder(input.body);
     const comment = await ctx.trx
-      .selectFrom('crove_kernel.conversation_message')
+      .selectFrom('ludy_kernel.conversation_message')
       .select(['id', 'conversation_id', 'channel_connection_id', 'kind', 'direction', 'external_message_id', 'author_identity_id', 'sent_at', 'platform_removed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
@@ -1485,7 +1485,7 @@ export const conversationReplyPrivately = defineCommand({
     }
     const parentConv = await lockConversation(ctx, comment.conversation_id);
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'status', 'scopes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', comment.channel_connection_id)
@@ -1508,7 +1508,7 @@ export const conversationReplyPrivately = defineCommand({
     if (ctx.now.getTime() - comment.sent_at.getTime() > 7 * 24 * HOUR_MS) {
       throw new DomainError('PRIVATE_REPLY_WINDOW_CLOSED', 409, 'Đã quá 7 ngày kể từ khi khách bình luận, Meta không còn cho phép trả lời riêng');
     }
-    const access = await sql<{ ok: boolean }>`SELECT crove_kernel.conversation_access('direct', ${connection.id}::uuid, true) AS ok`.execute(ctx.trx);
+    const access = await sql<{ ok: boolean }>`SELECT ludy_kernel.conversation_access('direct', ${connection.id}::uuid, true) AS ok`.execute(ctx.trx);
     if (!access.rows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'Bạn không có quyền gửi tin nhắn riêng trên kênh này');
     }
@@ -1517,7 +1517,7 @@ export const conversationReplyPrivately = defineCommand({
       throw new DomainError('NO_RECIPIENT', 409, 'Bình luận này không có thông tin người gửi để trả lời riêng');
     }
     const linked = await ctx.trx
-      .selectFrom('crove_kernel.conversation')
+      .selectFrom('ludy_kernel.conversation')
       .select('party_id')
       .where('org_id', '=', ctx.orgId)
       .where('identity_id', '=', identityId)
@@ -1528,7 +1528,7 @@ export const conversationReplyPrivately = defineCommand({
       .executeTakeFirst();
     const externalThreadId = `private:${comment.external_message_id}`;
     await ctx.trx
-      .insertInto('crove_kernel.conversation')
+      .insertInto('ludy_kernel.conversation')
       .values({
         org_id: ctx.orgId,
         channel_connection_id: connection.id,
@@ -1547,7 +1547,7 @@ export const conversationReplyPrivately = defineCommand({
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'kind', 'external_thread_id']).doNothing())
       .execute();
     const directConv = (await ctx.trx
-      .selectFrom('crove_kernel.conversation')
+      .selectFrom('ludy_kernel.conversation')
       .select(CONVERSATION_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', connection.id)
@@ -1556,7 +1556,7 @@ export const conversationReplyPrivately = defineCommand({
       .forUpdate()
       .executeTakeFirstOrThrow()) as ConversationRow;
     const existingMsg = await ctx.trx
-      .selectFrom('crove_kernel.conversation_message')
+      .selectFrom('ludy_kernel.conversation_message')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', directConv.id)
@@ -1569,7 +1569,7 @@ export const conversationReplyPrivately = defineCommand({
     }
     const seq = directConv.last_seq + 1;
     const message = await ctx.trx
-      .insertInto('crove_kernel.conversation_message')
+      .insertInto('ludy_kernel.conversation_message')
       .values({
         org_id: ctx.orgId,
         conversation_id: directConv.id,
@@ -1589,7 +1589,7 @@ export const conversationReplyPrivately = defineCommand({
       .returning('id')
       .executeTakeFirstOrThrow();
     await ctx.trx
-      .updateTable('crove_kernel.conversation')
+      .updateTable('ludy_kernel.conversation')
       .set({
         last_seq: seq,
         last_message_at: ctx.now,
@@ -1623,11 +1623,11 @@ export const EMAIL_REPLY_SOURCE = 'kernel.conversation.reply';
 export const EMAIL_REPLY_TEMPLATE = 'kernel.conversation_reply';
 async function queueEmailReply(ctx: CommandContext, conversation: ConversationRow, messageId: string, body: string): Promise<void> {
   const to = conversation.identity_id
-    ? await ctx.trx.selectFrom('crove_kernel.conversation_identity').select('external_user_id').where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).executeTakeFirst()
+    ? await ctx.trx.selectFrom('ludy_kernel.conversation_identity').select('external_user_id').where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).executeTakeFirst()
     : undefined;
   if (!to) throw new DomainError('NO_RECIPIENT', 409, 'Hội thoại này chưa có địa chỉ người nhận');
   const last = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message')
+    .selectFrom('ludy_kernel.conversation_message')
     .select(['external_message_id', 'email_refs'])
     .where('org_id', '=', ctx.orgId)
     .where('conversation_id', '=', conversation.id)
@@ -1638,11 +1638,11 @@ async function queueEmailReply(ctx: CommandContext, conversation: ConversationRo
     .executeTakeFirst();
   const refs = last?.external_message_id ? [...new Set([...last.email_refs, last.external_message_id])].slice(-EMAIL_REFS_MAX) : [];
   const meta = await ctx.trx
-    .selectFrom('crove_kernel.conversation')
-    .innerJoin('crove_kernel.tenant', 'crove_kernel.tenant.org_id', 'crove_kernel.conversation.org_id')
-    .select(['crove_kernel.conversation.subject as subject', 'crove_kernel.tenant.name as org_name'])
-    .where('crove_kernel.conversation.org_id', '=', ctx.orgId)
-    .where('crove_kernel.conversation.id', '=', conversation.id)
+    .selectFrom('ludy_kernel.conversation')
+    .innerJoin('ludy_kernel.tenant', 'ludy_kernel.tenant.org_id', 'ludy_kernel.conversation.org_id')
+    .select(['ludy_kernel.conversation.subject as subject', 'ludy_kernel.tenant.name as org_name'])
+    .where('ludy_kernel.conversation.org_id', '=', ctx.orgId)
+    .where('ludy_kernel.conversation.id', '=', conversation.id)
     .executeTakeFirstOrThrow();
   const subject = meta.subject ? (/^\s*re:/i.test(meta.subject) ? meta.subject : `Re: ${meta.subject}`) : `Trả lời từ ${meta.org_name}`;
   const mail = await createMailMessage(ctx, {
@@ -1656,7 +1656,7 @@ async function queueEmailReply(ctx: CommandContext, conversation: ConversationRo
     status: 'queued',
   });
   await ctx.trx
-    .updateTable('crove_kernel.conversation_message')
+    .updateTable('ludy_kernel.conversation_message')
     .set({ external_message_id: mail.messageIdHeader, ...(mail.status === 'suppressed' ? { send_state: 'failed', send_error_code: 'SUPPRESSED' } : {}) })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', messageId)
@@ -1684,7 +1684,7 @@ const replyCallKey = (messageId: string, attempt: number): string => `conversati
 // A call a worker began and never finished is a person's to settle after this long: the message says so (unknown).
 async function staleCall(ctx: CommandContext, key: string): Promise<boolean> {
   const call = await ctx.trx
-    .selectFrom('crove_kernel.external_call')
+    .selectFrom('ludy_kernel.external_call')
     .select(['state', 'started_at'])
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', key)
@@ -1710,9 +1710,9 @@ export const conversationReplyBegin = defineCommand({
     if (message.kind === 'email') return { action: 'none', reason: 'settled' };
     if (message.send_state === 'sending') {
       if (await staleCall(ctx, replyCallKey(message.id, message.send_attempt))) {
-        await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'unknown', send_error_code: 'WORKER_LOST' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+        await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'unknown', send_error_code: 'WORKER_LOST' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
         await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({ state: 'ambiguous', error_kind: 'unknown', error_code: 'WORKER_LOST', updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('key', '=', replyCallKey(message.id, message.send_attempt))
@@ -1725,33 +1725,33 @@ export const conversationReplyBegin = defineCommand({
     if (message.send_state !== 'queued') return { action: 'none', reason: 'settled' };
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active' || !conversationRules(connection.provider)) {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: 'CHANNEL_NOT_ACTIVE' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'failed', send_error_code: 'CHANNEL_NOT_ACTIVE' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       return { action: 'none', reason: 'channel_inactive' };
     }
     const conversation = await ctx.trx
-      .selectFrom('crove_kernel.conversation')
-      .innerJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'crove_kernel.conversation.org_id').onRef('i.id', '=', 'crove_kernel.conversation.identity_id'))
-      .select(['crove_kernel.conversation.external_thread_id as thread', 'crove_kernel.conversation.external_post_id as post', 'crove_kernel.conversation.last_inbound_at as lastInboundAt', 'i.external_user_id as contact'])
-      .where('crove_kernel.conversation.org_id', '=', ctx.orgId)
-      .where('crove_kernel.conversation.id', '=', message.conversation_id)
+      .selectFrom('ludy_kernel.conversation')
+      .innerJoin('ludy_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'ludy_kernel.conversation.org_id').onRef('i.id', '=', 'ludy_kernel.conversation.identity_id'))
+      .select(['ludy_kernel.conversation.external_thread_id as thread', 'ludy_kernel.conversation.external_post_id as post', 'ludy_kernel.conversation.last_inbound_at as lastInboundAt', 'i.external_user_id as contact'])
+      .where('ludy_kernel.conversation.org_id', '=', ctx.orgId)
+      .where('ludy_kernel.conversation.id', '=', message.conversation_id)
       .executeTakeFirst();
     if (!conversation) {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: 'NO_CONTACT' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'failed', send_error_code: 'NO_CONTACT' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       return { action: 'none', reason: 'settled' };
     }
     // An account stopped (or disconnected, or without the right to reply) after the reply was queued: nothing is sent through it.
-    const threadRow = await ctx.trx.selectFrom('crove_kernel.conversation').select('reply_window_until').where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    const threadRow = await ctx.trx.selectFrom('ludy_kernel.conversation').select('reply_window_until').where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
     const businessBlock = await businessReplyBlock(ctx, message.channel_connection_id, connection.provider, conversation.thread, threadRow?.reply_window_until ?? null, ctx.now.getTime());
     if (businessBlock && businessBlock !== 'window_closed') {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: businessBlockError(businessBlock).code }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'failed', send_error_code: businessBlockError(businessBlock).code }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       return { action: 'none', reason: 'settled' };
     }
     const callKey = replyCallKey(message.id, message.send_attempt);
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'kernel', target: connection.provider, step: 'reply', retry_safety: 'reconcile_only', started_at: ctx.now })
       .execute();
-    await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'sending', send_error_code: null }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'sending', send_error_code: null }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
     ctx.audit({ message_id: message.id, attempt: message.send_attempt });
     return {
       action: 'call',
@@ -1800,7 +1800,7 @@ async function countYoutubeReplyUnits(ctx: CommandContext, connectionId: string,
   if (row?.provider !== 'youtube') return;
   const q = youtubeQuotaNow({ resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until }, ctx.now);
   await ctx.trx
-    .updateTable('crove_kernel.channel_connection')
+    .updateTable('ludy_kernel.channel_connection')
     .set({ quota_reset_at: q.resetAt, quota_poll_units: q.pollUnits, quota_reply_units: q.replyUnits + units })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', connectionId)
@@ -1818,7 +1818,7 @@ export const conversationReplyRecord = defineCommand({
     requireSystem(ctx);
     // A YouTube reply adds to the connection's quota under its row's lock (countYoutubeReplyUnits). The erase of a channel locks the channel's row and
     // then deletes its messages, so this takes the two in the same order (channel, then message) for YouTube: otherwise the two could wait for each other.
-    const own = await ctx.trx.selectFrom('crove_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
+    const own = await ctx.trx.selectFrom('ludy_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
     if (own && (await youtubeQuotaRow(ctx, own.channel_connection_id, false))?.provider === 'youtube') await youtubeQuotaRow(ctx, own.channel_connection_id, true);
     const message = await lockMessage(ctx, input.messageId);
     const current = replyCallKey(message.id, message.send_attempt);
@@ -1827,7 +1827,7 @@ export const conversationReplyRecord = defineCommand({
     if (input.callKey !== current) return { state: message.send_state ?? 'none' };
     if (message.send_state === 'sent') {
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now, ...(result.kind === 'accepted' ? { external_ref: callRefOf(result.externalId) } : {}) })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', current)
@@ -1840,7 +1840,7 @@ export const conversationReplyRecord = defineCommand({
     if (message.send_state !== 'sending' && !(message.send_state === 'unknown' && result.kind === 'accepted')) return { state: message.send_state ?? 'none' };
     const call = (set: CallSet) =>
       ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ ...set, ...(set.state === 'succeeded' || set.state === 'failed' ? { finished_at: ctx.now } : {}), updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', current)
@@ -1848,14 +1848,14 @@ export const conversationReplyRecord = defineCommand({
     if (result.kind === 'accepted') {
       // The platform's id may already belong to a message the echo stored first.
       const clash = await ctx.trx
-        .selectFrom('crove_kernel.conversation_message')
+        .selectFrom('ludy_kernel.conversation_message')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('channel_connection_id', '=', message.channel_connection_id)
         .where('external_message_id', '=', result.externalId)
         .executeTakeFirst();
       await ctx.trx
-        .updateTable('crove_kernel.conversation_message')
+        .updateTable('ludy_kernel.conversation_message')
         .set({ send_state: 'sent', send_error_code: null, ...(clash ? {} : { external_message_id: result.externalId }) })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', message.id)
@@ -1865,11 +1865,11 @@ export const conversationReplyRecord = defineCommand({
       return { state: 'sent' };
     }
     if (result.kind === 'rejected') {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: code(result.code, result.error.toUpperCase()) }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'failed', send_error_code: code(result.code, result.error.toUpperCase()) }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       await call({ state: 'failed', error_kind: result.error, error_code: code(result.code, result.error) });
       return { state: 'failed' };
     }
-    await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'unknown', send_error_code: code(result.code, 'UNKNOWN') }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ send_state: 'unknown', send_error_code: code(result.code, 'UNKNOWN') }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
     await call({ state: 'ambiguous', error_kind: 'unknown', error_code: code(result.code, 'unknown') });
     return { state: 'unknown' };
   },
@@ -1894,13 +1894,13 @@ export const conversationReplySettle = defineCommand({
       // A person looked on the platform and settled it: the platform's id of an attempt it reported failed is no longer this message's, so a repeated status of
       // that attempt (Meta delivers at least once) cannot flip the answer back. Not for an email, whose id is its Message-ID.
       await ctx.trx
-        .updateTable('crove_kernel.conversation_message')
+        .updateTable('ludy_kernel.conversation_message')
         .set({ send_state: 'sent', send_error_code: null, ...(message.kind === 'email' ? {} : { external_message_id: null }) })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', message.id)
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', replyCallKey(message.id, message.send_attempt))
@@ -1919,7 +1919,7 @@ export const conversationReplySettle = defineCommand({
       throw new DomainError('SEND_UNKNOWN_NO_RESEND', 409, 'Tin nhắn này có thể đã đến khách. Hãy kiểm tra trên kênh rồi đánh dấu là đã gửi, không gửi lại bằng nút');
     }
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
-    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq', 'external_thread_id']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    const thread = await ctx.trx.selectFrom('ludy_kernel.conversation').select(['reply_window_until', 'last_seq', 'external_thread_id']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
     // The same rule as a new reply: a newer message means the customer's words changed what is worth saying, so an earlier reply is not
     // sent after it; a person writes a new one.
     if (thread && thread.last_seq > message.seq) throw new DomainError('CONVERSATION_MOVED', 409, 'Hội thoại vừa có tin mới nên chưa gửi lại. Hãy đọc tin mới rồi viết câu trả lời mới');
@@ -1928,7 +1928,7 @@ export const conversationReplySettle = defineCommand({
     if (businessBlock) throw businessBlockError(businessBlock);
     if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id);
     await ctx.trx
-      .updateTable('crove_kernel.conversation_message')
+      .updateTable('ludy_kernel.conversation_message')
       // A new attempt has no platform id yet: the earlier attempt's id would let its late status mark this one (and a failed attempt keeps none a status could use).
       .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null, ...(message.kind === 'email' ? {} : { external_message_id: null }) })
       .where('org_id', '=', ctx.orgId)
@@ -1970,7 +1970,7 @@ export const conversationHide = defineCommand({
     // YouTube meters the call (50 units of the project's day): refused up front while Google has said the quota is spent, like a reply.
     if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id, 'hide');
     await ctx.trx
-      .updateTable('crove_kernel.conversation_message')
+      .updateTable('ludy_kernel.conversation_message')
       .set({ hide_request: input.hidden ? 'hide' : 'unhide', hide_attempt: message.hide_attempt + 1, hide_error_code: null, hidden_by: input.hidden ? me : message.hidden_by })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', message.id)
@@ -2008,19 +2008,19 @@ export const conversationHideBegin = defineCommand({
     if (!message.hide_request || !message.external_message_id) return { action: 'none' };
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ hide_request: null, hide_error_code: 'CHANNEL_NOT_ACTIVE', hidden_by: message.hidden_at ? message.hidden_by : null }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ hide_request: null, hide_error_code: 'CHANNEL_NOT_ACTIVE', hidden_by: message.hidden_at ? message.hidden_by : null }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       return { action: 'none' };
     }
     const callKey = hideCallKey(message.id, message.hide_attempt);
-    const call = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
+    const call = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
     if (!call) {
       await ctx.trx
-        .insertInto('crove_kernel.external_call')
+        .insertInto('ludy_kernel.external_call')
         .values({ org_id: ctx.orgId, key: callKey, module: 'kernel', target: connection.provider, step: 'hide', retry_safety: 'idempotent', started_at: ctx.now })
         .execute();
     } else if (call.state === 'started' || call.state === 'ambiguous') {
       // Made again: the same hide, which the platform treats as one.
-      await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'started', calls: call.calls + 1, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', call.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'started', calls: call.calls + 1, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', call.id).execute();
     } else {
       return { action: 'none' };
     }
@@ -2053,14 +2053,14 @@ export const conversationHideRecord = defineCommand({
   handler: async (ctx, input): Promise<{ state: string }> => {
     requireSystem(ctx);
     // A YouTube hide adds to the connection's quota under its row's lock, so (as for a reply) the channel's row is locked before the message's.
-    const own = await ctx.trx.selectFrom('crove_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
+    const own = await ctx.trx.selectFrom('ludy_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
     if (own && (await youtubeQuotaRow(ctx, own.channel_connection_id, false))?.provider === 'youtube') await youtubeQuotaRow(ctx, own.channel_connection_id, true);
     const message = await lockMessage(ctx, input.messageId);
     if (!message.hide_request || input.callKey !== hideCallKey(message.id, message.hide_attempt)) return { state: 'stale' };
     const { result } = input;
     const settle = (set: CallSet) =>
       ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ ...set, ...(set.state === 'succeeded' || set.state === 'failed' ? { finished_at: ctx.now } : {}), updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', input.callKey)
@@ -2069,7 +2069,7 @@ export const conversationHideRecord = defineCommand({
     if (result.kind === 'done') {
       const hide = message.hide_request === 'hide';
       await ctx.trx
-        .updateTable('crove_kernel.conversation_message')
+        .updateTable('ludy_kernel.conversation_message')
         .set({ hidden_at: hide ? ctx.now : null, hidden_by: hide ? message.hidden_by : null, hide_request: null, hide_error_code: null })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', message.id)
@@ -2081,13 +2081,13 @@ export const conversationHideRecord = defineCommand({
     }
     if (result.kind === 'unknown') {
       // Left requested: the job asks again (the same call, which is safe); after its last try a person asks again.
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ hide_error_code: code(result.code, 'UNKNOWN') }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_message').set({ hide_error_code: code(result.code, 'UNKNOWN') }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       await settle({ state: 'ambiguous', error_kind: 'unknown', error_code: code(result.code, 'unknown') });
       return { state: 'unknown' };
     }
     const failure = code(result.code, result.error.toUpperCase());
     await ctx.trx
-      .updateTable('crove_kernel.conversation_message')
+      .updateTable('ludy_kernel.conversation_message')
       .set({ hide_request: null, hide_error_code: failure, hidden_by: message.hidden_at ? message.hidden_by : null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', message.id)
@@ -2104,14 +2104,14 @@ export const conversationHideRecord = defineCommand({
 // Whether this member may take a thread: a member who is not a viewer, of an org's thread they could read (a limited member
 // only on their channels; a private message only owners and admins until the Service role exists).
 async function mayAssign(ctx: CommandContext, conversation: ConversationRow, userId: string): Promise<boolean> {
-  const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
+  const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
   if (!member || member.role === 'viewer') return false;
   if (member.role === 'owner' || member.role === 'admin') return true;
   if (conversation.kind === 'direct' || conversation.kind === 'email') {
     // A private message or an email is handled by a member who holds the permission to read it (the desk.agent role, CV3), through an org-wide assignment.
     const held = await ctx.trx
-      .selectFrom('crove_kernel.role_assignment as a')
-      .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
+      .selectFrom('ludy_kernel.role_assignment as a')
+      .innerJoin('ludy_kernel.role_permission as p', 'p.role_key', 'a.role_key')
       .select('a.id')
       .where('a.org_id', '=', ctx.orgId)
       .where('a.user_id', '=', userId)
@@ -2120,7 +2120,7 @@ async function mayAssign(ctx: CommandContext, conversation: ConversationRow, use
       .executeTakeFirst();
     if (!held) return false;
   }
-  const rows = await ctx.trx.selectFrom('crove_kernel.channel_access').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.channel_access').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
   return rows.length === 0 || rows.some((r) => r.channel_connection_id === conversation.channel_connection_id);
 }
 
@@ -2137,7 +2137,7 @@ export const conversationAssign = defineCommand({
     if (input.assigneeUserId && !(await mayAssign(ctx, conversation, input.assigneeUserId))) {
       throw new DomainError('ASSIGNEE_NOT_ALLOWED', 422, 'Người này không xử lý được hội thoại này');
     }
-    await ctx.trx.updateTable('crove_kernel.conversation').set({ assignee_user_id: input.assigneeUserId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation').set({ assignee_user_id: input.assigneeUserId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
     ctx.audit({ conversation_id: conversation.id, assigned: input.assigneeUserId !== null });
     return { conversationId: conversation.id };
   },
@@ -2154,7 +2154,7 @@ export const conversationResolve = defineCommand({
     const me = requireUser(ctx);
     const conversation = await lockConversation(ctx, input.conversationId);
     if (conversation.status !== 'resolved') {
-      await ctx.trx.updateTable('crove_kernel.conversation').set({ status: 'resolved', resolved_at: ctx.now, resolved_by: me, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation').set({ status: 'resolved', resolved_at: ctx.now, resolved_by: me, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
     }
     ctx.audit({ conversation_id: conversation.id });
     return { conversationId: conversation.id };
@@ -2174,7 +2174,7 @@ export const conversationReopen = defineCommand({
     if (conversation.status === 'resolved') {
       // New when the customer wrote last, pending when the org did.
       const last = await ctx.trx
-        .selectFrom('crove_kernel.conversation_message')
+        .selectFrom('ludy_kernel.conversation_message')
         .select('direction')
         .where('org_id', '=', ctx.orgId)
         .where('conversation_id', '=', conversation.id)
@@ -2182,7 +2182,7 @@ export const conversationReopen = defineCommand({
         .limit(1)
         .executeTakeFirst();
       await ctx.trx
-        .updateTable('crove_kernel.conversation')
+        .updateTable('ludy_kernel.conversation')
         .set({ status: last?.direction === 'out' ? 'pending' : 'new', resolved_at: null, resolved_by: null, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', conversation.id)
@@ -2204,7 +2204,7 @@ export const conversationNoteAdd = defineCommand({
     const me = requireUser(ctx);
     const conversation = await lockConversation(ctx, input.conversationId);
     const note = await ctx.trx
-      .insertInto('crove_kernel.conversation_note')
+      .insertInto('ludy_kernel.conversation_note')
       .values({ org_id: ctx.orgId, conversation_id: conversation.id, author_user_id: me, body: input.body, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -2250,14 +2250,14 @@ export const conversationTasks = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<ConversationTaskList> => {
     const conversation = await ctx.trx
-      .selectFrom('crove_kernel.conversation')
+      .selectFrom('ludy_kernel.conversation')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.conversationId)
       .executeTakeFirst();
     if (!conversation) throw notFound();
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .select(['id', 'title', 'status', 'assignee_position_id', 'due', 'created_at', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where(sql<boolean>`source_ref @> ${JSON.stringify({ type: 'kernel.conversation', id: conversation.id })}::jsonb`)
@@ -2283,14 +2283,14 @@ export const conversationLinkContact = defineCommand({
     requireUser(ctx);
     const conversation = await lockConversation(ctx, input.conversationId);
     if (input.partyId) {
-      const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
+      const party = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ này');
     }
     // A person's decision about who this is: it holds for the customer's other threads of the same kind, never across kinds.
-    await ctx.trx.updateTable('crove_kernel.conversation').set({ party_id: input.partyId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation').set({ party_id: input.partyId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
     if (conversation.identity_id) {
       await ctx.trx
-        .updateTable('crove_kernel.conversation')
+        .updateTable('ludy_kernel.conversation')
         .set({ party_id: input.partyId, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('identity_id', '=', conversation.identity_id)
@@ -2317,11 +2317,11 @@ export const conversationSetIntent = defineCommand({
   handler: async (ctx, input): Promise<{ conversationId: string; intent: ConversationIntent | null }> => {
     const me = requireUser(ctx);
     const conversation = await lockConversation(ctx, input.conversationId);
-    const row = await ctx.trx.selectFrom('crove_kernel.conversation').select('intent').where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('ludy_kernel.conversation').select('intent').where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).executeTakeFirstOrThrow();
     const before = (row.intent as ConversationIntent | null) ?? null;
     if (before !== input.intent) {
       await ctx.trx
-        .updateTable('crove_kernel.conversation')
+        .updateTable('ludy_kernel.conversation')
         .set({ intent: input.intent, intent_set_by: input.intent ? me : null, intent_set_at: input.intent ? ctx.now : null, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', conversation.id)
@@ -2349,10 +2349,10 @@ export const conversationIntentSource = defineQuery({
     const { rows } = await sql<{ id: string; last_seq: number; texts: string[] | null }>`
       SELECT c.id, c.last_seq,
              (SELECT pg_catalog.array_agg(t.body ORDER BY t.seq) FROM (
-                SELECT pg_catalog.left(m.body, ${CONVERSATION_INTENT_CHARS}) AS body, m.seq FROM crove_kernel.conversation_message m
+                SELECT pg_catalog.left(m.body, ${CONVERSATION_INTENT_CHARS}) AS body, m.seq FROM ludy_kernel.conversation_message m
                 WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND pg_catalog.btrim(m.body) <> ''
                 ORDER BY m.seq DESC LIMIT ${CONVERSATION_INTENT_MESSAGES}) t) AS texts
-      FROM crove_kernel.conversation c
+      FROM ludy_kernel.conversation c
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ANY(${input.conversationIds}::uuid[])`.execute(ctx.trx);
     const byId = new Map(rows.map((r) => [r.id, { id: r.id, lastSeq: r.last_seq, texts: r.texts ?? [] }]));
     // In the order asked, each thread once.
@@ -2385,9 +2385,9 @@ export const conversationContactCandidates = defineQuery({
     const { rows } = await sql<{ party_id: string | null; identity_name: string | null; address: string | null; wa_id: string | null }>`
       SELECT c.party_id, i.display_name AS identity_name, CASE WHEN c.kind = 'email' AND NOT c.sender_unverified THEN i.external_user_id END AS address,
              CASE WHEN ch.provider = 'whatsapp' THEN i.external_user_id END AS wa_id
-      FROM crove_kernel.conversation c
-      LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
-      LEFT JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
+      FROM ludy_kernel.conversation c
+      LEFT JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+      LEFT JOIN ludy_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.conversationId}::uuid`.execute(ctx.trx);
     const thread = rows[0];
     if (!thread) throw notFound();
@@ -2400,13 +2400,13 @@ export const conversationContactCandidates = defineQuery({
         ? []
         : (
             await sql<{ id: string; name: string }>`
-              SELECT p.id, p.name FROM crove_kernel.party p
+              SELECT p.id, p.name FROM ludy_kernel.party p
               WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.email IS NOT NULL AND pg_catalog.lower(pg_catalog.btrim(p.email)) = ${thread.address}
               ORDER BY p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX}`.execute(ctx.trx)
           ).rows;
     // The numbers the customer wrote in this thread, most recent messages first.
     const written = await sql<{ body: string }>`
-      SELECT pg_catalog.left(m.body, 2000) AS body FROM crove_kernel.conversation_message m
+      SELECT pg_catalog.left(m.body, 2000) AS body FROM ludy_kernel.conversation_message m
       WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = ${input.conversationId}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL
       ORDER BY m.seq DESC LIMIT 20`.execute(ctx.trx);
     const keys: string[] = [];
@@ -2420,8 +2420,8 @@ export const conversationContactCandidates = defineQuery({
         ? []
         : (
             await sql<{ id: string; name: string }>`
-              SELECT p.id, p.name FROM crove_kernel.party p
-              WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.phone IS NOT NULL AND crove_kernel.phone_key(p.phone) = ANY(${keys}::text[])
+              SELECT p.id, p.name FROM ludy_kernel.party p
+              WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.phone IS NOT NULL AND ludy_kernel.phone_key(p.phone) = ANY(${keys}::text[])
               ORDER BY p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX}`.execute(ctx.trx)
           ).rows;
     // Words of two letters or more, folded; a one-word name needs that word, a longer one needs two of its words, so "Nguyễn" alone does not match everyone.
@@ -2433,11 +2433,11 @@ export const conversationContactCandidates = defineQuery({
         : (
             await sql<{ id: string; name: string }>`
               WITH tok AS (
-                SELECT DISTINCT w FROM pg_catalog.unnest(pg_catalog.string_to_array(crove_kernel.search_fold(${thread.identity_name}), ' ')) AS w WHERE pg_catalog.length(w) >= 2
+                SELECT DISTINCT w FROM pg_catalog.unnest(pg_catalog.string_to_array(ludy_kernel.search_fold(${thread.identity_name}), ' ')) AS w WHERE pg_catalog.length(w) >= 2
               ), need AS (SELECT LEAST(2, pg_catalog.count(*))::int AS n FROM tok),
               q AS (SELECT pg_catalog.to_tsquery('pg_catalog.simple', pg_catalog.string_agg(w, ' | ')) AS tsq FROM tok),
               near AS (
-                SELECT p.id, p.name, crove_kernel.search_fold(p.name) AS folded FROM crove_kernel.party p, q
+                SELECT p.id, p.name, ludy_kernel.search_fold(p.name) AS folded FROM ludy_kernel.party p, q
                 WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.search @@ q.tsq
               )
               SELECT near.id, near.name FROM near JOIN tok ON pg_catalog.strpos(' ' || near.folded || ' ', ' ' || tok.w || ' ') > 0
@@ -2479,13 +2479,13 @@ const NEW_NOTICE_AGE_MS = 24 * 3_600_000;
 
 // Tells the members who can answer a conversation that has become New: the assignee when there is one and they can read it; else the available
 // members who can read it; else the owners and admins (whoever is away). The readers are those the database lets read the thread
-// (crove_kernel.conversation_readers, the same rule as conversation_access, never a viewer). One notification per member for each time a thread becomes
+// (ludy_kernel.conversation_readers, the same rule as conversation_access, never a viewer). One notification per member for each time a thread becomes
 // New (the key carries the message that did it), no text in it.
 async function routeNewConversation(ctx: CommandContext, conversationId: string, assignee: string | null, seq: number): Promise<number> {
-  const { rows } = await sql<{ user_id: string; available: boolean }>`SELECT user_id, available FROM crove_kernel.conversation_readers(${conversationId}::uuid)`.execute(ctx.trx);
+  const { rows } = await sql<{ user_id: string; available: boolean }>`SELECT user_id, available FROM ludy_kernel.conversation_readers(${conversationId}::uuid)`.execute(ctx.trx);
   // A member who turned this kind off is not told: the choice below is made among those who did not, so the fallback still runs when the available
   // readers all muted it.
-  const muted = new Set((await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.notification_mute WHERE org_id = ${ctx.orgId}::uuid AND kind = ${CONVERSATION_NEW}`.execute(ctx.trx)).rows.map((r) => r.user_id));
+  const muted = new Set((await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.notification_mute WHERE org_id = ${ctx.orgId}::uuid AND kind = ${CONVERSATION_NEW}`.execute(ctx.trx)).rows.map((r) => r.user_id));
   const open = rows.filter((r) => !muted.has(r.user_id));
   let users: string[] = [];
   if (assignee && open.some((r) => r.user_id === assignee)) users = [assignee];
@@ -2513,14 +2513,14 @@ export const conversationComposing = defineCommand({
     const me = requireUser(ctx);
     // The thread as this member reads it: one they may not read is not found, and the marker's own policy refuses one they may not write.
     const thread = await ctx.trx
-      .selectFrom('crove_kernel.conversation')
+      .selectFrom('ludy_kernel.conversation')
       .select(['id', 'channel_connection_id', 'kind'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.conversationId)
       .executeTakeFirst();
     if (!thread) throw notFound();
     const current = await ctx.trx
-      .selectFrom('crove_kernel.conversation_composing')
+      .selectFrom('ludy_kernel.conversation_composing')
       .select('updated_at')
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', thread.id)
@@ -2529,7 +2529,7 @@ export const conversationComposing = defineCommand({
     if (current && ctx.now.getTime() - current.updated_at.getTime() < CONVERSATION_COMPOSING_EVERY_SECONDS * 1000) return { marked: false };
     const expires = new Date(ctx.now.getTime() + CONVERSATION_COMPOSING_SECONDS * 1000);
     await ctx.trx
-      .insertInto('crove_kernel.conversation_composing')
+      .insertInto('ludy_kernel.conversation_composing')
       .values({ org_id: ctx.orgId, conversation_id: thread.id, channel_connection_id: thread.channel_connection_id, kind: thread.kind, user_id: me, expires_at: expires, updated_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'conversation_id', 'user_id']).doUpdateSet({ expires_at: expires, updated_at: ctx.now }))
       .execute();
@@ -2551,7 +2551,7 @@ export const conversationSetAvailability = defineCommand({
     const until = input.status === 'away' && input.until ? new Date(input.until) : null;
     if (until && until.getTime() <= ctx.now.getTime()) throw new DomainError('AVAILABILITY_PAST', 422, 'Giờ quay lại phải ở tương lai');
     await ctx.trx
-      .insertInto('crove_kernel.member_availability')
+      .insertInto('ludy_kernel.member_availability')
       .values({ org_id: ctx.orgId, user_id: me, status: input.status, until, updated_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'user_id']).doUpdateSet({ status: input.status, until, updated_at: ctx.now }))
       .execute();
@@ -2568,7 +2568,7 @@ export const conversationAvailability = defineQuery({
   access: WRITERS,
   handler: async (ctx): Promise<Availability> => {
     const me = viewerOf(ctx);
-    const rows = await ctx.trx.selectFrom('crove_kernel.member_availability').select(['user_id', 'status', 'until']).where('org_id', '=', ctx.orgId).orderBy('user_id').execute();
+    const rows = await ctx.trx.selectFrom('ludy_kernel.member_availability').select(['user_id', 'status', 'until']).where('org_id', '=', ctx.orgId).orderBy('user_id').execute();
     const now = Date.now();
     const entry = (r: { user_id: string; status: string; until: Date | null }): Availability['me'] => {
       const over = r.status === 'away' && r.until !== null && r.until.getTime() <= now;
@@ -2591,7 +2591,7 @@ export const conversationToday = defineQuery({
   handler: async (ctx): Promise<TodayItem[]> => {
     const me = viewerOf(ctx);
     if (!me || ctx.role === 'viewer') return [];
-    const waiting = sql`FROM crove_kernel.conversation c JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
+    const waiting = sql`FROM ludy_kernel.conversation c JOIN ludy_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`;
     const { rows: total } = await sql<{ n: string }>`SELECT count(*)::text AS n ${waiting}`.execute(ctx.trx);
     const count = Number(total[0]?.n ?? 0);
@@ -2630,7 +2630,7 @@ export const conversationSandboxComment = defineCommand({
   handler: async (ctx, input): Promise<{ accountId: string; events: ConversationEvent[] }> => {
     requireUser(ctx);
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status', 'external_account_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -2662,7 +2662,7 @@ export const conversationSandboxComment = defineCommand({
 // ---------------------------------------------------------------------------------------------------------------------
 
 async function retentionOf(ctx: QueryContext | CommandContext): Promise<ConversationRetention> {
-  const row = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('retention_months').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.conversation_setting').select('retention_months').where('org_id', '=', ctx.orgId).executeTakeFirst();
   if (!row) return { retentionMonths: CONVERSATION_RETENTION_DEFAULT_MONTHS as 24, isDefault: true };
   const months = row.retention_months;
   return { retentionMonths: months === 6 || months === 12 || months === 24 ? months : null, isDefault: false };
@@ -2686,7 +2686,7 @@ export const conversationRetentionSet = defineCommand({
   handler: async (ctx, input): Promise<ConversationRetention> => {
     const me = requireUser(ctx);
     await ctx.trx
-      .insertInto('crove_kernel.conversation_setting')
+      .insertInto('ludy_kernel.conversation_setting')
       .values({ org_id: ctx.orgId, retention_months: input.retentionMonths, set_by: me })
       .onConflict((oc) => oc.column('org_id').doUpdateSet({ retention_months: input.retentionMonths, set_by: me, updated_at: ctx.now }))
       .execute();
@@ -2700,14 +2700,14 @@ async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>
   // The mails the org sent in answer on an email thread (#2439) carry the customer's address, their subject and the answer's text: all three are dropped
   // with the thread (the keyed hash stays, so a bounce still suppresses the address). A mail still queued then fails at send time with no address.
   await sql`
-    UPDATE crove_kernel.mail_message mm SET to_address = NULL, subject = NULL, payload = NULL
+    UPDATE ludy_kernel.mail_message mm SET to_address = NULL, subject = NULL, payload = NULL
     WHERE mm.org_id = ${ctx.orgId}::uuid AND mm.source = ${EMAIL_REPLY_SOURCE} AND (mm.to_address IS NOT NULL OR mm.subject IS NOT NULL OR mm.payload IS NOT NULL)
-      AND mm.source_id IN (SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
+      AND mm.source_id IN (SELECT m.id FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
                            WHERE m.org_id = ${ctx.orgId}::uuid AND c.kind = 'email' AND ${filter})`.execute(ctx.trx);
   const { rows } = await sql<{ threads: string; messages: string }>`
-    WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
+    WITH gone AS (DELETE FROM ludy_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
     SELECT (SELECT count(*) FROM gone)::text AS threads,
-           (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id IN (SELECT id FROM gone))::text AS messages`.execute(ctx.trx);
+           (SELECT count(*) FROM ludy_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id IN (SELECT id FROM gone))::text AS messages`.execute(ctx.trx);
   // What an AI coworker proposed to send into these threads (E4 #3863: a reply, a private reply, hiding a comment) holds the thread's or the message's id and, for a reply, the text, in the proposal's payload. It goes
   // with the thread, pending or decided (a decided proposal is frozen against the tenant, so the database's definer does it). The definer runs after the delete and takes no ids: it blanks the proposals whose
   // thread or message no longer exists, so it cannot reach a live thread's, and a large purge builds no id lists (#4160).
@@ -2717,7 +2717,7 @@ async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>
 
 // Blanks, rejects (a pending one) and audits the Engage proposals that name a conversation or a message the org no longer has; run after the deletes. Answers how many.
 async function eraseGoneProposals(ctx: CommandContext): Promise<number> {
-  const { rows } = await sql<{ n: number }>`SELECT crove_kernel.engage_proposal_erase_gone() AS n`.execute(ctx.trx);
+  const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.engage_proposal_erase_gone() AS n`.execute(ctx.trx);
   return rows[0]?.n ?? 0;
 }
 
@@ -2727,19 +2727,19 @@ async function eraseGoneProposals(ctx: CommandContext): Promise<number> {
 // identity (#3480). A skipped identity is swept by the next run.
 async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
   const candidates = await sql<{ id: string }>`
-    SELECT i.id FROM crove_kernel.conversation_identity i
-    WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+    SELECT i.id FROM ludy_kernel.conversation_identity i
+    WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM ludy_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
       -- A person who only replied in other customers' threads is still named by what they wrote there.
-      AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
+      AND NOT EXISTS (SELECT 1 FROM ludy_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
     ORDER BY i.id
     FOR UPDATE OF i SKIP LOCKED`.execute(ctx.trx);
   if (candidates.rows.length === 0) return 0;
   const { rows } = await sql<{ n: string }>`
     WITH gone AS (
-      DELETE FROM crove_kernel.conversation_identity i
+      DELETE FROM ludy_kernel.conversation_identity i
       WHERE i.org_id = ${ctx.orgId}::uuid AND i.id = ANY (${candidates.rows.map((r) => r.id)}::uuid[])
-        AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
       RETURNING i.id)
     SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
   return Number(rows[0]?.n ?? 0);
@@ -2764,7 +2764,7 @@ export const conversationEraseContact = defineCommand({
     let subject = conversation.identity_id;
     if (input.messageId) {
       const m = await ctx.trx
-        .selectFrom('crove_kernel.conversation_message')
+        .selectFrom('ludy_kernel.conversation_message')
         .select('author_identity_id')
         .where('org_id', '=', ctx.orgId)
         .where('conversation_id', '=', conversation.id)
@@ -2775,7 +2775,7 @@ export const conversationEraseContact = defineCommand({
     }
     // The customer's lock first: an intake of theirs in flight finishes before this reads or deletes, and one that starts later sees the tombstone.
     const subjectRow = subject
-      ? await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', subject).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', subject).executeTakeFirst()
       : undefined;
     if (subjectRow) await customerLock(ctx, subjectRow.provider, subjectRow.external_user_id);
     const filter = subject ? sql`c.identity_id = ${subject}::uuid` : sql`c.id = ${conversation.id}::uuid`;
@@ -2784,7 +2784,7 @@ export const conversationEraseContact = defineCommand({
       // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
       // its author).
       const others = await sql<{ conversation_id: string }>`
-        DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING m.conversation_id`.execute(ctx.trx);
+        DELETE FROM ludy_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING m.conversation_id`.execute(ctx.trx);
       erased.messages += others.rows.length;
       // What an AI coworker proposed about those comments (a private reply to one, hiding one: E4 #3863) names them by message id, and goes with them: the definer finds what lost its message.
       await eraseGoneProposals(ctx);
@@ -2794,13 +2794,13 @@ export const conversationEraseContact = defineCommand({
       // the customer (and refuses anything dated at or before now) while a copy of the database or the export cannot name them.
       const who = subjectRow;
       if (who) {
-        const h = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${who.provider}, ${who.external_user_id}) AS h`.execute(ctx.trx);
+        const h = await sql<{ h: string }>`SELECT ludy_kernel.conversation_identity_hash(${who.provider}, ${who.external_user_id}) AS h`.execute(ctx.trx);
         const key = `erased:${h.rows[0]?.h ?? ''}`;
         // A customer erased before, who came back and is erased again within the tombstone's 30 days: the old tombstone is replaced by
         // this one (the key is unique), which carries the later erasure time.
-        await ctx.trx.deleteFrom('crove_kernel.conversation_identity').where('org_id', '=', ctx.orgId).where('external_user_id', '=', key).where('id', '<>', subject).execute();
+        await ctx.trx.deleteFrom('ludy_kernel.conversation_identity').where('org_id', '=', ctx.orgId).where('external_user_id', '=', key).where('id', '<>', subject).execute();
         await ctx.trx
-          .updateTable('crove_kernel.conversation_identity')
+          .updateTable('ludy_kernel.conversation_identity')
           .set({ display_name: null, party_id: null, external_user_id: key, erased_at: ctx.now, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', subject)
@@ -2823,7 +2823,7 @@ export const conversationPurgeExpired = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<ConversationPurged> => {
     // An erase tombstone older than 30 days is longer than any redelivery: its identity goes if no thread names it.
-    await sql`UPDATE crove_kernel.conversation_identity SET erased_at = NULL WHERE org_id = ${ctx.orgId}::uuid AND erased_at < ${ctx.now}::timestamptz - interval '30 days'`.execute(ctx.trx);
+    await sql`UPDATE ludy_kernel.conversation_identity SET erased_at = NULL WHERE org_id = ${ctx.orgId}::uuid AND erased_at < ${ctx.now}::timestamptz - interval '30 days'`.execute(ctx.trx);
     const retention = await retentionOf(ctx);
     if (retention.retentionMonths === null) {
       const left = await deleteOrphanIdentities(ctx);
@@ -2831,7 +2831,7 @@ export const conversationPurgeExpired = defineCommand({
       return { threads: 0, messages: 0, identities: left, more: false };
     }
     const { rows } = await sql<{ id: string }>`
-      SELECT c.id FROM crove_kernel.conversation c
+      SELECT c.id FROM ludy_kernel.conversation c
       WHERE c.org_id = ${ctx.orgId}::uuid
         AND COALESCE(c.last_message_at, c.opened_at) < ${ctx.now}::timestamptz - pg_catalog.make_interval(months => ${retention.retentionMonths}::int)
       ORDER BY COALESCE(c.last_message_at, c.opened_at), c.id LIMIT ${input.limit}
@@ -2882,8 +2882,8 @@ export const conversationChannelCounts = defineQuery({
   access: ADMINS,
   handler: async (ctx, input): Promise<ConversationChannelCounts> => {
     const { rows } = await sql<{ threads: string; messages: string }>`
-      SELECT (SELECT count(*) FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND c.channel_connection_id = ${input.connectionId}::uuid)::text AS threads,
-             (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.channel_connection_id = ${input.connectionId}::uuid)::text AS messages`.execute(ctx.trx);
+      SELECT (SELECT count(*) FROM ludy_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND c.channel_connection_id = ${input.connectionId}::uuid)::text AS threads,
+             (SELECT count(*) FROM ludy_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.channel_connection_id = ${input.connectionId}::uuid)::text AS messages`.execute(ctx.trx);
     return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
   },
 });
@@ -2906,7 +2906,7 @@ export const conversationEraseChannel = defineCommand({
   handler: async (ctx, input): Promise<ConversationChannelErased> => {
     requireUser(ctx);
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -2933,7 +2933,7 @@ export const conversationEraseChannel = defineCommand({
 const HISTORY_WINDOW_DAYS = 7;
 
 // Hands the worker a read from a platform: its account's recent history, or a customer's name. The relay calls it for what
-// crove_kernel.conversation_sync_due lists, and it marks the work as handed out (for 30 minutes, 10 for a name), so the same work is not
+// ludy_kernel.conversation_sync_due lists, and it marks the work as handed out (for 30 minutes, 10 for a name), so the same work is not
 // handed out every pass; its event is what the worker's queue takes (as a reply's is), so the platform call is made by a job with only
 // ids in it. R2 and external, like a reply: the call it leads to reaches a platform.
 export const conversationSyncRequest = defineCommand({
@@ -2948,10 +2948,10 @@ export const conversationSyncRequest = defineCommand({
     const connection = await connectionOf(ctx, input.connectionId);
     if (!connection || connection.status !== 'active') return { queued: false };
     if (input.action === 'history') {
-      await ctx.trx.updateTable('crove_kernel.channel_connection').set({ history_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+      await ctx.trx.updateTable('ludy_kernel.channel_connection').set({ history_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
       await ctx.emit(SYNC_QUEUED, { action: 'history', connectionId: input.connectionId });
     } else {
-      await ctx.trx.updateTable('crove_kernel.conversation_identity').set({ profile_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.identityId).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_identity').set({ profile_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.identityId).execute();
       await ctx.emit(SYNC_QUEUED, { action: 'profile', connectionId: input.connectionId, identityId: input.identityId });
     }
     ctx.audit({ action: input.action, connection_id: input.connectionId });
@@ -2975,7 +2975,7 @@ export const conversationHistoryBegin = defineCommand({
   handler: async (ctx, input): Promise<HistoryWork> => {
     requireSystem(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status', 'scopes', 'history_synced_at', 'connected_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -2991,7 +2991,7 @@ export const conversationHistoryBegin = defineCommand({
       (row.provider === 'threads' && !row.scopes.includes('threads_read_replies'))
     ) {
       await ctx.trx
-        .updateTable('crove_kernel.channel_connection')
+        .updateTable('ludy_kernel.channel_connection')
         .set({ history_synced_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
@@ -3004,7 +3004,7 @@ export const conversationHistoryBegin = defineCommand({
     if (row.provider === 'youtube') {
       const quota = await youtubeQuotaRow(ctx, input.connectionId);
       const held = async (until: Date): Promise<HistoryWork> => {
-        await ctx.trx.updateTable('crove_kernel.channel_connection').set({ history_next_at: until }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+        await ctx.trx.updateTable('ludy_kernel.channel_connection').set({ history_next_at: until }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
         return { action: 'none' };
       };
       if (!quota?.comments_enabled || !quota.scopes.includes(YOUTUBE_COMMENT_SCOPE)) return held(new Date(ctx.now.getTime() + HOUR_MS));
@@ -3038,7 +3038,7 @@ async function youtubeRecord(ctx: CommandContext, connectionId: string, quota: N
   const after = youtubePollAllowed({ resetAt: q.resetAt, pollUnits, replyUnits: q.replyUnits, blockedUntil }, next, YOUTUBE_POLL_MAX_UNITS);
   if (!after.allowed && after.until.getTime() > next.getTime()) next = after.until;
   await ctx.trx
-    .updateTable('crove_kernel.channel_connection')
+    .updateTable('ludy_kernel.channel_connection')
     .set({ quota_reset_at: q.resetAt, quota_poll_units: pollUnits, quota_reply_units: q.replyUnits, quota_blocked_until: blockedUntil, history_idle_polls: idle, history_next_at: next })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', connectionId)
@@ -3064,7 +3064,7 @@ export const conversationHistoryRecord = defineCommand({
     }
     // A read that reached back everywhere leaves no gap (and clears an older one); else the period is kept for the threads to show.
     await ctx.trx
-      .updateTable('crove_kernel.channel_connection')
+      .updateTable('ludy_kernel.channel_connection')
       .set(
         input.complete
           ? { history_synced_at: ctx.now, gap_from: null, gap_to: null }
@@ -3094,7 +3094,7 @@ export const conversationProfileBegin = defineCommand({
   handler: async (ctx, input): Promise<ProfileWork> => {
     requireSystem(ctx);
     const identity = await ctx.trx
-      .selectFrom('crove_kernel.conversation_identity')
+      .selectFrom('ludy_kernel.conversation_identity')
       .select(['provider', 'external_user_id', 'display_name', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.identityId)
@@ -3123,7 +3123,7 @@ export const conversationProfileApply = defineCommand({
         ? { display_name: input.displayName, profile_checked_at: ctx.now, updated_at: ctx.now }
         : { profile_checked_at: ctx.now, updated_at: ctx.now };
     const res = await ctx.trx
-      .updateTable('crove_kernel.conversation_identity')
+      .updateTable('ludy_kernel.conversation_identity')
       .set(set)
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.identityId)
@@ -3155,7 +3155,7 @@ export const conversationAttachmentRequest = defineCommand({
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     requireSystem(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.conversation_attachment')
+      .selectFrom('ludy_kernel.conversation_attachment')
       .select(['channel_connection_id', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
@@ -3165,7 +3165,7 @@ export const conversationAttachmentRequest = defineCommand({
     const connection = await connectionOf(ctx, row.channel_connection_id);
     if (!connection || connection.status !== 'active') return { queued: false };
     await ctx.trx
-      .updateTable('crove_kernel.conversation_attachment')
+      .updateTable('ludy_kernel.conversation_attachment')
       .set({ requested_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
@@ -3193,7 +3193,7 @@ export const conversationAttachmentSource = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<AttachmentSource | null> => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.conversation_attachment')
+      .selectFrom('ludy_kernel.conversation_attachment')
       .select(['channel_connection_id', 'state', 'source_url', 'source_ref', 'storage_key'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
@@ -3219,7 +3219,7 @@ export const conversationAttachmentRecord = defineCommand({
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     requireSystem(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.conversation_attachment')
+      .selectFrom('ludy_kernel.conversation_attachment')
       .select(['message_id', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
@@ -3228,7 +3228,7 @@ export const conversationAttachmentRecord = defineCommand({
     if (!row || row.state !== 'pending') return { recorded: false };
     if (input.outcome === 'stored') {
       await ctx.trx
-        .updateTable('crove_kernel.conversation_attachment')
+        .updateTable('ludy_kernel.conversation_attachment')
         .set({
           state: 'stored',
           source_url: null,
@@ -3245,7 +3245,7 @@ export const conversationAttachmentRecord = defineCommand({
         .where('id', '=', input.attachmentId)
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.conversation_message')
+        .updateTable('ludy_kernel.conversation_message')
         .set({ attachments: sql<string[]>`pg_catalog.array_append(attachments, ${input.attachmentId}::uuid)` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.message_id)
@@ -3254,11 +3254,11 @@ export const conversationAttachmentRecord = defineCommand({
       return { recorded: true };
     }
     if (!input.retry) {
-      await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('id', '=', input.attachmentId).execute();
+      await ctx.trx.deleteFrom('ludy_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('id', '=', input.attachmentId).execute();
     } else {
       // A fetch that was made and may be asked again: it counts as a try (five at most; a hand-out that no job ran does not).
       await ctx.trx
-        .updateTable('crove_kernel.conversation_attachment')
+        .updateTable('ludy_kernel.conversation_attachment')
         .set({ fetch_attempts: sql<number>`fetch_attempts + 1` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.attachmentId)
@@ -3286,7 +3286,7 @@ export const conversationAttachmentGet = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<AttachmentFile> => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.conversation_attachment')
+      .selectFrom('ludy_kernel.conversation_attachment')
       .select(['id', 'content_type', 'size_bytes', 'sha256', 'generation', 'storage_key'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
@@ -3300,7 +3300,7 @@ export const conversationAttachmentGet = defineQuery({
 // ---------------------------------------------------------------------------------------------------------------------
 // Vy's drafts and the saved replies (CV8, #2310). A draft is written by the system context, never by an org-chart agent: a worker job reads the end of
 // the thread (customer text: tainted), calls the model in packages/agent and records the answer. A member asks for a draft and decides about it; the text
-// and the tainted mark are the system's alone (crove_kernel.conversation_draft_guard). Nothing the customer or Vy wrote is in an audit row, an event or a
+// and the tainted mark are the system's alone (ludy_kernel.conversation_draft_guard). Nothing the customer or Vy wrote is in an audit row, an event or a
 // job: those carry ids, lengths and codes.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -3351,7 +3351,7 @@ interface SavedReplyRow {
 }
 const toSavedReplyView = (r: SavedReplyRow): SavedReplyView => ({ id: r.id, title: r.title, body: r.body, keywords: r.keywords, useCount: r.use_count });
 const savedRepliesOf = async (ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<SavedReplyView[]> =>
-  (await ctx.trx.selectFrom('crove_kernel.saved_reply').select(['id', 'title', 'body', 'keywords', 'use_count']).where('org_id', '=', ctx.orgId).orderBy('title').orderBy('id').execute()).map(toSavedReplyView);
+  (await ctx.trx.selectFrom('ludy_kernel.saved_reply').select(['id', 'title', 'body', 'keywords', 'use_count']).where('org_id', '=', ctx.orgId).orderBy('title').orderBy('id').execute()).map(toSavedReplyView);
 
 const savedReplyNotFound = () => new DomainError('SAVED_REPLY_NOT_FOUND', 404, 'Không tìm thấy câu trả lời mẫu này');
 // A keyword is one short phrase: the empty ones and the repeats (after the matching's own reading) are dropped.
@@ -3372,10 +3372,10 @@ export const conversationSavedReplyCreate = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<{ id: string }> => {
     const me = requireUser(ctx);
-    const have = await ctx.trx.selectFrom('crove_kernel.saved_reply').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const have = await ctx.trx.selectFrom('ludy_kernel.saved_reply').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (Number(have.n) >= SAVED_REPLIES_MAX) throw new DomainError('SAVED_REPLY_LIMIT', 409, `Mỗi tổ chức lưu tối đa ${SAVED_REPLIES_MAX} câu trả lời mẫu`, { max: String(SAVED_REPLIES_MAX) });
     const row = await ctx.trx
-      .insertInto('crove_kernel.saved_reply')
+      .insertInto('ludy_kernel.saved_reply')
       .values({ org_id: ctx.orgId, title: input.title, body: input.body, keywords: cleanKeywords(input.keywords), created_by: me, created_at: ctx.now, updated_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -3394,7 +3394,7 @@ export const conversationSavedReplyUpdate = defineCommand({
   handler: async (ctx, input): Promise<{ id: string }> => {
     requireUser(ctx);
     const res = await ctx.trx
-      .updateTable('crove_kernel.saved_reply')
+      .updateTable('ludy_kernel.saved_reply')
       .set({ title: input.title, body: input.body, keywords: cleanKeywords(input.keywords), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -3414,7 +3414,7 @@ export const conversationSavedReplyDelete = defineCommand({
   target: (input) => ({ type: 'kernel.saved_reply', id: input.id }),
   handler: async (ctx, input): Promise<{ id: string }> => {
     requireUser(ctx);
-    const res = await ctx.trx.deleteFrom('crove_kernel.saved_reply').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const res = await ctx.trx.deleteFrom('ludy_kernel.saved_reply').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     if (Number(res.numDeletedRows) === 0) throw savedReplyNotFound();
     ctx.audit({ saved_reply_id: input.id });
     return { id: input.id };
@@ -3422,7 +3422,7 @@ export const conversationSavedReplyDelete = defineCommand({
 });
 
 const autoDraftOf = async (ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<boolean> => {
-  const row = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('auto_draft').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.conversation_setting').select('auto_draft').where('org_id', '=', ctx.orgId).executeTakeFirst();
   return row ? row.auto_draft : true;
 };
 
@@ -3444,7 +3444,7 @@ export const conversationAutoDraftSet = defineCommand({
   handler: async (ctx, input): Promise<ConversationAutoDraft> => {
     const me = requireUser(ctx);
     await ctx.trx
-      .insertInto('crove_kernel.conversation_setting')
+      .insertInto('ludy_kernel.conversation_setting')
       .values({ org_id: ctx.orgId, auto_draft: input.autoDraft, set_by: me })
       .onConflict((oc) => oc.column('org_id').doUpdateSet({ auto_draft: input.autoDraft, set_by: me, updated_at: ctx.now }))
       .execute();
@@ -3462,7 +3462,7 @@ export const conversationYoutubeComments = defineQuery({
   handler: async (ctx): Promise<YoutubeCommentsStatus[]> => {
     const now = new Date();
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'display_name', 'scopes', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_synced_at'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', 'youtube')
@@ -3509,7 +3509,7 @@ export const conversationYoutubeCommentsSet = defineCommand({
     // Switching it on again changes nothing (it would otherwise force a new read of the whole window and reset the interval).
     if (input.enabled && row.comments_enabled) return { enabled: true };
     await ctx.trx
-      .updateTable('crove_kernel.channel_connection')
+      .updateTable('ludy_kernel.channel_connection')
       .set(input.enabled ? { comments_enabled: true, history_synced_at: null, history_next_at: ctx.now, history_idle_polls: 0, history_requested_at: null } : { comments_enabled: false, history_next_at: null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -3523,7 +3523,7 @@ export const conversationYoutubeCommentsSet = defineCommand({
 // draft is in play per thread, so asking again returns the one that is. Nothing is asked of a thread whose last message is not a customer's.
 async function openDraft(ctx: CommandContext, conversation: ConversationRow, source: 'auto' | 'asked', requestedBy: string | null): Promise<{ draftId: string; queued: boolean }> {
   const last = await ctx.trx
-    .selectFrom('crove_kernel.conversation_message')
+    .selectFrom('ludy_kernel.conversation_message')
     .select(['direction', 'platform_removed_at'])
     .where('org_id', '=', ctx.orgId)
     .where('conversation_id', '=', conversation.id)
@@ -3540,13 +3540,13 @@ async function openDraft(ctx: CommandContext, conversation: ConversationRow, sou
   // Nor for a Telegram Business thread nobody may answer (its account is stopped, not allowed, read-only or has no window): no model call is spent on it.
   const businessBlock = connection ? await businessReplyBlock(ctx, conversation.channel_connection_id, connection.provider, conversation.external_thread_id, conversation.reply_window_until, ctx.now.getTime()) : null;
   if (businessBlock) throw businessBlockError(businessBlock);
-  const open = await ctx.trx.selectFrom('crove_kernel.conversation_draft').select(['id', 'basis_seq']).where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('state', 'in', ['requested', 'live']).executeTakeFirst();
+  const open = await ctx.trx.selectFrom('ludy_kernel.conversation_draft').select(['id', 'basis_seq']).where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('state', 'in', ['requested', 'live']).executeTakeFirst();
   if (open && open.basis_seq === conversation.last_seq) return { draftId: open.id, queued: false };
   if (open) {
-    await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'stale', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', open.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation_draft').set({ state: 'stale', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', open.id).execute();
   }
   const row = await ctx.trx
-    .insertInto('crove_kernel.conversation_draft')
+    .insertInto('ludy_kernel.conversation_draft')
     .values({
       org_id: ctx.orgId,
       conversation_id: conversation.id,
@@ -3580,7 +3580,7 @@ export const conversationDraftRequest = defineCommand({
   },
 });
 
-// The relay's own request, for a new conversation (crove_kernel.conversation_draft_due lists them): the same as a member's, unless the org turned
+// The relay's own request, for a new conversation (ludy_kernel.conversation_draft_due lists them): the same as a member's, unless the org turned
 // drafting off or the thread is no longer new.
 export const conversationDraftEnqueue = defineCommand({
   name: 'kernel.conversation.draft_enqueue',
@@ -3591,7 +3591,7 @@ export const conversationDraftEnqueue = defineCommand({
   target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
   handler: async (ctx, input): Promise<{ draftId: string | null; queued: boolean }> => {
     requireSystem(ctx);
-    const conversation = (await ctx.trx.selectFrom('crove_kernel.conversation').select(CONVERSATION_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).forUpdate().executeTakeFirst()) as ConversationRow | undefined;
+    const conversation = (await ctx.trx.selectFrom('ludy_kernel.conversation').select(CONVERSATION_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).forUpdate().executeTakeFirst()) as ConversationRow | undefined;
     if (!conversation || conversation.status !== 'new' || !(await autoDraftOf(ctx))) return { draftId: null, queued: false };
     try {
       return await openDraft(ctx, conversation, 'auto', null);
@@ -3623,15 +3623,15 @@ export const conversationDraftSource = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<DraftSource | null> => {
     const draft = await ctx.trx
-      .selectFrom('crove_kernel.conversation_draft')
+      .selectFrom('ludy_kernel.conversation_draft')
       .select(['conversation_id', 'channel_connection_id', 'basis_seq', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.draftId)
       .executeTakeFirst();
     if (!draft || draft.state !== 'requested') return null;
     const conversation = await ctx.trx
-      .selectFrom('crove_kernel.conversation as c')
-      .leftJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
+      .selectFrom('ludy_kernel.conversation as c')
+      .leftJoin('ludy_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
       .select(['c.last_seq', 'c.kind', 'i.display_name as customer_name'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', draft.conversation_id)
@@ -3639,7 +3639,7 @@ export const conversationDraftSource = defineQuery({
     const connection = await connectionOf(ctx, draft.channel_connection_id);
     if (!conversation || conversation.last_seq !== draft.basis_seq || !connection || connection.status !== 'active') return null;
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.conversation_message')
+      .selectFrom('ludy_kernel.conversation_message')
       .select(['direction', 'body', 'platform_removed_at', 'seq'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', draft.conversation_id)
@@ -3657,7 +3657,7 @@ export const conversationDraftSource = defineQuery({
       connection.provider === 'instagram' && conversation.kind === 'direct'
         ? CONVERSATION_INSTAGRAM_DIRECT_MAX
         : (rules?.replyMax ?? CONVERSATION_DRAFT_MAX);
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
     const matched = lastCustomer ? matchSavedReplies(lastCustomer.text, await savedRepliesOf(ctx), 5) : [];
     return {
       conversationId: draft.conversation_id,
@@ -3683,22 +3683,22 @@ export const conversationDraftRecord = defineCommand({
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     requireSystem(ctx);
     const draft = await ctx.trx
-      .selectFrom('crove_kernel.conversation_draft')
+      .selectFrom('ludy_kernel.conversation_draft')
       .select(['conversation_id', 'basis_seq', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.draftId)
       .forUpdate()
       .executeTakeFirst();
     if (!draft || draft.state !== 'requested') return { recorded: false };
-    const conversation = await ctx.trx.selectFrom('crove_kernel.conversation').select('last_seq').where('org_id', '=', ctx.orgId).where('id', '=', draft.conversation_id).executeTakeFirst();
+    const conversation = await ctx.trx.selectFrom('ludy_kernel.conversation').select('last_seq').where('org_id', '=', ctx.orgId).where('id', '=', draft.conversation_id).executeTakeFirst();
     const current = conversation !== undefined && conversation.last_seq === draft.basis_seq;
     if (input.outcome === 'written' && current) {
-      await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'live', body: input.body, written_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
+      await ctx.trx.updateTable('ludy_kernel.conversation_draft').set({ state: 'live', body: input.body, written_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
       ctx.audit({ draft_id: input.draftId, outcome: 'written', length: input.body.length });
       return { recorded: true };
     }
     await ctx.trx
-      .updateTable('crove_kernel.conversation_draft')
+      .updateTable('ludy_kernel.conversation_draft')
       .set({ state: input.outcome === 'written' ? 'stale' : 'discarded', body: null, decided_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.draftId)
@@ -3718,10 +3718,10 @@ export const conversationDraftDiscard = defineCommand({
   target: (input) => ({ type: 'kernel.conversation_draft', id: input.draftId }),
   handler: async (ctx, input): Promise<{ discarded: boolean }> => {
     requireUser(ctx);
-    const draft = await ctx.trx.selectFrom('crove_kernel.conversation_draft').select('state').where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).forUpdate().executeTakeFirst();
+    const draft = await ctx.trx.selectFrom('ludy_kernel.conversation_draft').select('state').where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).forUpdate().executeTakeFirst();
     if (!draft) throw new DomainError('DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp này');
     if (draft.state !== 'live' && draft.state !== 'requested') return { discarded: false };
-    await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'discarded', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
+    await ctx.trx.updateTable('ludy_kernel.conversation_draft').set({ state: 'discarded', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
     ctx.audit({ draft_id: input.draftId });
     return { discarded: true };
   },

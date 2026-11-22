@@ -77,7 +77,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
 
   async function insertToken(orgId: string, userId: string, id: string) {
     await rows(
-      `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+      `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
        VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings']::text[], now(), now() + interval '30 days', $3)`,
       [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest()],
     );
@@ -85,12 +85,12 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
   // An event of the member's own calendar, with the join address the sweep would have read.
   async function agendaEvent(orgId: string, userId: string, joinUrl: string | null) {
     // A member has one calendar connection: made on the first event, used for the rest.
-    const existing = await rows<{ id: string }>('SELECT id FROM crove_kernel.calendar_connection WHERE org_id = $1 AND user_id = $2', [orgId, userId]);
+    const existing = await rows<{ id: string }>('SELECT id FROM ludy_kernel.calendar_connection WHERE org_id = $1 AND user_id = $2', [orgId, userId]);
     const connection = existing[0]?.id ?? randomUUID();
     const event = randomUUID();
     if (!existing[0]) {
       await rows(
-        `INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events)
+        `INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events)
          VALUES ($1, $2, $3, 'google', $4, 'test', '{}', true)`,
         [orgId, connection, userId, `${connection}@calendar.test`],
       );
@@ -113,9 +113,9 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     pools.push(pool);
@@ -124,7 +124,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     for (const key of Object.keys(users) as Array<keyof typeof users>) users[key] = await upsertIdentity(db, { issuer: 'capture', subject: key, email: `${key}@capture.test`, name: null });
     orgA = (await createOrg(runtime, app(users.ownerA), 'Org A')).orgId;
     orgB = (await createOrg(runtime, app(users.ownerB), 'Org B')).orgId;
-    await rows(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($4, $5, 'member')`, [orgA, users.m1, users.m2, orgB, users.mB]);
+    await rows(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($4, $5, 'member')`, [orgA, users.m1, users.m2, orgB, users.mB]);
     await insertToken(orgA, users.m1, tokens.m1);
     await insertToken(orgA, users.m1, tokens.m1Two);
     await insertToken(orgA, users.m2, tokens.m2);
@@ -160,7 +160,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     const stored = (await rows<{ j: string }>('SELECT to_jsonb(s)::text AS j FROM crove_meetings.capture_session s WHERE meeting_id = $1', [meetingId]))[0]!.j;
     expect(stored).not.toContain('meet.google.com');
     expect(stored).not.toContain(code);
-    const audit = JSON.stringify((await rows('SELECT detail FROM crove_kernel.audit_event WHERE command = $1 AND detail->>$2 = $3', ['meetings.meeting.create', 'meetingId', meetingId]))[0]);
+    const audit = JSON.stringify((await rows('SELECT detail FROM ludy_kernel.audit_event WHERE command = $1 AND detail->>$2 = $3', ['meetings.meeting.create', 'meetingId', meetingId]))[0]);
     expect(audit).not.toContain('meet.google.com');
     expect(audit).not.toContain(code);
   });

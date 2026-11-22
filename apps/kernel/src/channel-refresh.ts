@@ -57,7 +57,7 @@ export async function refreshChannels(deps: RefreshDeps): Promise<RefreshOutcome
         const horizon = deps.refreshers[provider]?.horizonSeconds ?? REFRESH_HORIZON_SECONDS;
         const { rows: part } = await sql<Due>`
         SELECT org_id, connection_id, provider, version
-          FROM crove_kernel.channel_refresh_due(${REFRESH_LIMIT}::int, ${[provider]}::text[], ${horizon}::int)`.execute(db);
+          FROM ludy_kernel.channel_refresh_due(${REFRESH_LIMIT}::int, ${[provider]}::text[], ${horizon}::int)`.execute(db);
         due.rows.push(...part);
       }
       for (const row of due.rows) {

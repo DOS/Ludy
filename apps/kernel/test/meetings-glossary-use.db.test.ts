@@ -2,7 +2,7 @@
 // The organization's glossary in member-Vy text runs (#4043, step 3b) on PostgreSQL 17 with a fake model:
 // - the recorder's summary, translation (summary + transcript), chapters, and title receive the org's glossary as JSON data under a fixed line and spell/check outputs deterministically;
 // - a non-recorder attendee (and a non-recorder owner/admin on an org-visible meeting) translates published text normally with zero glossary terms and zero glossary queries;
-// - crove_meetings.glossary_for_recorder(uuid) is executable by crove_app alone in a user context with active org, non-disabled member standing, is_meeting_recorder, and non-expired text
+// - crove_meetings.glossary_for_recorder(uuid) is executable by ludy_app alone in a user context with active org, non-disabled member standing, is_meeting_recorder, and non-expired text
 //   retention, refusing worker/tenant/definer_tenant/other-org/non-recorder/viewer/disabled/inactive-org callers while keeping glossary_term RLS owner/admin-only;
 // - prompt-injection and invisible-character strings remain inert data, and AI-off behavior is unchanged.
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -175,15 +175,15 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     pools.push(appPool, workerPool);
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS, readAuditKey: randomBytes(32) }).register({
       commands: [...kernelCommands, ...meetingsCommands],
@@ -198,11 +198,11 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     const closing = await createOrg(runtime, asUser('closingOwner'), 'Công ty Đóng');
     closingOrgId = closing.orgId;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer'), ($1, $6, 'member')`,
       [orgId, users.adm, users.recorder, users.attendee, users.viewer, users.disabledRec],
     );
-    await sqlAdmin(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.disabledRec]);
+    await sqlAdmin(`UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.disabledRec]);
     const closingMfa = { type: 'user' as const, userId: users.closingOwner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     await runtime.execute('kernel.org.offboard', { confirmSlug: closing.slug }, { actor: closingMfa, orgId: closingOrgId });
   }, 300_000);
@@ -292,7 +292,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
 
     // 6. Non-recorder attendee AND non-recorder owner on the same org-visible meeting translate summary and transcript cleanly with ZERO glossary exposure.
     const auditBeforeNonRecorder = (
-      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
+      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
     ).rows[0]?.n;
 
     for (const nonRecorder of ['attendee', 'owner']) {
@@ -318,7 +318,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     // Non-recorder translations never queried meetings.glossary.for_meeting (neither ok nor denied), and recorder audits hold no term text.
     const auditRows = (
       await sqlAdmin<{ command: string; outcome: string; target_type: string; target_id: string; detail: unknown }>(
-        `SELECT command, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting' ORDER BY occurred_at`,
+        `SELECT command, outcome, target_type, target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting' ORDER BY occurred_at`,
         [orgId],
       )
     ).rows;
@@ -352,17 +352,17 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
       [closingOrgId, closedMeeting, users.closingOwner],
     );
 
-    // Privilege matrix: EXECUTE belongs strictly to crove_app alone among runtime/public roles.
+    // Privilege matrix: EXECUTE belongs strictly to ludy_app alone among runtime/public roles.
     const { rows: privs } = await sqlAdmin<{ role: string; can_exec: boolean }>(
       `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_meetings.glossary_for_recorder(uuid)'::regprocedure, 'EXECUTE') AS can_exec
-       FROM pg_catalog.unnest(ARRAY['public', 'crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) AS r`,
+       FROM pg_catalog.unnest(ARRAY['public', 'ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) AS r`,
     );
     expect(privs).toEqual([
       { role: 'public', can_exec: false },
-      { role: 'crove_app', can_exec: true },
-      { role: 'crove_worker', can_exec: false },
-      { role: 'crove_tenant', can_exec: false },
-      { role: 'crove_definer_tenant', can_exec: false },
+      { role: 'ludy_app', can_exec: true },
+      { role: 'ludy_worker', can_exec: false },
+      { role: 'ludy_tenant', can_exec: false },
+      { role: 'ludy_definer_tenant', can_exec: false },
     ]);
 
     const callAsApp = async (who: string | null, org: string, meetingId: string): Promise<{ ok: true; terms: string[] } | { ok: false; code: string; message: string }> => {
@@ -412,13 +412,13 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     try {
       await expect(wc.query('SELECT term FROM crove_meetings.glossary_for_recorder($1::uuid)', [orgMeeting])).rejects.toMatchObject({ code: '42501' });
       await wc.query('BEGIN');
-      await wc.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await wc.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       await expect(wc.query('SELECT term FROM crove_meetings.glossary_for_recorder($1::uuid)', [orgMeeting])).rejects.toMatchObject({ code: '42501' });
     } finally {
       await wc.query('ROLLBACK').catch(() => undefined);
       wc.release();
     }
-    for (const role of ['crove_tenant', 'crove_definer_tenant']) {
+    for (const role of ['ludy_tenant', 'ludy_definer_tenant']) {
       await admin(async (c) => {
         await c.query('BEGIN');
         try {
@@ -467,7 +467,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     expect((await query<GlossaryTerms>('owner', 'meetings.glossary.list')).terms.map((t) => t.term)).toContain('Ludy Cloud');
 
     const auditBeforeOff = (
-      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
+      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
     ).rows[0]?.n;
 
     prompts = [];
@@ -480,7 +480,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     expect(modelCalls).toBe(0);
     expect(prompts).toEqual([]);
     const auditAfterOff = (
-      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
+      await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.glossary.for_meeting'`, [orgId])
     ).rows[0]?.n;
     expect(auditAfterOff).toBe(auditBeforeOff);
   });

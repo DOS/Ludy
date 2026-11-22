@@ -59,8 +59,8 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@book.test`, name: null });
     const host = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `host-${randomUUID().slice(0, 8)}@book.test`, name: null });
     const { orgId } = await createOrg(app, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, host]));
-    const slug = (await admin((c) => c.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, host]));
+    const slug = (await admin((c) => c.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
     await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor: asUser(host), orgId });
     const type = await app.execute<EventType>(
       'crm.event_type.create',
@@ -98,15 +98,15 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 10 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 10 });
     app = register(createDb(appPool));
     worker = register(createDb(workerPool));
   });
@@ -154,12 +154,12 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     expect(await bookingStatus(app, o.slug, 'tu-van', request)).toMatchObject({ status: 'confirmed' });
 
     const [booking] = await o.bookings();
-    const event = (await admin((c) => c.query('SELECT user_id, kind, title, starts_at FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2', [o.orgId, booking?.calendar_event_id]))).rows[0];
+    const event = (await admin((c) => c.query('SELECT user_id, kind, title, starts_at FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2', [o.orgId, booking?.calendar_event_id]))).rows[0];
     expect(event).toMatchObject({ user_id: o.host, kind: 'booking', title: 'Tư vấn thuế: Nguyễn Văn Khách' });
-    const party = (await admin((c) => c.query('SELECT name, email, phone, kind, source_trust FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, booking?.party_id]))).rows[0];
+    const party = (await admin((c) => c.query('SELECT name, email, phone, kind, source_trust FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, booking?.party_id]))).rows[0];
     expect(party).toMatchObject({ name: 'Nguyễn Văn Khách', email: 'khach@example.test', phone: '0901234567', kind: 'person', source_trust: 'external' });
     // A confirmation writes the party's creation and the booking at the same instant: the creation sorts first.
-    const activity = (await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 ORDER BY occurred_at, kind <> 'party.created', id", [o.orgId, booking?.party_id]))).rows;
+    const activity = (await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 ORDER BY occurred_at, kind <> 'party.created', id", [o.orgId, booking?.party_id]))).rows;
     expect(activity.map((a) => a.kind)).toEqual(['party.created', 'crm.booking.confirmed']);
     expect(activity[1]?.summary).toContain('Tư vấn thuế lúc 09:00');
     // The slot is gone from the page.
@@ -231,7 +231,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
       (
         await admin((c) =>
           c.query<{ source: string; to_address: string; template_key: string; status: string; subject: string; payload: Record<string, unknown> }>(
-            "SELECT source, to_address, template_key, status, subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2 ORDER BY created_at, payload->>'recipient' = 'host', id",
+            "SELECT source, to_address, template_key, status, subject, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 ORDER BY created_at, payload->>'recipient' = 'host', id",
             [o.orgId, id],
           ),
         )
@@ -247,7 +247,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     expect(JSON.stringify(confirmed)).not.toMatch(/[0-9a-f]{32}\.[0-9]+\.[0-9a-f]{32}|Nguyễn|0901234567|Hỏi về/);
     const data = await worker.execute<{ token: string | null; visitor: unknown }>('crm.booking.mail_data', { bookingId: id, revision: 0 }, { actor: SYSTEM, orgId: o.orgId });
     expect(data.visitor).toEqual({ name: 'Nguyễn Văn Khách', email: 'khach@example.test', phone: '0901234567', note: 'Hỏi về thuế' });
-    const scheduled = await admin((c) => c.query("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'crm.booking.scheduled'", [o.orgId]));
+    const scheduled = await admin((c) => c.query("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'crm.booking.scheduled'", [o.orgId]));
     expect(scheduled.rows.map((r) => r.payload)).toEqual([{ booking_id: id, starts_at: at(day, 540) }]);
 
     // The link a mail of this revision carries.
@@ -278,7 +278,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     expect(await manage(moved?.requestId as string)).toEqual({ bookingId: id, outcome: 'none' });
     expect(await bookingManageView(app, o.slug, 'tu-van', { manage: first })).toMatchObject({ usable: false, outcome: 'moved', startsAt: at(day, 720), endsAt: at(day, 750) });
     expect(await bookingManageAsk(app, o.slug, 'tu-van', { manage: first, action: 'cancel' })).toBeNull();
-    const event = (await admin((c) => c.query('SELECT starts_at, status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2', [o.orgId, booking?.calendar_event_id]))).rows[0];
+    const event = (await admin((c) => c.query('SELECT starts_at, status FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2', [o.orgId, booking?.calendar_event_id]))).rows[0];
     expect(event).toMatchObject({ status: 'active' });
     expect(new Date(event?.starts_at).toISOString()).toBe(at(day, 720));
     const slots = async () => (await bookingView(app, o.slug, 'tu-van', dayRange(day)))?.slots.map((x) => x.start) ?? [];
@@ -302,16 +302,16 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     expect(await manage(cancel?.requestId as string)).toEqual({ bookingId: id, outcome: 'cancelled' });
     expect(await bookingManageView(app, o.slug, 'tu-van', { manage: second })).toMatchObject({ status: 'cancelled', usable: false, outcome: 'cancelled' });
     expect(await bookingManageAsk(app, o.slug, 'tu-van', { manage: second, action: 'cancel' })).toBeNull();
-    expect((await admin((c) => c.query('SELECT status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2', [o.orgId, booking?.calendar_event_id]))).rows[0]).toMatchObject({ status: 'cancelled' });
+    expect((await admin((c) => c.query('SELECT status FROM ludy_kernel.calendar_event WHERE org_id = $1 AND id = $2', [o.orgId, booking?.calendar_event_id]))).rows[0]).toMatchObject({ status: 'cancelled' });
     expect(await slots()).toContain(at(day, 720));
     expect(await link(2)).toBeNull();
     const before = (await mails()).length;
-    await admin((c) => c.query("DELETE FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h'", [o.orgId]));
+    await admin((c) => c.query("DELETE FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h'", [o.orgId]));
     expect(await remind(at(day, 720), '1h')).toEqual({ sent: false });
     expect((await mails()).length).toBe(before - 1);
     expect((await mails()).filter((m) => m.source === 'crm.booking.cancelled').map((m) => m.payload.recipient)).toEqual(['visitor', 'host']);
     // Same instant for the party's creation and the confirmation: the creation sorts first.
-    const activity = (await admin((c) => c.query<{ kind: string }>('SELECT kind FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 ORDER BY occurred_at, kind <> \'party.created\', id', [o.orgId, booking?.party_id]))).rows;
+    const activity = (await admin((c) => c.query<{ kind: string }>('SELECT kind FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 ORDER BY occurred_at, kind <> \'party.created\', id', [o.orgId, booking?.party_id]))).rows;
     expect(activity.map((a) => a.kind)).toEqual(['party.created', 'crm.booking.confirmed', 'crm.booking.moved', 'crm.booking.cancelled']);
     // Bad asks are turned away before anything is recorded.
     await expect(bookingManageAsk(app, o.slug, 'tu-van', { manage: second, action: 'drop' })).rejects.toMatchObject({ code: 'VALIDATION' });
@@ -422,7 +422,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
 
     // Another member may not touch the host's bookings; the owner may.
     const other = await upsertIdentity(createDb(appPool), { issuer: 'test', subject: randomUUID(), email: `other-${randomUUID().slice(0, 8)}@book.test`, name: null });
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, other]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, other]));
     await expect(app.execute('crm.booking.cancel', { bookingId: first?.id }, { actor: asUser(other), orgId: o.orgId })).rejects.toMatchObject({ code: 'BOOKING_HOST_FORBIDDEN' });
 
     // The host moves the first to a free time; a taken one is refused and nothing changes.
@@ -442,13 +442,13 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
 
     // The visitor is mailed and the host is not (they acted); the party's timeline says the host did it.
     const mails = await admin((c) =>
-      c.query<{ source: string; recipient: string }>("SELECT source, payload->>'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source IN ('crm.booking.moved', 'crm.booking.cancelled') ORDER BY created_at, id", [o.orgId]),
+      c.query<{ source: string; recipient: string }>("SELECT source, payload->>'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source IN ('crm.booking.moved', 'crm.booking.cancelled') ORDER BY created_at, id", [o.orgId]),
     );
     expect(mails.rows).toEqual([
       { source: 'crm.booking.moved', recipient: 'visitor' },
       { source: 'crm.booking.cancelled', recipient: 'visitor' },
     ]);
-    const activity = await admin((c) => c.query<{ summary: string }>("SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND kind IN ('crm.booking.moved', 'crm.booking.cancelled') ORDER BY occurred_at, id", [o.orgId]));
+    const activity = await admin((c) => c.query<{ summary: string }>("SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND kind IN ('crm.booking.moved', 'crm.booking.cancelled') ORDER BY occurred_at, id", [o.orgId]));
     expect(activity.rows.map((a) => a.summary.split(' ').slice(0, 5).join(' '))).toEqual(['Người chủ trì đổi lịch', 'Người chủ trì hủy lịch']);
   });
 
@@ -476,7 +476,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     const outcomes = await Promise.all(ids.map((id) => o.confirm(id)));
     expect(outcomes.filter((x) => x.status === 'confirmed')).toHaveLength(1);
     expect(outcomes.filter((x) => x.status === 'refused' && x.refusal === 'taken')).toHaveLength(199);
-    const events = await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.calendar_event WHERE org_id = $1 AND kind = 'booking' AND status = 'active'", [o.orgId]));
+    const events = await admin((c) => c.query("SELECT count(*)::int AS n FROM ludy_kernel.calendar_event WHERE org_id = $1 AND kind = 'booking' AND status = 'active'", [o.orgId]));
     expect(events.rows[0]?.n).toBe(1);
   });
 

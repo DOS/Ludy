@@ -157,7 +157,7 @@ export const dealBoard = defineQuery({
       SELECT d.stage_id, pg_catalog.count(*)::text AS n, pg_catalog.sum(d.amount)::text AS total
       FROM crove_crm.deal d
       JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
-      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND (s.kind = 'open' OR d.closed_at >= ${window}) AND ${where}
       GROUP BY d.stage_id`.execute(ctx.trx);
     const byStage = new Map(sums.rows.map((r) => [r.stage_id, r]));

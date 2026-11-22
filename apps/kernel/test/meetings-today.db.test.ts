@@ -72,9 +72,9 @@ suite('the Today view of the meetings page (#3955)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
@@ -82,7 +82,7 @@ suite('the Today view of the meetings page (#3955)', () => {
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
     for (const key of ['owner', 'rec', 'lan', 'other']) users[key] = await upsertIdentity(db, { issuer: 'today', subject: key, email: `${key}@today.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Hôm Nay')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.lan, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.lan, users.other]);
     // The seed (09:00 Vietnam time today) and every read below must see one Vietnam day: in the last 90 seconds before Vietnam midnight a run waits for the day to turn (#4086, as #3486 asks of the agenda test).
     const { rows: left } = await sqlAdmin<{ seconds: number }>(`SELECT extract(epoch FROM (date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') + interval '1 day') - (now() at time zone 'Asia/Ho_Chi_Minh'))::float8 AS seconds`);
     const seconds = (left[0] as { seconds: number }).seconds;
@@ -102,7 +102,7 @@ suite('the Today view of the meetings page (#3955)', () => {
     await sqlAdmin(`UPDATE crove_meetings.meeting SET started_at = ${VN_NINE} + interval '4 hours', ended_at = ${VN_NINE} + interval '4 hours 30 minutes' WHERE org_id = $1 AND id = $2`, [orgId, ids.current]);
     ids.hidden = await meeting('Họp riêng của rec', 1, 'rec', [], null);
     connection = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'lan@calendar.test', 'lan', '{}', true)`, [orgId, connection, users.lan]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'lan@calendar.test', 'lan', '{}', true)`, [orgId, connection, users.lan]);
     ids.e1 = await event('Giao ban', `${VN_NINE}`, 60, { series });
     ids.e2 = await event('Giao ban đã ghi', `${VN_NINE} + interval '4 hours'`, 90, { series, meetingId: ids.current as string });
     ids.e3 = await event('Cà phê với khách', `${VN_NINE} + interval '7 hours'`, 60);
@@ -140,7 +140,7 @@ suite('the Today view of the meetings page (#3955)', () => {
   it('shows each member their own agenda only, and an owner, another member and the system context none of someone else\'s agenda or facts', async () => {
     // `other` has a calendar and an event of their own: they see that one and not lan's, and lan does not see theirs.
     const otherConnection = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'other@calendar.test', 'other', '{}', true)`, [orgId, otherConnection, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'other@calendar.test', 'other', '{}', true)`, [orgId, otherConnection, users.other]);
     const theirs = await event('Việc riêng của other', `${VN_NINE} + interval '2 hours'`, 30, { who: 'other', connection: otherConnection, series: ids.series as string });
     const mine = await today('other');
     expect(mine.items.map((i) => i.event.id)).toEqual([theirs]);
@@ -158,9 +158,9 @@ suite('the Today view of the meetings page (#3955)', () => {
   });
 
   it('says the calendar is not read when the member switched the read off, and does not fail the page for an event whose meeting the member no longer reads', async () => {
-    await sqlAdmin(`UPDATE crove_kernel.calendar_connection SET read_events = false WHERE org_id = $1 AND id = $2`, [orgId, connection]);
+    await sqlAdmin(`UPDATE ludy_kernel.calendar_connection SET read_events = false WHERE org_id = $1 AND id = $2`, [orgId, connection]);
     expect(await today('lan')).toEqual({ enabled: false, totalMinutes: 0, items: [] });
-    await sqlAdmin(`UPDATE crove_kernel.calendar_connection SET read_events = true WHERE org_id = $1 AND id = $2`, [orgId, connection]);
+    await sqlAdmin(`UPDATE ludy_kernel.calendar_connection SET read_events = true WHERE org_id = $1 AND id = $2`, [orgId, connection]);
     const stray = await event('Gắn nhầm họp riêng', `${VN_NINE} + interval '9 hours'`, 30, { meetingId: ids.hidden as string });
     const out = await today('lan');
     const item = out.items.find((i) => i.event.id === stray);

@@ -45,13 +45,13 @@ suite('retention purges on PostgreSQL (#38)', () => {
 
   // Everything retention must never touch, counted as the database owner.
   const untouchable = async () => ({
-    audit: await count('crove_kernel.audit_event'),
-    outbox: await count('crove_kernel.outbox_event'),
+    audit: await count('ludy_kernel.audit_event'),
+    outbox: await count('ludy_kernel.outbox_event'),
     entries: await count('crove_finance.journal_entry'),
     lines: await count('crove_finance.journal_line'),
     documents: await count('crove_finance.purchase_document'),
-    files: await count('crove_kernel.file'),
-    tenants: await count('crove_kernel.tenant'),
+    files: await count('ludy_kernel.file'),
+    tenants: await count('ludy_kernel.tenant'),
   });
 
   beforeAll(async () => {
@@ -63,15 +63,15 @@ suite('retention purges on PostgreSQL (#38)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 2 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 2 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     workerDb = createDb(workerPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
@@ -83,25 +83,25 @@ suite('retention purges on PostgreSQL (#38)', () => {
       await c.query('BEGIN');
       for (let i = 0; i < 5; i++) {
         await c.query(
-          `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, created_at)
+          `INSERT INTO ludy_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, created_at)
            VALUES ($1, 'user:x', $2, 'kernel.test', 'h', now() - interval '8 days')`,
           [orgId, `old-${i}`],
         );
       }
       await c.query(
-        `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, created_at)
+        `INSERT INTO ludy_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, created_at)
          VALUES ($1, 'user:x', 'fresh', 'kernel.test', 'h', now() - interval '6 days')`,
         [orgId],
       );
       await c.query(
-        `INSERT INTO crove_kernel.inbound_drop (org_id, address_id, first_dropped_at, last_dropped_at) VALUES
+        `INSERT INTO ludy_kernel.inbound_drop (org_id, address_id, first_dropped_at, last_dropped_at) VALUES
            ($1, $2, now() - interval '40 days', now() - interval '31 days'),
            ($1, $3, now() - interval '40 days', now() - interval '29 days')`,
         [orgId, randomUUID(), randomUUID()],
       );
       // Invites: expired 91 days ago (purged), revoked 100 days ago (purged), expired 80 days ago (kept), pending (kept).
       await c.query(
-        `INSERT INTO crove_kernel.member_invite (org_id, email, role, invited_by, created_at, expires_at, status, revoked_at, revoked_by) VALUES
+        `INSERT INTO ludy_kernel.member_invite (org_id, email, role, invited_by, created_at, expires_at, status, revoked_at, revoked_by) VALUES
            ($1, 'a@example.com', 'member', $2, now() - interval '98 days', now() - interval '91 days', 'pending', NULL, NULL),
            ($1, 'b@example.com', 'member', $2, now() - interval '101 days', now() - interval '94 days', 'revoked', now() - interval '100 days', $2),
            ($1, 'c@example.com', 'member', $2, now() - interval '87 days', now() - interval '80 days', 'pending', NULL, NULL),
@@ -119,7 +119,7 @@ suite('retention purges on PostgreSQL (#38)', () => {
         ['0 days', false],
       ] as const) {
         await c.query(
-          `INSERT INTO crove_kernel.file_upload (org_id, staging_key, created_by, max_bytes, created_at, expires_at, used_at)
+          `INSERT INTO ludy_kernel.file_upload (org_id, staging_key, created_by, max_bytes, created_at, expires_at, used_at)
            VALUES ($1, $2, $3, 1024, now() - $4::interval, now() - $4::interval + interval '5 minutes',
                    CASE WHEN $5 THEN now() - $4::interval + interval '1 minute' END)`,
           [orgId, stagingKey(), owner, age, used],
@@ -128,12 +128,12 @@ suite('retention purges on PostgreSQL (#38)', () => {
       await c.query('SET LOCAL session_replication_role = origin');
       // Kept for good: an audit row, an outbox event and a balanced ledger entry, all years old.
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256)
          VALUES ($1, now() - interval '3 years', 'system', 'kernel.test', $2, 'ok', 'h')`,
         [orgId, randomUUID()],
       );
       await c.query(
-        `INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at) VALUES ($1, 'kernel.test', '{}', now() - interval '3 years')`,
+        `INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at) VALUES ($1, 'kernel.test', '{}', now() - interval '3 years')`,
         [orgId],
       );
       const entry = randomUUID();
@@ -169,20 +169,20 @@ suite('retention purges on PostgreSQL (#38)', () => {
       deleted: { 'kernel.idempotency_key': 5, 'kernel.inbound_drop': 1, 'kernel.member_invite': 2, 'kernel.file_upload': 2 },
       remaining: [],
     });
-    expect(await count('crove_kernel.idempotency_key', `org_id = '${orgId}' AND command = 'kernel.test'`)).toBe(1);
-    expect(await count('crove_kernel.idempotency_key', `key = 'fresh'`)).toBe(1);
-    expect(await count('crove_kernel.inbound_drop')).toBe(1);
+    expect(await count('ludy_kernel.idempotency_key', `org_id = '${orgId}' AND command = 'kernel.test'`)).toBe(1);
+    expect(await count('ludy_kernel.idempotency_key', `key = 'fresh'`)).toBe(1);
+    expect(await count('ludy_kernel.inbound_drop')).toBe(1);
     expect(
-      await admin(async (c) => (await c.query<{ email: string }>(`SELECT email FROM crove_kernel.member_invite ORDER BY email`)).rows.map((r) => r.email)),
+      await admin(async (c) => (await c.query<{ email: string }>(`SELECT email FROM ludy_kernel.member_invite ORDER BY email`)).rows.map((r) => r.email)),
     ).toEqual(['c@example.com', 'd@example.com']);
     expect(await untouchable()).toEqual(before);
     // Grants: the two older than 7 days went; the recent used one and the open one stay.
-    expect(await count('crove_kernel.file_upload', "created_at < now() - interval '7 days'")).toBe(0);
-    expect(await count('crove_kernel.file_upload')).toBe(2);
-    expect(await count('crove_kernel.file_upload', 'used_at IS NULL')).toBe(1);
+    expect(await count('ludy_kernel.file_upload', "created_at < now() - interval '7 days'")).toBe(0);
+    expect(await count('ludy_kernel.file_upload')).toBe(2);
+    expect(await count('ludy_kernel.file_upload', 'used_at IS NULL')).toBe(1);
 
     // A second run finds nothing to do.
-    const again = await sql<{ store: string; deleted: number; more: boolean }>`SELECT * FROM crove_kernel.retention_purge(10000)`.execute(workerDb);
+    const again = await sql<{ store: string; deleted: number; more: boolean }>`SELECT * FROM ludy_kernel.retention_purge(10000)`.execute(workerDb);
     expect(again.rows.every((r) => r.deleted === 0 && !r.more)).toBe(true);
     expect(await untouchable()).toEqual(before);
   });

@@ -72,7 +72,7 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
     const owner = await person('owner');
     const member = await person('member');
     const { orgId } = await createOrg(rt, asUser(owner), `HR 4B ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]));
     const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) =>
       rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
@@ -88,8 +88,8 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -340,7 +340,7 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
 
     // Audit events must carry no raw work permit or hourly/piece amounts or raw dates.
     const addAudits = await withAdmin(
-      async (c) => (await c.query<{ raw: string }>(`SELECT audit_event::text AS raw FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.employee.add'`, [o.orgId])).rows,
+      async (c) => (await c.query<{ raw: string }>(`SELECT audit_event::text AS raw FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.employee.add'`, [o.orgId])).rows,
     );
     for (const row of addAudits) {
       expect(row.raw).not.toContain(PERMIT_RAW);
@@ -364,7 +364,7 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
     await withAdmin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
       await c.query('COMMIT');
     });
     const exportedEmployees: Array<Record<string, unknown>> = [];

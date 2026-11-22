@@ -45,7 +45,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -53,7 +53,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
   async function connection(orgId: string, owner: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         'sandbox',
@@ -94,9 +94,9 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -230,7 +230,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
     expect(post.variants[0]?.checklist).toHaveLength(8);
     await exec(o, o.owner, 'social.variant.decide', { postId, decision: 'approved', variants: seen(post, all) });
     expect((await stored(postId))[0]?.checklist).toHaveLength(8);
-    const audit = await admin(async (c) => (await c.query<{ detail: { items: unknown[]; removed: number } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.review_check.set' AND outcome = 'ok' ORDER BY id", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: { items: unknown[]; removed: number } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.review_check.set' AND outcome = 'ok' ORDER BY id", [o.orgId])).rows);
     expect(audit.map((r) => [r.detail.items.length, r.detail.removed])).toEqual([[10, 0]]);
   });
 

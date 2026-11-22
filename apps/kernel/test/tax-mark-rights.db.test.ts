@@ -57,9 +57,9 @@ suite('who may mark a tax due done, per legal entity (#1917)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 2 });
     const db = createDb(pool);
@@ -73,15 +73,15 @@ suite('who may mark a tax due done, per legal entity (#1917)', () => {
     ({ orgId } = await createOrg(rt, asUser(users.owner), 'Quyền đánh dấu'));
     await admin(async (c) => {
       // The VAT return monthly, and the PIT withholding return monthly from the org's tax profile.
-      await c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1`, [orgId]);
-      await c.query(`INSERT INTO crove_kernel.tax_profile (org_id, obligations, pit_filing_period, updated_by) VALUES ($1, '{pit_withholding}', 'month', $2)`, [
+      await c.query(`UPDATE ludy_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1`, [orgId]);
+      await c.query(`INSERT INTO ludy_kernel.tax_profile (org_id, obligations, pit_filing_period, updated_by) VALUES ($1, '{pit_withholding}', 'month', $2)`, [
         orgId,
         users.owner,
       ]);
-      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       // A branch that has existed for years, so it owes every period the calendar lists.
       branch = (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, created_at) VALUES ($1, 'Chi nhánh', 'branch', $2, '2020-01-01') RETURNING id`, [
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by, created_at) VALUES ($1, 'Chi nhánh', 'branch', $2, '2020-01-01') RETURNING id`, [
           orgId,
           users.owner,
         ])
@@ -92,11 +92,11 @@ suite('who may mark a tax due done, per legal entity (#1917)', () => {
         [users.branchChief, 'member'],
         [users.viewer, 'viewer'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
       }
       // A chief accountant of the whole org, and one of the branch alone (whose assignment narrows its scope to the branch).
       const assign = (user: string, role: string, entity: string | null) =>
-        c.query('INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, $4, $5)', [
+        c.query('INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, $4, $5)', [
           orgId,
           user,
           role,
@@ -167,7 +167,7 @@ suite('who may mark a tax due done, per legal entity (#1917)', () => {
     // The member marks any other obligation, as before.
     expect(await exec(users.member, 'kernel.tax_obligation.done', { ...pitMark, legalEntityId: branch })).toMatchObject({ legalEntityId: branch, done: true });
     expect(await exec(users.member, 'kernel.tax_obligation.undo', { ...pitMark, legalEntityId: branch })).toMatchObject({ legalEntityId: branch, done: false });
-    const left = await admin((c) => c.query('SELECT 1 FROM crove_kernel.tax_obligation_done WHERE org_id = $1', [orgId]));
+    const left = await admin((c) => c.query('SELECT 1 FROM ludy_kernel.tax_obligation_done WHERE org_id = $1', [orgId]));
     expect(left.rowCount).toBe(0);
   });
 });

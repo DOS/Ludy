@@ -15,6 +15,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ReportLinkView } from '@ludy/mod-social';
 import { reportView, type ReportPage } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -57,14 +58,14 @@ suite('social report links on PostgreSQL (#643)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Cửa hàng ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']));
     return { orgId, owner, member };
   }
 
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -105,9 +106,9 @@ suite('social report links on PostgreSQL (#643)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -304,7 +305,7 @@ suite('social report links on PostgreSQL (#643)', () => {
       periodEnd: '2026-11-01T00:00:00+07:00',
       title: 'Tháng 10',
     });
-    const previous = readFileSync(join(MIGRATIONS, '20261028200000_crove_social_report_external.sql'), 'utf8');
+    const previous = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, '20261028200000_crove_social_report_external.sql'), 'utf8'));
     const [now, before] = await admin(async (c) => {
       const read = async () => (await c.query<{ page: string }>('SELECT crove_social.report_link_view($1)::text AS page', [token])).rows[0]?.page;
       // The audience list (#1146), the Reels (#1151) and the Google Business figures (#1477) came after: left out of
@@ -378,7 +379,7 @@ suite('social report links on PostgreSQL (#643)', () => {
     await snapshot(o.orgId, fb, '2026-10-10', {});
     await snapshot(o.orgId, fb, '2026-10-11', null);
     const { token } = await exec<{ token: string }>(o, o.owner, 'social.report_link.create', { periodStart: '2026-10-01T00:00:00+07:00', periodEnd: '2026-11-01T00:00:00+07:00' });
-    const previous = readFileSync(join(MIGRATIONS, '20261028240000_crove_social_story_report.sql'), 'utf8');
+    const previous = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, '20261028240000_crove_social_story_report.sql'), 'utf8'));
     const [now, audience, before] = await admin(async (c) => {
       // The Reels (#1151) came after.
       const current = (await c.query<{ page: string; audience: unknown }>(`SELECT (${WITHOUT_RATES('crove_social.report_link_view($1)')} - ARRAY['audience', 'reels', 'sections', 'performance'])::text AS page, crove_social.report_link_view($1) -> 'audience' AS audience`, [token])).rows[0];
@@ -500,7 +501,7 @@ suite('social report links on PostgreSQL (#643)', () => {
     const columns = await admin(async (x) =>
       (
         await x.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'report_link' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'report_link' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
@@ -580,7 +581,7 @@ suite('social report links on PostgreSQL (#643)', () => {
     await exec(o, o.owner, 'social.goal.set', { connectionId: null, targets: { posts: 3, reach: 1000 }, timeZone: 'Asia/Ho_Chi_Minh' });
     const plain = await exec<{ token: string }>(o, o.owner, 'social.report_link.create', { ...OCT, title: 'Tháng 10' });
     const outside = await exec<{ token: string }>(o, o.owner, 'social.report_link.create', { ...OCT, includeExternal: true, connectionIds: [fb] });
-    const previous = readFileSync(join(MIGRATIONS, '20261029100000_crove_social_follower_demographics.sql'), 'utf8');
+    const previous = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, '20261029100000_crove_social_follower_demographics.sql'), 'utf8'));
     const pages = await admin(async (c) => {
       const read = async (token: string, without: string) => (await c.query<{ page: string }>(`SELECT (crove_social.report_link_view($1) - ${without})::text AS page`, [token])).rows[0]?.page;
       // The rate sums (#1164) and the Google Business figures (#1477) came after: left out of today's answer.
@@ -679,7 +680,7 @@ suite('social report links on PostgreSQL (#643)', () => {
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'report_link' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'report_link' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
@@ -707,7 +708,7 @@ suite('social report links on PostgreSQL (#643)', () => {
       await exec<{ token: string }>(o, o.owner, 'social.report_link.create', { ...OCT, includeAudience: false, connectionIds: [fb] }),
       await exec<{ token: string }>(o, o.owner, 'social.report_link.create', { ...OCT, labelId: sale }),
     ];
-    const previous = readFileSync(join(MIGRATIONS, '20261029190000_crove_social_report_rate_goals.sql'), 'utf8');
+    const previous = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, '20261029190000_crove_social_report_rate_goals.sql'), 'utf8'));
     const pages = await admin(async (c) => {
       const read = async (token: string, without: string) => (await c.query<{ page: string }>(`SELECT (crove_social.report_link_view($1) - ${without})::text AS page`, [token])).rows[0]?.page;
       const now: (string | undefined)[] = [];
@@ -771,18 +772,18 @@ suite('social report links on PostgreSQL (#643)', () => {
         )
       ).rows.map((r) => r.grantee),
     );
-    expect(grants).toEqual(['crove_app']);
+    expect(grants).toEqual(['ludy_app']);
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'report_link' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'report_link' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
     expect(columns).toEqual(['revoked_at', 'revoked_by']);
     // The worker role may not call it.
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     const w = new pg.Client({ connectionString: worker.toString() });
     await w.connect();

@@ -46,15 +46,15 @@ export const signAcceptanceSource = defineQuery({
     const { rows: metaRows } = await sql<{ ai_stopped: boolean; budget_spent: boolean }>`
       SELECT
         (
-          crove_kernel.global_kill_switch_on('ai')
+          ludy_kernel.global_kill_switch_on('ai')
           OR EXISTS (
-            SELECT 1 FROM crove_kernel.kill_switch k
+            SELECT 1 FROM ludy_kernel.kill_switch k
              WHERE k.org_id = ${ctx.orgId}::uuid
                AND k.released_at IS NULL
                AND (k.scope = 'org' OR (k.scope = 'module' AND k.target IN ('sign', 'projects')))
           )
         ) AS ai_stopped,
-        crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'sign', NULL::uuid) AS budget_spent
+        ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'sign', NULL::uuid) AS budget_spent
     `.execute(ctx.trx);
 
     const meta = metaRows[0];
@@ -111,9 +111,9 @@ export const signAcceptanceAiStatus = defineQuery({
     const { rows } = await sql<{ ai_stopped: boolean }>`
       SELECT
         (
-          crove_kernel.global_kill_switch_on('ai')
+          ludy_kernel.global_kill_switch_on('ai')
           OR EXISTS (
-            SELECT 1 FROM crove_kernel.kill_switch k
+            SELECT 1 FROM ludy_kernel.kill_switch k
              WHERE k.org_id = ${ctx.orgId}::uuid
                AND k.released_at IS NULL
                AND (k.scope = 'org' OR (k.scope = 'module' AND k.target IN ('sign', 'projects')))

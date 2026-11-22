@@ -64,14 +64,14 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -103,7 +103,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@yt-conv.test`, name: null });
     const member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `member-${randomUUID().slice(0, 8)}@yt-conv.test`, name: null });
     const { orgId } = await createOrg(rt, asUser(owner), `YouTube ${randomUUID().slice(0, 6)}`);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
     const asOwner = { actor: asUser(owner), orgId };
     const asMember = { actor: asUser(member), orgId };
     const connect = (accountId: string, scopes: string[]) => {
@@ -167,7 +167,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     const nextAt = (await status()).nextPollAt as string;
     expect(Date.parse(nextAt)).toBeGreaterThan(Date.now() + 14 * 60_000);
     // When its time comes it is due again.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET history_next_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [orgId, connectionId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET history_next_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [orgId, connectionId]));
     expect((await dueConversationSync(workerDb, { history: ['youtube'], profile: [] })).map((j) => j.connectionId)).toContain(connectionId);
 
     // The threads are stored as comment threads under the video, so Social's post tab lists them.
@@ -218,7 +218,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     expect(inserts[0]?.body).toEqual({ snippet: { parentId: THREAD, textOriginal: 'Dạ bột mì số 11 ạ!' } });
     detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
     expect(detail.messages.at(-1)).toMatchObject({ direction: 'out', sendState: 'sent' });
-    const stored = await admin(async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM crove_kernel.conversation_message WHERE id = $1', [messageId])).rows[0]?.external_message_id);
+    const stored = await admin(async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM ludy_kernel.conversation_message WHERE id = $1', [messageId])).rows[0]?.external_message_id);
     expect(stored).toBe(replyId);
     // The reply cost 50 units of the project's day, counted beside the polling and never against its budget.
     expect(await status()).toMatchObject({ pollUnitsUsed: 2, replyUnitsUsed: 50 });
@@ -293,14 +293,14 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     const mfa = { type: 'user' as const, userId: owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: convId, confirm: true }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
     expect(erased.threads).toBe(1);
-    const left = await admin((c) => c.query('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body ILIKE $2', [orgId, '%0909123456%']));
+    const left = await admin((c) => c.query('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body ILIKE $2', [orgId, '%0909123456%']));
     expect(left.rows).toHaveLength(0);
-    const names = await admin((c) => c.query<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 AND provider = $2', [orgId, 'youtube']));
+    const names = await admin((c) => c.query<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND provider = $2', [orgId, 'youtube']));
     expect(names.rows.map((r) => r.external_user_id)).not.toContain(CUSTOMER);
 
     // No customer text, name or channel id reaches audit_event or outbox_event.
     for (const table of ['audit_event', 'outbox_event']) {
-      const leaked = await admin((c) => c.query(`SELECT 1 FROM crove_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3 OR row_to_json(t)::text ILIKE $4 OR row_to_json(t)::text ILIKE $5)`, [orgId, '%0909123456%', '%le.thi.hoa%', `%${CUSTOMER}%`, '%Mua ở đâu%']));
+      const leaked = await admin((c) => c.query(`SELECT 1 FROM ludy_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3 OR row_to_json(t)::text ILIKE $4 OR row_to_json(t)::text ILIKE $5)`, [orgId, '%0909123456%', '%le.thi.hoa%', `%${CUSTOMER}%`, '%Mua ở đâu%']));
       expect(leaked.rows).toHaveLength(0);
     }
   });
@@ -309,7 +309,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@yt-hide.test`, name: null });
     const viewer = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `viewer-${randomUUID().slice(0, 8)}@yt-hide.test`, name: null });
     const { orgId } = await createOrg(rt, asUser(owner), `YouTube hide ${randomUUID().slice(0, 6)}`);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
     const asOwner = { actor: asUser(owner), orgId };
     const sealed = broker.seal(JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' }), { orgId, provider: 'youtube', externalAccountId: CHANNEL });
     const { connectionId } = await rt.execute<{ connectionId: string }>(
@@ -338,7 +338,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     const deps = { runtime: worker, broker, adapter: (p: string) => (p === 'youtube' ? new YouTubePublisher(APP, fetchImpl).conversations : undefined) };
     const job = { orgId, connectionId, messageId, action: 'hide' as const };
     const units = async () => (await rt.query<YoutubeCommentsStatus[]>('kernel.conversation.youtube_comments', {}, asOwner)).find((s) => s.connectionId === connectionId)!.replyUnitsUsed;
-    const calls = () => admin(async (c) => (await c.query<{ target: string; state: string; retry_safety: string; calls: number }>("SELECT target, state, retry_safety, calls FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'hide' ORDER BY started_at", [orgId])).rows);
+    const calls = () => admin(async (c) => (await c.query<{ target: string; state: string; retry_safety: string; calls: number }>("SELECT target, state, retry_safety, calls FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'hide' ORDER BY started_at", [orgId])).rows);
 
     // The contract: YouTube hides, and the thread says this grant may.
     expect(CONVERSATION_PROVIDER_RULES.youtube?.canHide).toBe(true);
@@ -376,14 +376,14 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     answer = { status: 204 };
 
     // While the quota is known to be spent the command is refused up front with the reason, and no call is made.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET quota_blocked_until = now() + interval '2 hours' WHERE org_id = $1 AND id = $2", [orgId, connectionId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET quota_blocked_until = now() + interval '2 hours' WHERE org_id = $1 AND id = $2", [orgId, connectionId]));
     const before = platform.length;
     await expect(rt.execute('kernel.conversation.hide', { messageId, hidden: true }, asOwner)).rejects.toMatchObject({ code: 'YOUTUBE_QUOTA_SPENT' });
     expect(platform).toHaveLength(before);
-    await admin((c) => c.query('UPDATE crove_kernel.channel_connection SET quota_blocked_until = NULL WHERE org_id = $1 AND id = $2', [orgId, connectionId]));
+    await admin((c) => c.query('UPDATE ludy_kernel.channel_connection SET quota_blocked_until = NULL WHERE org_id = $1 AND id = $2', [orgId, connectionId]));
 
     // A grant without the comment scope (narrowed by the owner after the comments came in): no button (hideAllowed false) and the command is refused.
-    await admin((c) => c.query('UPDATE crove_kernel.channel_connection SET scopes = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, SCOPES.slice(0, 2)]));
+    await admin((c) => c.query('UPDATE ludy_kernel.channel_connection SET scopes = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, SCOPES.slice(0, 2)]));
     expect((await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner)).hideAllowed).toBe(false);
     await expect(rt.execute('kernel.conversation.hide', { messageId, hidden: true }, asOwner)).rejects.toMatchObject({ code: 'YOUTUBE_SCOPE_MISSING' });
     expect(platform).toHaveLength(before);
@@ -391,10 +391,10 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
 
     // The audit rows and events of the whole flow carry no comment text, name or channel id.
     for (const table of ['audit_event', 'outbox_event']) {
-      const leaked = await admin((c) => c.query(`SELECT 1 FROM crove_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3)`, [orgId, '%0909123456%', `%${CUSTOMER}%`]));
+      const leaked = await admin((c) => c.query(`SELECT 1 FROM ludy_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3)`, [orgId, '%0909123456%', `%${CUSTOMER}%`]));
       expect(leaked.rows).toHaveLength(0);
     }
-    const audited = await admin((c) => c.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.hide' AND outcome = 'ok'", [orgId]));
+    const audited = await admin((c) => c.query<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.hide' AND outcome = 'ok'", [orgId]));
     expect(Number(audited.rows[0]?.n)).toBeGreaterThanOrEqual(3);
   });
 });

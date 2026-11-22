@@ -17,7 +17,7 @@ suite('the chain of an Engage twin (#3863)', () => {
   beforeAll(async () => {
     h = await startHarness('engage_chain');
     connectionId = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
   }, 300_000);
   afterAll(async () => {
     await h?.stop();
@@ -27,21 +27,21 @@ suite('the chain of an Engage twin (#3863)', () => {
     const threadId = `thread-${randomUUID().slice(0, 8)}`;
     const event: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${threadId}`, direction: 'in', contact: { id: `u-${tick}`, name: 'Khách' }, text: 'Giá bao nhiêu?', at: new Date(Date.UTC(2026, 10, 2, 3, 0, tick++)).toISOString() };
     await h.system('conversations', 'kernel.conversation.ingest', { connectionId, events: [event] });
-    return (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [h.orgId, threadId])).rows[0]?.id as string;
+    return (await h.q<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [h.orgId, threadId])).rows[0]?.id as string;
   }
   const audit = async (command: string, proposalId?: string) =>
     (await h.q<{ actor_type: string; actor_id: string | null; outcome: string; proposal_id: string | null; detail: Record<string, unknown> }>(
-      `SELECT actor_type, actor_id, outcome, proposal_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND ($3::text IS NULL OR proposal_id::text = $3 OR detail ->> 'proposal_id' = $3 OR detail ->> 'under_proposal' = $3) ORDER BY occurred_at, id`,
+      `SELECT actor_type, actor_id, outcome, proposal_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND ($3::text IS NULL OR proposal_id::text = $3 OR detail ->> 'proposal_id' = $3 OR detail ->> 'under_proposal' = $3) ORDER BY occurred_at, id`,
       [h.orgId, command, proposalId ?? null],
     )).rows;
   const member = async (role: 'member' | 'viewer') => {
     const id = await upsertIdentity(h.db, { issuer: 'engage-chain', subject: `${role}-${randomUUID()}`, email: `${role}-${randomUUID().slice(0, 8)}@engage-chain.test`, name: role });
-    await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
+    await h.q('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
     return id;
   };
 
   it('holds exactly the 14 twins in the catalog, each with its scope and kind, and no other row', async () => {
-    const rows = (await h.q<{ command: string; scope: string; kind: string; adr: string }>('SELECT command, scope, kind, adr FROM crove_kernel.mcp_proposal_command ORDER BY command')).rows;
+    const rows = (await h.q<{ command: string; scope: string; kind: string; adr: string }>('SELECT command, scope, kind, adr FROM ludy_kernel.mcp_proposal_command ORDER BY command')).rows;
     expect(rows).toEqual(ENGAGE_PROPOSALS.map((p) => ({ command: p.command, scope: p.scope, kind: p.kind, adr: 'ADR-0051' })).sort((a, b) => (a.command < b.command ? -1 : 1)));
   });
 
@@ -85,7 +85,7 @@ suite('the chain of an Engage twin (#3863)', () => {
     }
     // An owner who stops being one while it waits holds the authority of the role they have now.
     const later = await h.addOwner();
-    await h.q("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [h.orgId, later]);
+    await h.q("UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [h.orgId, later]);
     await expect(h.approve(made.proposalId, later)).rejects.toMatchObject({ status: 403 });
     expect((await h.proposal(made.proposalId)).status).toBe('pending');
     expect(await h.executions('kernel.conversation.reply', made.proposalId)).toBe(0);

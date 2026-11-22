@@ -19,6 +19,7 @@ import { processInboundEmail } from '../src/inbound.ts';
 import { recordLastAttemptFailure, startWorker } from '../src/worker.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -110,20 +111,20 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
       u.password = password;
       return u.toString();
     };
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 4 });
     const db = createDb(pool);
     runtime = register(db);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -168,7 +169,7 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
     const [file] = await batch([fileId]);
     expect(file).toMatchObject({ status: 'failed', entries: null, canReextract: false });
     expect(file?.error).toMatch(/đường dẫn không an toàn/);
-    const files = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.file WHERE org_id = $1`, [orgA]));
+    const files = await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_kernel.file WHERE org_id = $1`, [orgA]));
     expect(files.rows[0]?.n).toBe(1);
   });
 
@@ -228,7 +229,7 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
     expect((await batch([document]))[0]).toMatchObject({ status: 'failed' });
     // Every attempt threw: the reading service failed, which the prober counts (#1998).
     const failed = await admin((c) =>
-      c.query<{ reason: string | null }>(`SELECT payload ->> 'reason' AS reason FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.read_failed' AND payload ->> 'fileId' = $2`, [
+      c.query<{ reason: string | null }>(`SELECT payload ->> 'reason' AS reason FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.read_failed' AND payload ->> 'fileId' = $2`, [
         orgA,
         document,
       ]),
@@ -288,7 +289,7 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
       return fileId;
     };
     const countOf = (fileId: string) =>
-      admin(async (c) => (await c.query<{ n: number | null }>('SELECT entry_count AS n FROM crove_kernel.extraction WHERE file_id = $1', [fileId])).rows[0]?.n);
+      admin(async (c) => (await c.query<{ n: number | null }>('SELECT entry_count AS n FROM ludy_kernel.extraction WHERE file_id = $1', [fileId])).rows[0]?.n);
     const entries = (n: number) => Array.from({ length: n }, (_, i) => ({ outcome: 'rejected' as const, name: `muc-${i}.txt`, reason: 'unsupported_type' as const }));
     const system = { actor: { type: 'system' as const, component: 'test' }, orgId: orgA };
 
@@ -307,31 +308,31 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
     const forged = await ingestArchive('forged');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks, completed_at, entry_count)
+        `INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks, completed_at, entry_count)
          VALUES ($1, $2, 'archive', 'done', $3::jsonb, '[]', now(), 99)`,
         [orgA, forged, JSON.stringify({ entries: [{ name: 'a.txt', outcome: 'rejected', reason: 'unsupported_type', fileId: null }] })],
       ),
     );
     expect(await countOf(forged)).toBe(1);
-    await expect(pool.query('UPDATE crove_kernel.extraction SET entry_count = 7 WHERE false')).rejects.toThrow(/permission denied/);
+    await expect(pool.query('UPDATE ludy_kernel.extraction SET entry_count = 7 WHERE false')).rejects.toThrow(/permission denied/);
 
     // An archive opened before the column existed (the trigger off, as before the migration) is counted when the
     // migration runs, and running the migration again changes nothing.
     const older = await ingestArchive('older');
     await admin(async (c) => {
-      await c.query('ALTER TABLE crove_kernel.extraction DISABLE TRIGGER extraction_entry_count');
+      await c.query('ALTER TABLE ludy_kernel.extraction DISABLE TRIGGER extraction_entry_count');
       try {
         await c.query(
-          `INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks, completed_at)
+          `INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks, completed_at)
            VALUES ($1, $2, 'archive', 'done', $3::jsonb, '[]', now())`,
           [orgA, older, JSON.stringify({ entries: entries(4).map((e) => ({ ...e, fileId: null })) })],
         );
       } finally {
-        await c.query('ALTER TABLE crove_kernel.extraction ENABLE TRIGGER extraction_entry_count');
+        await c.query('ALTER TABLE ludy_kernel.extraction ENABLE TRIGGER extraction_entry_count');
       }
     });
     expect(await countOf(older)).toBeNull();
-    const migration = readFileSync(new URL('../../../supabase/migrations/20261020235000_crove_kernel_extraction_entry_count.sql', import.meta.url), 'utf8');
+    const migration = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261020235000_crove_kernel_extraction_entry_count.sql', import.meta.url), 'utf8'));
     for (let run = 0; run < 2; run++) await admin((c) => c.query(`BEGIN;\n${migration}\nCOMMIT;`));
     expect(await countOf(older)).toBe(4);
     expect(await countOf(opened)).toBe(3);
@@ -340,7 +341,7 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
 
   it('opens ZIPs attached to an email as email documents, bounded per message and per ZIP (#432)', async () => {
     // Org B, so the counts of org A's other cases stay as they are.
-    const token = await admin(async (c) => (await c.query<{ t: string }>('SELECT inbound_token AS t FROM crove_kernel.tenant WHERE org_id = $1', [orgB])).rows[0]?.t);
+    const token = await admin(async (c) => (await c.query<{ t: string }>('SELECT inbound_token AS t FROM ludy_kernel.tenant WHERE org_id = $1', [orgB])).rows[0]?.t);
     const extra = 5;
     const big = Array.from({ length: MAX_EMAIL_ARCHIVE_DOCUMENTS + extra }, (_, i) => ({ name: `thang-10/hd-${String(i + 1).padStart(2, '0')}.xml`, data: invoiceXml(1000 + i) }));
     const zips = [buildZip(big), buildZip([{ name: 'hd.xml', data: invoiceXml(2000) }]), buildZip([{ name: 'hd.xml', data: invoiceXml(2001) }])];
@@ -378,7 +379,7 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
     expect(received.fileIds).toHaveLength(MAX_EMAIL_ARCHIVES + 1);
     const filed = await admin(async (c) =>
       (await c.query<{ id: string; filename: string; content_type: string; source: string; created_by: string | null }>(
-        'SELECT id, filename, content_type, source, created_by FROM crove_kernel.file WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY filename',
+        'SELECT id, filename, content_type, source, created_by FROM ludy_kernel.file WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY filename',
         [orgB, received.fileIds],
       )).rows,
     );
@@ -400,7 +401,7 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
       big.map((entry, i) => [entry.name, i < MAX_EMAIL_ARCHIVE_DOCUMENTS ? 'stored' : 'rejected', i < MAX_EMAIL_ARCHIVE_DOCUMENTS ? null : 'email_limit']),
     );
     const documents = await admin(async (c) =>
-      (await c.query<{ source: string; created_by: string | null }>('SELECT source, created_by FROM crove_kernel.file WHERE org_id = $1 AND id = ANY($2::uuid[])', [orgB, opened.fileIds])).rows,
+      (await c.query<{ source: string; created_by: string | null }>('SELECT source, created_by FROM ludy_kernel.file WHERE org_id = $1 AND id = ANY($2::uuid[])', [orgB, opened.fileIds])).rows,
     );
     expect(documents).toEqual(opened.fileIds.map(() => ({ source: 'email', created_by: null })));
     for (const entry of big.slice(MAX_EMAIL_ARCHIVE_DOCUMENTS)) {
@@ -471,8 +472,8 @@ suite('bulk intake of a ZIP archive on PostgreSQL (issue #314)', () => {
     const children = stored.map((e) => e.file?.id as string);
     const rows = await admin((c) =>
       c.query<{ created_by: string; source: string; proposals: number }>(
-        `SELECT f.created_by, f.source, (SELECT count(*)::int FROM crove_kernel.proposal p WHERE p.org_id = f.org_id AND p.source_file_id = f.id) AS proposals
-         FROM crove_kernel.file f WHERE f.org_id = $1 AND f.id = ANY($2::uuid[])`,
+        `SELECT f.created_by, f.source, (SELECT count(*)::int FROM ludy_kernel.proposal p WHERE p.org_id = f.org_id AND p.source_file_id = f.id) AS proposals
+         FROM ludy_kernel.file f WHERE f.org_id = $1 AND f.id = ANY($2::uuid[])`,
         [orgA, children],
       ),
     );

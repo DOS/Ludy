@@ -35,7 +35,7 @@ const begin = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input) => {
-    await sql`SELECT crove_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${input.meetingId}::uuid, ${input.stagingKey})`.execute(ctx.trx).catch(asDomain);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${input.meetingId}::uuid, ${input.stagingKey})`.execute(ctx.trx).catch(asDomain);
     return { ok: true };
   },
 });
@@ -46,7 +46,7 @@ const imported = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input) => {
-    await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx).catch(asDomain);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx).catch(asDomain);
     return { ok: true };
   },
 });
@@ -58,7 +58,7 @@ const rawReplace = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   handler: async (ctx, input) => {
-    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.meeting_platform_recording_replace(${input.connectionId}::uuid, ${JSON.stringify(input.rows)}::jsonb) AS n`.execute(ctx.trx).catch(asDomain);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.meeting_platform_recording_replace(${input.connectionId}::uuid, ${JSON.stringify(input.rows)}::jsonb) AS n`.execute(ctx.trx).catch(asDomain);
     return { count: rows[0]?.n };
   },
 });
@@ -66,7 +66,7 @@ const recordingRows = defineQuery({
   name: 'test.mp.recording_rows',
   input: z.strictObject({}),
   access: 'system',
-  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('crove_kernel.meeting_platform_recording').select('id').where('org_id', '=', ctx.orgId).execute()).length,
+  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('ludy_kernel.meeting_platform_recording').select('id').where('org_id', '=', ctx.orgId).execute()).length,
 });
 
 suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () => {
@@ -105,7 +105,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const lan = await person('lan');
     const nam = await person('nam');
     const viewer = await person('viewer');
-    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, lan, nam, viewer]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, lan, nam, viewer]);
     const exec = <T = unknown>(user: string, command: string, input: unknown = {}) => api.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T = unknown>(user: string, name: string, input: unknown = {}) => api.query<T>(name, input, { actor: asUser(user), orgId });
     const sys = <T = unknown>(command: string, input: unknown = {}) => worker.execute<T>(command, input, { actor: SYSTEM, orgId });
@@ -142,7 +142,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   const mine = (o: Org, user: string) => o.query<MeetingPlatformRecordingView[]>(user, 'kernel.meeting_platform.recordings');
   const rowOf = async (externalId: string, connectionId: string) =>
     (await sqlAdmin<{ id: string; status: string; title: string; staging_key: string | null; error_code: string | null; meeting_id: string | null; size_bytes: string | null }>(
-      'SELECT id, status, title, staging_key, error_code, meeting_id, size_bytes FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2',
+      'SELECT id, status, title, staging_key, error_code, meeting_id, size_bytes FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2',
       [connectionId, externalId],
     )).rows[0];
   const idOf = async (externalId: string, connectionId: string) => (await rowOf(externalId, connectionId))?.id as string;
@@ -176,15 +176,15 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
     const kernelDefs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
@@ -224,7 +224,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await o.query<unknown[]>(o.lan, 'kernel.meeting_platform.connections')).toHaveLength(1);
     await expect(connect(o, o.viewer)).rejects.toMatchObject({ status: 403 });
     // The audit row holds the ids and provider, never the sealed bytes or the account.
-    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.meeting_platform.connect' AND outcome = 'ok'", [o.orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.meeting_platform.connect' AND outcome = 'ok'", [o.orgId]);
     expect(audit.rows.length).toBe(2);
     const text = JSON.stringify(audit.rows);
     expect(text).not.toContain(envelopeOf(c.secret));
@@ -249,7 +249,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   it('a connection that is expired comes back active, to be listed again, when the member connects again', async () => {
     const o = await org();
     const c = await connect(o, o.lan);
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET status = 'expired', status_reason = 'grant revoked', last_synced_at = now() WHERE id = $1", [c.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET status = 'expired', status_reason = 'grant revoked', last_synced_at = now() WHERE id = $1", [c.connectionId]);
     expect(await o.query<MeetingPlatformConnectionView[]>(o.lan, 'kernel.meeting_platform.connections')).toMatchObject([{ status: 'expired', statusReason: 'grant revoked' }]);
     await connect(o, o.lan, c.account, 'sandbox', 'sealed-bytes-2');
     expect(await o.query<MeetingPlatformConnectionView[]>(o.lan, 'kernel.meeting_platform.connections')).toMatchObject([{ status: 'active', statusReason: null, lastSyncedAt: null }]);
@@ -262,7 +262,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const begun = await o.exec<{ attemptId: string; expiresAt: string }>(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: hash, codeVerifier: verifier });
     expect(new Date(begun.expiresAt).getTime()).toBeGreaterThan(Date.now());
     // The attempt is stored under the recording provider's own name, never the calendar's.
-    const stored = await sqlAdmin<{ provider: string }>('SELECT provider FROM crove_kernel.oauth_state WHERE state_hash = $1', [hash]);
+    const stored = await sqlAdmin<{ provider: string }>('SELECT provider FROM ludy_kernel.oauth_state WHERE state_hash = $1', [hash]);
     expect(stored.rows.map((r) => r.provider)).toEqual(['zoom_recordings']);
     // Another member cannot finish it, and an unknown state says the same thing.
     await expect(o.exec(o.nam, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: hash })).rejects.toMatchObject({ code: 'OAUTH_STATE_INVALID' });
@@ -270,18 +270,18 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: hash })).toEqual({ codeVerifier: verifier });
     await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: hash })).rejects.toMatchObject({ code: 'OAUTH_STATE_USED' });
     // The verifier is wiped with the consume.
-    const row = await sqlAdmin<{ code_verifier: string | null }>('SELECT code_verifier FROM crove_kernel.oauth_state WHERE state_hash = $1', [hash]);
+    const row = await sqlAdmin<{ code_verifier: string | null }>('SELECT code_verifier FROM ludy_kernel.oauth_state WHERE state_hash = $1', [hash]);
     expect(row.rows[0]?.code_verifier).toBeNull();
     // An attempt that ran out is refused as expired.
     const late = `sha256:${randomBytes(32).toString('hex')}`;
     await o.exec(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: late, codeVerifier: verifier });
-    await sqlAdmin("UPDATE crove_kernel.oauth_state SET expires_at = now() - interval '1 minute' WHERE state_hash = $1", [late]);
+    await sqlAdmin("UPDATE ludy_kernel.oauth_state SET expires_at = now() - interval '1 minute' WHERE state_hash = $1", [late]);
     await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: late })).rejects.toMatchObject({ code: 'OAUTH_STATE_EXPIRED' });
     // A viewer starts none; a platform that has no connect dialog (the sandbox) is not a provider of the command.
     await expect(o.exec(o.viewer, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ status: 403 });
     await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'sandbox', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ code: expect.stringMatching(/VALIDATION|INVALID/) });
     // The audit rows name the attempt and the provider, never the hash or the verifier.
-    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.meeting_platform.oauth_%' AND outcome = 'ok'", [o.orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.meeting_platform.oauth_%' AND outcome = 'ok'", [o.orgId]);
     expect(audit.rows.length).toBeGreaterThanOrEqual(3);
     const text = JSON.stringify(audit.rows);
     expect(text).not.toContain(hash);
@@ -295,9 +295,9 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const b = await connect(o, o.lan);
     const expired = await connect(o, o.lan);
     const theirs = await connect(o, o.nam);
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET last_synced_at = now() WHERE org_id = $1", [o.orgId]);
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [expired.connectionId]);
-    const synced = async () => Object.fromEntries((await sqlAdmin<{ id: string; s: boolean }>('SELECT id, last_synced_at IS NOT NULL AS s FROM crove_kernel.meeting_platform_connection WHERE org_id = $1', [o.orgId])).rows.map((r) => [r.id, r.s]));
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET last_synced_at = now() WHERE org_id = $1", [o.orgId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [expired.connectionId]);
+    const synced = async () => Object.fromEntries((await sqlAdmin<{ id: string; s: boolean }>('SELECT id, last_synced_at IS NOT NULL AS s FROM ludy_kernel.meeting_platform_connection WHERE org_id = $1', [o.orgId])).rows.map((r) => [r.id, r.s]));
     expect(await o.exec(o.lan, 'kernel.meeting_platform.refresh', { connectionId: a.connectionId })).toEqual({ refreshed: 1 });
     expect(await synced()).toMatchObject({ [a.connectionId]: false, [b.connectionId]: true, [expired.connectionId]: true, [theirs.connectionId]: true });
     // Another member's id is not theirs to refresh: nothing changes, nothing is revealed.
@@ -312,7 +312,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const c = await connect(o, o.lan);
     expect(await replace(o, c.connectionId, [listed('a'), listed('b'), listed('c')])).toEqual({ count: 3 });
     expect((await mine(o, o.lan)).map((r) => r.title).sort()).toEqual(['Họp a', 'Họp b', 'Họp c']);
-    expect((await sqlAdmin<{ l: boolean }>('SELECT last_synced_at IS NOT NULL AS l FROM crove_kernel.meeting_platform_connection WHERE id = $1', [c.connectionId])).rows[0]?.l).toBe(true);
+    expect((await sqlAdmin<{ l: boolean }>('SELECT last_synced_at IS NOT NULL AS l FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [c.connectionId])).rows[0]?.l).toBe(true);
     // a changes, b and c vanish, d is new; a repeated id counts once.
     expect(await replace(o, c.connectionId, [listed('a', { title: 'Đã đổi', hasVideo: true, sizeBytes: null, lengthSeconds: null }), listed('d'), listed('d')])).toEqual({ count: 2 });
     expect((await rowOf('a', c.connectionId))?.title).toBe('Đã đổi');
@@ -333,7 +333,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     // An empty list deletes the suggestions only ('a' went; the three rows above stay).
     expect(await replace(o, c.connectionId, [])).toEqual({ count: 0 });
     expect(await rowOf('a', c.connectionId)).toBeUndefined();
-    expect(await sqlAdmin('SELECT 1 FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [c.connectionId]).then((r) => r.rowCount)).toBe(3);
+    expect(await sqlAdmin('SELECT 1 FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1', [c.connectionId]).then((r) => r.rowCount)).toBe(3);
     expect(running.recordingId).toBeTruthy();
   });
 
@@ -357,7 +357,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await refuses(api.execute('kernel.meeting_platform.recording_replace', { connectionId: c.connectionId, rows: [] }, { actor: SYSTEM, orgId: o.orgId }))).toBe('FORBIDDEN');
     // A connection that is expired, unknown, or another org's is left as it is.
     await replace(o, c.connectionId, [listed('keep')]);
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [c.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [c.connectionId]);
     expect(await replace(o, c.connectionId, [listed('new')])).toEqual({ count: 0 });
     expect(await replace(o, c.connectionId, [])).toEqual({ count: 0 });
     expect(await rowOf('keep', c.connectionId)).toBeDefined();
@@ -410,7 +410,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await o.sysQuery('kernel.meeting_platform.import_holds', { recordingId, stagingKey: key })).toBe('staged');
     expect(await o.sysQuery('kernel.meeting_platform.import_holds', { recordingId, stagingKey: stagingKey() })).toBe('none');
     expect(await rowOf('v', c.connectionId)).toMatchObject({ status: 'staged', staging_key: key });
-    expect((await sqlAdmin<{ s: boolean }>('SELECT staged_at IS NOT NULL AS s FROM crove_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]?.s).toBe(true);
+    expect((await sqlAdmin<{ s: boolean }>('SELECT staged_at IS NOT NULL AS s FROM ludy_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]?.s).toBe(true);
     expect(await o.sys('kernel.meeting_platform.import_staged', { recordingId, stagingKey: key })).toMatchObject({ applied: 0 });
     // A duplicate or stale job cannot fail a row that is staged, whatever it was handed.
     expect(await o.sys('kernel.meeting_platform.import_failed', { recordingId, code: 'timeout', stagingKey: key })).toMatchObject({ applied: 0 });
@@ -426,7 +426,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect((await rowOf('v', c.connectionId))?.status).toBe('claimed');
     expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId }))).toBe('MEETING_PLATFORM_STATE');
     // The audit row of the claim names the recording, never the staging key.
-    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.meeting_platform.import.claim'", [o.orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.meeting_platform.import.claim'", [o.orgId]);
     expect(JSON.stringify(audit.rows)).not.toContain(key);
     // Recording the media of another meeting or by another member changes nothing; the owner's own does.
     await as(o.lan, 'test.mp.imported', { meetingId: randomUUID() });
@@ -494,7 +494,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const o = await org();
     const c = await connect(o, o.lan);
     const back = (id: string, column: 'updated_at' | 'staged_at' | 'started_at', ms: number) =>
-      sqlAdmin(`UPDATE crove_kernel.meeting_platform_recording SET ${column} = now() - ($2 || ' milliseconds')::interval WHERE id = $1`, [id, String(ms)]);
+      sqlAdmin(`UPDATE ludy_kernel.meeting_platform_recording SET ${column} = now() - ($2 || ' milliseconds')::interval WHERE id = $1`, [id, String(ms)]);
     // staged: 56 minutes (expired) and 54 (kept)
     const staleStaged = await staged(o, o.lan, c.connectionId, 'staged-old');
     const freshStaged = await staged(o, o.lan, c.connectionId, 'staged-new');
@@ -556,7 +556,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await o.exec(o.lan, 'kernel.meeting_platform.import.claim_failed', { recordingId: r.recordingId, code: 'claim_failed' });
     await replace(o, c.connectionId, [listed('two')]);
     expect(await o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId })).toEqual({ connectionId: c.connectionId, disconnected: true });
-    const left = async (table: string, column: string, id: string) => Number((await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table} WHERE ${column} = $1`, [id])).rows[0]?.n);
+    const left = async (table: string, column: string, id: string) => Number((await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.${table} WHERE ${column} = $1`, [id])).rows[0]?.n);
     expect(await left('meeting_platform_connection', 'id', c.connectionId)).toBe(0);
     expect(await left('meeting_platform_credential', 'id', c.connectionId)).toBe(0);
     expect(await left('meeting_platform_recording', 'connection_id', c.connectionId)).toBe(0);
@@ -565,7 +565,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await left('meeting_platform_credential', 'id', keep.connectionId)).toBe(1);
     expect(await left('meeting_platform_recording', 'connection_id', keep.connectionId)).toBe(1);
     // A viewer (demoted after connecting) can still take their own away.
-    await sqlAdmin("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
+    await sqlAdmin("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
     expect(await o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: keep.connectionId })).toMatchObject({ disconnected: true });
   });
 
@@ -584,18 +584,18 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await connect(o, o.lan, 'lan@zoom.test', 'zoom', 'sealed-bytes-two');
     expect((await o.sysQuery<{ envelope: string }>('kernel.meeting_platform.credential', { connectionId: c.connectionId })).envelope).toBe(envelopeOf('sealed-bytes-two'));
     // Expired: no credential goes out.
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [c.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [c.connectionId]);
     expect(await refuses(o.sysQuery('kernel.meeting_platform.credential', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_NOT_ACTIVE');
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET status = 'active' WHERE id = $1", [c.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET status = 'active' WHERE id = $1", [c.connectionId]);
     expect((await o.sysQuery<{ keyId: string }>('kernel.meeting_platform.credential', { connectionId: c.connectionId })).keyId).toBe('k1');
     // The member left the org, no longer edits in it, or is disabled: nothing goes out.
-    await sqlAdmin("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
+    await sqlAdmin("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
     expect(await refuses(o.sysQuery('kernel.meeting_platform.credential', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_OWNER_LEFT');
-    await sqlAdmin("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.lan]);
+    await sqlAdmin("UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [o.lan]);
     expect(await refuses(o.sysQuery('kernel.meeting_platform.credential', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_OWNER_LEFT');
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [o.lan]);
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [o.lan]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan]);
     expect(await refuses(o.sysQuery('kernel.meeting_platform.credential', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_OWNER_LEFT');
   });
 
@@ -605,7 +605,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const b = await connect(o, o.nam);
     const expired = await connect(o, o.lan);
     const gone = await connect(o, o.nam);
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [expired.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET status = 'expired' WHERE id = $1", [expired.connectionId]);
     const all: Array<{ orgId: string; connectionId: string; provider: string }> = [];
     let after: { orgId: string; connectionId: string } | null = null;
     for (let page = 0; page < 200; page++) {
@@ -620,7 +620,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     // The order is the key's: the cursor never skips or repeats a row.
     expect(new Set(all.map((r) => r.connectionId)).size).toBe(all.length);
     expect([...all].map((r) => `${r.orgId}/${r.connectionId}`)).toEqual([...all].map((r) => `${r.orgId}/${r.connectionId}`).sort());
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.nam]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.nam]);
     const again = await o.sysQuery<Array<{ orgId: string; connectionId: string }>>('kernel.meeting_platform.sync_due', { afterOrg: null, afterId: null, limit: 1000 });
     expect(again.filter((r) => r.orgId === o.orgId).map((r) => r.connectionId)).toEqual([a.connectionId]);
     // Only the worker's system context pages them.
@@ -641,7 +641,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await o.query<MeetingPlatformConnectionView[]>(o.lan, 'kernel.meeting_platform.connections')).toMatchObject([{ status: 'active', statusReason: 'platform_unavailable' }]);
     expect((await o.sysQuery<{ keyId: string }>('kernel.meeting_platform.credential', { connectionId: a.connectionId })).keyId).toBe('k1');
     // 11 minutes later it is due again; a refresh brings it back at once.
-    await sqlAdmin("UPDATE crove_kernel.meeting_platform_connection SET last_synced_at = now() - interval '11 minutes' WHERE id = $1", [a.connectionId]);
+    await sqlAdmin("UPDATE ludy_kernel.meeting_platform_connection SET last_synced_at = now() - interval '11 minutes' WHERE id = $1", [a.connectionId]);
     expect((await due()).sort()).toEqual([a.connectionId, b.connectionId].sort());
     await o.sys('kernel.meeting_platform.sync_failed', { connectionId: a.connectionId, code: 'download_failed', expired: false });
     expect(await due()).toEqual([b.connectionId]);
@@ -747,7 +747,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   it('enforces RLS visibility, org scope, retention, failed-import shell exclusion and disabled Meetings app with no existence leak (#4123)', async () => {
     const o = await org();
     const o2 = await org();
-    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o2.orgId, o.lan]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o2.orgId, o.lan]);
     const c = await connect(o, o.lan);
     const t0 = new Date(Math.floor(Date.now() / 60_000) * 60_000 - 20 * 3_600_000);
     const at = (mins: number) => new Date(t0.getTime() + mins * MIN);
@@ -821,7 +821,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(uninstalledRows.find((r) => r.id === visHidRow.id)?.matchedMeeting).toBeNull();
 
     // 7. A member demoted to viewer still lists their own connection rows but cannot see any meeting (meeting_read denies viewer).
-    await sqlAdmin("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
+    await sqlAdmin("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
     await insertMeeting(o.orgId, o.nam, at(900), at(930), 'org', futureRetention);
     await replace(o, c.connectionId, [listed('rec-viewer', { startedAt: at(900).toISOString(), lengthSeconds: 1800 })]);
     const viewerList = await mine(o, o.lan);

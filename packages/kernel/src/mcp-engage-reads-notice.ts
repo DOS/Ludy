@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The worker's pass that tells the people who connected an AI app before its Engage reads existed (#4069, follow-up of #4068; ADR-0051 decision 2). The scan
-// (crove_kernel.mcp_engage_reads_to_tell, ids only, across active orgs) finds the people with a live grant made before the consent screen named the reads, who were not told yet and are members now;
+// (ludy_kernel.mcp_engage_reads_to_tell, ids only, across active orgs) finds the people with a live grant made before the consent screen named the reads, who were not told yet and are members now;
 // for each it runs kernel.mcp.engage_reads_notify, which stamps their grants and writes one notification. A failure for one person never stops the others; it is tried again on the next pass.
 // Once everyone was told the scan reads an empty partial index.
 import { sql } from 'kysely';
@@ -14,7 +14,7 @@ export const MCP_ENGAGE_READS_NOTICE_LIMIT = 100;
 
 // One pass; the number of people handled.
 export async function sweepMcpEngageReadsNotices(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
-  const { rows } = await sql<{ org_id: string; user_id: string }>`SELECT org_id, user_id FROM crove_kernel.mcp_engage_reads_to_tell(${MCP_ENGAGE_READS_NOTICE_LIMIT}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string; user_id: string }>`SELECT org_id, user_id FROM ludy_kernel.mcp_engage_reads_to_tell(${MCP_ENGAGE_READS_NOTICE_LIMIT}::int)`.execute(deps.workerDb);
   let done = 0;
   for (const row of rows) {
     try {

@@ -1,4 +1,4 @@
-// Channels per member (#1081) on PostgreSQL 17: a member or viewer with rows in crove_kernel.channel_access uses those
+// Channels per member (#1081) on PostgreSQL 17: a member or viewer with rows in ludy_kernel.channel_access uses those
 // channels only. A limited member cannot add, edit, submit or cancel a variant on another channel (approving and
 // scheduling stay with owners and admins), and can on theirs; the post list, the calendar, a single read, metrics, the
 // CSV exports and notifications leave the other channels out; owners and admins are never limited, whatever rows exist;
@@ -47,7 +47,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -61,7 +61,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     const other = await person('other');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adminUser, member, other, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adminUser, member, other, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer, other, a: await connection(orgId, owner, 'Kênh A'), b: await connection(orgId, owner, 'Kênh B') };
   }
@@ -92,15 +92,15 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 2 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -137,7 +137,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     await limit(o, o.member, []);
     expect(await query(o, o.member, 'social.channel_access.mine', {})).toEqual({ limited: false, connectionIds: [] });
     const audited = await admin((c) =>
-      c.query<{ detail: { user_id: string; limited: boolean } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.channel_access.set' AND outcome = 'ok' ORDER BY id", [o.orgId]),
+      c.query<{ detail: { user_id: string; limited: boolean } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.channel_access.set' AND outcome = 'ok' ORDER BY id", [o.orgId]),
     );
     expect(audited.rows.map((r) => [r.detail.user_id, r.detail.limited])).toEqual([
       [o.member, true],
@@ -322,7 +322,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     await expect(limit(o, o.owner, [o.a])).rejects.toMatchObject({ code: 'CHANNEL_ACCESS_NOT_LIMITABLE' });
     // Rows left from before a promotion do nothing: the database keeps them, the helper skips owners and admins.
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $4, $2), ($1, $3, $4, $2)', [o.orgId, o.owner, o.admin, o.a]),
+      c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $4, $2), ($1, $3, $4, $2)', [o.orgId, o.owner, o.admin, o.a]),
     );
     const onB = await post(o, o.owner, [o.b]);
     for (const user of [o.owner, o.admin]) {
@@ -407,13 +407,13 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     await admin((c) => c.query('UPDATE crove_social.post SET author_user_id = $2 WHERE org_id = $1 AND id = $3', [o.orgId, o.member, onB]));
     await exec(o, o.owner, 'social.post_comment.add', { postId: mine, body: 'Góp ý' });
     await exec(o, o.owner, 'social.post_comment.add', { postId: onB, body: 'Góp ý' });
-    const events = await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.commented' ORDER BY id", [o.orgId]));
+    const events = await admin((c) => c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.commented' ORDER BY id", [o.orgId]));
     for (const e of events.rows) await worker.execute('social.notification.dispatch', { eventId: e.id }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId });
     const told = await query<{ items: { postId: string | null }[] }>(o, o.member, 'social.notification.list', {});
     expect(told.items.map((i) => i.postId)).toEqual([mine]);
     // Removing the member drops their rows (the composite foreign key cascades).
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
-    const left = await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.channel_access WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
+    const left = await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.channel_access WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
     expect(left.rows[0]?.n).toBe(0);
   });
 });

@@ -65,7 +65,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const stored = async (meetingId: string) => (await sqlAdmin<{ source_stage: string; member_user_id: string }>('SELECT source_stage, member_user_id FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 ORDER BY source_stage', [orgId, meetingId])).rows;
-  const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
+  const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
 
   // What the model was given and what it said, and everything a handler wrote to the console.
   let modelCalls = 0;
@@ -127,15 +127,15 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries, rowsQuery] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -143,7 +143,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'outsider', 'viewer']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'translation', subject: key, email: `${key}@translation.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Dịch')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [orgId, users.admin, users.recorder, users.attendee, users.outsider, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [orgId, users.admin, users.recorder, users.attendee, users.outsider, users.viewer]);
   }, 300_000);
 
   afterAll(async () => {
@@ -176,7 +176,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
       ['item', `English: ${ITEM}`, 'ok'],
     ]);
     // The run is the member's own, bound to the meeting, for its own feature.
-    const runs = await sqlAdmin<{ status: string; feature: string; subject_id: string }>('SELECT status, feature, subject_id FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, out.runId]);
+    const runs = await sqlAdmin<{ status: string; feature: string; subject_id: string }>('SELECT status, feature, subject_id FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, out.runId]);
     expect(runs.rows).toEqual([{ status: 'ready', feature: 'meetings.translate', subject_id: meetingId }]);
     // The model's words are tainted and name their run; nothing became a task.
     const row = await sqlAdmin<{ tainted: boolean; source_run_id: string }>('SELECT tainted, source_run_id FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]);
@@ -284,7 +284,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     expect((await get('attendee', obeyed)).translations[0]?.segments[0]).toMatchObject({ state: 'refused', codes: ['CONTACT_ADDED'] });
     expect(await tasks()).toBe(before);
     // Nothing else of the org changed: no mail, no outbox event carries the text.
-    const mails = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup'`, [orgId]);
+    const mails = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup'`, [orgId]);
     expect(Number(mails.rows[0]?.n)).toBe(0);
   });
 
@@ -335,13 +335,13 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     expect(await refuses(translate('attendee', meetingId, 'published', { model: null }))).toBe('TRANSLATE_OFF');
     // A kill switch of the org, of the meetings module and of the member's own Vy stops it before any call; a member whose vy.use was taken away is refused too.
     const engage = async (scope: string, target: string) =>
-      (await sqlAdmin<{ id: string }>('INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, scope, target, users.owner])).rows[0]?.id as string;
+      (await sqlAdmin<{ id: string }>('INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, scope, target, users.owner])).rows[0]?.id as string;
     for (const [scope, target] of [['org', '*'], ['module', 'meetings']] as const) {
       const id = await engage(scope, target);
       try {
         expect(await refuses(translate('attendee', meetingId, 'published'))).toBe('AI_BUDGET_EXHAUSTED');
       } finally {
-        await sqlAdmin('UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
+        await sqlAdmin('UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
       }
     }
     await exec('owner', 'kernel.member.permission.set', { userId: users.outsider, permission: 'vy.use', allowed: false });
@@ -366,7 +366,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     const other = await seedPublished();
     const live = await exec<{ runId: string }>('attendee', 'kernel.member_vy.run.start', { feature: 'meetings.summary', subjectType: 'meeting', subjectId: other });
     expect((await translate('attendee', meetingId, 'published')).state).toBe('ready');
-    const state = await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
+    const state = await sqlAdmin<{ status: string }>('SELECT status FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
     expect(state.rows[0]?.status).toBe('running');
   });
 
@@ -389,7 +389,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     expect(await refuses(exec('attendee', 'meetings.translation.copy_result', { meetingId: b, runId: done.runId }))).toBe('TRANSLATION_RESULT_NOT_FOUND');
     // A run that is another member's is the same answer as one that does not exist.
     expect(await refuses(exec('recorder', 'meetings.translation.copy_result', { meetingId: a, runId: done.runId }))).toBe('TRANSLATION_RESULT_NOT_FOUND');
-    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET created_at = now() - interval '2 minutes', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND run_id = $2`, [orgId, done.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET created_at = now() - interval '2 minutes', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND run_id = $2`, [orgId, done.runId]);
     expect(await refuses(exec('attendee', 'meetings.translation.copy_result', { meetingId: a, runId: done.runId }))).toBe('TRANSLATION_RESULT_NOT_FOUND');
   });
 
@@ -518,9 +518,9 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
       const meetingId = await seedPublished();
       const started = await exec<{ runId: string }>('attendee', 'meetings.translate.start', { meetingId, stage: 'published' });
       await exec('recorder', 'meetings.meeting.delete', { meetingId });
-      const run = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, started.runId]);
+      const run = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, started.runId]);
       expect(run.rows[0]).toEqual({ status: 'cancelled', error: 'MEETING_REMOVED' });
-      const result = await sqlAdmin('SELECT 1 FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, started.runId]);
+      const result = await sqlAdmin('SELECT 1 FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2', [orgId, started.runId]);
       expect(result.rowCount).toBe(0);
     });
 
@@ -538,7 +538,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
       const summary = await sqlAdmin<{ summary: string }>(`SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
       expect(summary.rows[0]?.summary).not.toContain(EMAIL);
       // The audit trail names ids and counts, never a word of a translation.
-      const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.translat%'`, [orgId])).rows);
+      const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.translat%'`, [orgId])).rows);
       expect(audit).not.toContain('English:');
       expect(audit).not.toContain('báo giá');
     });
@@ -548,13 +548,13 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     const meetingId = await seedPublished();
     await translate('attendee', meetingId, 'published');
     const needle = 'English:';
-    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.translat%'`, [orgId])).rows;
+    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.translat%'`, [orgId])).rows;
     expect(audit.length).toBeGreaterThan(0);
     expect(JSON.stringify(audit)).not.toContain(needle);
     expect(JSON.stringify(audit)).not.toContain('1.250.000');
-    const outbox = (await sqlAdmin(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1`, [orgId])).rows;
+    const outbox = (await sqlAdmin(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1`, [orgId])).rows;
     expect(JSON.stringify(outbox)).not.toContain(needle);
-    const results = (await sqlAdmin(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.translate'`, [orgId])).rows;
+    const results = (await sqlAdmin(`SELECT body FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.translate'`, [orgId])).rows;
     expect(results.length).toBeGreaterThan(0);
     // The follow-up draft of the recorder holds the published original only.
     const draft = await query<{ summary?: string }>('recorder', 'meetings.followup.draft', { meetingId }).catch(() => ({}));

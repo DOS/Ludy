@@ -57,13 +57,13 @@ async function suppliersOf(ctx: Ctx, itemIds: readonly string[]): Promise<Map<st
     SELECT DISTINCT ON (pm.item_id) pm.item_id::text AS item_id, coalesce(x.duplicate_of, x.id)::text AS party_id
     FROM crove_finance.stock_move pm
     JOIN crove_finance.purchase_document d ON d.org_id = pm.org_id AND d.id = pm.document_id AND d.direction = 'purchase'
-    JOIN crove_kernel.party x ON x.org_id = d.org_id AND x.id = d.party_id
+    JOIN ludy_kernel.party x ON x.org_id = d.org_id AND x.id = d.party_id
     WHERE pm.org_id = ${ctx.orgId}::uuid AND pm.item_id = ANY (${[...itemIds]}::uuid[]) AND pm.source_type = 'document_line' AND pm.quantity > 0
       AND NOT EXISTS (SELECT 1 FROM crove_finance.stock_move r WHERE r.org_id = pm.org_id AND r.reverses_move_id = pm.id)
     ORDER BY pm.item_id, pm.move_date DESC, pm.id DESC`.execute(ctx.trx);
   if (rows.length === 0) return found;
   const parties = await ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select(['id', 'name', 'email'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...new Set(rows.map((r) => r.party_id))])
@@ -213,7 +213,7 @@ export const stockReorderSource = defineQuery({
     let supplier: Supplier | null = null;
     if (input.supplierPartyId) {
       const party = await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select(['id', 'name', 'email'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.supplierPartyId)
@@ -221,8 +221,8 @@ export const stockReorderSource = defineQuery({
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy đối tác này');
       supplier = { partyId: party.id, name: oneLine(party.name), email: plainEmail(party.email) };
     }
-    const holder = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
-    const tenant = holder ? null : await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const holder = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
+    const tenant = holder ? null : await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const orgName = oneLine(holder?.name ?? tenant?.name ?? '');
     const language = input.lang ?? 'vi';
     return { orgName, supplier, items, template: reorderTemplate({ language, orgName, supplierName: supplier?.name ?? null, items }) };

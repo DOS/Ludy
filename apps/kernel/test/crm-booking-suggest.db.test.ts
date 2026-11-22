@@ -108,9 +108,9 @@ suite('booking suggestions from a client message (#1440)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -132,7 +132,7 @@ suite('booking suggestions from a client message (#1440)', () => {
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Văn phòng Kế toán An', idempotencyKey: randomUUID() }, { slug: null });
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]));
     // The owner hosts from 9:00 to 12:00 every day; one-hour meetings.
     await rt.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 540, end: 720 })) }, { actor: asUser(owner.userId), orgId: org.orgId });
     type = await rt.execute<EventType>(
@@ -184,7 +184,7 @@ suite('booking suggestions from a client message (#1440)', () => {
     expect(call?.prompt).toContain(`- ${day} (`);
     expect(call?.prompt).toContain(`----------\n${message}\n----------`);
     // Nothing was written: the org's calendar holds only the busy event.
-    const events = await admin(async (c) => (await c.query('SELECT kind FROM crove_kernel.calendar_event WHERE org_id = $1', [org.orgId])).rows);
+    const events = await admin(async (c) => (await c.query('SELECT kind FROM ludy_kernel.calendar_event WHERE org_id = $1', [org.orgId])).rows);
     expect(events).toEqual([{ kind: 'manual' }]);
   });
 
@@ -205,7 +205,7 @@ suite('booking suggestions from a client message (#1440)', () => {
   it("names times in the lead host's zone, even when only a co-host in another zone may still host", async () => {
     const person = (who: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${who}-${randomUUID().slice(0, 6)}@suggest.test`, name: null });
     const [lead, coHost] = [await person('lead'), await person('cohost')];
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [org.orgId, lead, coHost]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [org.orgId, lead, coHost]));
     await rt.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 540, end: 720 })) }, { actor: asUser(lead), orgId: org.orgId });
     await rt.execute('kernel.calendar.hours.save', { timeZone: 'Europe/Berlin', windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 540, end: 1020 })) }, { actor: asUser(coHost), orgId: org.orgId });
     const team = await rt.execute<EventType>(
@@ -214,7 +214,7 @@ suite('booking suggestions from a client message (#1440)', () => {
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
     // The lead becomes a viewer: only the co-host in Berlin may still host.
-    await admin((c) => c.query("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [org.orgId, lead]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [org.orgId, lead]));
     const s = (await rpc('crm/bookings/suggest', await tokenFor(owner), { eventTypeId: team.id, message: '' })).body as BookingSuggestion;
     expect(s.timeZone).toBe(VN);
     expect(s.slots).toHaveLength(3);
@@ -266,7 +266,7 @@ suite('booking suggestions from a client message (#1440)', () => {
     const me = await rpc('me/get', await tokenFor(limited), undefined, { slug: null });
     expect(me.status).toBe(200);
     limited.userId = String(me.body?.userId);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, limited.userId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, limited.userId]));
     let refused: Awaited<ReturnType<typeof rpc>> | null = null;
     let allowed = 0;
     for (let i = 0; i < 10 && !refused; i++) {

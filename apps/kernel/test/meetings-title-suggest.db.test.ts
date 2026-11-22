@@ -67,9 +67,9 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -81,7 +81,7 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'recorder', 'reader', 'stranger']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'title', subject: key, email: `${key}@title.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Gợi ý tên')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -105,7 +105,7 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     expect(await refuses(titleRun('reader', meetingId))).toBe('FORBIDDEN');
     expect(await refuses(titleRun('stranger', meetingId))).not.toBeNull();
     const started = await titleRun('recorder', meetingId);
-    const run = await sqlAdmin<{ feature: string; subject_type: string; subject_id: string }>(`SELECT feature, subject_type, subject_id FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, started.runId]);
+    const run = await sqlAdmin<{ feature: string; subject_type: string; subject_id: string }>(`SELECT feature, subject_type, subject_id FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, started.runId]);
     expect(run.rows[0]).toMatchObject({ feature: 'meetings.title', subject_type: 'meeting', subject_id: meetingId });
     // The run changed nothing about the meeting.
     expect(await titleOf(meetingId)).toBe('Họp tuần');
@@ -140,7 +140,7 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     expect(await refuses(exec('recorder', 'meetings.meeting.rename', { meetingId, title: '\u200B \u202E' }))).toBe('MEETING_TITLE_EMPTY');
     expect(await refuses(exec('recorder', 'meetings.meeting.rename', { meetingId, title: 'a'.repeat(201) }))).not.toBeNull();
     expect(await titleOf(meetingId)).toBe('Chốt báo giá tháng 12');
-    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.rename' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.rename' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
     // Refused attempts are audited too (with their code); the successful rename's row is the one that names the meeting.
     const detail = JSON.stringify(audit.rows[0]?.detail);
     expect(detail).toContain(meetingId);
@@ -152,7 +152,7 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     const meetingId = await seedMeeting('recorder');
     const { runId } = await titleRun('recorder', meetingId);
     await exec('recorder', 'kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: JSON.stringify({ v: 1, titles: 2, dropped: 1 }) } });
-    const stored = await sqlAdmin<{ body: string | null }>(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]);
+    const stored = await sqlAdmin<{ body: string | null }>(`SELECT body FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]);
     // Three numbers: no title, no word of the meeting.
     expect(JSON.parse(stored.rows[0]?.body ?? 'null')).toEqual({ v: 1, titles: 2, dropped: 1 });
   });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects timeline and Gantt view (#2599) on a real PostgreSQL 17:
-// 1) projects.task.set_dates atomically writes crove_projects.project_task.start_on and crove_kernel.task.due,
+// 1) projects.task.set_dates atomically writes crove_projects.project_task.start_on and ludy_kernel.task.due,
 //    supports partial updates and null clearing, and validates startOn <= vietnamDate(due).
 // 2) Enforces 409 TASK_CHECKED_OUT while an AI agent run holds an active lease, and succeeds once released.
 // 3) Enforces viewer, agent, cross-org, and archived-project guards.
@@ -148,13 +148,13 @@ suite('projects timeline & set_dates (#2599) on PostgreSQL 17', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const wUrl = new URL(adminUrl);
-    wUrl.username = 'crove_worker';
+    wUrl.username = 'ludy_worker';
     wUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
@@ -408,16 +408,16 @@ suite('projects timeline & set_dates (#2599) on PostgreSQL 17', () => {
     let branchEntityId = '';
     await withAdmin(async (c) => {
       defaultEntityId = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
       ).rows[0]?.id as string;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Hà Nội', 'branch', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Hà Nội', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchUser.userId, branchEntityId, owner.userId],
       );
@@ -435,7 +435,7 @@ suite('projects timeline & set_dates (#2599) on PostgreSQL 17', () => {
       due: '2027-03-18T16:59:00.000Z',
     });
     await withAdmin((c) =>
-      c.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, taskA]),
+      c.query(`UPDATE ludy_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, taskA]),
     );
     await exec(owner.userId, org.orgId, 'projects.task.set_dates', {
       projectId,
@@ -463,7 +463,7 @@ suite('projects timeline & set_dates (#2599) on PostgreSQL 17', () => {
     await withAdmin(async (c) => {
       hiddenTaskD = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id, due)
            VALUES ($1, 'Việc mật trụ sở', 'human', 'user', $2, '2027-03-28T16:59:00.000Z') RETURNING id`,
           [org.orgId, defaultEntityId],
         )
@@ -534,7 +534,7 @@ suite('projects timeline & set_dates (#2599) on PostgreSQL 17', () => {
     await withAdmin(async (c) => {
       await c.query(
         `WITH inserted AS (
-           INSERT INTO crove_kernel.task (org_id, title, source, created_by_type)
+           INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type)
            SELECT $1, 'Việc #' || g, 'human', 'user'
            FROM generate_series(1, 205) AS g
            RETURNING id

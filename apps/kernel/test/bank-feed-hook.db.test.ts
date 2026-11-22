@@ -138,22 +138,22 @@ suite('Bank feed webhook (#4203)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
     runtimeApi = runtime;
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     app = createHttpApp({
       config,
@@ -173,12 +173,12 @@ suite('Bank feed webhook (#4203)', () => {
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty nhận thông báo', idempotencyKey: randomUUID() }, null);
     slug = String(created.body?.slug);
     orgId = String(created.body?.orgId);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser.userId, member.userId]);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherOrgId = String(other.body?.orgId);
     const connect = async (org: string, by: string) => {
       const id = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'bank_tingee', $3, 'Tingee thử', $4)", [org, id, `tingee-${randomUUID().slice(0, 8)}`, by]);
+      await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'bank_tingee', $3, 'Tingee thử', $4)", [org, id, `tingee-${randomUUID().slice(0, 8)}`, by]);
       return id;
     };
     connectionId = await connect(orgId, owner.userId);
@@ -207,7 +207,7 @@ suite('Bank feed webhook (#4203)', () => {
     const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM crove_finance.bank_feed_hook WHERE org_id = $1', [orgId]);
     expect(stored).toEqual([{ key_sha256: bankFeedHookKeyHash(keyOwner) }]);
     // The key is in no audit row, and the status answers never carry it or its hash.
-    const audit = JSON.stringify(await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]));
+    const audit = JSON.stringify(await rows('SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1', [orgId]));
     expect(audit).not.toContain(keyOwner);
     expect(audit).not.toContain(bankFeedHookKeyHash(keyOwner));
     const status = await hookStatus(adminUser);
@@ -326,9 +326,9 @@ suite('Bank feed webhook (#4203)', () => {
 
   it('stops answering for a hook whose connection is closed or whose org has Finance off', async () => {
     await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
-    await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
     expect((await post(keyOwner)).status).toBe(404);
-    await rows("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
     expect((await post(keyOwner)).status).toBe(200);
     await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
   });
@@ -347,7 +347,7 @@ suite('Bank feed webhook (#4203)', () => {
     expect(left[0]?.body).not.toContain(PAYER_EMAIL);
     // The purge function names both tables (the full purge is exercised in org-purge.db.test.ts).
     const def = await rows<{ ok: boolean }>(
-      "SELECT pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.bank_feed_webhook_notice' AND pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.bank_feed_hook' AS ok",
+      "SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.bank_feed_webhook_notice' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.bank_feed_hook' AS ok",
     );
     expect(def).toEqual([{ ok: true }]);
   });

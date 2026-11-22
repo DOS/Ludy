@@ -50,12 +50,12 @@ suite('finance books regime per legal entity (#1403)', () => {
     return url.toString();
   };
 
-  // One transaction as crove_app in userId's context; committed when commit is set, else rolled back.
+  // One transaction as ludy_app in userId's context; committed when commit is set, else rolled back.
   async function asApp<T>(userId: string, fn: (c: pg.PoolClient) => Promise<T>, commit = false): Promise<T> {
     const c = await appPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const result = await fn(c);
       await c.query(commit ? 'COMMIT' : 'ROLLBACK');
       return result;
@@ -92,9 +92,9 @@ suite('finance books regime per legal entity (#1403)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = new pg.Pool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    kyselyPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appPool = new pg.Pool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
+    kyselyPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const db = createDb(kyselyPool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
@@ -104,12 +104,12 @@ suite('finance books regime per legal entity (#1403)', () => {
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@books-regime.test', name: null });
     ({ orgId } = await createOrg(runtime, asUser(owner), 'Hai chế độ kế toán'));
     await admin(async (a) => {
-      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty con TT99', 'company', $2) RETURNING id`, [orgId, owner])
+        await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty con TT99', 'company', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
-      await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
-      await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
+      await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         member,
         branch,
@@ -249,7 +249,7 @@ suite('finance books regime per legal entity (#1403)', () => {
   });
 
   it('follows the fiscal year of the org', async () => {
-    await admin((a) => a.query(`INSERT INTO crove_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 3, $2)`, [orgId, owner]));
+    await admin((a) => a.query(`INSERT INTO ludy_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 3, $2)`, [orgId, owner]));
     const books = (from: string) =>
       refusal(
         admin((a) =>
@@ -262,14 +262,14 @@ suite('finance books regime per legal entity (#1403)', () => {
       );
     expect(await books('2031-01-01')).toMatchObject({ message: 'BOOKS_NOT_FISCAL_YEAR_START' });
     expect(await books('2031-04-01')).toBeNull();
-    await admin((a) => a.query(`DELETE FROM crove_kernel.tax_profile WHERE org_id = $1`, [orgId]));
+    await admin((a) => a.query(`DELETE FROM ludy_kernel.tax_profile WHERE org_id = $1`, [orgId]));
   });
 
   it('waits for a posting in flight and then refuses the year it booked', async () => {
     const poster = await appPool.connect();
     try {
       await poster.query('BEGIN');
-      await poster.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+      await poster.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
       await post(poster, { entity: defaultEntity, date: '2032-05-05', debit: '1111', credit: '5111' });
       let settled = false;
       const books = refusal(

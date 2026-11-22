@@ -48,16 +48,16 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, user(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [member, branchAdmin] = [await identity('member'), await identity('branch')];
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'admin')", [orgId, member, branchAdmin]);
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'admin')", [orgId, member, branchAdmin]);
     if (withBranch) {
-      const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
-      await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchAdmin, branch, owner]);
+      const branch = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
+      await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchAdmin, branch, owner]);
     }
     const grant = async (userId: string) => {
       const id = randomUUID();
       await rows(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [orgId, id, userId, `oauth-${id}`, `client-${id}`],
       );
@@ -65,7 +65,7 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     };
     // Planted on purpose: what a grant must never read.
     const party = (name: string) =>
-      rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone, address) VALUES ($1, $2, 'organization', 'secret-contact@example.test', '0900000000', 'Số 9 Đường Bí Mật') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+      rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email, phone, address) VALUES ($1, $2, 'organization', 'secret-contact@example.test', '0900000000', 'Số 9 Đường Bí Mật') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     // A sale (Dr 131 / Cr 511) or a purchase (Dr 156 / Cr 331) with its balanced entry, in one transaction.
     async function invoice(partyId: string, number: string, date: string, total: string, direction: 'sale' | 'purchase' = 'sale'): Promise<string> {
       const doc = randomUUID();
@@ -108,7 +108,7 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
       });
     const pendingRequest = (docId: string) =>
       rows(
-        `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers)
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers)
          VALUES ($1, $2, 'finance.supplier_payment', 'finance.supplier_payment.record', 'pending', 'Chi nhà cung cấp', $3::jsonb, $4::jsonb, $5::uuid[])`,
         [orgId, randomUUID(), JSON.stringify({ purchaseDocumentId: docId }), JSON.stringify([{ type: 'user', id: owner }]), [owner]],
       );
@@ -125,9 +125,9 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);

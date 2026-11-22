@@ -95,12 +95,12 @@ export const mcpOpenBalances = defineQuery({
       const { rows } = await sql<{ party_id: string; name: string | null; invoice_date: string; total: string }>`
         SELECT coalesce(x.duplicate_of, x.id)::text AS party_id, k.name, d.invoice_date::text AS invoice_date, d.total::text AS total
           FROM crove_finance.purchase_document d
-          JOIN crove_kernel.party x ON x.org_id = d.org_id AND x.id = d.party_id
-          JOIN crove_kernel.party k ON k.org_id = x.org_id AND k.id = coalesce(x.duplicate_of, x.id)
+          JOIN ludy_kernel.party x ON x.org_id = d.org_id AND x.id = d.party_id
+          JOIN ludy_kernel.party k ON k.org_id = x.org_id AND k.id = coalesce(x.duplicate_of, x.id)
          WHERE d.org_id = ${ctx.orgId}::uuid AND d.legal_entity_id = ${entity}::uuid AND d.direction = 'purchase' AND d.total > 0
            AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
            AND NOT EXISTS (SELECT 1 FROM crove_finance.supplier_payment sp WHERE sp.org_id = d.org_id AND sp.purchase_document_id = d.id AND sp.status IN ('approved', 'paid'))
-           AND NOT EXISTS (SELECT 1 FROM crove_kernel.proposal q WHERE q.org_id = d.org_id AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal q WHERE q.org_id = d.org_id AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'
                              AND pg_catalog.lower(q.payload ->> 'purchaseDocumentId') = d.id::text)`.execute(ctx.trx);
       const byParty = new Map<string, Accum>();
       for (const r of rows) {

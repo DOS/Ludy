@@ -59,7 +59,7 @@ async function saleRegime(ctx: CommandContext, direction: DocumentDirection, leg
 // The legal entity a proposal was stamped with (#1538: the entity of the reading it came from), none for a call that is not an approval.
 async function proposalEntity(ctx: CommandContext): Promise<string | undefined> {
   if (!ctx.proposalId) return undefined;
-  const row = await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
   return row?.legal_entity_id ?? undefined;
 }
 
@@ -72,14 +72,14 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
   // a change of its kind (#2438, kernel.party.update checks that nothing points at the party) could commit between that check and the line.
   const existing = taxCode
     ? await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', '=', taxCode)
         .forShare()
         .executeTakeFirst()
     : await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', 'is', null)
@@ -97,7 +97,7 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
   // new party (party_link_new) is not visible to the same statement's RETURNING check.
   const created = { id: randomUUID() };
   await ctx.trx
-    .insertInto('crove_kernel.party')
+    .insertInto('ludy_kernel.party')
     .values({
       id: created.id,
       org_id: ctx.orgId,

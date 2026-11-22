@@ -1,5 +1,5 @@
 // Reminders and escalation for proposals waiting for approval (#676, plan §8.3 "After approval"). An org may set, in
-// crove_kernel.proposal_policy, how many days a proposal can wait before the people who may approve it get a
+// ludy_kernel.proposal_policy, how many days a proposal can wait before the people who may approve it get a
 // reminder mail, and how many days before its owners are told. The worker finds the proposals due
 // (proposal_nudges_due) and runs kernel.proposal.remind for each, which checks again under the proposal's lock, mails
 // once per stage, stamps the proposal and leaves its audit row. A reminder never approves, rejects or changes a
@@ -67,7 +67,7 @@ export function expiryDue(p: { status: string; createdAt: Date; escalatedAt: Dat
 
 export async function readPolicy(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promise<ProposalPolicy> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.proposal_policy')
+    .selectFrom('ludy_kernel.proposal_policy')
     .select(['remind_after_days', 'escalate_after_days', 'expire_after_days'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('created_at')
@@ -103,7 +103,7 @@ export const proposalPolicySave = defineCommand({
     if (input.expireAfterDays !== null && (input.escalateAfterDays === null || input.expireAfterDays <= input.escalateAfterDays)) {
       throw new DomainError('PROPOSAL_EXPIRY_ORDER', 422, 'Chỉ đặt được hạn chờ duyệt khi đã bật báo chủ sở hữu, và hạn này phải dài hơn số ngày báo chủ sở hữu');
     }
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_kernel.proposal_policy:${ctx.orgId}`}))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_kernel.proposal_policy:${ctx.orgId}`}))`.execute(ctx.trx);
     const before = await readPolicy(ctx);
     const values = {
       remind_after_days: input.remindAfterDays,
@@ -112,10 +112,10 @@ export const proposalPolicySave = defineCommand({
       updated_by: ctx.actor.userId,
       updated_at: ctx.now,
     };
-    const updated = await ctx.trx.updateTable('crove_kernel.proposal_policy').set(values).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const updated = await ctx.trx.updateTable('ludy_kernel.proposal_policy').set(values).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (Number(updated.numUpdatedRows) === 0) {
       await ctx.trx
-        .insertInto('crove_kernel.proposal_policy')
+        .insertInto('ludy_kernel.proposal_policy')
         .values({ org_id: ctx.orgId, ...values, created_at: ctx.now })
         .execute();
     }
@@ -136,7 +136,7 @@ export async function approversNow(ctx: CommandContext, proposal: { command: str
 }
 
 async function owners(ctx: CommandContext): Promise<string[]> {
-  const rows = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').orderBy('user_id').execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').orderBy('user_id').execute();
   return rows.map((r) => r.user_id);
 }
 
@@ -157,7 +157,7 @@ export const proposalRemind = defineCommand({
   handler: async (ctx, input): Promise<RemindResult> => {
     // Under the proposal's lock, so a decision in flight is either seen or comes after.
     const proposal = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', 'command', 'status', 'title', 'created_at', 'reminded_at', 'escalated_at', 'eligible_approvers', 'authors', 'co_authors'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.proposalId)
@@ -168,14 +168,14 @@ export const proposalRemind = defineCommand({
     const stages = nudgesDue({ status: proposal.status, createdAt: proposal.created_at, remindedAt: proposal.reminded_at, escalatedAt: proposal.escalated_at }, policy, ctx.now);
     if (stages.length === 0) return { stages: [], queued: 0 };
 
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const days = Math.floor((ctx.now.getTime() - proposal.created_at.getTime()) / DAY_MS);
     const recipients = new Map<NudgeStage, string[]>();
     if (stages.includes('remind')) recipients.set('remind', await approversNow(ctx, proposal));
     if (stages.includes('escalate')) recipients.set('escalate', await owners(ctx));
     const everyone = [...new Set([...recipients.values()].flat())];
     const { rows: people } = everyone.length
-      ? await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.member_emails(${everyone}::uuid[])`.execute(ctx.trx)
+      ? await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM ludy_kernel.member_emails(${everyone}::uuid[])`.execute(ctx.trx)
       : { rows: [] };
     const emails = new Map(people.filter((p) => p.email).map((p) => [p.user_id, p.email as string]));
 
@@ -203,7 +203,7 @@ export const proposalRemind = defineCommand({
     }
     // Stamped even when nobody had an address: the stage happened once, and the audit row says who was mailed.
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ ...(stages.includes('remind') ? { reminded_at: ctx.now } : {}), ...(stages.includes('escalate') ? { escalated_at: ctx.now } : {}) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', proposal.id)
@@ -230,7 +230,7 @@ export const proposalExpire = defineCommand({
   target: (input) => ({ type: 'kernel.proposal', id: input.proposalId }),
   handler: async (ctx, input): Promise<ExpireResult> => {
     const proposal = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', 'status', 'title', 'revision', 'created_at', 'escalated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.proposalId)
@@ -241,7 +241,7 @@ export const proposalExpire = defineCommand({
     if (!expiryDue({ status: proposal.status, createdAt: proposal.created_at, escalatedAt: proposal.escalated_at }, policy, ctx.now)) return { expired: false };
     const days = Math.floor((ctx.now.getTime() - proposal.created_at.getTime()) / DAY_MS);
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ status: 'expired', decided_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', proposal.id)
@@ -257,7 +257,7 @@ export const proposalExpire = defineCommand({
 // order never skips the owners' mail.
 export async function sweepProposalNudges(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   let done = 0;
-  const { rows: expiring } = await sql<{ org_id: string; proposal_id: string }>`SELECT org_id, proposal_id FROM crove_kernel.proposal_expiries_due(${PROPOSAL_NUDGE_LIMIT}::int)`.execute(deps.workerDb);
+  const { rows: expiring } = await sql<{ org_id: string; proposal_id: string }>`SELECT org_id, proposal_id FROM ludy_kernel.proposal_expiries_due(${PROPOSAL_NUDGE_LIMIT}::int)`.execute(deps.workerDb);
   for (const row of expiring) {
     try {
       const result = await deps.runtime.execute<ExpireResult>('kernel.proposal.expire', { proposalId: row.proposal_id }, { actor: ACTOR, orgId: row.org_id });
@@ -266,7 +266,7 @@ export async function sweepProposalNudges(deps: { runtime: Runtime; workerDb: Db
       console.warn(`[proposal-expiry] proposal ${row.proposal_id.slice(0, 8)}`, error instanceof DomainError ? error.code : error instanceof Error ? error.message : error);
     }
   }
-  const { rows } = await sql<{ org_id: string; proposal_id: string }>`SELECT org_id, proposal_id FROM crove_kernel.proposal_nudges_due(${PROPOSAL_NUDGE_LIMIT}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string; proposal_id: string }>`SELECT org_id, proposal_id FROM ludy_kernel.proposal_nudges_due(${PROPOSAL_NUDGE_LIMIT}::int)`.execute(deps.workerDb);
   for (const row of rows) {
     try {
       const result = await deps.runtime.execute<RemindResult>('kernel.proposal.remind', { proposalId: row.proposal_id }, { actor: ACTOR, orgId: row.org_id });

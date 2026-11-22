@@ -114,7 +114,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     const generation = await putFile(new LocalDiskStore(dir), key, bytes, options.contentType ?? 'image/jpeg', sha);
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [org.orgId, id, sha, key, generation, filename, options.contentType ?? 'image/jpeg', bytes.byteLength, options.source ?? 'social'],
       ),
@@ -133,9 +133,9 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -167,11 +167,11 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [org.orgId, member.userId, limited.userId, viewer.userId]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [org.orgId, member.userId, limited.userId, viewer.userId]),
     );
     const connect = async (displayName: string) => String((await rpc('channels/connectSandbox', owner, { displayName, key: randomUUID() })).body?.connectionId);
     channels = { mine: await connect('Trang của bạn'), hidden: await connect('Trang khác') };
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, limited.userId, channels.mine, owner.userId]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, limited.userId, channels.mine, owner.userId]));
     files = {
       menu: await file('Thực đơn.jpg'),
       // The same name as a Mac saves it (decomposed), on another file: two files of one name.
@@ -209,7 +209,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     expect(second).toMatchObject({ problem: null, file: { filename: 'cua-tiem.png', mime: 'image/png' } });
     // The same bytes from another address: the same file.
     expect(copy.file.fileId).toBe(first.file.fileId);
-    const rows = await admin((c) => c.query('SELECT source, content_type, created_by FROM crove_kernel.file WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY content_type', [org.orgId, [first.file.fileId, second.file.fileId]]));
+    const rows = await admin((c) => c.query('SELECT source, content_type, created_by FROM ludy_kernel.file WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY content_type', [org.orgId, [first.file.fileId, second.file.fileId]]));
     expect(rows.rows).toEqual([
       { source: 'social', content_type: 'image/jpeg', created_by: member.userId },
       { source: 'social', content_type: 'image/png', created_by: member.userId },
@@ -224,7 +224,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     answer('https://cdn.test/mat.jpg', Buffer.from('Not Found'), 'text/plain', 404);
     answer('https://cdn.test/sang-http.jpg', jpeg, 'image/jpeg', 200, 'http://cdn.test/sang-http.jpg');
     answer('https://cdn.test/hoa-don.jpg', documentBytes);
-    const before = { files: await count('crove_kernel.file'), fetched: fetched.length };
+    const before = { files: await count('ludy_kernel.file'), fetched: fetched.length };
     const urls = [
       'http://cdn.test/a.jpg',
       'https://127.0.0.1/a.jpg',
@@ -255,8 +255,8 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     expect(fetched.slice(before.fetched).sort()).toEqual(['https://cdn.test/cham.jpg', 'https://cdn.test/lon.jpg', 'https://cdn.test/mat.jpg', 'https://cdn.test/sang-http.jpg', 'https://cdn.test/trang.html']);
     const document = await rpc('social/media/fetchUrls', member, { urls: ['https://cdn.test/hoa-don.jpg'] });
     expect(document.body.results).toEqual([{ url: 'https://cdn.test/hoa-don.jpg', file: null, problem: 'MEDIA_URL_DOCUMENT' }]);
-    expect(await count('crove_kernel.file')).toBe(before.files);
-    expect(await admin(async (c) => (await c.query("SELECT count(*) AS n FROM crove_kernel.file WHERE org_id = $1 AND source = 'social' AND filename = 'hoa-don.jpg'", [org.orgId])).rows[0]?.n)).toBe('0');
+    expect(await count('ludy_kernel.file')).toBe(before.files);
+    expect(await admin(async (c) => (await c.query("SELECT count(*) AS n FROM ludy_kernel.file WHERE org_id = $1 AND source = 'social' AND filename = 'hoa-don.jpg'", [org.orgId])).rows[0]?.n)).toBe('0');
   });
 
   it('refuses a viewer and more than ten URLs, and says busy past the budget', async () => {
@@ -333,7 +333,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     expect(variants.rows.every((v) => v.status === 'draft')).toBe(true);
     expect(variants.rows.find((v) => v.post_id === postIds[0])?.settings.firstComment).toBe('Xem thực đơn đầy đủ ở trang của quán');
     expect(variants.rows.filter((v) => 'firstComment' in v.settings)).toHaveLength(1);
-    const audit = await admin((c) => c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.import' ORDER BY occurred_at DESC LIMIT 1", [org.orgId]));
+    const audit = await admin((c) => c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.import' ORDER BY occurred_at DESC LIMIT 1", [org.orgId]));
     expect(audit.rows[0]?.detail).toMatchObject({ posts: 30, media: 45, labels_created: 1 });
   });
 

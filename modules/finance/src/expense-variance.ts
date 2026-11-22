@@ -184,7 +184,7 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
   const partyIds = [...new Set(contributorsFound.flatMap((r) => (r.party_id ? [r.party_id] : [])))];
   const parties = new Map<string, string>();
   if (partyIds.length > 0) {
-    for (const p of await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) parties.set(p.id, p.name);
+    for (const p of await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) parties.set(p.id, p.name);
   }
   const names = await accountNames(ctx, result.regime, result.chartVersion, result.lines.map((l) => l.code));
 

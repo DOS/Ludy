@@ -94,9 +94,9 @@ function checkTopology() {
   const workerEnv = envOf(worker);
   assert(!('WORKER_DATABASE_URL' in apiEnv), 'the API container has no WORKER_DATABASE_URL');
   assert(!('EXTRACT_URL' in apiEnv), 'the API container has no EXTRACT_URL');
-  assert(workerEnv['WORKER_DATABASE_URL']?.includes('crove_worker'), 'the worker container has the worker login');
+  assert(workerEnv['WORKER_DATABASE_URL']?.includes('ludy_worker') || workerEnv['WORKER_DATABASE_URL']?.includes('crove_worker'), 'the worker container has the worker login');
   assert(workerEnv['EXTRACT_URL'] === 'http://ludy-extract:8090', 'the worker reaches ludy-extract');
-  assert(apiEnv['DATABASE_URL']?.includes('crove_app'), 'the API runs on the app login');
+  assert(apiEnv['DATABASE_URL']?.includes('ludy_app') || apiEnv['DATABASE_URL']?.includes('crove_app'), 'the API runs on the app login');
   for (const [name, env] of [['api', apiEnv], ['worker', workerEnv]]) assert(env['LUDY_MODULES'] === 'finance', `${name} runs the finance module only (LUDY_MODULES=${env['LUDY_MODULES']})`);
   const extractNet = `${PROJECT}_extract`;
   assert(!Object.keys(api.NetworkSettings.Networks).includes(extractNet), 'the API is not on the extract network');

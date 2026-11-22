@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
-const userIdOf = (email: string) => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email })[0]?.id ?? '';
+const userIdOf = (email: string) => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email })[0]?.id ?? '';
 
 // A draft on the org's only channel, written from the composer.
 async function draft(page: Page, slug: string, body: string): Promise<void> {
@@ -33,7 +33,7 @@ test('filters the drafts by a writer, keeps it in the link, and shares it as a s
   await signInNewUser(lanPage, lanEmail);
   await expect.poll(() => userIdOf(lanEmail)).not.toBe('');
   const lan = userIdOf(lanEmail);
-  exec(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) SELECT org_id, :'lan', 'member' FROM crove_kernel.tenant WHERE slug = :'slug'`, { lan, slug });
+  exec(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) SELECT org_id, :'lan', 'member' FROM ludy_kernel.tenant WHERE slug = :'slug'`, { lan, slug });
   await draft(lanPage, slug, 'Bài nháp của Lan');
 
   // The owner checks Lan's drafts: the filter is in the address and survives a reload.
@@ -75,7 +75,7 @@ test('filters the drafts by a writer, keeps it in the link, and shares it as a s
   await lanContext.close();
 
   const rows = sql<{ name: string; shared: boolean }>(
-    `SELECT name, shared FROM crove_social.saved_view WHERE org_id = (SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug') ORDER BY name`,
+    `SELECT name, shared FROM crove_social.saved_view WHERE org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug') ORDER BY name`,
     { slug },
   );
   expect(rows.map((r) => `${r.name}:${String(r.shared)}`)).toEqual(['Nháp của Lan:true', 'Nháp riêng của chủ:false']);

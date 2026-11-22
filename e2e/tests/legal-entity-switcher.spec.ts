@@ -73,9 +73,9 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   await test.step('the lock was recorded for the second entity', async () => {
     const rows = sql<{ month: string; entity: string }>(
       `SELECT a.detail->>'month' AS month, e.name AS entity
-       FROM crove_kernel.audit_event a
-       JOIN crove_kernel.tenant t ON t.org_id = a.org_id
-       JOIN crove_kernel.legal_entity e ON e.org_id = a.org_id AND e.id::text = a.detail->>'legalEntityId'
+       FROM ludy_kernel.audit_event a
+       JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
+       JOIN ludy_kernel.legal_entity e ON e.org_id = a.org_id AND e.id::text = a.detail->>'legalEntityId'
        WHERE t.slug = :'slug' AND a.command = 'finance.period.lock' AND a.outcome = 'ok'`,
       { slug },
     );

@@ -75,16 +75,16 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const admin = await person('admin');
     const member = await person('member');
     const { orgId } = await createOrg(rt, asUser(owner), `Hạch toán lương ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     // Three people may approve a posting (an owner and two admins), or the owner alone.
     const admin2 = await person('admin2');
-    if (people === 'trio') await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, admin2]));
-    if (people === 'solo') await withAdmin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = ANY ($2::uuid[])`, [orgId, [admin, member]]));
+    if (people === 'trio') await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, admin2]));
+    if (people === 'solo') await withAdmin((c) => c.query(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = ANY ($2::uuid[])`, [orgId, [admin, member]]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
         c.query(
           `INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
-           SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`,
+           SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`,
           [orgId],
         ),
       );
@@ -140,8 +140,8 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -251,13 +251,13 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const cash = await pay(o, runId, 'net_pay', { type: 'cash_payment', cashAccount: '1111' });
-    const flagged = await rows<{ checks: { id: string; status: string; code: string; params: { count: string } }[] }>('SELECT payload -> \'checks\' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, cash.proposalId]);
+    const flagged = await rows<{ checks: { id: string; status: string; code: string; params: { count: string } }[] }>('SELECT payload -> \'checks\' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, cash.proposalId]);
     // The three people of the test are paid 5 million or more net: the flag counts them and names nobody.
     expect(flagged[0]?.checks).toEqual([expect.objectContaining({ id: 'anomaly_cash', status: 'warn', code: 'anomaly_cash.payroll_limit', params: { count: '3' } })]);
     const detail = await rt.query<{ checks: { code?: string }[] }>('kernel.inbox.get', { id: cash.proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
     expect(JSON.stringify(detail)).not.toMatch(/Canary/);
     const bank = await pay(o, runId, 'tax', { type: 'cash_payment', cashAccount: '1111' });
-    const none = await rows<{ checks: unknown }>('SELECT payload -> \'checks\' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, bank.proposalId]);
+    const none = await rows<{ checks: unknown }>('SELECT payload -> \'checks\' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, bank.proposalId]);
     expect(none[0]?.checks ?? null).toBeNull();
   });
 
@@ -265,7 +265,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     for (const kind of ['net_pay', 'insurance', 'union', 'tax'] as const) await approve(o, (await pay(o, runId, kind)).proposalId);
-    for (const table of ['crove_kernel.proposal', 'crove_finance.cash_voucher', 'crove_finance.journal_entry', 'crove_kernel.audit_event', 'crove_kernel.outbox_event']) {
+    for (const table of ['ludy_kernel.proposal', 'crove_finance.cash_voucher', 'crove_finance.journal_entry', 'ludy_kernel.audit_event', 'ludy_kernel.outbox_event']) {
       const hit = await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text ILIKE '%canary%'`, [o.orgId]);
       expect(hit, table).toHaveLength(0);
     }
@@ -277,27 +277,27 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await pay(o, runId, 'net_pay');
     // A proposal row written some other way than by the preparer (raw SQL, staff here): the amount of the first line is raised, still a valid voucher.
     await rows(
-      `UPDATE crove_kernel.proposal
+      `UPDATE ludy_kernel.proposal
           SET payload = jsonb_set(jsonb_set(payload, '{lines,0,amount}', to_jsonb((((payload #>> '{lines,0,amount}')::bigint) + 1)::text)), '{total}', to_jsonb((((payload ->> 'total')::bigint) + 1)::text))
         WHERE org_id = $1 AND id = $2`,
       [o.orgId, proposalId],
     );
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
     expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     // A stored proposal whose amounts and accounts match the run, but whose description was changed (for example to free text or a person's name, #2853), is refused too.
     const tax = await pay(o, runId, 'tax');
-    await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{description}', '"Chi lương Nguyễn Thị Hằng Canary"') WHERE org_id = $1 AND id = $2`, [o.orgId, tax.proposalId]);
+    await rows(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{description}', '"Chi lương Nguyễn Thị Hằng Canary"') WHERE org_id = $1 AND id = $2`, [o.orgId, tax.proposalId]);
     await expect(approve(o, tax.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'description' } });
     expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, tax.proposalId]))[0]?.status).toBe('pending');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, tax.proposalId]))[0]?.status).toBe('pending');
   });
 
   it('rebuilds the cash flag when it records: a stored proposal without it, with a changed count, or with one on a bank payment is refused', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const rawChecks = (proposalId: string, checks: string) =>
-      rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{checks}', $3::jsonb) WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId, checks]);
+      rows(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{checks}', $3::jsonb) WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId, checks]);
     // A cash payment of the net pay raises the flag; the same row without it (raw SQL, staff here) cannot be approved, so it cannot slip into a bulk approval.
     const cash = await pay(o, runId, 'net_pay', { type: 'cash_payment', cashAccount: '1111' });
     await rawChecks(cash.proposalId, '[]');
@@ -354,8 +354,8 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'trio');
     const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
     await withAdmin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
     });
     const approved = await approvedRun(o);
     const posting = await ask(o, approved.runId, o.admin);
@@ -498,11 +498,11 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'trio');
     const { runId } = await postedRun(o, 'trio');
     const { proposalId } = await pay(o, runId, 'union', {}, o.admin);
-    const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
     expect(stored?.co_authors).toEqual([o.owner]);
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     // A proposal row written some other way without the co-author (raw SQL, staff here) is refused when it records, even by the other admin.
-    await rows('UPDATE crove_kernel.proposal SET co_authors = NULL WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    await rows('UPDATE ludy_kernel.proposal SET co_authors = NULL WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
     await expect(approve(o, proposalId, o.admin2)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'coAuthors' } });
     expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
   });
@@ -811,9 +811,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const first = await pay(o, runId, 'tax', {}, o.admin);
     // A second pending proposal of the same (run, kind), as if created before the open-proposal check saw the first: both pass checkPayable while the slot lock holds them, and the second hits cash_voucher_payroll_payment_uq on insert.
     const [cloned] = await rows<{ id: string }>(
-      `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id)
+      `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id)
        SELECT org_id, kind, command, 'pending', title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id
-       FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2 RETURNING id`,
+       FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2 RETURNING id`,
       [o.orgId, first.proposalId],
     );
     const secondId = cloned?.id as string;
@@ -840,7 +840,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
 
     // Another 23505 on the payroll voucher insert (here, rewinding the bank_debit number series so number_allocate hits number_allocation_number_uq) is not misreported as HR_PAYMENT_DONE.
     const union = await pay(o, runId, 'union', {}, o.admin);
-    await rows(`UPDATE crove_kernel.number_series SET next_number = 1 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
+    await rows(`UPDATE ludy_kernel.number_series SET next_number = 1 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
     const nonPayroll23505 = await approve(o, union.proposalId, o.admin2).then(
       () => null,
       (err: { code?: string; status?: number; details?: Record<string, unknown> }) => err,
@@ -851,7 +851,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
 
     // Restoring the series lets the union payment record cleanly; a settled bank line on a payroll payment still surfaces BANK_LINE_MATCHED rather than HR_PAYMENT_DONE.
-    await rows(`UPDATE crove_kernel.number_series SET next_number = 2 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
+    await rows(`UPDATE ludy_kernel.number_series SET next_number = 2 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
     await expect(approve(o, union.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
   });
 
@@ -927,7 +927,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'trio');
     const branch = await withAdmin(async (c) => {
       const { rows: created } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh phía Nam', 'branch', $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh phía Nam', 'branch', $2) RETURNING id`,
         [o.orgId, o.owner],
       );
       return created[0]?.id as string;
@@ -941,7 +941,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
       );
     const checksOf = async (proposalId: string) =>
       (await rows<{ checks: { id: string; status: string; code?: string; params?: Record<string, string> }[] | null }>(
-        `SELECT payload -> 'checks' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`,
+        `SELECT payload -> 'checks' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`,
         [o.orgId, proposalId],
       ))[0]?.checks ?? [];
 
@@ -1009,7 +1009,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
       { actor: asUser(o99.owner), orgId: o99.orgId, idempotencyKey: randomUUID() },
     );
     const [checks99] = await rows<{ checks: { code?: string; params?: Record<string, string> }[] }>(
-      `SELECT payload -> 'checks' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`,
+      `SELECT payload -> 'checks' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`,
       [o99.orgId, plain99.proposalId],
     );
     expect(checks99?.checks).toEqual([expect.objectContaining({ code: 'anomaly_payroll.active_payment', params: { accounts: '3386' } })]);

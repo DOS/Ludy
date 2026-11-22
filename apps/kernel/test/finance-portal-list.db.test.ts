@@ -180,17 +180,17 @@ suite('tax portal purchase list (#465)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -261,9 +261,9 @@ suite('tax portal purchase list (#465)', () => {
     const xlsx = await upload(token, 'danh-sach.xlsx', portalListXlsx([spec('1', '2026-09-01')]));
     expect(xlsx.status).toBe(200);
     const fileId = xlsx.body.files[0].fileId as string;
-    const row = await admin(async (c) => (await c.query('SELECT source, content_type, filename FROM crove_kernel.file WHERE id = $1', [fileId])).rows[0]);
+    const row = await admin(async (c) => (await c.query('SELECT source, content_type, filename FROM ludy_kernel.file WHERE id = $1', [fileId])).rows[0]);
     expect(row).toEqual({ source: 'import', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: 'danh-sach.xlsx' });
-    const outbox = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [fileId])).rows[0]);
+    const outbox = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [fileId])).rows[0]);
     expect(outbox.n).toBe(0);
     const recent = await rpc('files/recent', token, undefined);
     expect(recent.body.map((f: { id: string }) => f.id)).not.toContain(fileId);
@@ -421,7 +421,7 @@ suite('tax portal purchase list (#465)', () => {
         ),
       ).rejects.toThrow(/already has its outcome/);
     });
-    const audits = await admin(async (c) => (await c.query(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.portal_list.%' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
+    const audits = await admin(async (c) => (await c.query(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.portal_list.%' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
     expect(audits.map((a) => a.command)).toEqual(expect.arrayContaining(['finance.portal_list.import', 'finance.portal_list.record', 'finance.portal_list.remove']));
   });
 
@@ -440,7 +440,7 @@ suite('tax portal purchase list (#465)', () => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         return await c.query(text, params);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
@@ -537,7 +537,7 @@ suite('tax portal purchase list (#465)', () => {
     expect(asDocument.status).toBe(409);
     expect(asDocument.body.code).toBe('FILE_IS_IMPORT');
     const outbox = await admin(
-      async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [imported.body.files[0].fileId])).rows[0],
+      async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [imported.body.files[0].fileId])).rows[0],
     );
     expect(outbox.n).toBe(0);
     // A ZIP uploaded as a document is not imported as a list, by the upload or by the import command.

@@ -64,7 +64,7 @@ export function socialFiguresQuery(options: { now?: () => Date } = {}) {
       const admin = ctx.actor.type === 'user' && (ctx.role === 'owner' || ctx.role === 'admin');
       const reconnect = admin
         ? await ctx.trx
-            .selectFrom('crove_kernel.channel_connection')
+            .selectFrom('ludy_kernel.channel_connection')
             .select(sql<string>`count(*)`.as('n'))
             .where('org_id', '=', ctx.orgId)
             .where('status', 'in', [...ATTENTION_CHANNEL_STATUSES])

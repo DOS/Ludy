@@ -111,7 +111,7 @@ export const reportLinkCreate = defineCommand({
     const end = new Date(bounds.endMs);
     const ids = [...new Set(input.connectionIds ?? [])];
     if (ids.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
       if (found.length !== ids.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     }
     if (input.labelId) {

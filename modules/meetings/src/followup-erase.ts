@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The copy of a meeting's text in its follow-up mails (L3, #2590; erasure #3016, ADR-0047 point 7). meetings.followup.send stores the shared summary, the decisions and the
-// action items' owners as the merge data of each mail (crove_kernel.mail_message.payload, source 'meetings.followup', source_id the meeting). The mail queue drops that
+// action items' owners as the merge data of each mail (ludy_kernel.mail_message.payload, source 'meetings.followup', source_id the meeting). The mail queue drops that
 // payload 30 days after a final status, which is later than a meeting's own delete, owner delete or text purge: so each of those paths drops it too, in the same transaction (and the subject with it: #3063).
 // The mail table lets a payload only be dropped (never changed): the guard trigger refuses any other change, and the tenant role holds UPDATE on the column for exactly this.
 // A mail still queued then fails to render (the queue records TEMPLATE_DATA) rather than send the text of a meeting that no longer exists.
@@ -20,7 +20,7 @@ export async function lockFollowup(ctx: Ctx, meetingId: string): Promise<void> {
 export async function dropFollowupPayloads(ctx: Ctx, meetingId: string): Promise<number> {
   await lockFollowup(ctx, meetingId);
   const result = await ctx.trx
-    .updateTable('crove_kernel.mail_message')
+    .updateTable('ludy_kernel.mail_message')
     .set({ payload: null, subject: null })
     .where('org_id', '=', ctx.orgId)
     .where('source', '=', FOLLOWUP_MAIL_SOURCE)

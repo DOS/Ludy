@@ -83,7 +83,7 @@ export const bannedWordAdd = defineCommand({
     const userId = requireUser(ctx);
     const connectionIds = [...new Set(input.connectionIds ?? [])];
     if (connectionIds.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).where('status', '<>', 'revoked').execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).where('status', '<>', 'revoked').execute();
       if (found.length !== connectionIds.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Có kênh không thuộc tổ chức này');
     }
     await lockOrg(ctx);

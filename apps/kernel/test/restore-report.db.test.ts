@@ -47,8 +47,8 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
     if (user) [url.username, url.password] = user;
     return url.toString();
   };
-  const APP: [string, string] = ['crove_app', 'test-app-pw'];
-  const WORKER: [string, string] = ['crove_worker', 'test-worker-pw'];
+  const APP: [string, string] = ['ludy_app', 'test-app-pw'];
+  const WORKER: [string, string] = ['ludy_worker', 'test-worker-pw'];
   function dbFor(name: string, user: [string, string]): Db {
     const pool = createPool({ connectionString: urlOf(name, user), max: 2 });
     pools.push(pool);
@@ -68,7 +68,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
     return client(urlOf(name, APP), async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
         const out = await fn(c);
         await c.query('COMMIT');
         return out;
@@ -82,7 +82,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
   const allocate = (name: string, docType: string) =>
     asOwner(name, async (c) => {
       const { rows } = await c.query<{ number: string; allocation_id: string }>(
-        `SELECT number::text AS number, allocation_id FROM crove_kernel.allocate_number(NULL, $1, '2026-10-01', 'test.record', $2::uuid)`,
+        `SELECT number::text AS number, allocation_id FROM ludy_kernel.allocate_number(NULL, $1, '2026-10-01', 'test.record', $2::uuid)`,
         [docType, randomUUID()],
       );
       return rows[0]!;
@@ -111,11 +111,11 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
     client(urlOf(dbName), async (c) => {
       await c.query(`SET session_replication_role = replica`);
       const recent = `> now() - interval '10 minutes'`;
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - make_interval(mins => $1) WHERE occurred_at ${recent}`, [minutes]);
-      for (const table of ['crove_finance.journal_entry', 'crove_finance.journal_voucher', 'crove_kernel.number_series']) {
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - make_interval(mins => $1) WHERE occurred_at ${recent}`, [minutes]);
+      for (const table of ['crove_finance.journal_entry', 'crove_finance.journal_voucher', 'ludy_kernel.number_series']) {
         await c.query(`UPDATE ${table} SET created_at = created_at - make_interval(mins => $1) WHERE created_at ${recent}`, [minutes]);
       }
-      await c.query(`UPDATE crove_kernel.number_allocation SET allocated_at = allocated_at - make_interval(mins => $1) WHERE allocated_at ${recent}`, [minutes]);
+      await c.query(`UPDATE ludy_kernel.number_allocation SET allocated_at = allocated_at - make_interval(mins => $1) WHERE allocated_at ${recent}`, [minutes]);
     });
   const archive = async () => {
     const worker = dbFor(dbName, WORKER);
@@ -130,12 +130,12 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
   beforeAll(async () => {
     await client(ADMIN as string, (c) => c.query(`CREATE DATABASE ${dbName}`));
     await migrate({ adminUrl: urlOf(dbName), dir: MIGRATIONS });
-    await setRolePasswords(urlOf(dbName), { crove_app: APP[1], crove_worker: WORKER[1] });
+    await setRolePasswords(urlOf(dbName), { ludy_app: APP[1], ludy_worker: WORKER[1] });
     const db = dbFor(dbName, APP);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: 'restore-report', email: 'restore-report@example.com', name: null });
     ({ orgId } = await createOrg(runtime, { type: 'user', userId, aal: 'aal1' }, 'Org restore'));
-    entityId = await client(urlOf(dbName), async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]!.id);
+    entityId = await client(urlOf(dbName), async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]!.id);
     dir = mkdtempSync(join(tmpdir(), 'crove-restore-report-'));
     store = new LocalArchiveStore(dir);
 
@@ -180,22 +180,22 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
     const allowed = await client(urlOf(dbName), async (c) => {
       const { rows } = await c.query<{ fn: string; role: string }>(
         `SELECT f AS fn, r AS role
-         FROM unnest(ARRAY['crove_kernel.archive_series_highs(timestamptz,timestamptz)', 'crove_kernel.archive_series_next()',
-                           'crove_kernel.archive_legal_entities()', 'crove_kernel.number_series_reseed(uuid,uuid,text,text,bigint)']) f,
-              unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_prober']) r
+         FROM unnest(ARRAY['ludy_kernel.archive_series_highs(timestamptz,timestamptz)', 'ludy_kernel.archive_series_next()',
+                           'ludy_kernel.archive_legal_entities()', 'ludy_kernel.number_series_reseed(uuid,uuid,text,text,bigint)']) f,
+              unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_prober']) r
          WHERE has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
       );
       return rows.map((r) => `${r.fn} ${r.role}`);
     });
     expect(allowed).toEqual([
-      'crove_kernel.archive_legal_entities() crove_worker',
-      'crove_kernel.archive_series_highs(timestamptz,timestamptz) crove_worker',
-      'crove_kernel.archive_series_next() crove_worker',
-      'crove_kernel.number_series_reseed(uuid,uuid,text,text,bigint) crove_worker',
+      'ludy_kernel.archive_legal_entities() ludy_worker',
+      'ludy_kernel.archive_series_highs(timestamptz,timestamptz) ludy_worker',
+      'ludy_kernel.archive_series_next() ludy_worker',
+      'ludy_kernel.number_series_reseed(uuid,uuid,text,text,bigint) ludy_worker',
     ]);
     // The worker outside a system context of the org is refused.
     await expect(
-      sql`SELECT * FROM crove_kernel.number_series_reseed(NULL, ${entityId}::uuid, 'test.restore', '2026', 100)`.execute(dbFor(dbName, WORKER)),
+      sql`SELECT * FROM ludy_kernel.number_series_reseed(NULL, ${entityId}::uuid, 'test.restore', '2026', 100)`.execute(dbFor(dbName, WORKER)),
     ).rejects.toThrow(/NUMBER_RESEED_SYSTEM_CONTEXT/);
   });
 
@@ -232,7 +232,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
 
     const audits = await client(urlOf(copyName), async (c) => {
       const { rows } = await c.query<{ actor_type: string; outcome: string; detail: { docType: string; next: string; previousNext: string | null } }>(
-        `SELECT actor_type, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.number.reseed' ORDER BY occurred_at, id`,
+        `SELECT actor_type, outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.number.reseed' ORDER BY occurred_at, id`,
         [orgId],
       );
       return rows;
@@ -252,7 +252,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
     // The late series came back with its archived id.
     const lateIds = await Promise.all(
       [dbName, copyName].map((name) =>
-        client(urlOf(name), async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.number_series WHERE org_id = $1 AND doc_type = 'test.restore.late'`, [orgId])).rows[0]?.id),
+        client(urlOf(name), async (c) => (await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.number_series WHERE org_id = $1 AND doc_type = 'test.restore.late'`, [orgId])).rows[0]?.id),
       ),
     );
     expect(lateIds[1]).toBe(lateIds[0]);
@@ -277,7 +277,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
     expect(await reseed('test.restore.floor', '41')).toMatchObject({ previousNext: null, next: '41' });
     // A series the reseed made has no allocation yet, and its doc type's reset is locked all the same: a switch would
     // number a new period from 1 beside the numbers the archive holds.
-    await expect(asOwner(copyName, (c) => c.query(`SELECT crove_kernel.number_series_policy_set(NULL, 'test.restore.floor', 'never')`))).rejects.toThrow(
+    await expect(asOwner(copyName, (c) => c.query(`SELECT ludy_kernel.number_series_policy_set(NULL, 'test.restore.floor', 'never')`))).rejects.toThrow(
       /NUMBER_POLICY_IN_USE/,
     );
     expect((await allocate(copyName, 'test.restore.floor')).number).toBe('41');

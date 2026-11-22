@@ -109,7 +109,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   const call = async (path: string, who: Account, input?: unknown, on: ReturnType<typeof createHttpApp> = app, org: string | null = slug) => rpc(`misaAmis/${path}`, await tokenFor(who), input, org, on);
   const connectInput = (extra: Record<string, unknown> = {}) => ({ legalEntityId: null, accessCode: PLANTED, ...extra });
   const asUser = (who: Account) => ({ type: 'user' as const, userId: who.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
-  const defaultEntity = async (org = orgId) => String((await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org]))[0]?.id);
+  const defaultEntity = async (org = orgId) => String((await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org]))[0]?.id);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -120,15 +120,15 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
     const register = (target: ReturnType<typeof createDb>, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' as const } : {}) }).register({
@@ -138,7 +138,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     const runtime = register(db, true);
     api = runtime;
     worker = register(createDb(workerPool));
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     const deps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
     app = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true } });
@@ -153,7 +153,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Kế toán AMIS', idempotencyKey: randomUUID() }, null);
     slug = String(created.body?.slug);
     orgId = String(created.body?.orgId);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser.userId, member.userId, viewer.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser.userId, member.userId, viewer.userId]);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherSlug = String(other.body?.slug);
     otherOrgId = String(other.body?.orgId);
@@ -174,7 +174,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   const ASK = { kind: 'purchase_services', from: '2026-10-01', to: '2026-10-31', serviceItemCode: 'DV_CHUNG' } as const;
   let connectionId = '';
   let entityId = '';
-  const events = async () => (await rows<{ payload: { connection_id?: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_match.check_requested' ORDER BY id", [orgId])).map((r) => r.payload);
+  const events = async () => (await rows<{ payload: { connection_id?: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_match.check_requested' ORDER BY id", [orgId])).map((r) => r.payload);
   const checkRow = async () => (await rows<{ state: string; failure: string | null; params: Record<string, unknown>; finished_at: Date | null; requested_by: string | null }>('SELECT state, failure, params, finished_at, requested_by FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0];
   const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; partyAmbiguous: Set<string> | null; itemCodes: Set<string> | null; partyNameCodes: Map<string, string> | null; unitIds: Map<string, { name: string; id: string }> | null; unitAmbiguous: Set<string> | null; stockIds: Map<string, string> | null; itemIds: Map<string, string> | null; product?: string }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
   const requestedAt = async () => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0]!.requested_at).toISOString();
@@ -229,7 +229,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     await expect(call('matches/check', owner, { id: connectionId, ask: ASK }, offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     await expect(call('matches/check', owner, { id: randomUUID(), ask: ASK })).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
     const other = randomUUID();
-    await rows("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh khác', 'branch', $3)", [orgId, other, owner.userId]);
+    await rows("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh khác', 'branch', $3)", [orgId, other, owner.userId]);
     await expect(call('matches/check', owner, { id: connectionId, ask: { ...ASK, legalEntityId: other } })).resolves.toMatchObject({ status: 422, body: { code: 'MISA_AMIS_MATCH_ENTITY' } });
     // Another org cannot see this connection at all.
     await expect(call('matches/check', outsider, { id: connectionId, ask: ASK }, app, otherSlug)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
@@ -286,7 +286,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(await record({ state: 'done', failure: null, results: [] })).toEqual({ recorded: false, results: 0 });
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(4);
     // The audit row of the record names counts, no tax code, no code.
-    const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.record_check'", [orgId]);
+    const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.record_check'", [orgId]);
     expect(JSON.stringify(audit)).not.toMatch(/0101234564|NCC_ABC/);
   });
 
@@ -344,7 +344,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
 
     it('records what a name match found: a proposal with its name on that row alone, several as ambiguous, and nothing for none; a proposal is no match', async () => {
       for (const name of ['Hộ kinh doanh Hoa Sen', 'Hộ kinh doanh Hoa Mai', 'Hộ kinh doanh Hoa Lan', 'Hộ kinh doanh Hoa Cúc']) {
-        partyIds.push(String((await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, source_trust) VALUES ($1, $2, 'external') RETURNING id", [orgId, name]))[0]?.id));
+        partyIds.push(String((await rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, source_trust) VALUES ($1, $2, 'external') RETURNING id", [orgId, name]))[0]?.id));
       }
       const [p1, p2, p3] = partyIds as [string, string, string];
       await askAgain();
@@ -366,7 +366,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       expect(read.partyNameCodes).toEqual(new Map());
       expect(read.partyCodes).toEqual(new Map());
       // The candidate's name is in no audit row, no event and no outbox payload.
-      for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event']) expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%Hoa Sen (HKD)%'`, [orgId]), table).toEqual([]);
+      for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event']) expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%Hoa Sen (HKD)%'`, [orgId]), table).toEqual([]);
     });
 
     it('refuses a name result that does not fit its kind or its state, in the command and in the table', async () => {
@@ -405,8 +405,8 @@ suite('MISA AMIS catalogue match (#4112)', () => {
         admin(async (c) => {
           await c.query('BEGIN');
           try {
-            await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
-            await c.query('SET LOCAL ROLE crove_tenant');
+            await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
+            await c.query('SET LOCAL ROLE ludy_tenant');
             await c.query(statement);
             return 'inserted';
           } catch (error) {
@@ -419,7 +419,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
         const c = await workerPool.connect();
         try {
           await c.query('BEGIN');
-          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+          await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
           await c.query(statement);
           return 'inserted';
         } catch (error) {
@@ -488,7 +488,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       // Deciding twice finds nothing to decide; the name of the candidate is nowhere any more.
       expect(await call('matches/confirmName', owner, { connectionId, partyId: p1, proposalId: randomUUID(), candidateCode: 'KH_HS' })).toMatchObject(gone);
       expect(await rows("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId])).toEqual([]);
-      const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.confirm_name'", [orgId]);
+      const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.confirm_name'", [orgId]);
       expect(audit.length).toBeGreaterThan(0);
       expect(JSON.stringify(audit)).not.toMatch(/Hoa Sen|KH_HS/);
     });

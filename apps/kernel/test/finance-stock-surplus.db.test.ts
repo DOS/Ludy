@@ -46,7 +46,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Hàng thừa ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
     return { orgId, owner, admin: adminUser, member, viewer };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.member) => rt.execute<T>(name, input, { actor: asMfa(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -68,7 +68,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal_voucher.record', input: { surplus } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const counts = (o: Org, user = o.member) => query<StockCount[]>(o, 'finance.stock_count.list', {}, user);
   const supplier = async (o: Org) =>
-    (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Cung ứng Mẫu', '0101234564') RETURNING id", [o.orgId]))[0]?.id as string;
+    (await rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Cung ứng Mẫu', '0101234564') RETURNING id", [o.orgId]))[0]?.id as string;
   // A confirmed count with a surplus of 150 (three of an item the books never held, costed at 50) and, when asked, a shortage beside it.
   async function confirmedCount(o: Org, extraShortage = false): Promise<string> {
     const b = await makeItem(o, `B${randomUUID().slice(0, 4)}`);
@@ -98,9 +98,9 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -186,7 +186,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     // Another org's count is not found, and nothing was written for any of the above.
     const stranger = await org();
     await expect(askSurplus(stranger, { countId, account: '711' })).rejects.toMatchObject({ code: 'STOCK_COUNT_NOT_FOUND' });
-    const [none] = await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.proposal WHERE org_id = $1 AND command = 'finance.journal_voucher.record'", [o.orgId]);
+    const [none] = await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.journal_voucher.record'", [o.orgId]);
     expect(none?.n).toBe('0');
   });
 
@@ -209,7 +209,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     const { proposalId } = await askSurplus(o, { countId, account: '711' });
     // The proposal as a requester could never have made it (the payload is built by the server): one for another amount, written under the owner's hand.
     await rows(
-      `UPDATE crove_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"100"'), '{lines,1,credit}', '"100"'), '{total}', '"100"')
+      `UPDATE ludy_kernel.proposal SET payload = jsonb_set(jsonb_set(jsonb_set(payload, '{lines,0,debit}', '"100"'), '{lines,1,credit}', '"100"'), '{total}', '"100"')
        WHERE org_id = $1 AND id = $2`,
       [o.orgId, proposalId],
     );
@@ -245,7 +245,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
   const received = (o: Org, item: string, partyId: string, date: string, quantity: string, invoiceNumber: string) =>
     admin(async (c) => {
       await c.query('SET session_replication_role = replica');
-      const [entity] = (await c.query<{ id: string }>('SELECT id::text AS id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId])).rows;
+      const [entity] = (await c.query<{ id: string }>('SELECT id::text AS id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId])).rows;
       const doc = (
         await c.query<{ id: string }>(
           `INSERT INTO crove_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
@@ -286,7 +286,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
   it('names the supplier the goods were last received from as a hint, and follows the resolution: the proposal waiting, then the voucher', async () => {
     const o = await org();
     const party = await supplier(o);
-    const other = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp cũ') RETURNING id", [o.orgId]))[0]?.id as string;
+    const other = (await rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp cũ') RETURNING id", [o.orgId]))[0]?.id as string;
     const b = await makeItem(o, `S${randomUUID().slice(0, 4)}`);
     await received(o, b, other, '2026-08-01', '5', '000001');
     await received(o, b, party, '2026-09-12', '5', '000002');
@@ -308,7 +308,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     const o = await org();
     const countId = await confirmedCount(o);
     expect((await source(o, countId)).manualEntry).toBe(false);
-    const [entity] = await rows<{ id: string }>('SELECT id::text AS id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId]);
+    const [entity] = await rows<{ id: string }>('SELECT id::text AS id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId]);
     const manual = await rt.execute<{ proposalId: string }>(
       'kernel.proposal.request',
       {

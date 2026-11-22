@@ -51,7 +51,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
 
   async function member(o: Org, role: 'admin' | 'member' | 'viewer'): Promise<string> {
     const id = await person(role);
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, id, role]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, id, role]));
     return id;
   }
 
@@ -88,9 +88,9 @@ suite('removing a published post on PostgreSQL (#860)', () => {
   const deps = (platform: Publisher) => ({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 });
   const variant = async (o: Org, postId: string) => (await get(o, postId)).variants[0] as PostView['variants'][number];
   const events = (o: Org, type: string) =>
-    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at', [o.orgId, type])).rows.map((r) => r.payload));
+    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at', [o.orgId, type])).rows.map((r) => r.payload));
   const removeCalls = (id: string) =>
-    admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
+    admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
   const metricsDue = async (id: string) =>
     admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows.some((r) => r.variant_id === id));
 
@@ -103,15 +103,15 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registry);
@@ -151,7 +151,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     expect((await get(o, postId)).status).toBe('cancelled');
     expect(await removeCalls(id)).toEqual([{ key: `social.publish:${id}:1:1:remove`, state: 'succeeded', retry_safety: 'idempotent', error_code: null }]);
     expect(await events(o, 'social.variant.removed')).toEqual([{ post_id: postId, variant_id: id, provider: 'sandbox', by: o.owner }]);
-    const audit = await admin(async (c) => (await c.query<{ actor_id: string; target_id: string; detail: Record<string, unknown> }>("SELECT actor_id, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.variant.remove' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ actor_id: string; target_id: string; detail: Record<string, unknown> }>("SELECT actor_id, target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.variant.remove' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
     expect(audit[0]).toEqual({ actor_id: o.owner, target_id: id, detail: { post_id: postId, variant_id: id, provider: 'sandbox', reason: 'Sai giá khuyến mãi' } });
     // Metrics stop: the sweep reads published variants only.
     expect(await metricsDue(id)).toBe(false);

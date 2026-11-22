@@ -69,7 +69,7 @@ suite('marketplace order reports (#2515)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Bán sàn ${randomUUID().slice(0, 6)}`);
     const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
     return { orgId, owner, member, viewer };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -110,16 +110,16 @@ suite('marketplace order reports (#2515)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) => new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     rt = register(db);
     worker = register(createDb(workerPool));
@@ -140,7 +140,7 @@ suite('marketplace order reports (#2515)', () => {
     const bytes = report(row('A1', 'Đang giao', 'QC-1', 2), row('A2', 'Đã hủy', 'QC-2', 1), row('A3', 'Hoàn thành', 'QC-1', 1));
     const { fileId, handled } = await read(o, bytes);
     expect(handled).toBe(true);
-    const run = (await rows<{ result: { kind: string; summary: Record<string, unknown> } }>('SELECT result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version DESC LIMIT 1', [o.orgId, fileId]))[0]?.result;
+    const run = (await rows<{ result: { kind: string; summary: Record<string, unknown> } }>('SELECT result FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version DESC LIMIT 1', [o.orgId, fileId]))[0]?.result;
     expect(run).toMatchObject({ kind: 'marketplace_orders', summary: { state: 'staged', platform: 'shopee', orders: 3, lines: 3, profileConfirmed: false, stages: { shipped: 1, completed: 1, cancelled: 1, placed: 0, returned: 0, unknown: 0 } } });
     // Nothing is stored as an order or as stock, and no buyer value was kept anywhere in the read.
     expect(await orderRows(o)).toEqual([]);
@@ -301,7 +301,7 @@ suite('marketplace order reports (#2515)', () => {
     ).rejects.toThrow(/STOCK_ORDER_REVERSAL/);
     expect(await onHand(o, item)).toBe('-2');
     // A move of an order line is of the line's own legal entity: an item of another entity is refused by the table.
-    const other = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
+    const other = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
     const foreign = await makeItem(o, 'QC-9', { legalEntityId: other });
     await expect(
       rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move) VALUES ($1, $2, '2026-11-01', -1, 'order_line', $3, 'ship')", [o.orgId, foreign, ship?.order_line_id]),
@@ -525,7 +525,7 @@ suite('marketplace order reports (#2515)', () => {
     const item = await makeItem(o, 'QC-CL');
     await confirm(o, (await read(o, report(row('K1', 'Đang giao', 'MA-CL', 3)))).fileId);
     // October, the month of the order, is closed before the line is assigned (the rows a close leaves are written by the database owner).
-    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
     await rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, '2026-10-01']);
     const [line] = await rows<{ id: string }>('SELECT id FROM crove_finance.channel_order_line WHERE org_id = $1', [o.orgId]);
     await execute(o, 'finance.marketplace.assign', { lineId: line?.id, itemId: item }, o.member);
@@ -587,7 +587,7 @@ suite('marketplace order reports (#2515)', () => {
     const lineIdOf = async (org: Org, orderNo: string) =>
       (await rows<{ id: string }>('SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = $2', [org.orgId, orderNo]))[0]?.id as string;
     const [s1, s2, s3, s4] = [await lineIdOf(o, 'S1'), await lineIdOf(o, 'S2'), await lineIdOf(o, 'S3'), await lineIdOf(o, 'S4')];
-    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
     const ask = (lineIds: string[], user = o.member) => query<{ lines: Array<{ lineId: string; text: string }>; items: Array<{ id: string; code: string; name: string; unit: string }> }>(o, 'finance.marketplace.suggest_source', { legalEntityId: entity?.id, lineIds }, user);
     // Only the unassigned line is read, with its product name and SKU as one text; the assigned, placed and cancelled ones are left out, never read.
     const source = await ask([s1, s2, s3, s4]);
@@ -608,7 +608,7 @@ suite('marketplace order reports (#2515)', () => {
     await execute(o, 'finance.marketplace.assign', { lineId: s1, itemId: item, factor: '1' }, o.member);
     expect((await ask([s1])).lines).toEqual([]);
     // Another legal entity's lines are not read through this entity.
-    const second = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
+    const second = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
     await confirm(o, (await read(o, report(row('S5', 'Đang giao', 'LẠ-5', 1)))).fileId);
     const s5 = await lineIdOf(o, 'S5');
     const viaSecond = await query<{ lines: unknown[] }>(o, 'finance.marketplace.suggest_source', { legalEntityId: second, lineIds: [s5] }, o.member);
@@ -638,11 +638,11 @@ suite('marketplace order reports (#2515)', () => {
     // A generic sheet is not handled: the worker goes on to the other readers, and no run is recorded here.
     const none = await read(o, buildXlsx([['nothing', 'here'], ['a', 'b']]));
     expect(none.handled).toBe(false);
-    expect(await rows('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, none.fileId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, none.fileId])).toEqual([]);
     // A row with a quantity that is not one stops the file: a failed read that names the row, and nothing staged.
     const bad = await read(o, report(row('B1', 'Đang giao', 'QC-1', 1), row('B2', 'Đang giao', 'QC-1', 0)));
     expect(bad.handled).toBe(true);
-    const failed = (await rows<{ status: string; error: string }>('SELECT status, error FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version DESC LIMIT 1', [o.orgId, bad.fileId]))[0];
+    const failed = (await rows<{ status: string; error: string }>('SELECT status, error FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version DESC LIMIT 1', [o.orgId, bad.fileId]))[0];
     expect(failed).toMatchObject({ status: 'failed', error: expect.stringContaining('dòng 4') });
     expect(await orderRows(o)).toEqual([]);
   });
@@ -658,7 +658,7 @@ suite('marketplace order reports (#2515)', () => {
     );
     for (const value of Object.values(BUYER)) expect(stored[0]?.t).not.toContain(value);
     // The audit rows and the activity of the file carry no buyer value either.
-    const audit = await rows<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.confirm'`, [o.orgId]);
+    const audit = await rows<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.confirm'`, [o.orgId]);
     for (const value of Object.values(BUYER)) expect(JSON.stringify(audit)).not.toContain(value);
     // Another org sees none of it.
     const other = await org();

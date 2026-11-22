@@ -37,7 +37,7 @@ type Waiting = Pick<VariantRow, 'id' | 'provider' | 'status' | 'settings' | 'ext
 async function publishIdOf(trx: CommandContext['trx'], orgId: string, v: Waiting, wait: 'sent_to_app' | 'no_id'): Promise<string | null> {
   if (wait === 'no_id') return v.external_post_id;
   const call = await trx
-    .selectFrom('crove_kernel.external_call')
+    .selectFrom('ludy_kernel.external_call')
     .select('external_ref')
     .where('org_id', '=', orgId)
     .where('key', '=', publishCallKey(v.id, callRevision(v), v.attempt, PUBLISH_STEP))
@@ -66,7 +66,7 @@ export const lateIdTarget = defineQuery({
     requireSystem(ctx);
     const v = await ctx.trx
       .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
       .select([
         'v.id',
         'v.provider',

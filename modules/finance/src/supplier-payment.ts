@@ -80,7 +80,7 @@ async function refuseDuplicate(ctx: CommandContext, invoiceId: string): Promise<
     .executeTakeFirst();
   if (live) throw new DomainError('SUPPLIER_PAYMENT_EXISTS', 409, 'Hóa đơn này đã có khoản chi được duyệt');
   const open = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', SUPPLIER_PAYMENT_COMMAND)
@@ -141,7 +141,7 @@ export const supplierPaymentRecord = defineCommand({
     const doc = await loadInvoice(ctx.trx, ctx.orgId, invoiceId);
     const account = await activeAccount(ctx.trx, ctx.orgId, doc.party_id);
     // "Approve what you saw": the request showed this account (by its row, its last four digits and the day it was added), this supplier and this amount.
-    const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+    const proposal = await ctx.trx.selectFrom('ludy_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
     if (
       doc.party_id !== payload.partyId.toLowerCase() ||
       account.id !== payload.accountId.toLowerCase() ||
@@ -314,7 +314,7 @@ export const financeSupplierPaymentsWaitingSignals = defineQuery({
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<FinanceSupplierPaymentsWaitingSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
-    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
+    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (ludy_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
     if (scope[0]?.whole !== true) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Bạn chỉ xem được một phần sổ sách nên chưa kiểm tra được khoản chi nhà cung cấp đang chờ');
     const asked = input.partyIds.map((id) => sql`${id}::uuid`);
     const { rows } = await sql<{ party_id: string; count: number; amount: string }>`
@@ -322,18 +322,18 @@ export const financeSupplierPaymentsWaitingSignals = defineQuery({
         SELECT id, kept FROM (
           SELECT a.id, coalesce(a.duplicate_of, a.id) AS kept,
                  row_number() OVER (PARTITION BY coalesce(a.duplicate_of, a.id) ORDER BY (a.id = coalesce(a.duplicate_of, a.id)) DESC, a.id) AS rn
-            FROM crove_kernel.party a
+            FROM ludy_kernel.party a
            WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(asked)})
         ) g WHERE rn = 1
       ), waiting AS (
         SELECT coalesce(pa.duplicate_of, pa.id) AS kept, p.amount, p.currency
           FROM crove_finance.supplier_payment p
-          JOIN crove_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
+          JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
          WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'approved'
         UNION ALL
         SELECT coalesce(pa.duplicate_of, pa.id) AS kept, CASE WHEN q.payload ->> 'amount' ~ '^[0-9]{1,16}(\\.[0-9]{1,4})?$' THEN (q.payload ->> 'amount')::numeric ELSE 0 END AS amount, q.payload ->> 'currency' AS currency
-          FROM crove_kernel.proposal q
-          JOIN crove_kernel.party pa ON pa.org_id = q.org_id AND pa.id::text = pg_catalog.lower(q.payload ->> 'partyId')
+          FROM ludy_kernel.proposal q
+          JOIN ludy_kernel.party pa ON pa.org_id = q.org_id AND pa.id::text = pg_catalog.lower(q.payload ->> 'partyId')
          WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'
       )
       SELECT asked.id AS party_id, count(*)::int AS count, coalesce(sum(w.amount) FILTER (WHERE w.currency = 'VND'), 0)::text AS amount

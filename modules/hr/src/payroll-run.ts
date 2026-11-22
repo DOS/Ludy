@@ -385,8 +385,8 @@ export const runOpen = defineCommand({
   handler: async (ctx, input): Promise<HrRunWritten> => {
     const userId = userOf(ctx.actor);
     const entity = input.legalEntityId
-      ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst()
-      : await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
+      ? await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst()
+      : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
     if (!entity) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của bảng lương');
     const exists = await ctx.trx
       .selectFrom('crove_hr.payroll_run')
@@ -762,7 +762,7 @@ async function resolveLegacySyncedLineIds(
   if (candidates.length === 0) return new Set();
   const since = new Date(runCreatedAt.getTime() - 60_000);
   const lastSync = await ctx.trx
-    .selectFrom('crove_kernel.audit_event')
+    .selectFrom('ludy_kernel.audit_event')
     .select(['occurred_at'])
     .where('org_id', '=', ctx.orgId)
     .where('occurred_at', '>=', since)
@@ -778,7 +778,7 @@ async function resolveLegacySyncedLineIds(
   const employeeIds = [...new Set(candidates.map((c) => c.employeeId))];
   const lineIds = candidates.map((c) => c.lineId);
   const leaveWritten = await ctx.trx
-    .selectFrom('crove_kernel.audit_event')
+    .selectFrom('ludy_kernel.audit_event')
     .select(['target_id'])
     .where('org_id', '=', ctx.orgId)
     .where('outcome', '=', 'ok')
@@ -793,7 +793,7 @@ async function resolveLegacySyncedLineIds(
   if (employeesWithPriorLeave.size === 0) return new Set();
 
   const editedAfterSync = await ctx.trx
-    .selectFrom('crove_kernel.audit_event')
+    .selectFrom('ludy_kernel.audit_event')
     .select(['target_id'])
     .where('org_id', '=', ctx.orgId)
     .where('occurred_at', '>', lastSync.occurred_at)
@@ -1284,7 +1284,7 @@ export const runList = defineQuery({
 });
 
 export async function employerName(ctx: ReadCtx, legalEntityId: string): Promise<string> {
-  const row = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst();
   return row?.name ?? '';
 }
 

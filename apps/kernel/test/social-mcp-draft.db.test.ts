@@ -51,7 +51,7 @@ suite('the MCP draft command (#3227)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', $6::text[], $4, now(), now() + interval '30 days', $3)`,
         [orgId, id, userId, `oauth-${id}`, `client-${id}`, scopes],
       ),
@@ -72,7 +72,7 @@ suite('the MCP draft command (#3227)', () => {
   async function channel(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -92,9 +92,9 @@ suite('the MCP draft command (#3227)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 6 });
     pools.push(pool);
@@ -105,7 +105,7 @@ suite('the MCP draft command (#3227)', () => {
     }
     orgA = (await createOrg(runtime, browser(users.ownerA), 'Org A')).orgId;
     orgB = (await createOrg(runtime, browser(users.ownerB), 'Org B')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgA, users.adminA, users.memberA]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgA, users.adminA, users.memberA]));
     conns.a1 = await channel(orgA, users.ownerA, 'Trang Facebook A');
     conns.a2 = await channel(orgA, users.ownerA, 'Kênh thứ hai');
     conns.b1 = await channel(orgB, users.ownerB, 'Kênh của tổ chức B');
@@ -151,7 +151,7 @@ suite('the MCP draft command (#3227)', () => {
   it('refuses a revoked grant, another org\'s channel and anything outside the person\'s own limits, with the same codes', async () => {
     const grant = await insertGrant(orgA, users.ownerA);
     const ctx = { actor: mcp(users.ownerA, grant, ['ludy.read', 'ludy.social.draft']), orgId: orgA };
-    await admin((c) => c.query('UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE id = $1', [grant]));
+    await admin((c) => c.query('UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE id = $1', [grant]));
     expect([(await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, ctx))).status]).toEqual([401]);
     expect((await refusal(draft({ body: 'x', channels: [{ connectionId: conns.b1 }] }))).code).toBe('CHANNEL_NOT_FOUND');
     expect((await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }, { connectionId: conns.a1 }] }))).code).toBe('CHANNEL_ALREADY_IN_POST');
@@ -172,7 +172,7 @@ suite('the MCP draft command (#3227)', () => {
   it('audits the call as the grant\'s, not as the person\'s own click', async () => {
     const ctx = await grantActor();
     const made = await draft({ body: 'Có dấu vết', channels: [{ connectionId: conns.a1 }] }, ctx);
-    const audited = await admin(async (c) => (await c.query("SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.mcp.draft_create' AND outcome = 'ok' ORDER BY occurred_at DESC LIMIT 1", [orgA])).rows[0]);
+    const audited = await admin(async (c) => (await c.query("SELECT actor_type, actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.mcp.draft_create' AND outcome = 'ok' ORDER BY occurred_at DESC LIMIT 1", [orgA])).rows[0]);
     expect(audited).toMatchObject({ actor_type: 'user', actor_id: users.ownerA });
     expect(audited.detail).toMatchObject({ mcpCall: true, mcpGrant: ctx.actor.mcp?.grantId, post_id: made.postId, origin: 'ai', actor_origin: 'mcp' });
   });

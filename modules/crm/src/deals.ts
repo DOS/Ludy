@@ -175,7 +175,7 @@ const DUPLICATE_CHAIN_MAX = 10;
 export function base(ctx: Reader) {
   return ctx.trx
     .selectFrom('crove_crm.deal as d')
-    .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
     // The open next step of the deal (at most one, by index) unless it is snoozed: the badge "Cần theo dõi".
     .leftJoin('crove_crm.deal_next_step as n', (j) =>
@@ -185,9 +185,9 @@ export function base(ctx: Reader) {
     .leftJoin(
       sql`LATERAL (
         WITH RECURSIVE chain(id, name, duplicate_of, depth) AS (
-          SELECT x.id, x.name, x.duplicate_of, 1 FROM crove_kernel.party x WHERE x.org_id = d.org_id AND x.id = p.duplicate_of
+          SELECT x.id, x.name, x.duplicate_of, 1 FROM ludy_kernel.party x WHERE x.org_id = d.org_id AND x.id = p.duplicate_of
           UNION ALL
-          SELECT y.id, y.name, y.duplicate_of, c.depth + 1 FROM chain c JOIN crove_kernel.party y ON y.org_id = d.org_id AND y.id = c.duplicate_of WHERE c.depth < ${sql.lit(DUPLICATE_CHAIN_MAX)}
+          SELECT y.id, y.name, y.duplicate_of, c.depth + 1 FROM chain c JOIN ludy_kernel.party y ON y.org_id = d.org_id AND y.id = c.duplicate_of WHERE c.depth < ${sql.lit(DUPLICATE_CHAIN_MAX)}
         )
         SELECT id, name FROM chain ORDER BY depth DESC LIMIT 1
       )`.as('k'),
@@ -207,14 +207,14 @@ const notFound = () => new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấ
 const stale = () => new DomainError('STALE_VERSION', 409, 'Cơ hội này vừa được người khác sửa; hãy mở lại để xem bản mới');
 
 async function assertParty(ctx: CommandContext, partyId: string): Promise<string> {
-  const party = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
+  const party = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
   return party.name;
 }
 
 async function assertOwner(ctx: CommandContext, userId: string | null): Promise<void> {
   if (userId === null) return;
-  const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
+  const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
   if (!member) throw new DomainError('DEAL_OWNER_INVALID', 422, 'Người phụ trách phải là thành viên của tổ chức');
 }
 
@@ -491,11 +491,11 @@ export const partyDeals = defineQuery({
 });
 
 // The conversations linked to a contact (#2333; for a company, its people's too, and duplicates merged into it), read
-// through crove_kernel.conversation under its own row-level security (a member limited to other channels or without
+// through ludy_kernel.conversation under its own row-level security (a member limited to other channels or without
 // kernel.conversation.direct.read sees no entry for a direct or email thread), with no message body.
 async function conversationsForParty(ctx: Reader, partyId: string, since: Date | null): Promise<ConversationOther[]> {
   const party = await ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select(['id', 'duplicate_of'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', partyId)
@@ -503,16 +503,16 @@ async function conversationsForParty(ctx: Reader, partyId: string, since: Date |
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
   const keepId = party.duplicate_of ?? party.id;
   let q = ctx.trx
-    .selectFrom('crove_kernel.conversation as c')
-    .innerJoin('crove_kernel.channel_connection as cc', (j) => j.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
+    .selectFrom('ludy_kernel.conversation as c')
+    .innerJoin('ludy_kernel.channel_connection as cc', (j) => j.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
     .select(['c.id', 'c.kind', 'c.status', 'c.channel_connection_id', 'cc.provider', 'cc.display_name', 'c.last_message_at'])
     .where('c.org_id', '=', ctx.orgId)
     .where('c.party_id', 'is not', null)
     .where(
       sql<boolean>`EXISTS (
-        SELECT 1 FROM crove_kernel.party p
-        LEFT JOIN crove_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id)
-        LEFT JOIN crove_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
+        SELECT 1 FROM ludy_kernel.party p
+        LEFT JOIN ludy_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id)
+        LEFT JOIN ludy_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
         WHERE p.org_id = c.org_id AND p.id = c.party_id
           AND (kp.id = ${keepId}::uuid OR coalesce(co.duplicate_of, co.id) = ${keepId}::uuid)
       )`,
@@ -556,7 +556,7 @@ export const partySearch = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<PartyChoice[]> => {
     const like = `%${input.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    let q = ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'kind', 'tax_code']).where('org_id', '=', ctx.orgId);
+    let q = ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'kind', 'tax_code']).where('org_id', '=', ctx.orgId);
     if (input.q) q = q.where((eb) => eb.or([eb('name', 'ilike', like), eb('tax_code', 'ilike', like)]));
     const rows = await q.orderBy('name').orderBy('id').limit(input.limit ?? PARTY_SEARCH_LIMIT).execute();
     return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind as PartyChoice['kind'], taxCode: r.tax_code }));

@@ -79,9 +79,9 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -93,7 +93,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'recorder', 'reader', 'stranger']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'chapters', subject: key, email: `${key}@chapters.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Mục lục')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -121,7 +121,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     expect(await refuses(exec('reader', 'meetings.chapters.start', { meetingId }))).toBe('FORBIDDEN');
     expect(await refuses(exec('stranger', 'meetings.chapters.start', { meetingId }))).not.toBeNull();
     const started = await exec<{ meetingId: string; runId: string }>('recorder', 'meetings.chapters.start', { meetingId });
-    const run = await sqlAdmin<{ feature: string; subject_type: string; subject_id: string }>(`SELECT feature, subject_type, subject_id FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, started.runId]);
+    const run = await sqlAdmin<{ feature: string; subject_type: string; subject_id: string }>(`SELECT feature, subject_type, subject_id FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, started.runId]);
     expect(run.rows[0]).toMatchObject({ feature: 'meetings.chapters', subject_type: 'meeting', subject_id: meetingId });
     // A meeting with no transcript has nothing to write chapters from.
     const empty = await seedMeeting('recorder');
@@ -148,7 +148,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     expect(await get('reader', meetingId)).toEqual({ meetingId, draft: [], published: [] });
     expect(await refuses(exec('recorder', 'meetings.chapters.copy_result', { meetingId, runId }))).toBe('CHAPTERS_ALREADY_COPIED');
     // The audit row of the copy holds counts, no title.
-    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.chapters.copy_result' ORDER BY id DESC LIMIT 1`, [orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.chapters.copy_result' ORDER BY id DESC LIMIT 1`, [orgId]);
     expect(JSON.stringify(audit.rows[0]?.detail)).not.toContain('Báo giá');
   });
 
@@ -269,15 +269,15 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     const other = await seedMeeting('recorder');
     const done = await finishedRun('recorder', other, BODY);
     const { runId } = await exec<{ runId: string }>('recorder', 'meetings.chapters.start', { meetingId });
-    const results = (id: string) => sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, id]).then((r) => r.rows[0]?.n);
+    const results = (id: string) => sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, id]).then((r) => r.rows[0]?.n);
     expect(await results(meetingId)).toBe(1);
     expect(await results(other)).toBe(1);
     await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [meetingId, other]]);
     expect(await results(meetingId)).toBe(0);
     expect(await results(other)).toBe(0);
-    const runs = await sqlAdmin<{ id: string; status: string; error: string | null }>(`SELECT id, status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [runId, done]]);
+    const runs = await sqlAdmin<{ id: string; status: string; error: string | null }>(`SELECT id, status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [runId, done]]);
     expect(runs.rows.find((r) => r.id === runId)).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });
-    const audit = await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail->>'feature' = 'meetings.chapters'`, [orgId]);
+    const audit = await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail->>'feature' = 'meetings.chapters'`, [orgId]);
     expect(audit.rows[0]?.n).toBe(1);
   });
 });

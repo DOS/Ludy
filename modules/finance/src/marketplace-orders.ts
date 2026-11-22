@@ -132,9 +132,9 @@ async function matchSkus(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId
 // The newest run of a file when it is a staged order report: the run a member decides. `lock`: the file row and the run are locked for the decision (the order a re-read and a record
 // take them in, as for a bank statement).
 async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: MarketplaceSummary; platform: Platform; lines: StagedLine[]; legalEntityId: string | null; sha256: string } | null> {
-  const file = await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
+  const file = await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
   if (!file) return null;
-  let query = ctx.trx.selectFrom('crove_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
+  let query = ctx.trx.selectFrom('ludy_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
   if (lock) query = query.forUpdate();
   const run = await query.executeTakeFirst();
   if (!run || run.status !== 'done') return null;
@@ -190,16 +190,16 @@ export const marketplaceStaged = defineQuery({
   handler: async (ctx): Promise<MarketplaceStaged[]> => {
     const { rows } = await sql<{ file_id: string; filename: string; created_at: Date; summary: unknown; legal_entity_id: string | null }>`
       SELECT x.file_id::text AS file_id, f.filename, f.created_at, x.result -> 'summary' AS summary, x.legal_entity_id::text AS legal_entity_id
-      FROM crove_kernel.extraction x
-      JOIN crove_kernel.file f ON f.org_id = x.org_id AND f.id = x.file_id
+      FROM ludy_kernel.extraction x
+      JOIN ludy_kernel.file f ON f.org_id = x.org_id AND f.id = x.file_id
       WHERE x.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
-        AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+        AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
       ORDER BY f.created_at DESC
       LIMIT 20`.execute(ctx.trx);
     const entityIds = [...new Set(rows.flatMap((r) => (r.legal_entity_id ? [r.legal_entity_id] : [])))];
     const names = new Map<string, string>();
     if (entityIds.length > 0) {
-      for (const e of await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute()) names.set(e.id, e.name);
+      for (const e of await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute()) names.set(e.id, e.name);
     }
     return rows.flatMap((r) => {
       const summary = zMarketplaceSummary.safeParse(r.summary);

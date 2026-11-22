@@ -13,17 +13,17 @@ export interface VerifiedIdentity {
 
 export async function upsertIdentity(db: Db, identity: VerifiedIdentity): Promise<string> {
   const { rows } = await sql<{ id: string }>`
-    SELECT crove_kernel.identity_upsert(${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name}) AS id`.execute(db);
+    SELECT ludy_kernel.identity_upsert(${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name}) AS id`.execute(db);
   const id = rows[0]?.id;
   if (!id) throw new DomainError('INTERNAL', 500, 'Không tạo được tài khoản');
   return id;
 }
 
-// Maps a verified token to its user only after the session checks pass (crove_kernel.identity_resolve), so a
+// Maps a verified token to its user only after the session checks pass (ludy_kernel.identity_resolve), so a
 // revoked or disabled session never creates or updates the account. upstream: the self-host db adapter.
 export async function resolveIdentity(db: Db, identity: VerifiedIdentity & { sessionId: string; upstream: boolean }): Promise<string> {
   const { rows } = await sql<{ id: string }>`
-    SELECT crove_kernel.identity_resolve(${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name},
+    SELECT ludy_kernel.identity_resolve(${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name},
       ${identity.sessionId}::uuid, ${identity.upstream}) AS id`.execute(db);
   const id = rows[0]?.id;
   if (!id) throw new DomainError('INTERNAL', 500, 'Không tạo được tài khoản');
@@ -39,7 +39,7 @@ export interface OrgSummary {
 
 export async function myOrgs(db: Db, userId: string): Promise<OrgSummary[]> {
   const { rows } = await sql<{ org_id: string; slug: string; name: string; role: MemberRole }>`
-    SELECT org_id, slug, name, role FROM crove_kernel.my_orgs(${userId}::uuid)`.execute(db);
+    SELECT org_id, slug, name, role FROM ludy_kernel.my_orgs(${userId}::uuid)`.execute(db);
   return rows.map((r) => ({ orgId: r.org_id, slug: r.slug, name: r.name, role: r.role }));
 }
 
@@ -66,7 +66,7 @@ export function slugify(name: string): string {
 }
 
 // How many orgs one user may create (External-tenant gate T4): perDay in any rolling 24 hours, total ever,
-// counting closed orgs too. Enforced by crove_kernel.create_or_replay_org under a per-user lock, so the limit holds
+// counting closed orgs too. Enforced by ludy_kernel.create_or_replay_org under a per-user lock, so the limit holds
 // across API instances; a replay of an existing idempotency key does not count.
 export interface OrgCreateLimits {
   perDay: number;
@@ -100,17 +100,17 @@ export function orgCreateCommand(limits: OrgCreateLimits = DEFAULT_ORG_CREATE_LI
     access: ['owner'],
     bootstrap: async (trx, actor, input, idempotencyKey) => {
       // Transaction-local, read by the definer right below.
-      await sql`SELECT set_config('crove.org_create_limit_per_day', ${String(limits.perDay)}, true),
-                       set_config('crove.org_create_limit_total', ${String(limits.total)}, true)`.execute(trx);
+      await sql`SELECT set_config('ludy.org_create_limit_per_day', ${String(limits.perDay)}, true),
+                       set_config('ludy.org_create_limit_total', ${String(limits.total)}, true)`.execute(trx);
       const { rows } = await sql<{ org_id: string | null }>`
-        SELECT crove_kernel.create_or_replay_org(${actor.userId}::uuid, ${slugify(input.name)}, ${input.name}, ${idempotencyKey}) AS org_id`.execute(trx);
+        SELECT ludy_kernel.create_or_replay_org(${actor.userId}::uuid, ${slugify(input.name)}, ${input.name}, ${idempotencyKey}) AS org_id`.execute(trx);
       const orgId = rows[0]?.org_id;
       if (!orgId) throw new DomainError('INTERNAL', 500, 'Không tạo được tổ chức');
       return orgId;
     },
     handler: async (ctx): Promise<OrgSummary> => {
       const tenant = await ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select(['org_id', 'slug', 'name'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();

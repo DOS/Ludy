@@ -53,7 +53,7 @@ async function settledThroughGroup(ctx: QueryContext, partyId: string, invoice: 
     SELECT pg_catalog.count(*)::text AS n
     FROM crove_finance.cash_voucher v
     JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
-    JOIN crove_kernel.proposal p ON p.org_id = v.org_id AND p.id = v.proposal_id
+    JOIN ludy_kernel.proposal p ON p.org_id = v.org_id AND p.id = v.proposal_id
     WHERE v.org_id = ${ctx.orgId} AND v.party_id = ${partyId}
       AND p.payload #>> '{matchedBy,invoice,number}' = ${invoice.number}
       AND p.payload #>> '{matchedBy,invoice,series}' = ${invoice.series}
@@ -189,8 +189,8 @@ export const bankMatched = defineQuery({
       JOIN crove_finance.bank_line l ON l.org_id = v.org_id AND l.id = v.bank_line_id
       JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
       LEFT JOIN crove_finance.journal_entry r ON r.org_id = j.org_id AND r.reverses_entry_id = j.id
-      LEFT JOIN crove_kernel.party pa ON pa.org_id = v.org_id AND pa.id = v.party_id
-      LEFT JOIN crove_kernel.proposal pr ON pr.org_id = v.org_id AND pr.id = v.proposal_id
+      LEFT JOIN ludy_kernel.party pa ON pa.org_id = v.org_id AND pa.id = v.party_id
+      LEFT JOIN ludy_kernel.proposal pr ON pr.org_id = v.org_id AND pr.id = v.proposal_id
       WHERE v.org_id = ${ctx.orgId}
         AND l.legal_entity_id = ${legalEntityId}
         AND l.value_date >= ${period.from}::date AND l.value_date <= ${period.to}::date
@@ -204,7 +204,7 @@ export const bankMatched = defineQuery({
     const deciders = [...new Set(shown.flatMap((r) => (r.decided_by ? [r.decided_by] : [])))];
     const names = new Map<string, string>();
     if (deciders.length > 0) {
-      const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${deciders}::uuid[])`.execute(ctx.trx);
+      const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${deciders}::uuid[])`.execute(ctx.trx);
       for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
     }
     const items: BankMatched['items'] = [];

@@ -78,7 +78,7 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     return vault.open({ keyId: s.keyId, envelope: Buffer.from(s.envelope, 'base64') }, { orgId, provider: s.provider, externalAccountId: s.externalAccountId });
   };
   const row = (connectionId: string) =>
-    admin(async (c) => (await c.query<{ status: string; expires_at: Date }>('SELECT status, expires_at FROM crove_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]);
+    admin(async (c) => (await c.query<{ status: string; expires_at: Date }>('SELECT status, expires_at FROM ludy_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]);
 
   // Hands out a new pair per refresh and remembers what it was given.
   function fakeRefresher(answer: 'ok' | 'refused' | 'failed' = 'ok'): Refresher & { seen: string[] } {
@@ -105,15 +105,15 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
@@ -161,8 +161,8 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     expect((await refreshChannels({ runtime: worker, broker: vault, workerDb, refreshers: { zalo_oa: refresher } })).refreshed).toBe(0);
     // No token in audit rows or events.
     const dump = await admin(async (c) => {
-      const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
-      const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+      const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM ludy_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+      const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM ludy_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
       return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
     });
     for (const token of ['a-2', 'r-2', 'r-1']) expect(dump).not.toContain(`"${token}"`);
@@ -211,8 +211,8 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       expect(fake.calls).toHaveLength(1);
       // No token or secret of it is in an audit row or an event.
       const dump = await admin(async (c) => {
-        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
-        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM ludy_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM ludy_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
         return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
       });
       for (const word of ['access-token-1', 'refresh-token-1', 'refresh-token-0', APP.appSecret]) expect(dump).not.toContain(word);
@@ -293,8 +293,8 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       expect(fake.calls).toHaveLength(1);
       // The address of the call carries the app secret; nothing of it, or of a token, is in an audit row or an event.
       const dump = await admin(async (c) => {
-        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
-        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM ludy_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM ludy_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
         return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
       });
       for (const word of ['TTP_access_1', 'TTP_R1', 'TTP_R0', APP.appSecret, 'app_secret']) expect(dump).not.toContain(word);
@@ -371,8 +371,8 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       expect(fake.calls).toHaveLength(1);
       // The refresh carries no token in its address, and nothing of a key or a token is in an audit row or an event.
       const dump = await admin(async (c) => {
-        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM crove_kernel.audit_event WHERE org_id = $1", [o.orgId]);
-        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM crove_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
+        const a = await c.query<{ t: string }>("SELECT coalesce(string_agg(detail::text, ' '), '') AS t FROM ludy_kernel.audit_event WHERE org_id = $1", [o.orgId]);
+        const e = await c.query<{ t: string }>("SELECT coalesce(string_agg(payload::text, ' '), '') AS t FROM ludy_kernel.outbox_event WHERE org_id = $1", [o.orgId]);
         return `${a.rows[0]?.t} ${e.rows[0]?.t}`;
       });
       for (const word of ['SHP_access_1', 'SHP_R1', 'SHP_R0', PARTNER.partnerKey]) expect(dump).not.toContain(word);
@@ -420,7 +420,7 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
       provider: 'zalo_oa',
       refresh: async () => {
         // A reconnect lands while the provider answers.
-        await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET updated_at = now() + interval '1 second' WHERE id = $1", [id]));
+        await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET updated_at = now() + interval '1 second' WHERE id = $1", [id]));
         return { secret: JSON.stringify({ accessToken: 'late', refreshToken: 'late' }), expiresAt: new Date(Date.now() + 25 * HOUR) };
       },
     };
@@ -441,11 +441,11 @@ suite('channel token refresh on PostgreSQL (S6.4)', () => {
     }
     const { rows } = await admin((c) =>
       c.query<{ role: string }>(
-        `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r
-         WHERE has_function_privilege(r, 'crove_kernel.channel_refresh_due(int, text[], int)', 'EXECUTE') ORDER BY 1`,
+        `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
+         WHERE has_function_privilege(r, 'ludy_kernel.channel_refresh_due(int, text[], int)', 'EXECUTE') ORDER BY 1`,
       ),
     );
-    expect(rows.map((r) => r.role)).toEqual(['crove_worker']);
+    expect(rows.map((r) => r.role)).toEqual(['ludy_worker']);
     // The API runtime cannot store a refresh: the command is the system's.
     await expect(api.execute('kernel.channel.refresh', { connectionId: randomUUID(), ifVersion: new Date().toISOString(), expiresAt: null, credential: { keyId: 'k', envelope: 'AA==' } }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
   });

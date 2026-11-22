@@ -33,7 +33,7 @@ async function sellerOf(ctx: Reader, org: Org, frozen: Frozen): Promise<QuoteDoc
   const issuer =
     frozen.issuerEntityId === null
       ? undefined
-      : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', frozen.issuerEntityId).executeTakeFirst();
+      : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', frozen.issuerEntityId).executeTakeFirst();
   return { name: issuer?.name ?? org.name, taxCode: issuer?.tax_code ?? null, address: org.address, phone: letterhead?.phone ?? null, email: letterhead?.email ?? null, bankNote: letterhead?.bank_note ?? null };
 }
 
@@ -47,7 +47,7 @@ export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<Q
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', quoteId)
     .executeTakeFirstOrThrow();
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   const sentAt = row.sent_at;
   const sent = sentAt !== null && row.buyer_name !== null;
   const snapshot =
@@ -60,7 +60,7 @@ export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<Q
   const logoFile = await logoFileOf(ctx, sent && row.seller_logo_frozen ? row.seller_logo_file_id : await liveLogo());
   if (!sent) {
     const party = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['name', 'tax_code', 'address', 'phone', 'email'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', quote.partyId)

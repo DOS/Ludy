@@ -58,7 +58,7 @@ interface CommandPolicy {
 // (role_key, scope) keeps it from naming an entity), and no entity-scoped role holds an approval permission (#1507;
 // roles.db.test.ts pins the table). So its holders cover every legal entity a proposal names (#1538, #2060). Should an
 // entity role ever hold it, eligibility must first become "holds it for the proposal's entity", here and in the
-// database (crove_kernel.proposal_approval_decide, approval_eligible_now and the chief accountant keep guard, #1793).
+// database (ludy_kernel.proposal_approval_decide, approval_eligible_now and the chief accountant keep guard, #1793).
 export const LEDGER_APPROVE_PERMISSION = 'finance.proposal.approve';
 
 // Approval policy per proposal command. Every proposal command is R3. The ledger's post to it, so the roles that may post
@@ -132,14 +132,14 @@ export function hasApprovalPolicy(command: string): boolean {
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
 
-// The policy table as the database's approval gate must hold it too (crove_kernel.approval_command_policy, #1793):
+// The policy table as the database's approval gate must hold it too (ludy_kernel.approval_command_policy, #1793):
 // apps/kernel/test/invariant/proposal-approve-gate.db.test.ts compares the two.
 export function approvalPolicies(): Array<{ command: string; roles: readonly string[]; permission: string | null; fourEyes: boolean; ledger: boolean }> {
   return Object.entries(POLICIES).map(([command, p]) => ({ command, ...p, ledger: p === LEDGER }));
 }
 
 // The commands judged on the members of the org now, not on the snapshot taken at the request (CommandPolicy.live): the database's
-// crove_kernel.approval_command_live answers the same for each of them (apps/kernel/test/ads.db.test.ts pins both).
+// ludy_kernel.approval_command_live answers the same for each of them (apps/kernel/test/ads.db.test.ts pins both).
 export function liveApprovalCommands(): string[] {
   return Object.entries(POLICIES)
     .filter(([, p]) => p.live === true)
@@ -163,7 +163,7 @@ export function liveApprovalCommands(): string[] {
 // 20: the proposal-only twin that creates a team task linked to a thread (kernel.conversation.follow_up_approved, #4148, in ENGAGE_PROPOSALS) was given its approval policy.
 export const APPROVAL_POLICY_VERSION = 20;
 
-// The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
+// The org's approval policy (#1402): its preset, a data row of ludy_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
 export interface OrgApprovalPolicy {
   preset: string;
@@ -174,8 +174,8 @@ export interface OrgApprovalPolicy {
 
 export async function orgApprovalPolicy(trx: Transaction<Database>, orgId: string): Promise<OrgApprovalPolicy> {
   const row = await trx
-    .selectFrom('crove_kernel.tenant as t')
-    .innerJoin('crove_kernel.approval_preset as p', 'p.key', 't.approval_preset')
+    .selectFrom('ludy_kernel.tenant as t')
+    .innerJoin('ludy_kernel.approval_preset as p', 'p.key', 't.approval_preset')
     .select(['t.approval_preset', 't.approval_policy_version', 'p.ledger_chief_accountant_only'])
     .where('t.org_id', '=', orgId)
     .executeTakeFirst();
@@ -204,10 +204,10 @@ async function permissionHolders(
 ): Promise<Set<string>> {
   if (options.userIds && options.userIds.length === 0) return new Set();
   let query = trx
-    .selectFrom('crove_kernel.role_assignment as a')
-    .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
+    .selectFrom('ludy_kernel.role_assignment as a')
+    .innerJoin('ludy_kernel.role_permission as p', 'p.role_key', 'a.role_key')
     // A viewer (the read-only base role) holds no permission, whatever they were given before a demotion (#1279).
-    .innerJoin('crove_kernel.tenant_member as m', (join) => join.onRef('m.org_id', '=', 'a.org_id').onRef('m.user_id', '=', 'a.user_id'))
+    .innerJoin('ludy_kernel.tenant_member as m', (join) => join.onRef('m.org_id', '=', 'a.org_id').onRef('m.user_id', '=', 'a.user_id'))
     .select('a.user_id')
     .where('a.org_id', '=', orgId)
     .where('a.legal_entity_id', 'is', null)
@@ -253,7 +253,7 @@ export async function eligibleApprovers(trx: Transaction<Database>, orgId: strin
   const { roles, permission } = policyFor(command, await orgApprovalPolicy(trx, orgId));
   if (roles.length === 0 && permission === null) return [];
   const rows = await trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
     .orderBy('user_id')
@@ -316,7 +316,7 @@ export async function decideApproval(
   if ((snapshot.length === 0 && policy.live !== true) || authors === null) return deny('not_eligible');
   if (policy.roles.length === 0 && policy.permission === null) return deny('not_eligible');
   let query = trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
     // user_id order, as membership changes lock, so the two never take the same rows in opposite orders.
@@ -338,7 +338,7 @@ export async function decideApproval(
   // offboards only owners can, and an admin or chief accountant still counts, so a closing org's last postings keep
   // their second pair of eyes. The owner who wrote one rejects it or, under the founder preset, first demotes the others
   // or revokes their approval role (audited); under the accountant preset an author never approves a ledger proposal.
-  // The database gate (crove_kernel.proposal_approval_decide) counts the same way.
+  // The database gate (ludy_kernel.proposal_approval_decide) counts the same way.
   const eligible = new Set(live.filter((m) => policy.roles.includes(m.role) || holders.has(m.user_id)).map((m) => m.user_id));
   if (!eligible.has(actor.userId)) return deny('not_eligible', eligible.size);
 
@@ -464,9 +464,9 @@ export async function decideAgentApproval(
 
   const { rows: seats } = await sql<{ position_id: string; role_key: string; module: string; agent_risk: Risk; template_risk: Risk; le_scope: string[] }>`
     SELECT p.id AS position_id, p.role_key, p.module, a.max_risk AS agent_risk, t.max_risk AS template_risk, p.le_scope
-    FROM crove_kernel.agent a
-    JOIN crove_kernel.agent_template t ON t.key = a.template_key
-    JOIN crove_kernel.position p ON p.org_id = a.org_id AND p.holder_agent_id = a.id AND p.status = 'active' AND p.role_key = t.role_key
+    FROM ludy_kernel.agent a
+    JOIN ludy_kernel.agent_template t ON t.key = a.template_key
+    JOIN ludy_kernel.position p ON p.org_id = a.org_id AND p.holder_agent_id = a.id AND p.status = 'active' AND p.role_key = t.role_key
     WHERE a.org_id = ${orgId}::uuid AND a.id = ${approver.agentId}::uuid AND a.status = 'active'`.execute(trx);
   const seat = seats[0];
   if (!seat || !info.agentApprovers.includes(seat.role_key)) return { reason: 'not_eligible', rule: 'P12' };
@@ -482,11 +482,11 @@ export async function decideAgentApproval(
 
   const { rows: runs } = await sql<{ tainted: boolean; status: string; stopped: boolean }>`
     SELECT r.tainted, r.status,
-           EXISTS (SELECT 1 FROM crove_kernel.kill_switch k
+           EXISTS (SELECT 1 FROM ludy_kernel.kill_switch k
                    WHERE k.org_id = r.org_id AND (k.released_at IS NULL OR k.engaged_at > ${options.stoppedSince ?? null}::timestamptz)
                      AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${seat.module}) OR (k.scope = 'agent' AND k.target = r.agent_id::text)))
-             OR crove_kernel.global_kill_switch_on('ai') AS stopped
-    FROM crove_kernel.ai_run r
+             OR ludy_kernel.global_kill_switch_on('ai') AS stopped
+    FROM ludy_kernel.ai_run r
     WHERE r.org_id = ${orgId}::uuid AND r.id = ${approver.runId}::uuid AND r.agent_id = ${approver.agentId}::uuid`.execute(trx);
   const run = runs[0];
   if (!run) return { reason: 'not_eligible', rule: 'P12' };
@@ -503,10 +503,10 @@ export async function decideAgentApproval(
     const { rows } = await sql<{ in_chain: boolean }>`
       WITH RECURSIVE chain (id, assignee_position_id, created_by_type, created_by_id, parent_task_id, depth) AS (
         SELECT t.id, t.assignee_position_id, t.created_by_type, t.created_by_id, t.parent_task_id, 0
-        FROM crove_kernel.task t WHERE t.org_id = ${orgId}::uuid AND t.id = ${proposal.source_task_id}::uuid
+        FROM ludy_kernel.task t WHERE t.org_id = ${orgId}::uuid AND t.id = ${proposal.source_task_id}::uuid
         UNION ALL
         SELECT t.id, t.assignee_position_id, t.created_by_type, t.created_by_id, t.parent_task_id, c.depth + 1
-        FROM chain c JOIN crove_kernel.task t ON t.org_id = ${orgId}::uuid AND t.id = c.parent_task_id
+        FROM chain c JOIN ludy_kernel.task t ON t.org_id = ${orgId}::uuid AND t.id = c.parent_task_id
         WHERE c.depth < 20
       )
       SELECT EXISTS (SELECT 1 FROM chain c
@@ -520,16 +520,16 @@ export async function decideAgentApproval(
     // approving work of its superior (who could route the review to it).
     const { rows } = await sql<{ same_line: boolean }>`
       WITH asker (pos) AS (
-        SELECT t.assignee_position_id FROM crove_kernel.task t
+        SELECT t.assignee_position_id FROM ludy_kernel.task t
         WHERE t.org_id = ${orgId}::uuid AND t.id = ${proposal.source_task_id}::uuid AND t.assignee_position_id IS NOT NULL
         UNION
-        SELECT p.id FROM crove_kernel.position p WHERE p.org_id = ${orgId}::uuid AND p.holder_agent_id = ${proposal.requested_by_agent}::uuid
+        SELECT p.id FROM ludy_kernel.position p WHERE p.org_id = ${orgId}::uuid AND p.holder_agent_id = ${proposal.requested_by_agent}::uuid
       )
       SELECT NOT EXISTS (SELECT 1 FROM asker)
              OR EXISTS (SELECT 1 FROM asker a
                         WHERE a.pos = ${seat.position_id}::uuid
-                           OR crove_kernel.position_in_subtree(${orgId}::uuid, ${seat.position_id}::uuid, a.pos)
-                           OR crove_kernel.position_in_subtree(${orgId}::uuid, a.pos, ${seat.position_id}::uuid)) AS same_line`.execute(trx);
+                           OR ludy_kernel.position_in_subtree(${orgId}::uuid, ${seat.position_id}::uuid, a.pos)
+                           OR ludy_kernel.position_in_subtree(${orgId}::uuid, a.pos, ${seat.position_id}::uuid)) AS same_line`.execute(trx);
     if (rows[0]?.same_line !== false) return { reason: 'reporting_line', rule: 'reporting_line' };
   }
   return { reason: 'ok' };

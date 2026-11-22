@@ -24,14 +24,14 @@ export const archiveSource = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
       .executeTakeFirst();
     // An .xlsx report arrives as a ZIP: one whose original was deleted (#2516) is never opened again, whatever a versioned bucket still holds.
     if (!file || !isArchiveType(file.content_type) || file.original_deleted_at) return null;
-    const run = await ctx.trx.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', file.id).limit(1).executeTakeFirst();
+    const run = await ctx.trx.selectFrom('ludy_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', file.id).limit(1).executeTakeFirst();
     const { original_deleted_at: _deleted, ...rest } = file;
     return { ...rest, expanded: Boolean(run) };
   },
@@ -76,7 +76,7 @@ export const recordArchive = defineCommand({
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, input) => {
     const archive = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'created_by', 'source', 'upload_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -84,7 +84,7 @@ export const recordArchive = defineCommand({
       .executeTakeFirst();
     if (!archive) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
     if (!isArchiveType(archive.content_type)) throw new DomainError('NOT_ARCHIVE', 409, 'Tệp này không phải tệp ZIP');
-    const existing = await ctx.trx.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', archive.id).limit(1).executeTakeFirst();
+    const existing = await ctx.trx.selectFrom('ludy_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', archive.id).limit(1).executeTakeFirst();
     if (existing) return { extractionId: existing.id, duplicate: true, fileIds: [] as string[] };
 
     // An archive that came by email (#432) files its entries as email attachments, and only its first
@@ -121,7 +121,7 @@ export const recordArchive = defineCommand({
     }
     const entity = archive.upload_entity_id ?? (await uploaderEntity(ctx, archive.created_by));
     const run = await ctx.trx
-      .insertInto('crove_kernel.extraction')
+      .insertInto('ludy_kernel.extraction')
       .values({
         org_id: ctx.orgId,
         ...(entity ? { legal_entity_id: entity } : {}),

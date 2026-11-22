@@ -99,7 +99,7 @@ suite('the term list of a transcription run (#3499)', () => {
   async function party(name: string, opts: { kind?: 'organization' | 'person'; companyId?: string; taxCode?: string; phone?: string; email?: string; address?: string } = {}): Promise<string> {
     const id = randomUUID();
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.party (org_id, id, kind, name, company_id, tax_code, phone, email, address) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
+      c.query(`INSERT INTO ludy_kernel.party (org_id, id, kind, name, company_id, tax_code, phone, email, address) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
         orgId,
         id,
         opts.kind ?? 'organization',
@@ -135,7 +135,7 @@ suite('the term list of a transcription run (#3499)', () => {
         await store.put(storageKey, ciphertext);
         const fileId = randomUUID();
         await c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.opus', 'audio/ogg', $5, 'meeting_audio')`,
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.opus', 'audio/ogg', $5, 'meeting_audio')`,
           [orgId, fileId, sha, storageKey, ciphertext.length],
         );
         await c.query(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 600)`, [orgId, randomUUID(), meetingId, fileId, order, order * 600]);
@@ -150,7 +150,7 @@ suite('the term list of a transcription run (#3499)', () => {
     return meetingId;
   }
 
-  const agentOf = async (who: string) => (await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND member_user_id = $2 AND kind = 'member_vy'`, [orgId, users[who]]))).rows[0]?.id as string;
+  const agentOf = async (who: string) => (await admin((c) => c.query<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND member_user_id = $2 AND kind = 'member_vy'`, [orgId, users[who]]))).rows[0]?.id as string;
   // One run, as the product makes it: the recorder starts it, the worker transcribes. Returns what the provider received.
   async function transcribe(who: string, meetingId: string, provider = formProvider): Promise<{ requests: Received[]; runId: string }> {
     const { runId } = await app.execute<{ runId: string }>('meetings.transcript.start', { meetingId }, { actor: asUser(who), orgId });
@@ -168,15 +168,15 @@ suite('the term list of a transcription run (#3499)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const build = (db: ReturnType<typeof createDb>) =>
       new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -200,7 +200,7 @@ suite('the term list of a transcription run (#3499)', () => {
     }
     orgId = (await createOrg(app, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Terms')).orgId;
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [
         orgId,
         users.recorder,
         users.lan,
@@ -249,11 +249,11 @@ suite('the term list of a transcription run (#3499)', () => {
       for (const never of ['Đối Thủ', 'Người Ngoài', '0101234567', '0309999999', '0912', '0123', '0124', 'saomai.example', 'terms.test', 'noname', 'Lê Lợi', '500.000', 'xxxxxxxx', 'xóa theo yêu cầu']) expect(sent).not.toContain(never);
     }
     // The names are read behind the audio door and are in no audit row.
-    const audits = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.meeting_audio.open'`, [orgId]));
+    const audits = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.meeting_audio.open'`, [orgId]));
     expect(audits.rows.length).toBeGreaterThan(0);
     expect(JSON.stringify(audits.rows)).not.toContain('Sao Mai');
     // Nor in an event the run left behind.
-    const outbox = await admin((c) => c.query<{ payload: unknown }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]));
+    const outbox = await admin((c) => c.query<{ payload: unknown }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1', [orgId]));
     expect(JSON.stringify(outbox.rows)).not.toMatch(/Sao Mai|Hoàng Văn Ghi|Trần Thị Lan/);
     expect(runId).toBeTruthy();
   }, 120_000);
@@ -313,8 +313,8 @@ suite('the term list of a transcription run (#3499)', () => {
         .finally(() => c.end());
     };
     // The worker login with no run context: the audio door's own refusal.
-    expect(await call('crove_worker', 'test-worker-pw', meetingId)).toMatchObject({ ok: false, message: expect.stringContaining('MEETINGS_RUN_REQUIRED') });
+    expect(await call('ludy_worker', 'test-worker-pw', meetingId)).toMatchObject({ ok: false, message: expect.stringContaining('MEETINGS_RUN_REQUIRED') });
     // The app login (which runs commands and queries) has no right to call it at all.
-    expect(await call('crove_app', 'test-app-pw', meetingId)).toMatchObject({ ok: false, message: expect.stringContaining('permission denied') });
+    expect(await call('ludy_app', 'test-app-pw', meetingId)).toMatchObject({ ok: false, message: expect.stringContaining('permission denied') });
   }, 120_000);
 });

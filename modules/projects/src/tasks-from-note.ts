@@ -64,7 +64,7 @@ async function activeProjectMemberSeatIds(trx: QueryContext['trx'], orgId: strin
   if (memberIds.length === 0) return [];
 
   const positions = await trx
-    .selectFrom('crove_kernel.position')
+    .selectFrom('ludy_kernel.position')
     .select('id')
     .where('org_id', '=', orgId)
     .where('status', '=', 'active')
@@ -114,7 +114,7 @@ async function memberProfilesMap(trx: QueryContext['trx'], userIds: readonly str
   if (unique.length === 0) return map;
   const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
     SELECT user_id, email, display_name
-      FROM crove_kernel.member_profiles(${unique}::uuid[])`.execute(trx);
+      FROM ludy_kernel.member_profiles(${unique}::uuid[])`.execute(trx);
   for (const r of rows) {
     map.set(r.user_id, { displayName: r.display_name, email: r.email });
   }
@@ -148,13 +148,13 @@ export async function checkProjectsVyAccess(
     }
   }
 
-  const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
+  const allowed = await sql<{ ok: boolean }>`SELECT ludy_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
   if (allowed.rows[0]?.ok !== true) {
     return { available: false, reason: 'forbidden', resetOn: null };
   }
 
   const agentRow = await ctx.trx
-    .selectFrom('crove_kernel.agent')
+    .selectFrom('ludy_kernel.agent')
     .select(['id', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', 'member_vy')
@@ -166,8 +166,8 @@ export async function checkProjectsVyAccess(
   const agentId = agentRow?.id ?? null;
 
   const stopped = await sql<{ stopped: boolean }>`
-    SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-      SELECT 1 FROM crove_kernel.kill_switch k
+    SELECT ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
+      SELECT 1 FROM ludy_kernel.kill_switch k
        WHERE k.org_id = ${ctx.orgId}::uuid
          AND k.released_at IS NULL
          AND (
@@ -181,7 +181,7 @@ export async function checkProjectsVyAccess(
   }
 
   const budget = await sql<{ spent: boolean; reset_on: string }>`
-    SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, ${agentId}::uuid) AS spent,
+    SELECT ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, ${agentId}::uuid) AS spent,
            pg_catalog.to_char(
              (pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE ${DEFAULT_TIME_ZONE}) + pg_catalog.make_interval(months => 1))::date,
              'YYYY-MM-DD'
@@ -214,7 +214,7 @@ export async function queryProjectSeats(
   }
 
   const positions = await ctx.trx
-    .selectFrom('crove_kernel.position')
+    .selectFrom('ludy_kernel.position')
     .select(['id', 'title', 'status', 'holder_user_id'])
     .where('org_id', '=', ctx.orgId)
     .where('status', '=', 'active')
@@ -269,7 +269,7 @@ export async function createAndAttachConfirmedTasks(
     // Lock all referenced positions in canonical UUID order before looping task creation to prevent deadlocks.
     await sql<{ id: string }>`
       SELECT id
-        FROM crove_kernel.position
+        FROM ludy_kernel.position
        WHERE org_id = ${ctx.orgId}::uuid
          AND id = ANY(${requestedSeats}::uuid[])
        ORDER BY id ASC
@@ -292,7 +292,7 @@ export async function createAndAttachConfirmedTasks(
     createdIds.push(created.taskId);
   }
 
-  // Lock crove_projects.project after kernel task creation (which locks crove_kernel.position) for uniform lock ordering,
+  // Lock crove_projects.project after kernel task creation (which locks ludy_kernel.position) for uniform lock ordering,
   // then re-validate seats under the project lock so concurrent projects.member.remove cannot leave a removed member assigned.
   const project = await loadProject(ctx.trx, ctx.orgId, params.projectId, true);
   assertNotArchived(project);

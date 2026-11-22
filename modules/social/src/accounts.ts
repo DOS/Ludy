@@ -57,7 +57,7 @@ export const accountRecord = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   handler: async (ctx, input) => {
-    const connection = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    const connection = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     const row = await ctx.trx
       .insertInto('crove_social.account_snapshot')
@@ -131,7 +131,7 @@ export const accountTrends = defineQuery({
     const { rows } = await sql<{ connection_id: string; provider: string; captured_on: string; followers: string | null; reach: string | null }>`
       SELECT s.channel_connection_id AS connection_id, c.provider, to_char(s.captured_on, 'YYYY-MM-DD') AS captured_on, s.followers, s.reach
       FROM crove_social.account_snapshot s
-      JOIN crove_kernel.channel_connection c ON c.org_id = s.org_id AND c.id = s.channel_connection_id
+      JOIN ludy_kernel.channel_connection c ON c.org_id = s.org_id AND c.id = s.channel_connection_id
       WHERE s.org_id = ${ctx.orgId}
         AND s.captured_on >= (pg_catalog.now() AT TIME ZONE 'UTC')::date - ${input.days}::int
         AND (s.followers IS NOT NULL OR s.reach IS NOT NULL)
@@ -158,7 +158,7 @@ export const accountTrends = defineQuery({
     const performance = await sql<{ connection_id: string; provider: string; day: string; figures: unknown }>`
       SELECT DISTINCT ON (s.channel_connection_id, d.key) s.channel_connection_id AS connection_id, c.provider, d.key AS day, d.value AS figures
       FROM crove_social.account_snapshot s
-      JOIN crove_kernel.channel_connection c ON c.org_id = s.org_id AND c.id = s.channel_connection_id
+      JOIN ludy_kernel.channel_connection c ON c.org_id = s.org_id AND c.id = s.channel_connection_id
       CROSS JOIN LATERAL pg_catalog.jsonb_each(s.performance) d
       WHERE s.org_id = ${ctx.orgId}
         AND s.performance IS NOT NULL
@@ -271,7 +271,7 @@ export const accountConnectionVersion = defineQuery({
   input: z.strictObject({ connectionId: zId }),
   access: 'system',
   handler: async (ctx, input): Promise<{ version: string | null }> => {
-    const row = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('updated_at').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('updated_at').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     return { version: row ? row.updated_at.toISOString() : null };
   },
 });

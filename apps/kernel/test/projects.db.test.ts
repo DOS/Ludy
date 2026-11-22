@@ -152,12 +152,12 @@ suite('projects module on PostgreSQL (#2591)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const wUrl = new URL(adminUrl);
-    wUrl.username = 'crove_worker';
+    wUrl.username = 'ludy_worker';
     wUrl.password = 'test-worker-pw';
     workerUrl = wUrl.toString();
 
@@ -296,7 +296,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
     expect(candidates.map((c) => c.id)).not.toContain(existingTaskId);
     // The picker says when a title is an AI coworker's, so it can mark the invisible characters (#4421).
     expect(candidates.find((c) => c.id === freeTaskId)?.tainted).toBe(false);
-    await withAdmin((c) => c.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, freeTaskId]));
+    await withAdmin((c) => c.query(`UPDATE ludy_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, freeTaskId]));
     const marked = await query<ProjectCandidateTask[]>(owner.userId, org.orgId, 'projects.unassigned_tasks', {});
     expect(marked.find((c) => c.id === freeTaskId)?.tainted).toBe(true);
   });
@@ -405,7 +405,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
       rt.execute('projects.task.create', { projectId, title: 'By agent', assigneePositionId: null }, { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
-    // Direct SQL inside crove_worker agent context cannot INSERT into any crove_projects.* table.
+    // Direct SQL inside ludy_worker agent context cannot INSERT into any crove_projects.* table.
     const statements: Array<[string, unknown[]]> = [
       ['INSERT INTO crove_projects.project (org_id, name, created_by) VALUES ($1, $2, $3)', [org.orgId, 'Direct', owner.userId]],
       ['INSERT INTO crove_projects.project_member (org_id, project_id, user_id) VALUES ($1, $2, $3)', [org.orgId, projectId, owner.userId]],
@@ -416,7 +416,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [org.orgId, agentActor.agentId, agentActor.runId]);
+        await c.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [org.orgId, agentActor.agentId, agentActor.runId]);
         await expect(c.query(sqlText, params)).rejects.toThrow(/AGENT_FORBIDDEN|row-level security|permission denied/);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
@@ -441,16 +441,16 @@ suite('projects module on PostgreSQL (#2591)', () => {
     let branchEntityId = '';
     await withAdmin(async (c) => {
       defaultEntityId = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
       ).rows[0]?.id as string;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', 'branch', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchAccountant.userId, branchEntityId, owner.userId],
       );
@@ -466,21 +466,21 @@ suite('projects module on PostgreSQL (#2591)', () => {
     await withAdmin(async (c) => {
       defaultTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Bút toán trụ sở chính', 'human', 'user', $2) RETURNING id`,
           [org.orgId, defaultEntityId],
         )
       ).rows[0]?.id as string;
       unattachedHiddenTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Bút toán trụ sở chưa gắn', 'human', 'user', $2) RETURNING id`,
           [org.orgId, defaultEntityId],
         )
       ).rows[0]?.id as string;
       branchTaskId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Bút toán chi nhánh Đà Nẵng', 'human', 'user', $2) RETURNING id`,
           [org.orgId, branchEntityId],
         )
@@ -602,7 +602,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_kernel.audit_event
+        `UPDATE ludy_kernel.audit_event
          SET occurred_at = $1
          WHERE org_id = $2 AND command IN ('kernel.org.offboard', 'kernel.org.export.record')`,
         [new Date(Date.now() - 32 * DAY), org.orgId],
@@ -613,7 +613,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
     expect(purged).toMatchObject({ kind: 'purged', orgId: org.orgId });
 
     await withAdmin(async (c) => {
-      for (const tbl of ['crove_projects.project', 'crove_projects.project_member', 'crove_projects.project_task', 'crove_kernel.task']) {
+      for (const tbl of ['crove_projects.project', 'crove_projects.project_member', 'crove_projects.project_task', 'ludy_kernel.task']) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);
         expect(rows[0]?.n, tbl).toBe('0');
       }

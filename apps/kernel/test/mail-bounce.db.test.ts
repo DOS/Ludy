@@ -55,7 +55,7 @@ const tokenOf = defineQuery({
   name: 'kernel.mail_test.token',
   input: z.object({ messageId: z.string().uuid() }),
   access: ['owner', 'admin', 'member', 'viewer'],
-  handler: async (ctx, input) => (await sql<{ token: string | null }>`SELECT crove_kernel.mail_bounce_token(${input.messageId}::uuid) AS token`.execute(ctx.trx)).rows[0]?.token ?? null,
+  handler: async (ctx, input) => (await sql<{ token: string | null }>`SELECT ludy_kernel.mail_bounce_token(${input.messageId}::uuid) AS token`.execute(ctx.trx)).rows[0]?.token ?? null,
 });
 
 const report = (token: string, status: string, options: { action?: string; messageId?: string } = {}) =>
@@ -142,9 +142,9 @@ suite('bounces of SMTP mail (#539)', () => {
   };
   const mailState = (id: string) =>
     admin(async (c) => ({
-      status: (await c.query<{ status: string }>('SELECT status FROM crove_kernel.mail_message WHERE id = $1', [id])).rows[0]?.status,
-      events: (await c.query<{ kind: string; provider: string }>('SELECT kind, provider FROM crove_kernel.mail_event WHERE message_id = $1 ORDER BY created_at', [id])).rows,
-      suppressions: (await c.query<{ scope: string; reason: string }>('SELECT scope, reason FROM crove_kernel.mail_suppression WHERE source_message_id = $1', [id])).rows,
+      status: (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.mail_message WHERE id = $1', [id])).rows[0]?.status,
+      events: (await c.query<{ kind: string; provider: string }>('SELECT kind, provider FROM ludy_kernel.mail_event WHERE message_id = $1 ORDER BY created_at', [id])).rows,
+      suppressions: (await c.query<{ scope: string; reason: string }>('SELECT scope, reason FROM ludy_kernel.mail_suppression WHERE source_message_id = $1', [id])).rows,
     }));
 
   beforeAll(async () => {
@@ -156,15 +156,15 @@ suite('bounces of SMTP mail (#539)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, sendTest], queries: [...kernelQueries({ inboundDomain: DOMAIN }), tokenOf] };
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -194,7 +194,7 @@ suite('bounces of SMTP mail (#539)', () => {
     // Another org's context gets nothing for this mail.
     expect(await runtime.query('kernel.mail_test.token', { messageId: mail.id }, { actor: other, orgId: otherOrgId })).toBeNull();
     // The API role cannot resolve a token; only the worker can.
-    await expect(sql`SELECT * FROM crove_kernel.mail_message_by_bounce_token(${mail.token})`.execute(db)).rejects.toThrow(/permission denied/);
+    await expect(sql`SELECT * FROM ludy_kernel.mail_message_by_bounce_token(${mail.token})`.execute(db)).rejects.toThrow(/permission denied/);
   });
 
   it('accepts a bounce report at the API and records a hard bounce on its mail', async () => {

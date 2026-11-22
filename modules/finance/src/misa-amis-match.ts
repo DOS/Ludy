@@ -91,7 +91,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
   handler: async (ctx, input): Promise<MisaAmisMatchCheckQueued> => {
     const conn = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -149,7 +149,7 @@ export const misaAmisMatchCheckTarget = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisMatchTarget> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .leftJoin('crove_finance.misa_amis_match_check as k', (join) => join.onRef('k.org_id', '=', 'c.org_id').onRef('k.connection_id', '=', 'c.id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'c.default_sales_stock_code', 'c.unit_aliases', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
       .where('c.org_id', '=', ctx.orgId)
@@ -447,7 +447,7 @@ export const misaAmisMatchProposalsQuery = defineQuery({
       .execute();
     if (rows.length === 0) return [];
     const parties = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', rows.map((r) => r.match_key))

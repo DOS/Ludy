@@ -63,9 +63,9 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     const viewer = await person('viewer');
     const { orgId } = await createOrg(app, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, host, other, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, host, other, viewer]),
     );
-    const slug = (await admin((c) => c.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
+    const slug = (await admin((c) => c.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
     await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor: asUser(host), orgId });
     const type = await app.execute<EventType>(
       'crm.event_type.create',
@@ -78,7 +78,7 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     const party = (name: string, over: { email?: string | null; phone?: string | null } = {}) =>
       admin((c) =>
         c
-          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone) VALUES ($1, $2, 'person', $3, $4) RETURNING id", [orgId, name, over.email ?? null, over.phone ?? null])
+          .query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email, phone) VALUES ($1, $2, 'person', $3, $4) RETURNING id", [orgId, name, over.email ?? null, over.phone ?? null])
           .then((r) => r.rows[0]!.id),
       );
     const deal = (partyId: string, title = 'Gói kế toán năm') => exec<{ id: string; version: number }>(owner, 'crm.deal.create', { partyId, title, amount: '15000000', expectedClose: null });
@@ -93,7 +93,7 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     };
     const dealOf = async (bookingId: string) => (await admin((c) => c.query<{ deal_id: string | null }>('SELECT deal_id FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [orgId, bookingId]))).rows[0]!.deal_id;
     const audits = async (command: string, bookingId: string) =>
-      (await admin((c) => c.query<{ outcome: string; target_type: string; detail: Record<string, unknown> }>('SELECT outcome, target_type, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND target_id = $3 ORDER BY occurred_at, id', [orgId, command, bookingId]))).rows;
+      (await admin((c) => c.query<{ outcome: string; target_type: string; detail: Record<string, unknown> }>('SELECT outcome, target_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND target_id = $3 ORDER BY occurred_at, id', [orgId, command, bookingId]))).rows;
     const item = async (user: string, bookingId: string) => (await query<BookingItem>(user, 'crm.booking.get', { id: bookingId }));
     return { orgId, slug, owner, host, other, viewer, type, exec, query, stage, party, deal, book, dealOf, audits, item };
   }
@@ -107,15 +107,15 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     app = register(createDb(appPool));
     worker = register(createDb(workerPool));
   });
@@ -214,7 +214,7 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     const start = new Date(Date.now() - 3 * DAY);
     await admin(async (c) => {
       await c.query(
-        "INSERT INTO crove_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, $3, $4, $5, $6, 'Đã họp', 'booking', $3)",
+        "INSERT INTO ludy_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, $3, $4, $5, $6, 'Đã họp', 'booking', $3)",
         [o.orgId, event, o.host, start.toISOString(), new Date(start.getTime() + 1_800_000).toISOString(), VN],
       );
       await c.query(

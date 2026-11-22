@@ -132,7 +132,7 @@ suite('retention holds on evidence files (#1009)', () => {
     (
       await admin((c) =>
         c.query<{ held_until: Date | null; hold_attempts: number; hold_error: string | null; hold_attempted_at: Date | null }>(
-          'SELECT held_until, hold_attempts, hold_error, hold_attempted_at FROM crove_kernel.file WHERE id = $1',
+          'SELECT held_until, hold_attempts, hold_error, hold_attempted_at FROM ludy_kernel.file WHERE id = $1',
           [fileId],
         ),
       )
@@ -142,7 +142,7 @@ suite('retention holds on evidence files (#1009)', () => {
     admin(async (c) => {
       await c.query('BEGIN');
       await c.query("SET LOCAL session_replication_role = 'replica'");
-      await c.query("UPDATE crove_kernel.file SET hold_attempted_at = now() - interval '2 days' WHERE id = $1", [fileId]);
+      await c.query("UPDATE ludy_kernel.file SET hold_attempted_at = now() - interval '2 days' WHERE id = $1", [fileId]);
       await c.query('COMMIT');
     });
   const run = (days = 3650, state: EvidenceHoldState = { unavailableReportedAt: 0 }, target: BlobStore = store) =>
@@ -158,16 +158,16 @@ suite('retention holds on evidence files (#1009)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
@@ -206,7 +206,7 @@ suite('retention holds on evidence files (#1009)', () => {
     expect(await run()).toEqual({ held: 0, failed: 0, waiting: 0 });
     expect(store.calls).toHaveLength(1);
     // The hold is audited as a system command.
-    const { rows } = await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE command = 'kernel.file.hold.record' AND org_id = $1", [orgId]));
+    const { rows } = await admin((c) => c.query("SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE command = 'kernel.file.hold.record' AND org_id = $1", [orgId]));
     expect(rows[0]?.n).toBe(1);
   });
 

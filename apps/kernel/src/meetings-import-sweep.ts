@@ -51,7 +51,7 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
   const done = { handedOver: 0, expired: 0, listed: 0, failures: 0 };
   const now = deps.now ?? (() => new Date());
 
-  const open = await sql<OpenRow>`SELECT org_id, id, connection_id, provider, external_id, has_audio, has_video, size_bytes, staging_key FROM crove_kernel.meeting_platform_import_open(${OPEN_PER_PASS}::int)`.execute(deps.workerDb);
+  const open = await sql<OpenRow>`SELECT org_id, id, connection_id, provider, external_id, has_audio, has_video, size_bytes, staging_key FROM ludy_kernel.meeting_platform_import_open(${OPEN_PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of open.rows) {
     try {
       // An org whose Meetings is off (ADR-0053) downloads nothing from a platform.
@@ -76,7 +76,7 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
 
   // Expiry: the definer fails what is overdue and returns the staging keys whose bytes must go.
   try {
-    const expired = await sql<{ staging_key: string }>`SELECT staging_key FROM crove_kernel.meeting_platform_recording_sweep()`.execute(deps.workerDb);
+    const expired = await sql<{ staging_key: string }>`SELECT staging_key FROM ludy_kernel.meeting_platform_recording_sweep()`.execute(deps.workerDb);
     for (const row of expired.rows) {
       await deps.store.delete(row.staging_key).catch((error) => console.warn('[meetings-import-sweep] staged bytes not deleted', codeOf(error)));
       done.expired += 1;
@@ -93,7 +93,7 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
   // A pass lists at most CONNECTIONS_PER_PASS connections, as before: only the ones it does not skip count.
   let worked = 0;
   for (let page = 0; page < MAX_DUE_PAGES && worked < CONNECTIONS_PER_PASS; page++) {
-    const due: { rows: Array<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }> } = await sql<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }>`SELECT org_id, connection_id, provider FROM crove_kernel.meeting_platform_sync_due(${after?.org ?? null}::uuid, ${after?.id ?? null}::uuid, ${CONNECTIONS_PER_PASS}::int)`.execute(deps.workerDb);
+    const due: { rows: Array<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }> } = await sql<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }>`SELECT org_id, connection_id, provider FROM ludy_kernel.meeting_platform_sync_due(${after?.org ?? null}::uuid, ${after?.id ?? null}::uuid, ${CONNECTIONS_PER_PASS}::int)`.execute(deps.workerDb);
     for (const row of due.rows) {
       const ctx = { actor: ACTOR, orgId: row.org_id };
       const adapter = deps.adapters[row.provider];

@@ -17,7 +17,7 @@ suite('the follow-up task proposal twin (#4148)', () => {
   beforeAll(async () => {
     h = await startHarness('engage_follow_up');
     connectionId = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
   }, 300_000);
   afterAll(async () => {
     await h?.stop();
@@ -27,16 +27,16 @@ suite('the follow-up task proposal twin (#4148)', () => {
     const threadId = `thread-${randomUUID().slice(0, 8)}`;
     const event: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${threadId}`, direction: 'in', contact: { id: `u-${tick}`, name: 'Trần Thị Khách' }, text, at: new Date(Date.UTC(2026, 10, 2, 3, 0, tick++)).toISOString() };
     await h.system<ConversationIngested>('conversations', 'kernel.conversation.ingest', { connectionId, events: [event] });
-    return (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
+    return (await h.q<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
   }
   const tasksOf = async (conversation: string) =>
     (await h.q<{ id: string; title: string; tainted: boolean; source: string; source_ref: { type: string; id: string }; assignee_position_id: string | null; due: Date | null }>(
-      "SELECT id, title, tainted, source, source_ref, assignee_position_id, due FROM crove_kernel.task WHERE org_id = $1 AND source_ref @> $2::jsonb ORDER BY created_at",
+      "SELECT id, title, tainted, source, source_ref, assignee_position_id, due FROM ludy_kernel.task WHERE org_id = $1 AND source_ref @> $2::jsonb ORDER BY created_at",
       [h.orgId, JSON.stringify({ type: 'kernel.conversation', id: conversation })],
     )).rows;
-  const taskEvents = async (taskId: string) => (await h.q<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2", [h.orgId, taskId])).rows[0]?.n ?? 0;
-  const wakeups = async (agentId: string) => (await h.q<{ tainted: boolean; status: string }>('SELECT tainted, status FROM crove_kernel.agent_wakeup WHERE org_id = $1 AND agent_id = $2', [h.orgId, agentId])).rows;
-  const wakeCount = async () => (await h.q<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.agent_wakeup WHERE org_id = $1', [h.orgId])).rows[0]?.n ?? 0;
+  const taskEvents = async (taskId: string) => (await h.q<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2", [h.orgId, taskId])).rows[0]?.n ?? 0;
+  const wakeups = async (agentId: string) => (await h.q<{ tainted: boolean; status: string }>('SELECT tainted, status FROM ludy_kernel.agent_wakeup WHERE org_id = $1 AND agent_id = $2', [h.orgId, agentId])).rows;
+  const wakeCount = async () => (await h.q<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.agent_wakeup WHERE org_id = $1', [h.orgId])).rows[0]?.n ?? 0;
 
   it('waits as a tainted proposal: no task, no event and no wake-up until a person approves; then one tainted task, its event and the agent\'s wake-up', async () => {
     const conversation = await thread('Cho mình xin báo giá 20 hộp');

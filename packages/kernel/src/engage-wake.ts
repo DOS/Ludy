@@ -37,7 +37,7 @@ const DAY_MS = 86_400_000;
 
 export async function wakeRulesOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<EngageWakeRulesView> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.conversation_setting')
+    .selectFrom('ludy_kernel.conversation_setting')
     .select(['wake_unanswered_hours', 'wake_reply_window_hours', 'wake_quote_days'])
     .where('org_id', '=', ctx.orgId)
     .executeTakeFirst();
@@ -66,7 +66,7 @@ export const conversationWakeRulesSet = defineCommand({
     const me = ctx.actor.userId;
     const values = { wake_unanswered_hours: input.unansweredHours, wake_reply_window_hours: input.replyWindowHours, wake_quote_days: input.quoteDays };
     await ctx.trx
-      .insertInto('crove_kernel.conversation_setting')
+      .insertInto('ludy_kernel.conversation_setting')
       .values({ org_id: ctx.orgId, ...values, set_by: me })
       .onConflict((oc) => oc.column('org_id').doUpdateSet({ ...values, set_by: me, updated_at: ctx.now }))
       .execute();
@@ -112,13 +112,13 @@ export const wakeConversations = defineQuery({
     // after the lookback means the last customer message is after it too, with a day of slack for the platform's clock).
     const waiting = (extra: RawBuilder<unknown>, order: RawBuilder<unknown>, since: Date) => sql<ThreadRow>`
       SELECT c.id, c.kind, w.since AS at
-      FROM crove_kernel.conversation c
+      FROM ludy_kernel.conversation c
       CROSS JOIN LATERAL (
         SELECT pg_catalog.min(m.received_at) AS since
-        FROM crove_kernel.conversation_message m
+        FROM ludy_kernel.conversation_message m
         WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in'
           AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
-          AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o
+          AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM ludy_kernel.conversation_message o
                                 WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0)
       ) w
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND w.since IS NOT NULL
@@ -129,7 +129,7 @@ export const wakeConversations = defineQuery({
     const unanswered = await waiting(sql`AND c.kind IN ('direct', 'email') AND w.since <= ${waitedUntil}::timestamptz AND w.since >= ${lookback}::timestamptz`, sql`w.since DESC, c.id`, lookback);
     const newInbound = await waiting(
       sql`AND c.kind IN ('direct', 'email') AND w.since >= ${freshFrom}::timestamptz
-          AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out')`,
+          AND NOT EXISTS (SELECT 1 FROM ludy_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out')`,
       sql`w.since DESC, c.id`,
       freshFrom,
     );
@@ -137,10 +137,10 @@ export const wakeConversations = defineQuery({
     // The reply windows are chosen on their own, soonest first: a thread with a few minutes left is never hidden behind a longer inbox.
     const closing = await sql<{ id: string; reply_window_until: Date }>`
       SELECT c.id, c.reply_window_until
-      FROM crove_kernel.conversation c
+      FROM ludy_kernel.conversation c
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND c.reply_window_until > ${now}::timestamptz AND c.reply_window_until <= ${windowEnd}::timestamptz
-        AND EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
-                    AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0))
+        AND EXISTS (SELECT 1 FROM ludy_kernel.conversation_message m WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
+                    AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM ludy_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0))
         ${mine}
       ORDER BY c.reply_window_until, c.id
       LIMIT ${ENGAGE_WAKE_ROWS_MAX} OFFSET ${input.offset}`.execute(ctx.trx);

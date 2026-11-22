@@ -16,11 +16,11 @@ test("a proposal fills the form marked as the coworker's, the box is locked whil
   await signUp(page, newEmail("einvoice-proposal"));
   const slug = await createOrg(page, "Công ty Đề Xuất Hóa Đơn E2E");
   exec(
-    `INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Nguyễn Văn Nam', 'person' FROM crove_kernel.tenant WHERE slug = :'slug'`,
+    `INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Nguyễn Văn Nam', 'person' FROM ludy_kernel.tenant WHERE slug = :'slug'`,
     { slug },
   );
   const [customer] = sql<{ id: string }>(
-    `SELECT p.id FROM crove_kernel.party p JOIN crove_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug' AND p.name = 'Nguyễn Văn Nam'`,
+    `SELECT p.id FROM ludy_kernel.party p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug' AND p.name = 'Nguyễn Văn Nam'`,
     { slug },
   );
   expect(customer?.id).toBeTruthy();

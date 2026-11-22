@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The AI budget meter on PostgreSQL 17 (#2382): one ledger (crove_kernel.org_usage, metric ai_cost) and one set of limits
-// (crove_kernel.budget_policy, set by an owner with a fresh second factor). At 100% of a budget that covers a call the
+// The AI budget meter on PostgreSQL 17 (#2382): one ledger (ludy_kernel.org_usage, metric ai_cost) and one set of limits
+// (ludy_kernel.budget_policy, set by an owner with a fresh second factor). At 100% of a budget that covers a call the
 // meter refuses the call; calls in flight finish. The core keeps working: XML e-invoices are read, a proposal is approved
 // and posted, the journal is exported, while a photo that needs the model waits in the Inbox and is read after the budget
 // is raised. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -73,7 +73,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
   // A statement read as the worker login role, the one the sweeps' functions are open to.
   async function asWorker<T extends pg.QueryResultRow>(text: string, values: unknown[] = []): Promise<T[]> {
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     const client = new pg.Client({ connectionString: url.toString() });
     await client.connect();
@@ -97,7 +97,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     withAiScope({ orgId, agentId, meter: systemMeter(worker, { price: PRICE }) }, () => metered(feature, async () => ({ usage })));
   const status = (o: { orgId: string; owner: string }, module?: string) => rt.query<{ state: string; percent: number | null; scope: string | null }>('kernel.ai.meter.status', module ? { module } : {}, { actor: asUser(o.owner), orgId: o.orgId });
   const ledger = (orgId: string) =>
-    admin(async (c) => (await c.query<{ feature: string | null; module: string | null; agent_id: string | null; amount: string; input_tokens: number | null; output_tokens: number | null }>("SELECT feature, module, agent_id, amount::text, input_tokens, output_tokens FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' ORDER BY created_at, id", [orgId])).rows);
+    admin(async (c) => (await c.query<{ feature: string | null; module: string | null; agent_id: string | null; amount: string; input_tokens: number | null; output_tokens: number | null }>("SELECT feature, module, agent_id, amount::text, input_tokens, output_tokens FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' ORDER BY created_at, id", [orgId])).rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -108,16 +108,16 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorkerUrl = new URL(adminUrl);
-    asWorkerUrl.username = 'crove_worker';
+    asWorkerUrl.username = 'ludy_worker';
     asWorkerUrl.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorkerUrl.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -139,10 +139,10 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     await call(o.orgId);
     expect(await ledger(o.orgId)).toEqual([{ feature: 'social.draft', module: 'social', agent_id: null, amount: CALL_COST, input_tokens: 1000, output_tokens: 100 }]);
     // The usage rows have no column that could hold a prompt, a document's text or a model's answer.
-    const columns = await admin(async (c) => (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_kernel' AND table_name = 'org_usage' ORDER BY column_name")).rows.map((r) => r.column_name));
+    const columns = await admin(async (c) => (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ludy_kernel' AND table_name = 'org_usage' ORDER BY column_name")).rows.map((r) => r.column_name));
     expect(columns).toEqual(['agent_id', 'amount', 'created_at', 'feature', 'id', 'input_tokens', 'metric', 'module', 'org_id', 'output_tokens']);
     // Nor does a row's audit trail: ids, the feature and the numbers only (besides who ran it).
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.ai.usage.record'", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.ai.usage.record'", [o.orgId])).rows);
     expect(audit.map((a) => Object.keys(a.detail).filter((k) => !['component', 'workerInstance'].includes(k)).sort())).toEqual([['agent', 'cost', 'feature', 'inputTokens', 'module', 'outputTokens']]);
   });
 
@@ -218,9 +218,9 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     await setBudget(o, '1');
     const record = (cost: string) =>
       rt.execute('kernel.ai.usage.record_member', { feature: 'social.draft', module: 'social', agentId: null, inputTokens: 10, outputTokens: 1, cost }, { actor: asUser(o.owner), orgId: o.orgId });
-    const crossings = async () => (await asWorker<{ org_id: string; scope: string; level: string }>('SELECT org_id, scope, level FROM crove_kernel.ai_budget_crossings(100)')).filter((r) => r.org_id === o.orgId);
+    const crossings = async () => (await asWorker<{ org_id: string; scope: string; level: string }>('SELECT org_id, scope, level FROM ludy_kernel.ai_budget_crossings(100)')).filter((r) => r.org_id === o.orgId);
     const notices = () =>
-      admin(async (c) => (await c.query<{ dedupe_key: string; detail: Record<string, string> }>("SELECT dedupe_key, detail FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.ai_budget' ORDER BY dedupe_key", [o.orgId])).rows);
+      admin(async (c) => (await c.query<{ dedupe_key: string; detail: Record<string, string> }>("SELECT dedupe_key, detail FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.ai_budget' ORDER BY dedupe_key", [o.orgId])).rows);
     const notify = (level: string) => worker.execute<{ told: number }>('kernel.ai.budget.notify', { scope: 'org', target: '*', level }, { actor: system, orgId: o.orgId });
 
     await record('0.5');
@@ -298,14 +298,14 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     expect(Date.parse(kept.deferred as string)).toBeGreaterThan(Date.now());
     expect(modelCalls).toBe(0);
     expect(await ledger(o.orgId)).toHaveLength(spentBefore);
-    const deferrals = await admin(async (c) => (await c.query<{ metric: string; subject_id: string; notified: boolean }>('SELECT metric, subject_id, notified FROM crove_kernel.usage_deferral WHERE org_id = $1', [o.orgId])).rows);
+    const deferrals = await admin(async (c) => (await c.query<{ metric: string; subject_id: string; notified: boolean }>('SELECT metric, subject_id, notified FROM ludy_kernel.usage_deferral WHERE org_id = $1', [o.orgId])).rows);
     expect(deferrals).toEqual([{ metric: 'ai_budget', subject_id: photo, notified: false }]);
-    const mails = await admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.usage.defer'", [o.orgId])).rowCount);
+    const mails = await admin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.usage.defer'", [o.orgId])).rowCount);
     expect(mails).toBe(0);
     const files = await rt.query<Array<{ id: string; status: string; error: string | null }>>('kernel.files.recent', {}, { actor: asUser(o.owner), orgId: o.orgId });
     expect(files.find((f) => f.id === photo)).toMatchObject({ status: 'waiting', error: WAITING_FOR_AI_BUDGET });
     expect(files.find((f) => f.id === photo)?.error).toContain('Vy đã hết ngân sách tháng này');
-    const runs = () => admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, photo])).rowCount);
+    const runs = () => admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, photo])).rowCount);
     expect(await runs()).toBe(0);
 
     // 4. Asked again while the budget is still spent, it waits again and adds nothing to its history; once an owner raises
@@ -313,10 +313,10 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     const again = await extractAndPropose(deps, o.orgId, photo);
     expect(again).toEqual({ proposalId: null, deferred: expect.any(String) });
     expect(Date.parse(again.deferred as string)).toBeLessThanOrEqual(Date.now() + AI_BUDGET_RECHECK_MS);
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.usage_deferral WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.usage_deferral WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
     expect(modelCalls).toBe(0);
     // The raise itself sends the waiting document to be read again: the event a re-uploaded file raises, queued by the relay.
-    const queued = () => admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested' AND payload->>'fileId' = $2", [o.orgId, photo])).rowCount);
+    const queued = () => admin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.ingested' AND payload->>'fileId' = $2", [o.orgId, photo])).rowCount);
     const before = (await queued()) ?? 0;
     await setBudget(o, '0.0045');
     expect(await queued()).toBe(before);
@@ -362,7 +362,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     const done = await extractAndPropose({ runtime: worker, store, extractor: reader, extract, today: () => '2026-10-13', meter: racing }, o.orgId, fileId);
     expect(done).toEqual({ proposalId: null, deferred: expect.any(String) });
     expect(modelCalls).toBe(0);
-    const pages = await admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'extraction_pages'", [o.orgId])).rowCount);
+    const pages = await admin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'extraction_pages'", [o.orgId])).rowCount);
     expect(pages).toBe(0);
   });
 
@@ -372,13 +372,13 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     await setBudget(mine, '5');
     const meter = systemMeter(worker, { price: PRICE, defaultMonthlyBudget: '0.009' });
     const through = (orgId: string) => withAiScope({ orgId, meter }, () => metered('social.draft', async () => ({ usage })));
-    expect((await asWorker<{ org_id: string }>('SELECT org_id FROM crove_kernel.ai_budget_seed_due(1000)')).map((r) => r.org_id)).toContain(o.orgId);
+    expect((await asWorker<{ org_id: string }>('SELECT org_id FROM ludy_kernel.ai_budget_seed_due(1000)')).map((r) => r.org_id)).toContain(o.orgId);
     await through(o.orgId);
     await through(o.orgId);
     await expect(through(o.orgId)).rejects.toMatchObject({ name: 'AiBudgetExhaustedError', scope: 'org' });
-    const policy = await admin(async (c) => (await c.query<{ monthly_limit: string; updated_by: string; hard_stop: boolean }>("SELECT monthly_limit::text, updated_by, hard_stop FROM crove_kernel.budget_policy WHERE org_id = $1", [o.orgId])).rows);
+    const policy = await admin(async (c) => (await c.query<{ monthly_limit: string; updated_by: string; hard_stop: boolean }>("SELECT monthly_limit::text, updated_by, hard_stop FROM ludy_kernel.budget_policy WHERE org_id = $1", [o.orgId])).rows);
     expect(policy).toEqual([{ monthly_limit: '0.009000', updated_by: '00000000-0000-0000-0000-000000000000', hard_stop: true }]);
-    expect((await asWorker<{ org_id: string }>('SELECT org_id FROM crove_kernel.ai_budget_seed_due(1000)')).map((r) => r.org_id)).not.toContain(o.orgId);
+    expect((await asWorker<{ org_id: string }>('SELECT org_id FROM ludy_kernel.ai_budget_seed_due(1000)')).map((r) => r.org_id)).not.toContain(o.orgId);
     // The owner's own budget stands, and so does the owner's raise of the default.
     for (let i = 0; i < 3; i++) await through(mine.orgId);
     expect(await status(mine)).toMatchObject({ state: 'ok' });

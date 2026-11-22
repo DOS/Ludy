@@ -110,15 +110,15 @@ suite('the per-org app gate through createKernel (ADR-0053)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
       u.password = password;
       return u.toString();
     };
-    appUrl = loginUrl('crove_app', 'test-app-pw');
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    appUrl = loginUrl('ludy_app', 'test-app-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     const service = await startExtractService();
     stopExtract = service.stop;
     extractUrl = service.url;

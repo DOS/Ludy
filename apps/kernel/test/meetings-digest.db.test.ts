@@ -71,7 +71,7 @@ suite("This week's decisions and open items (#3949)", () => {
   });
   const recap = (who: string, days: 7 | 14 | 30 = 7, over: Partial<MeetingBriefDeps> = {}) => runMeetingDigest(deps(over), orgId, asUser(who), { days });
   const resultRows = async () =>
-    (await sqlAdmin<{ status: string; body: string | null; error_code: string | null }>(`SELECT status, body, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.digest' ORDER BY created_at`, [orgId])).rows;
+    (await sqlAdmin<{ status: string; body: string | null; error_code: string | null }>(`SELECT status, body, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.digest' ORDER BY created_at`, [orgId])).rows;
 
   // A meeting started `daysAgo` days ago, recorded by `recorder` and read by `readers`.
   async function meeting(title: string, daysAgo: number, recorder: string, readers: string[], textDay = 'current_date + 365'): Promise<string> {
@@ -90,7 +90,7 @@ suite("This week's decisions and open items (#3949)", () => {
     let taskId: string | null = null;
     if (over.task !== undefined) {
       taskId = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, over.task]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, over.task]);
     }
     await sqlAdmin(
       `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
@@ -108,9 +108,9 @@ suite("This week's decisions and open items (#3949)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(appPool);
@@ -119,7 +119,7 @@ suite("This week's decisions and open items (#3949)", () => {
     setSummaryEnabled(true);
     for (const key of ['owner', 'rec', 'lan', 'other', 'solo1', 'solo2']) users[key] = await upsertIdentity(db, { issuer: 'digest', subject: key, email: `${key}@digest.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Tổng Kết')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.rec, users.lan, users.other, users.solo1, users.solo2]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.rec, users.lan, users.other, users.solo1, users.solo2]);
   }, 300_000);
 
   afterAll(async () => {
@@ -282,7 +282,7 @@ suite("This week's decisions and open items (#3949)", () => {
            VALUES ($1, $2, $4, 'vi', now() - interval '2 days', now() - interval '2 days' + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, current_date + 365)`,
           [orgId, id, users.solo2, `Họp đã xong ${stamp(i)}`],
         );
-        await c.query(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, 'Đã xong', 'human', 'system', 'done')`, [orgId, taskId]);
+        await c.query(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, 'Đã xong', 'human', 'system', 'done')`, [orgId, taskId]);
         await c.query(
           `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
            VALUES ($1, $2, $3, 'Đã xong', 'Lan', $4, '', 'published', 'accepted', $5, false, 10)`,

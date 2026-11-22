@@ -16,6 +16,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -46,6 +47,7 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
   const dbName = `crove_test_glossary_widen_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let before = '';
+  let upgraded = false;
   let pool: pg.Pool | undefined;
   let orgId = '';
   let userId = '';
@@ -53,7 +55,7 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
   const ids: Record<string, string> = {};
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await c.connect();
     try {
       return await fn(c);
@@ -83,7 +85,7 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
     const app = new URL(adminUrl);
     app.username = 'crove_app';
     app.password = 'test-app-pw';
-    pool = createPool({ connectionString: app.toString(), max: 2 });
+    pool = createPreCutoverPool({ connectionString: app.toString(), max: 2 });
     const db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -107,6 +109,12 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
     ids.fullwidthWww = await insertTerm('www．example.com');
 
     await migrate({ adminUrl, dir: MIGRATIONS });
+    upgraded = true;
+    await pool.end();
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    app.username = 'ludy_app';
+    pool = createPool({ connectionString: app.toString(), max: 2 });
+    runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(registry);
   }, 300_000);
 
   afterAll(async () => {

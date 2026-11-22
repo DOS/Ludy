@@ -146,10 +146,10 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     db = createDb(pool);
@@ -230,23 +230,23 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     let sharedNoteId = '';
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
          VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
         [org.orgId, branchMember.userId, viewer.userId],
       );
       defaultEntityId = (
-        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
       ).rows[0]!.id;
       branchEntityId = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by)
            VALUES ($1, 'Chi nhánh Hà Nội', 'branch', $2) RETURNING id`,
           [org.orgId, owner.userId],
         )
       ).rows[0]!.id;
       // Scope branchMember strictly to branchEntityId so defaultEntityId tasks are hidden by le_scope RLS.
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
          VALUES ($1, $2, 'external_accountant', $3, $4)`,
         [org.orgId, branchMember.userId, branchEntityId, owner.userId],
       );
@@ -281,7 +281,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
         updatedOffsetSql = '0 days',
       ) => {
         const res = await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id, due, created_at, updated_at)
+          `INSERT INTO ludy_kernel.task (org_id, title, status, source, created_by_type, legal_entity_id, due, created_at, updated_at)
            VALUES (
              $1,
              $2,
@@ -315,7 +315,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
       // Record kernel.task.set_status audit events matching actual completion times: doneBranch 2 days ago, oldDone 12 days ago.
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
          VALUES
            ($1, pg_catalog.now() - interval '2 days', 'user', $2, 'kernel.task.set_status', $3, 'ok', 'kernel.task', $4::uuid, repeat('a', 64), jsonb_build_object('task', $4::text, 'status', 'done')),
            ($1, pg_catalog.now() - interval '12 days', 'user', $2, 'kernel.task.set_status', $5, 'ok', 'kernel.task', $6::uuid, repeat('b', 64), jsonb_build_object('task', $6::text, 'status', 'done'))`,
@@ -323,7 +323,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
       );
 
       await c.query(
-        `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type, author_id, tainted, created_at)
+        `INSERT INTO ludy_kernel.task_comment (org_id, task_id, body, author_type, author_id, tainted, created_at)
          VALUES
            ($1, $2, 'Đã bàn giao bảng lương sạch', 'user', $3, false, pg_catalog.now() - interval '2 hours'),
            ($1, $2, 'Nội dung tainted không nên đưa làm trích dẫn chính', 'user', $3, true, pg_catalog.now() - interval '1 hour')`,
@@ -343,7 +343,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
       const hiddenOverdue = await insertTask('Bí mật đơn vị A quá hạn', 'todo', defaultEntityId, '-1 day');
       await insertTask('Bí mật đơn vị A đang chờ', 'waiting', defaultEntityId, null);
       await c.query(
-        `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type, author_id, tainted)
+        `INSERT INTO ludy_kernel.task_comment (org_id, task_id, body, author_type, author_id, tainted)
          VALUES ($1, $2, 'Bình luận bí mật A', 'user', $3, false)`,
         [org.orgId, hiddenOverdue, owner.userId],
       );
@@ -361,9 +361,9 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
   afterEach(async () => {
     vi.unstubAllGlobals();
     await withAdmin(async (c) => {
-      await c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [org.orgId]);
-      await c.query(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [org.orgId]);
-      await c.query(`SELECT crove_kernel.global_kill_switch_set('ai', false, 'test', 'reset')`);
+      await c.query(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [org.orgId]);
+      await c.query(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [org.orgId]);
+      await c.query(`SELECT ludy_kernel.global_kill_switch_set('ai', false, 'test', 'reset')`);
     });
   });
 
@@ -389,9 +389,9 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
       withAdmin(async (c) => ({
         projects: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_projects.project WHERE org_id = $1', [org.orgId])).rows[0]!.n),
         projectTasks: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_projects.project_task WHERE org_id = $1', [org.orgId])).rows[0]!.n),
-        tasks: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.task WHERE org_id = $1', [org.orgId])).rows[0]!.n),
+        tasks: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.task WHERE org_id = $1', [org.orgId])).rows[0]!.n),
         notes: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_notes.note WHERE org_id = $1', [org.orgId])).rows[0]!.n),
-        mails: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.mail_message WHERE org_id = $1', [org.orgId])).rows[0]!.n),
+        mails: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.mail_message WHERE org_id = $1', [org.orgId])).rows[0]!.n),
       }));
 
     const before = await snapshot();
@@ -438,11 +438,11 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     // Verify nothing was created/stored in project, tasks, notes, or mail.
     expect(after).toEqual(before);
 
-    // Verify usage recorded in crove_kernel.org_usage under feature projects.weekly_status.
+    // Verify usage recorded in ludy_kernel.org_usage under feature projects.weekly_status.
     const usageRows = await withAdmin(async (c) =>
       (
         await c.query<{ feature: string; module: string; input_tokens: number; output_tokens: number }>(
-          `SELECT feature, module, input_tokens, output_tokens FROM crove_kernel.org_usage WHERE org_id = $1 AND feature = 'projects.weekly_status'`,
+          `SELECT feature, module, input_tokens, output_tokens FROM ludy_kernel.org_usage WHERE org_id = $1 AND feature = 'projects.weekly_status'`,
           [org.orgId],
         )
       ).rows,
@@ -526,7 +526,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
     // 3. Projects module kill switch
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'projects', $2)`, [org.orgId, owner.userId]),
+      c.query(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'projects', $2)`, [org.orgId, owner.userId]),
     );
     const modPaused = await rpc('projects/weeklyStatus', owner, { projectId });
     expect(modPaused.status).toBe(200);
@@ -536,8 +536,8 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
     // 4. Org kill switch
     await withAdmin(async (c) => {
-      await c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [org.orgId]);
-      await c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [org.orgId, owner.userId]);
+      await c.query(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [org.orgId]);
+      await c.query(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [org.orgId, owner.userId]);
     });
     const orgPaused = await rpc('projects/weeklyStatus', owner, { projectId });
     expect(orgPaused.status).toBe(200);
@@ -546,8 +546,8 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
     // 5. Global AI kill switch
     await withAdmin(async (c) => {
-      await c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [org.orgId]);
-      await c.query(`SELECT crove_kernel.global_kill_switch_set('ai', true, 'test', 'pause ai')`);
+      await c.query(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [org.orgId]);
+      await c.query(`SELECT ludy_kernel.global_kill_switch_set('ai', true, 'test', 'pause ai')`);
     });
     const globalPaused = await rpc('projects/weeklyStatus', owner, { projectId });
     expect(globalPaused.status).toBe(200);
@@ -556,9 +556,9 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
     // 6. Hard-stop AI budget on projects
     await withAdmin(async (c) => {
-      await c.query(`SELECT crove_kernel.global_kill_switch_set('ai', false, 'test', 'resume ai')`);
+      await c.query(`SELECT ludy_kernel.global_kill_switch_set('ai', false, 'test', 'resume ai')`);
       await c.query(
-        `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by)
+        `INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by)
          VALUES ($1, 'module', 'projects', 0, 80, true, $2)`,
         [org.orgId, owner.userId],
       );

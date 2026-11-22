@@ -114,16 +114,16 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       await c.query('BEGIN');
       await c.query(`SET LOCAL session_replication_role = replica`);
       await c.query(
-        `INSERT INTO crove_kernel.agent_template (key, module, title, role_key, max_risk, job_description)
+        `INSERT INTO ludy_kernel.agent_template (key, module, title, role_key, max_risk, job_description)
          VALUES ('redact.probe', 'meetings', 'Probe', 'member', 'R2', '{}'::jsonb) ON CONFLICT DO NOTHING`,
       );
       await c.query(
-        `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, max_risk, status, created_by)
+        `INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, max_risk, status, created_by)
          VALUES ($1, $2, 'redact.probe', 'Agent Redact', 'org_chart', 'R2', 'active', $3)`,
         [orgId, agentId, users.owner],
       );
       await c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at)
+        `INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at)
          VALUES ($1, $2, $3, 'meetings', 'running', false, now(), now() + interval '30 minutes')`,
         [orgId, runId, agentId],
       );
@@ -147,10 +147,10 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     pools.push(pool);
@@ -166,7 +166,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     }
     orgId = (await createOrg(runtime, asUser('owner'), 'Org Redact')).orgId;
     await sqlAdmin(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
        VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`,
       [orgId, users.admin, users.recorder, users.attendee, users.other, users.viewer],
     );
@@ -234,7 +234,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     });
     const vyAgentId = (
       await sqlAdmin<{ id: string }>(
-        `SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
+        `SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
         [orgId, users.recorder],
       )
     )[0]!.id;
@@ -263,7 +263,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     // Engage AI org kill switch to verify deterministic operation works identically with AI off (D4).
     const ksId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_kernel.kill_switch (org_id, id, scope, target, reason, engaged_by)
+      `INSERT INTO ludy_kernel.kill_switch (org_id, id, scope, target, reason, engaged_by)
        VALUES ($1, $2, 'org', '*', 'AI off test', $3)`,
       [orgId, ksId, users.owner],
     );
@@ -296,7 +296,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       // Create and accept a draft action item into a team task: must NOT be proposed or redacted.
       const posId = randomUUID();
       await sqlAdmin(
-        `INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id)
+        `INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id)
          VALUES ($1, $2, 'Nhân viên', 'kernel', 'member', $3)`,
         [orgId, posId, users.attendee],
       );
@@ -426,13 +426,13 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       expect(markHits.hits[0]?.speakerLabel).toBe(REDACTION_MARK_BY_KIND.email);
     } finally {
       // Release AI org kill switch before MCP grant check (mcp_grant_standing checks org kill switch).
-      await sqlAdmin(`DELETE FROM crove_kernel.kill_switch WHERE org_id = $1 AND id = $2`, [orgId, ksId]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.kill_switch WHERE org_id = $1 AND id = $2`, [orgId, ksId]);
     }
 
     // MCP company grant read (ludy_meeting_minutes & ludy_meetings_search) sees only marks, zero original values.
     const grantId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Client', 'client.example.test', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '7 days', $3, 'company', NULL)`,
       [orgId, grantId, users.owner, `c-${grantId}`, `o-${grantId}`],
     );
@@ -463,7 +463,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
     // D2 + Audit: hidden tokens exist nowhere in DB tables (except the unrelated accepted task row above) or audit detail.
     const auditRows = await sqlAdmin<{ command: string; detail: Record<string, unknown> }>(
-      `SELECT command, detail FROM crove_kernel.audit_event
+      `SELECT command, detail FROM ludy_kernel.audit_event
        WHERE org_id = $1 AND command IN ('meetings.transcript.redact', 'meetings.transcript.redact_candidates', 'kernel.member_vy.subject_results.drop')
        ORDER BY id`,
       [orgId],
@@ -749,12 +749,12 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
     // Recorder's Vy results for meetingId are gone; live run is cancelled and cannot store later; copy_result refuses.
     const vyLeft = await sqlAdmin<{ c: string }>(
-      `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2 AND subject_id = $3`,
+      `SELECT count(*)::text AS c FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2 AND subject_id = $3`,
       [orgId, users.recorder, meetingId],
     );
     expect(Number(vyLeft[0]?.c)).toBe(0);
     const liveRunRow = await sqlAdmin<{ status: string; error: string }>(
-      `SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`,
+      `SELECT status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2`,
       [orgId, rLive.runId],
     );
     expect(liveRunRow[0]).toEqual({ status: 'cancelled', error: 'SUBJECT_REDACTED' });
@@ -772,7 +772,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
     // Control result on secondMeetingId and attendee's published translation stayed untouched.
     const vyOtherLeft = await sqlAdmin<{ c: string }>(
-      `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2 AND subject_id = $3`,
+      `SELECT count(*)::text AS c FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2 AND subject_id = $3`,
       [orgId, users.recorder, secondMeetingId],
     );
     expect(Number(vyOtherLeft[0]?.c)).toBe(1);
@@ -790,7 +790,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     });
     expect(attendeeDrop).toEqual({ subjectType: 'meeting', subjectId: secondMeetingId, cancelled: 0, removed: 0 });
     const vyOtherStill = await sqlAdmin<{ c: string }>(
-      `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2 AND subject_id = $3`,
+      `SELECT count(*)::text AS c FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2 AND subject_id = $3`,
       [orgId, users.recorder, secondMeetingId],
     );
     expect(Number(vyOtherStill[0]?.c)).toBe(1);
@@ -813,7 +813,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     });
     const vyAgentId = (
       await sqlAdmin<{ id: string }>(
-        `SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
+        `SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`,
         [orgId, users.recorder],
       )
     )[0]!.id;
@@ -825,12 +825,12 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
         await c.query('BEGIN');
         await c.query(`SET LOCAL session_replication_role = replica`);
         await c.query(
-          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, finished_at, expires_at)
+          `INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, finished_at, expires_at)
            VALUES ($1, $2, $3, 'meetings', 'meetings.title', 'succeeded', true, now(), now(), now() + interval '30 minutes')`,
           [orgId, runId, vyAgentId],
         );
         await c.query(
-          `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, status, body, private_read, expires_at, created_at)
+          `INSERT INTO ludy_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, status, body, private_read, expires_at, created_at)
            VALUES ($1, $2, $3, 'meetings.title', 'meeting', $4, 'ready', '{}', true, now() + interval '30 days', now())`,
           [orgId, users.recorder, runId, mRace],
         );
@@ -857,7 +857,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
       // Case A: a newly committed run whose UUID <= maxLockedRunId must fail closed with 409 VY_RUN_BUSY (zero silent skip).
       await cHold.query('BEGIN');
-      await cHold.query(`SELECT id FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, r1.runId]);
+      await cHold.query(`SELECT id FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, r1.runId]);
       const pBusy = exec('recorder', 'kernel.member_vy.subject_results.drop', { subjectType: 'meeting', subjectId: mRace });
       await waitForBlockedOnPid(holdPid);
       await seedLowUuidRun(r0Id);
@@ -865,14 +865,14 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       expect(await refuses(pBusy)).toBe('VY_RUN_BUSY');
 
       const stillTwo = await sqlAdmin<{ c: string }>(
-        `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+        `SELECT count(*)::text AS c FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
         [orgId, mRace],
       );
       expect(Number(stillTwo[0]?.c)).toBe(2);
 
       // Case B: a newly committed run whose UUID > maxLockedRunId retries in ascending order and drops all 3 cleanly.
       await cHold.query('BEGIN');
-      await cHold.query(`SELECT id FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, r1.runId]);
+      await cHold.query(`SELECT id FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2 FOR UPDATE`, [orgId, r1.runId]);
       const pRetry = exec<{ cancelled: number; removed: number }>('recorder', 'kernel.member_vy.subject_results.drop', {
         subjectType: 'meeting',
         subjectId: mRace,
@@ -887,7 +887,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
       expect(await pRetry).toEqual({ subjectType: 'meeting', subjectId: mRace, cancelled: 1, removed: 3 });
       const zeroLeft = await sqlAdmin<{ c: string }>(
-        `SELECT count(*)::text AS c FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+        `SELECT count(*)::text AS c FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
         [orgId, mRace],
       );
       expect(Number(zeroLeft[0]?.c)).toBe(0);

@@ -58,9 +58,9 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -86,7 +86,7 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     const error = await refused('social');
     expect(error).toMatchObject({ code: 'APP_BUSY', status: 409, details: { module: 'social', reasons: ['recording', 'import'] } });
     // Nothing changed: the app is still on.
-    const off = await admin(async (c) => (await c.query<{ apps_off: string[] }>('SELECT apps_off FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.apps_off);
+    const off = await admin(async (c) => (await c.query<{ apps_off: string[] }>('SELECT apps_off FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.apps_off);
     expect(off).toEqual([]);
     fake = [];
     await expect(setApp('social', false)).resolves.toMatchObject({ module: 'social', enabled: false });
@@ -122,7 +122,7 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     await setApp('meetings', true);
     // Another member's meeting, visible to its attendees only: the owner who switches cannot read it, and it still counts.
     const recorder = await upsertIdentity(db, { issuer: 'test', subject: `appbusy-rec-${randomUUID()}`, email: 'appbusy-recorder@example.com', name: null });
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, recorder]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, recorder]));
     const meetingId = randomUUID();
     await admin((c) =>
       c.query(
@@ -142,13 +142,13 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     const id = randomUUID();
     await asStaff((c) =>
       c.query(
-        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, started_at, status, meeting_id, staging_key)
+        `INSERT INTO ludy_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, started_at, status, meeting_id, staging_key)
          VALUES ($1, $2, $3, $4, 'ext-1', now(), 'importing', $5, $6)`,
         [orgId, id, randomUUID(), member, randomUUID(), `staging/${'a'.repeat(64)}`],
       ),
     );
     expect(await refused('meetings')).toMatchObject({ code: 'APP_BUSY', details: { reasons: ['import'] } });
-    await asStaff((c) => c.query("UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'expired' WHERE org_id = $1 AND id = $2", [orgId, id]));
+    await asStaff((c) => c.query("UPDATE ludy_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'expired' WHERE org_id = $1 AND id = $2", [orgId, id]));
     expect(await refused('meetings')).toBeNull();
     await setApp('meetings', true);
   });
@@ -177,7 +177,7 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
   };
   const call = async (launchId: string, step: string, state = 'started') => {
     await asStaff((c) =>
-      c.query(`INSERT INTO crove_kernel.external_call (org_id, id, key, module, target, step, retry_safety, state) VALUES ($1, $2, $3, 'ads', 'meta', $4, 'idempotent', $5)`, [
+      c.query(`INSERT INTO ludy_kernel.external_call (org_id, id, key, module, target, step, retry_safety, state) VALUES ($1, $2, $3, 'ads', 'meta', $4, 'idempotent', $5)`, [
         orgId,
         randomUUID(),
         `ads.launch:${launchId}:1:${step}`,

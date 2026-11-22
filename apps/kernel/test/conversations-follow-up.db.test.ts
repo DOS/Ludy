@@ -97,8 +97,8 @@ suite('Create task from a conversation (CV3, #3295)', () => {
     at: new Date(Date.now() - 600_000 + tick * 1000).toISOString(),
   });
   const ingest = (events: ConversationEvent[]) => worker.execute('kernel.conversation.ingest', { connectionId: org.connectionId, events }, { actor: SYSTEM, orgId: org.orgId });
-  const threadOf = async (external: string) => ((await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [org.orgId, external]))[0] as { id: string }).id;
-  const statusOf = async (id: string) => (await rows<{ status: string }>('SELECT status FROM crove_kernel.conversation WHERE org_id = $1 AND id = $2', [org.orgId, id]))[0]?.status;
+  const threadOf = async (external: string) => ((await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [org.orgId, external]))[0] as { id: string }).id;
+  const statusOf = async (id: string) => (await rows<{ status: string }>('SELECT status FROM ludy_kernel.conversation WHERE org_id = $1 AND id = $2', [org.orgId, id]))[0]?.status;
   const followUp = (who: Account, conversationId: string, extra: Record<string, unknown> = {}) =>
     rpc('conversations/followUp', who, { conversationId, title: 'Gọi lại báo giá', assigneePositionId: null, idempotencyKey: randomUUID(), ...extra });
   const tasksOf = (who: Account, conversationId: string) => rpc('conversations/tasks', who, { conversationId });
@@ -109,9 +109,9 @@ suite('Create task from a conversation (CV3, #3295)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appUrl = urlFor('crove_app', 'test-app-pw');
-    workerUrl = urlFor('crove_worker', 'test-worker-pw');
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appUrl = urlFor('ludy_app', 'test-app-pw');
+    workerUrl = urlFor('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     db = createDb(pool);
@@ -129,9 +129,9 @@ suite('Create task from a conversation (CV3, #3295)', () => {
     const created = await rpc('org/create', owner, { name: 'Cửa hàng Hoa Nắng', idempotencyKey: randomUUID() }, { slug: null });
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId), connectionId: randomUUID() };
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [org.orgId, desk.userId, lan.userId, viewer.userId]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [org.orgId, desk.userId, owner.userId]);
-    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [org.orgId, org.connectionId, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [org.orgId, desk.userId, lan.userId, viewer.userId]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [org.orgId, desk.userId, owner.userId]);
+    await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [org.orgId, org.connectionId, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
   });
 
   afterAll(async () => {
@@ -152,7 +152,7 @@ suite('Create task from a conversation (CV3, #3295)', () => {
     const taskId = String(made.body?.taskId);
     // An ordinary task of the org: a person's, untainted, with no description, and a source only kernel code sets.
     const [task] = await rows<{ title: string; description: string | null; source: string; source_ref: { type: string; id: string }; tainted: boolean; assignee_position_id: string | null; due: Date; created_by_id: string | null }>(
-      'SELECT title, description, source, source_ref, tainted, assignee_position_id, due, created_by_id FROM crove_kernel.task WHERE org_id = $1 AND id = $2',
+      'SELECT title, description, source, source_ref, tainted, assignee_position_id, due, created_by_id FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
       [org.orgId, taskId],
     );
     expect(task).toMatchObject({ title: 'Gửi báo giá cho khách', description: null, source: 'human', tainted: false, assignee_position_id: null, source_ref: { type: 'kernel.conversation', id: a1 } });
@@ -224,13 +224,13 @@ suite('Create task from a conversation (CV3, #3295)', () => {
     const e1 = await threadOf('e1');
     const taskId = String((await followUp(owner, e1, { title: 'Gọi khách về đơn' })).body.taskId);
     const audit = JSON.stringify(
-      await rows("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('kernel.conversation.follow_up', 'kernel.task.create_from_conversation')", [org.orgId]),
+      await rows("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('kernel.conversation.follow_up', 'kernel.task.create_from_conversation')", [org.orgId]),
     );
     expect(audit).toContain(taskId);
     expect(audit).toContain(e1);
     expect(audit).not.toContain('Gọi khách về đơn');
     expect(audit).not.toContain('0901234567');
-    const [task] = await rows<{ title: string; description: string | null }>('SELECT title, description FROM crove_kernel.task WHERE org_id = $1 AND id = $2', [org.orgId, taskId]);
+    const [task] = await rows<{ title: string; description: string | null }>('SELECT title, description FROM ludy_kernel.task WHERE org_id = $1 AND id = $2', [org.orgId, taskId]);
     expect(task?.description).toBeNull();
     expect(JSON.stringify(task)).not.toContain('0901234567');
   });

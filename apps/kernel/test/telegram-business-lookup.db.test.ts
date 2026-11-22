@@ -80,9 +80,9 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
   const derived = () => vault.deriveKeys(TELEGRAM_HOOK_KEY_INFO).map((k) => k.key);
   const post = (body: string) => app.request(`${BASE}/${hook}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': telegramHookSecret(derived()[0] as Buffer, hook) }, body });
   const asOwner = () => ({ actor: { type: 'user' as const, userId: ownerId, aal: 'aal1' as const }, orgId });
-  const accounts = async () => (await rows<{ chat_business: Array<{ id: string; userId: string; name: string | null; username: string | null; canReply: boolean; enabled: boolean; approved: boolean }> }>('SELECT chat_business FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0]?.chat_business ?? [];
+  const accounts = async () => (await rows<{ chat_business: Array<{ id: string; userId: string; name: string | null; username: string | null; canReply: boolean; enabled: boolean; approved: boolean }> }>('SELECT chat_business FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0]?.chat_business ?? [];
   const messagesOf = (thread: string) =>
-    rows<{ body: string }>('SELECT m.body FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id WHERE m.org_id = $1 AND c.external_thread_id = $2 ORDER BY m.seq', [orgId, thread]);
+    rows<{ body: string }>('SELECT m.body FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id WHERE m.org_id = $1 AND c.external_thread_id = $2 ORDER BY m.seq', [orgId, thread]);
   const business = (text: string, o: { chat: number; messageId: number; connectionId: string }) =>
     JSON.stringify({
       update_id: updateId++,
@@ -120,9 +120,9 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -133,7 +133,7 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     app = createHttpApp({ config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, telegramWebhook: { keys: derived } });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     pools.push(workerPool);
@@ -154,7 +154,7 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     const t = telegram();
     const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t.fetchImpl })).conversations;
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId, connectionId, action: 'chat', on: true })).toBe('on');
-    hook = ((await rows<{ chat_hook: string }>('SELECT chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0] as { chat_hook: string }).chat_hook;
+    hook = ((await rows<{ chat_hook: string }>('SELECT chat_hook FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0] as { chat_hook: string }).chat_hook;
   });
 
   afterAll(async () => {
@@ -199,8 +199,8 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     expect(t.calls).toHaveLength(1);
     // Neither the audit log nor an event holds the business connection id, the account's id or its name.
     for (const needle of [ENABLED, 'Lan Trần', 'lan_tran']) {
-      expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
-      expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE detail::text LIKE $1', [`%${needle}%`])).length).toBe(0);
+      expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE payload::text LIKE $1', [`%${needle}%`])).length).toBe(0);
     }
   });
 
@@ -302,10 +302,10 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     expect(t.calls).toHaveLength(0);
     expect((await accounts()).some((a) => a.id === 'FromUpdate-1_x=')).toBe(true);
     // Chats switched off: the connection takes no business notice, so there is nothing to look up for.
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'off', chat_hook = NULL WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'off', chat_hook = NULL WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
     const known = await worker.query<{ lookup: boolean }>('kernel.channel.telegram_business_known', { connectionId, id: 'NotListed-1_x=' }, { actor: { type: 'system', component: 'test' }, orgId });
     expect(known).toEqual({ lookup: false });
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_hook = $3 WHERE org_id = $1 AND id = $2", [orgId, connectionId, hook]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3 WHERE org_id = $1 AND id = $2", [orgId, connectionId, hook]);
     expect(await worker.query('kernel.channel.telegram_business_known', { connectionId, id: 'NotListed-1_x=' }, { actor: { type: 'system', component: 'test' }, orgId })).toEqual({ lookup: true });
     expect(await worker.query('kernel.channel.telegram_business_known', { connectionId, id: ENABLED }, { actor: { type: 'system', component: 'test' }, orgId })).toEqual({ lookup: false });
   });

@@ -28,7 +28,7 @@ export async function repostCallsOf(trx: Trx, orgId: string, variants: readonly 
   if (variants.length === 0) return out;
   const keys = new Map(variants.map((v) => [repostKey(v), v.id]));
   const { rows } = await sql<CommentCall & { finished_at: Date | null }>`
-    SELECT key, state, external_ref, error_code, started_at, finished_at FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at, finished_at FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid AND key = ANY(${[...keys.keys()]}::text[])`.execute(trx);
   for (const row of rows) {
     const id = keys.get(row.key);
@@ -74,10 +74,10 @@ export const repostBegin = defineCommand({
     if (!byLikes && !byTime) return { action: 'none', reason: 'not_yet' };
     const callKey = repostKey(v);
     // Once: any call made, whatever came of it, settles the repost of this publish.
-    const made = await ctx.trx.selectFrom('crove_kernel.external_call').select('key').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
+    const made = await ctx.trx.selectFrom('ludy_kernel.external_call').select('key').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
     if (made) return { action: 'none', reason: 'done' };
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: REPOST_STEP, retry_safety: 'never', request_hash: v.content_hash, started_at: ctx.now })
       .execute();
     return { action: 'call', variantId: v.id, callKey, externalId: v.external_post_id };
@@ -120,7 +120,7 @@ export const repostRecord = defineCommand({
           ? { state, error_kind: 'unknown', error_code: errorCode }
           : { state, error_kind: r.error, error_code: errorCode, finished_at: ctx.now };
     const updated = await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ ...values, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)

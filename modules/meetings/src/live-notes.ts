@@ -138,7 +138,7 @@ async function replaceLiveNotes(
   const meetingDay = vnDay(row.started_at ?? new Date());
   const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
   const ids = [userId, ...readers.map((r) => r.user_id)];
-  const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(
+  const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(
     ctx.trx,
   );
   const people = profiles.map((p) => ({ userId: p.user_id, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
@@ -163,7 +163,7 @@ async function replaceLiveNotes(
     .where((eb) =>
       eb.exists(
         eb
-          .selectFrom('crove_kernel.ai_run as r')
+          .selectFrom('ludy_kernel.ai_run as r')
           .select('r.id')
           .whereRef('r.id', '=', 'crove_meetings.action_item.source_run_id')
           .where('r.org_id', '=', ctx.orgId)

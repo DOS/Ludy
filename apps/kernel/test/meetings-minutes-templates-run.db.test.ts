@@ -97,9 +97,9 @@ suite('minutes templates an organization writes: the run, the save and the reade
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -110,7 +110,7 @@ suite('minutes templates an organization writes: the run, the save and the reade
     setSummaryEnabled(true);
     for (const key of ['owner', 'recorder', 'attendee']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'minutes-templates-run', subject: key, email: `${key}@templates-run.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Mẫu chạy')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recorder, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recorder, users.attendee]);
   }, 300_000);
 
   afterAll(async () => {
@@ -269,7 +269,7 @@ suite('minutes templates an organization writes: the run, the save and the reade
     const diff = (benignUsers[0] as string).split('\n').flatMap((l, i) => (plain(l) === plain(userLines[i] ?? '') ? [] : [i]));
     expect(diff).toHaveLength(1);
     // Nothing of the template is in a log or in the audit rows as text of a hint.
-    const audits = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1`, [orgId]);
+    const audits = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1`, [orgId]);
     expect(JSON.stringify(audits.rows)).not.toContain('evil.test');
   });
 

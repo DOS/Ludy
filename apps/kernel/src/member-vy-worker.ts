@@ -28,7 +28,7 @@ export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: D
   let removed = 0;
   let after: string | null = null;
   for (;;) {
-    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.member_vy_results_due(${ORGS_PER_PASS}::int, ${after}::uuid)`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_kernel.member_vy_results_due(${ORGS_PER_PASS}::int, ${after}::uuid)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         removed += (await deps.runtime.execute<{ removed: number }>('kernel.vy_data.results.expire', {}, { actor: ACTOR, orgId: row.org_id })).removed;
@@ -51,7 +51,7 @@ const reportedUnrecorded = new Set<string>();
 export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; workerDb: Db; reported?: Set<string> }): Promise<number> {
   const reported = deps.reported ?? reportedUnrecorded;
   const { rows } = await sql<{ org_id: string; user_id: string; recorded: boolean }>`
-    SELECT org_id, user_id, recorded FROM crove_kernel.member_vy_former_members_due(${FORMER_MEMBERS_PER_PASS}::int)`.execute(deps.workerDb);
+    SELECT org_id, user_id, recorded FROM ludy_kernel.member_vy_former_members_due(${FORMER_MEMBERS_PER_PASS}::int)`.execute(deps.workerDb);
   let removed = 0;
   const unrecorded = new Set<string>();
   for (const row of rows) {

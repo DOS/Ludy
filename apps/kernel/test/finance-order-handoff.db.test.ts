@@ -150,9 +150,9 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Đơn Hàng ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
-    if (options.sellerOf) await admin((c) => c.query('UPDATE crove_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, SELLER_TAX_CODE]));
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [orgId]))[0]?.id;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
+    if (options.sellerOf) await admin((c) => c.query('UPDATE ludy_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, SELLER_TAX_CODE]));
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [orgId]))[0]?.id;
     if (!entity) throw new Error('the org has no legal entity');
     return { orgId, owner, admin: adminUser, member, viewer, entity };
   }
@@ -199,7 +199,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       for (const [text, params] of statements) await c.query(text, params);
       await c.query('COMMIT');
     } catch (error) {
@@ -257,16 +257,16 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 6 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -306,7 +306,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
         [handoff.orderId, 1, 1],
         [handoff.orderId, 3, 2],
       ]);
-      const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.draft_from_order' AND outcome = 'ok'", [o.orgId]);
+      const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.draft_from_order' AND outcome = 'ok'", [o.orgId]);
       expect(audit).toHaveLength(1);
       expect(JSON.stringify(audit[0]?.detail)).not.toContain('Công ty Mua Thử');
       expect(JSON.stringify(audit[0]?.detail)).not.toContain(BUYER_TAX_CODE);
@@ -440,7 +440,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect(b).toEqual(a);
       expect(await onHand(o, item)).toBe('-3');
       expect(await orderMoves(o, handoff.orderId)).toHaveLength(1);
-      const audit = await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.stock.move_from_order_line' AND outcome = 'ok'", [o.orgId]);
+      const audit = await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.stock.move_from_order_line' AND outcome = 'ok'", [o.orgId]);
       expect(JSON.stringify(audit)).not.toContain(LINE_TWO);
     });
 
@@ -514,12 +514,12 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     it('refuses with a bare 409 a delivery of a line whose move sits in an entity the caller cannot see, instead of a 500', async () => {
       const o = await org();
       const branch = (
-        await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
+        await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
       )[0]?.id as string;
       const limited = await identity('limited');
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
-        await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+        await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+        await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
       });
       const mainItem = await makeItem(o);
       await teach(o, mainItem, LINE_TWO);
@@ -690,12 +690,12 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       const o = await org();
       await addSeries(o);
       const branch = (
-        await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
+        await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
       )[0]?.id as string;
       const limited = await identity('limited');
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
-        await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+        await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+        await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
       });
       const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }]);
       await draftFrom(o, handoff);

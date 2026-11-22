@@ -164,7 +164,7 @@ export const reviewPlanCreate = defineCommand({
       }
       const connections = [...new Set(r.connectionIds ?? [])];
       if (connections.length > 0) {
-        const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connections).execute();
+        const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connections).execute();
         if (found.length !== connections.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
       }
       const at = sql`coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)`;
@@ -224,12 +224,12 @@ export const linksRevokeForMember = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới thực hiện được việc này');
-    const event = await ctx.trx.selectFrom('crove_kernel.outbox_event').select(['type', 'payload', 'actor_type', 'actor_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
+    const event = await ctx.trx.selectFrom('ludy_kernel.outbox_event').select(['type', 'payload', 'actor_type', 'actor_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
     if (!event || (event.type !== 'kernel.member.removed' && event.type !== 'kernel.member.role_changed')) return { review: 0, report: 0, calendar: 0 };
     const data = z.object({ userId: zId }).safeParse(event.payload);
     if (!data.success) return { review: 0, report: 0, calendar: 0 };
     const userId = data.data.userId;
-    const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
+    const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
     if (member && (member.role === 'owner' || member.role === 'admin')) return { review: 0, report: 0, calendar: 0 };
     // Who took the right away; the member themself when the event names nobody.
     const by = event.actor_type === 'user' && event.actor_id ? event.actor_id : userId;

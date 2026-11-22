@@ -21,7 +21,7 @@ const USER: UserActor = { type: 'user', userId: '01900000-0000-7000-8000-0000000
 function fakeDb(role: string): Db {
   const connection: DatabaseConnection = {
     async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
-      const rows = /crove_kernel\.enter_(?:user_)?context\(/.test(query.sql)
+      const rows = /ludy_kernel\.enter_(?:user_)?context\(/.test(query.sql)
         ? [{ role }]
         : /pg_attribute/.test(query.sql)
           ? [{ present: true }]

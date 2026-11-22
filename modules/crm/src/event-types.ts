@@ -117,7 +117,7 @@ function assertMayHost(ctx: CommandContext, userId: string, hostUserId: string):
 
 async function assertHost(ctx: CommandContext, hostUserId: string): Promise<void> {
   const member = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select('role')
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', hostUserId)
@@ -145,7 +145,7 @@ async function assertMeet(ctx: CommandContext, userId: string, input: EventTypeI
   const mine =
     input.assignment === 'single' && input.hostUserId === userId
       ? await ctx.trx
-          .selectFrom('crove_kernel.calendar_connection')
+          .selectFrom('ludy_kernel.calendar_connection')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('user_id', '=', userId)

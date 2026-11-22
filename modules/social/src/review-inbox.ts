@@ -41,7 +41,7 @@ export async function reviewWaiting(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'a
   const rows = await ctx.trx
     .selectFrom('crove_social.post_variant as v')
     .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
-    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+    .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
     .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.revision', 'v.content_hash', 'v.channel_connection_id', 'v.scheduled_at', 'v.updated_at', 'v.body as variant_body', 'c.display_name', 'p.body', 'p.title', 'p.scheduled_at as post_scheduled_at', 'p.author_user_id'])
     .where('v.org_id', '=', ctx.orgId)
     .where('v.status', '=', 'in_review')

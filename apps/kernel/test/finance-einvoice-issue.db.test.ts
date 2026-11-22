@@ -75,20 +75,20 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Phát Hành ${randomUUID().slice(0, 6)}`);
     const member = await identity('member');
     const viewer = await identity('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     // The org's tax code is its default entity's, and the entity has a connection to the offline provider under it: what the issue needs before it asks anyone.
     if (options.taxCode !== false) await execute({ orgId, owner }, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
     if (options.connection !== false) {
       const channel = randomUUID();
       await admin(async (c) => {
-        await c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
+        await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
         await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
     let adminUser: string | null = null;
     if (options.team) {
       adminUser = await identity('admin');
-      await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
+      await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
     }
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -114,7 +114,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       const result = await c.query(sqlText, params);
       await c.query('COMMIT');
       return result;
@@ -135,14 +135,14 @@ suite('issuing a sales e-invoice (#2502)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 2 });
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -168,7 +168,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const before = await draftRow(o, draft.id);
     expect(before).toMatchObject({ state: 'draft', submitted_at: null });
     const { proposalId } = await request(o, draft.id);
-    const proposal = (await rows<{ command: string; kind: string; status: string; payload: Record<string, unknown>; legal_entity_id: string }>('SELECT command, kind, status, payload, legal_entity_id FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0];
+    const proposal = (await rows<{ command: string; kind: string; status: string; payload: Record<string, unknown>; legal_entity_id: string }>('SELECT command, kind, status, payload, legal_entity_id FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0];
     expect(proposal).toMatchObject({ command: 'finance.einvoice.issue', kind: 'finance.einvoice_issue', status: 'pending' });
     // The payload names the draft, the hash of what it is issued from, the total and the currency, and carries no buyer data and no entity.
     expect(proposal?.payload).toEqual({ draftId: draft.id, contentHash: expect.stringMatching(/^[0-9a-f]{64}$/), amount: '274000', currency: 'VND', lineCount: 2 });
@@ -178,7 +178,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     expect(after).toMatchObject({ state: 'submitting', error_code: null, idempotency_key: before?.idempotency_key });
     expect(after?.submitted_at).toBeInstanceOf(Date);
     // Audited with ids and the total, never the buyer.
-    const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.issue' AND outcome = 'ok'`, [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.issue' AND outcome = 'ok'`, [o.orgId]);
     expect(audit).toHaveLength(1);
     expect(audit[0]?.detail).toMatchObject({ draftId: draft.id, total: '274000', currency: 'VND' });
     expect(JSON.stringify(audit[0]?.detail)).not.toContain('Công ty Mua Thử');
@@ -342,16 +342,16 @@ suite('issuing a sales e-invoice (#2502)', () => {
     await expect(submit(o.member, o, draft.id, hash)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_ISSUE_FORBIDDEN') });
     // The function is the API login's alone: the tenant role, the worker login and PUBLIC cannot run it, and nor can they run the approval test it asks.
     const grants = await rows<{ app: boolean; worker: boolean; tenant: boolean; approved_app: boolean; approved_definer: boolean; owner: string }>(
-      `SELECT has_function_privilege('crove_app', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS app,
-              has_function_privilege('crove_worker', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS worker,
+      `SELECT has_function_privilege('ludy_app', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS app,
+              has_function_privilege('ludy_worker', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS worker,
               has_function_privilege('public', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS tenant,
-              has_function_privilege('crove_app', 'crove_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_app,
-              has_function_privilege('crove_definer_einvoice', 'crove_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_definer,
+              has_function_privilege('ludy_app', 'crove_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_app,
+              has_function_privilege('ludy_definer_einvoice', 'crove_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_definer,
               (SELECT proowner::regrole::text FROM pg_proc WHERE oid = 'crove_finance.einvoice_submit(uuid, text)'::regprocedure) AS owner`,
     );
-    expect(grants[0]).toEqual({ app: true, worker: false, tenant: false, approved_app: false, approved_definer: true, owner: 'crove_definer_einvoice' });
+    expect(grants[0]).toEqual({ app: true, worker: false, tenant: false, approved_app: false, approved_definer: true, owner: 'ludy_definer_einvoice' });
     const shape = await rows<{ definer: boolean; config: string[]; login: boolean }>(
-      `SELECT p.prosecdef AS definer, p.proconfig AS config, (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'crove_definer_einvoice') AS login
+      `SELECT p.prosecdef AS definer, p.proconfig AS config, (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'ludy_definer_einvoice') AS login
        FROM pg_proc p WHERE p.oid = 'crove_finance.einvoice_submit(uuid, text)'::regprocedure`,
     );
     expect(shape[0]).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'], login: false });

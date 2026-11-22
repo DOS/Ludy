@@ -3,7 +3,7 @@
 // date, and per reviewer the decisions they made with the median time from submission to decision; for client review
 // links, the median time to the client's answer. A read only query over what the module already records: the posts,
 // the decision rows (post_approval), the audit rows of social.post.submit, the channels' publish times, the
-// assignments (#640) and the clients' answers (review_feedback). Names come only from crove_kernel.member_profiles,
+// assignments (#640) and the clients' answers (review_feedback). Names come only from ludy_kernel.member_profiles,
 // which answers for members of the org; anyone else who appears (a member who left) is shown as left, without a name.
 //
 // The submission a decision answers is the latest successful social.post.submit of its post at or before it; a post
@@ -51,7 +51,7 @@ export const teamReport = defineQuery({
         GROUP BY p.author_user_id`.execute(ctx.trx),
       // On the org's audit rows of the period (audit_event_time_idx).
       sql<{ user_id: string; n: string }>`
-        SELECT e.actor_id AS user_id, pg_catalog.count(DISTINCT e.target_id) AS n FROM crove_kernel.audit_event e
+        SELECT e.actor_id AS user_id, pg_catalog.count(DISTINCT e.target_id) AS n FROM ludy_kernel.audit_event e
         WHERE e.org_id = ${org}::uuid AND e.occurred_at >= ${from} AND e.occurred_at < ${to}
           AND e.command = 'social.post.submit' AND e.outcome = 'ok' AND e.actor_type = 'user' AND e.actor_id IS NOT NULL
           AND e.target_type = 'social.post'
@@ -95,7 +95,7 @@ export const teamReport = defineQuery({
           SELECT p.id, p.created_at FROM crove_social.post p
           WHERE p.org_id = ${org}::uuid AND p.id IN (SELECT d.post_id FROM d)
         ), s AS MATERIALIZED (
-          SELECT e.target_id AS post_id, e.occurred_at FROM crove_kernel.audit_event e
+          SELECT e.target_id AS post_id, e.occurred_at FROM ludy_kernel.audit_event e
           WHERE e.org_id = ${org}::uuid AND e.occurred_at >= GREATEST((SELECT pg_catalog.min(p.created_at) FROM p), ${lookback}::timestamptz) AND e.occurred_at < ${to}
             AND e.command = 'social.post.submit' AND e.outcome = 'ok' AND e.target_type = 'social.post'
             AND e.target_id IN (SELECT p.id FROM p)
@@ -119,7 +119,7 @@ export const teamReport = defineQuery({
         SELECT f.verdict, pg_catalog.date_part('epoch', f.created_at - l.created_at)::float8 AS seconds
         FROM f JOIN l ON l.id = f.link_id
         WHERE f.created_at >= ${from}`.execute(ctx.trx),
-      ctx.trx.selectFrom('crove_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', org).execute(),
+      ctx.trx.selectFrom('ludy_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', org).execute(),
     ]);
 
     const rows = new Map<string, TeamMemberRow>();
@@ -145,7 +145,7 @@ export const teamReport = defineQuery({
     const ids = [...rows.keys()];
     if (ids.length > 0) {
       const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
       for (const p of profiles) Object.assign(row(p.user_id), { name: p.display_name ?? p.email, left: false });
     }
     const list = [...rows.values()].sort((a, b) => Number(a.left) - Number(b.left) || (a.name ?? '').localeCompare(b.name ?? '', 'vi') || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));

@@ -16,8 +16,8 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
 
   const joinOrg = (email: string) =>
     exec(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-       SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+       SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
@@ -34,23 +34,23 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
     exec(
       `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        SELECT t.org_id, gen_random_uuid(), 'Họp giao ban tuần', 'vi', now(), now() + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365
-         FROM crove_kernel.tenant t, crove_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email: recorderEmail },
     );
     exec(
       `INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id)
-       SELECT m.org_id, gen_random_uuid(), m.id, u.id FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id, crove_kernel.user_account u
+       SELECT m.org_id, gen_random_uuid(), m.id, u.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email: readerEmail },
     );
     exec(
-      `INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id)
+      `INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id)
        SELECT t.org_id, gen_random_uuid(), 'Nhân viên bán hàng', 'kernel', 'member', u.id
-         FROM crove_kernel.tenant t, crove_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+         FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email: readerEmail },
     );
   });
-  const [{ id: meetingId }] = sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug }) as [{ id: string }];
+  const [{ id: meetingId }] = sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug }) as [{ id: string }];
 
   await test.step('the recorder writes a summary and an item, naming the attendee by name, never by id', async () => {
     await page.goto(`/o/${slug}/meetings/${meetingId}`);
@@ -75,13 +75,13 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
     await expect(reader.getByTestId('meeting-results')).toHaveCount(0);
     await outsider.goto(`/o/${slug}/meetings/${meetingId}`);
     await expect(outsider.getByTestId('meeting-results')).toHaveCount(0);
-    expect(sql(`SELECT 1 FROM crove_meetings.action_item i JOIN crove_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug' AND i.stage = 'published'`, { slug })).toHaveLength(0);
+    expect(sql(`SELECT 1 FROM crove_meetings.action_item i JOIN ludy_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug' AND i.stage = 'published'`, { slug })).toHaveLength(0);
   });
 
   await test.step('one click shares the summary and the item', async () => {
     await page.getByRole('button', { name: 'Chia sẻ cho người dự họp' }).click();
     await expect(page.getByText('Đã chia sẻ cho người dự họp')).toBeVisible();
-    expect(sql(`SELECT i.stage FROM crove_meetings.action_item i JOIN crove_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ stage: 'published' }]);
+    expect(sql(`SELECT i.stage FROM crove_meetings.action_item i JOIN ludy_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ stage: 'published' }]);
   });
 
   await test.step('the reader sees what was shared and makes a task from the item', async () => {
@@ -93,7 +93,7 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
     await expect(panel.getByLabel('Vị trí', { exact: true })).toHaveValue(/.+/);
     await panel.getByRole('button', { name: 'Tạo việc', exact: true }).click();
     await expect(panel.getByText('Đã tạo việc')).toBeVisible();
-    expect(sql(`SELECT i.status FROM crove_meetings.action_item i JOIN crove_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ status: 'accepted' }]);
+    expect(sql(`SELECT i.status FROM crove_meetings.action_item i JOIN ludy_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ status: 'accepted' }]);
   });
 
   await test.step('the task links back to the meeting for the reader, and the outsider is told the record cannot be opened', async () => {

@@ -162,17 +162,17 @@ suite('bank statement lines to bank vouchers (#326)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -219,7 +219,7 @@ suite('bank statement lines to bank vouchers (#326)', () => {
     const [doc] = await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows);
     vendor = doc.party_id;
     customer = randomUUID();
-    await admin((c) => c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`, [org.orgId, customer]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`, [org.orgId, customer]));
 
     const imported = await rpc('bank/import', await tokenFor(member), {
       bankAccount: '1121',
@@ -363,8 +363,8 @@ suite('bank statement lines to bank vouchers (#326)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors)
-             SELECT org_id, kind, command, title, payload, eligible_approvers, authors FROM crove_kernel.proposal WHERE id = $1 RETURNING id`,
+            `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors)
+             SELECT org_id, kind, command, title, payload, eligible_approvers, authors FROM ludy_kernel.proposal WHERE id = $1 RETURNING id`,
             [first],
           )
         ).rows,

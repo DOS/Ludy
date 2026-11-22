@@ -93,14 +93,14 @@ suite('inbound address rotation on PostgreSQL', () => {
 
   const tokenOf = (orgId: string) =>
     withAdmin(async (admin) => {
-      const { rows } = await admin.query<{ inbound_token: string }>('SELECT inbound_token FROM crove_kernel.tenant WHERE org_id = $1', [orgId]);
+      const { rows } = await admin.query<{ inbound_token: string }>('SELECT inbound_token FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]);
       return rows[0]?.inbound_token ?? '';
     });
 
   const ledger = (orgId: string) =>
     withAdmin(async (admin) => {
       const { rows } = await admin.query<{ token: string; retired: boolean }>(
-        'SELECT token, retired_at IS NOT NULL AS retired FROM crove_kernel.inbound_address WHERE org_id = $1 ORDER BY created_at, id',
+        'SELECT token, retired_at IS NOT NULL AS retired FROM ludy_kernel.inbound_address WHERE org_id = $1 ORDER BY created_at, id',
         [orgId],
       );
       return rows;
@@ -109,7 +109,7 @@ suite('inbound address rotation on PostgreSQL', () => {
   const rotateAudits = (orgId: string) =>
     withAdmin(async (admin) => {
       const { rows } = await admin.query<{ actor_id: string; outcome: string; detail: Record<string, unknown> }>(
-        `SELECT actor_id, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.inbound.rotate' ORDER BY occurred_at, id`,
+        `SELECT actor_id, outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.inbound.rotate' ORDER BY occurred_at, id`,
         [orgId],
       );
       return rows;
@@ -128,7 +128,7 @@ suite('inbound address rotation on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
@@ -140,10 +140,10 @@ suite('inbound address rotation on PostgreSQL', () => {
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
     runtime = register(db);
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
     workerDb = createDb(workerPool);
     workerRuntime = register(workerDb);
@@ -227,15 +227,15 @@ suite('inbound address rotation on PostgreSQL', () => {
       headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'content-type': 'message/rfc822', 'x-crove-recipient': `${token}@in.test` },
       body: mime(token, number),
     });
-  const messages = (id: string) => count('SELECT count(*) AS n FROM crove_kernel.inbound_message WHERE message_id LIKE $1', [`%${id}%`]);
-  const pending = () => count('SELECT count(*) AS n FROM crove_kernel.inbound_pending', []);
-  const emailFiles = () => count(`SELECT count(*) AS n FROM crove_kernel.file WHERE org_id = $1 AND source = 'email'`, [org.orgId]);
-  const receiveAudits = () => count(`SELECT count(*) AS n FROM crove_kernel.audit_event WHERE command = 'kernel.inbound.receive'`, []);
+  const messages = (id: string) => count('SELECT count(*) AS n FROM ludy_kernel.inbound_message WHERE message_id LIKE $1', [`%${id}%`]);
+  const pending = () => count('SELECT count(*) AS n FROM ludy_kernel.inbound_pending', []);
+  const emailFiles = () => count(`SELECT count(*) AS n FROM ludy_kernel.file WHERE org_id = $1 AND source = 'email'`, [org.orgId]);
+  const receiveAudits = () => count(`SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE command = 'kernel.inbound.receive'`, []);
   const drops = () =>
     withAdmin(async (admin) => {
       const { rows } = await admin.query<{ org_id: string; token: string; dropped_count: string }>(
-        `SELECT d.org_id, a.token, d.dropped_count::text FROM crove_kernel.inbound_drop d
-         JOIN crove_kernel.inbound_address a ON a.org_id = d.org_id AND a.id = d.address_id ORDER BY d.first_dropped_at`,
+        `SELECT d.org_id, a.token, d.dropped_count::text FROM ludy_kernel.inbound_drop d
+         JOIN ludy_kernel.inbound_address a ON a.org_id = d.org_id AND a.id = d.address_id ORDER BY d.first_dropped_at`,
       );
       return rows;
     });
@@ -313,7 +313,7 @@ suite('inbound address rotation on PostgreSQL', () => {
       // The new address files the invoice, and its extraction job turns it into a proposal in the org.
       const emailProposals = () =>
         count(
-          `SELECT count(*) AS n FROM crove_kernel.proposal p JOIN crove_kernel.file f ON f.org_id = p.org_id AND f.id = p.source_file_id
+          `SELECT count(*) AS n FROM ludy_kernel.proposal p JOIN ludy_kernel.file f ON f.org_id = p.org_id AND f.id = p.source_file_id
            WHERE p.org_id = $1 AND f.source = 'email'`,
           [org.orgId],
         );
@@ -335,7 +335,7 @@ suite('inbound address rotation on PostgreSQL', () => {
     // The worker's resolver itself knows only the active token.
     const resolve = (token: string) =>
       workerDb.transaction().execute(async (trx) => {
-        const { rows } = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${token}) AS org_id`.execute(trx);
+        const { rows } = await sql<{ org_id: string | null }>`SELECT ludy_kernel.org_by_inbound_token(${token}) AS org_id`.execute(trx);
         return rows[0]?.org_id ?? null;
       });
     expect(await resolve(newToken)).toBe(org.orgId);

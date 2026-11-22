@@ -55,11 +55,11 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     );
     return id;
   };
-  const party = (name: string) => admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
+  const party = (name: string) => admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
   const event = (who: string) =>
     admin((c) =>
       c.query<{ id: string }>(
-        "INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', 'Gặp khách', 'manual', $2) RETURNING id",
+        "INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', 'Gặp khách', 'manual', $2) RETURNING id",
         [orgId, users[who]],
       ).then((r) => r.rows[0]!.id),
     );
@@ -69,7 +69,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
   };
   const linkCount = (meetingId: string) => admin((c) => c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.meeting_link WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]).then((r) => Number(r.rows[0]!.n)));
   const audits = (command: string, meetingId: string) =>
-    admin((c) => c.query<{ detail: Record<string, unknown>; actor_id: string | null }>(`SELECT detail, actor_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ->> 'meetingId' = $3 ORDER BY occurred_at`, [orgId, command, meetingId]).then((r) => r.rows));
+    admin((c) => c.query<{ detail: Record<string, unknown>; actor_id: string | null }>(`SELECT detail, actor_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ->> 'meetingId' = $3 ORDER BY occurred_at`, [orgId, command, meetingId]).then((r) => r.rows));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -80,9 +80,9 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = new URL(adminUrl);
-    login.username = 'crove_app';
+    login.username = 'ludy_app';
     login.password = 'test-app-pw';
     pool = createPool({ connectionString: login.toString(), max: 4 });
     const db = createDb(pool);
@@ -94,7 +94,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     }
     orgId = (await createOrg(rt, asUser('owner'), 'Links')).orgId;
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, users.recorder, users.attendee, users.other, users.viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, users.recorder, users.attendee, users.other, users.viewer]),
     );
   }, 300_000);
 
@@ -175,14 +175,14 @@ suite('meeting links on PostgreSQL (#2587)', () => {
       segments: [{ startSeconds: 0, endSeconds: 4, speakerLabel: 'A', text: 'Công ty Nhìn Thấy và Công ty Bị Ẩn đều có mặt, nói về gói kế toán năm.' }],
     });
     // A restrictive policy on party stands in for the legal-entity policy to come (#1538): the recorder's own reads do not see this row.
-    await admin((c) => c.query(`CREATE POLICY test_hide_party_suggest ON crove_kernel.party AS RESTRICTIVE FOR SELECT TO crove_tenant USING (id <> '${hidden}'::uuid)`));
+    await admin((c) => c.query(`CREATE POLICY test_hide_party_suggest ON ludy_kernel.party AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (id <> '${hidden}'::uuid)`));
     try {
       const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
       expect(got.parties.map((p) => p.partyId)).toEqual([visible]);
       expect(JSON.stringify(got)).not.toContain('Bị Ẩn');
       expect(got.deals.map((d) => d.dealId)).not.toContain(hiddenDeal);
     } finally {
-      await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_party_suggest ON crove_kernel.party'));
+      await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_party_suggest ON ludy_kernel.party'));
     }
     // The transcript is the recorder's: a reader who may read the meeting still gets no suggestion from it.
     await admin((c) => c.query("INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)", [orgId, m, users.attendee]));
@@ -204,7 +204,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     await exec('recorder', 'crm.deal.move', { dealId: d, version: 1, stageId: (await exec<Array<{ id: string; kind: string }>>('recorder', 'crm.pipeline.setup', {})).find((x) => x.kind === 'lost')?.id });
     expect((await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).deals).toEqual([]);
     // The sensitive read is audited like the transcript's own.
-    const read = await admin((c) => c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.link.suggest' AND detail ->> 'read' = 'sensitive'", [orgId]));
+    const read = await admin((c) => c.query("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.link.suggest' AND detail ->> 'read' = 'sensitive'", [orgId]));
     expect(read.rowCount).toBeGreaterThan(0);
     // Past its text day the transcript is gone from the meeting: nothing is derived from it.
     await admin((c) => c.query('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, m]));
@@ -234,7 +234,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     // Only an event the recorder made (manual or a booking's) can be the meeting's: a time-off block, like a synced busy block (kinds the calendar rewrites), cannot.
     const timeOff = await admin((c) =>
       c.query<{ id: string }>(
-        "INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', NULL, 'time_off', $2) RETURNING id",
+        "INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', NULL, 'time_off', $2) RETURNING id",
         [orgId, users.recorder],
       ).then((r) => r.rows[0]!.id),
     );

@@ -14,7 +14,7 @@ import { ROLES, openMeeting, userOf } from './transcript.ts';
 export async function attendeeNames(ctx: CommandContext | QueryContext, meetingId: string, recorderId: string): Promise<Array<{ userId: string; name: string }>> {
   const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
   const ids = [recorderId, ...readers.map((r) => r.user_id).filter((id) => id !== recorderId)];
-  const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+  const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
   const names = new Map(rows.map((r) => [r.user_id, cleanName(r.display_name)]));
   return ids.flatMap((id) => {
     const name = names.get(id) ?? '';

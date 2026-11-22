@@ -1,4 +1,4 @@
-// In-app notifications for every module (#671): crove_kernel.notification, one row per member, shown by the bell in the
+// In-app notifications for every module (#671): ludy_kernel.notification, one row per member, shown by the bell in the
 // org shell. Social keeps its own (#637) until it moves here.
 //
 // Writing one: notifyMembers(ctx, { kind, users, key, ... }) inside a system command (the module's dispatch of an
@@ -85,13 +85,13 @@ export async function notifyMembers(ctx: CommandContext, input: NotifyInput): Pr
   if (wanted.length === 0) return 0;
   // Members now, who have not turned this kind off (unless it is required).
   const { rows } = await sql<{ user_id: string }>`
-    SELECT m.user_id FROM crove_kernel.tenant_member m
+    SELECT m.user_id FROM ludy_kernel.tenant_member m
     WHERE m.org_id = ${ctx.orgId} AND m.user_id = ANY(${wanted}::uuid[])
-      ${input.required === true ? sql`` : sql`AND NOT EXISTS (SELECT 1 FROM crove_kernel.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${input.kind})`}`.execute(ctx.trx);
+      ${input.required === true ? sql`` : sql`AND NOT EXISTS (SELECT 1 FROM ludy_kernel.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${input.kind})`}`.execute(ctx.trx);
   if (rows.length === 0) return 0;
   const users = rows.map((r) => r.user_id);
   const inserted = await ctx.trx
-    .insertInto('crove_kernel.notification')
+    .insertInto('ludy_kernel.notification')
     .values(
       users.map((userId) => ({
         org_id: ctx.orgId,
@@ -111,7 +111,7 @@ export async function notifyMembers(ctx: CommandContext, input: NotifyInput): Pr
     .execute();
   // The recipients' old ones go.
   await sql`
-    DELETE FROM crove_kernel.notification
+    DELETE FROM ludy_kernel.notification
     WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[])
       AND (read_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_READ_KEEP_DAYS}::int)
            OR created_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_KEEP_DAYS}::int))`.execute(ctx.trx);
@@ -120,14 +120,14 @@ export async function notifyMembers(ctx: CommandContext, input: NotifyInput): Pr
 
 // The org's owners and admins, the members who act on what needs a look.
 export async function ownersAndAdmins(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promise<string[]> {
-  const rows = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin']).execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin']).execute();
   return rows.map((r) => r.user_id);
 }
 
 // An outbox event, read by id: a dispatch never trusts the job's copy.
 export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, eventId: string) {
   const event = await ctx.trx
-    .selectFrom('crove_kernel.outbox_event')
+    .selectFrom('ludy_kernel.outbox_event')
     .select(['id', 'type', 'payload', 'actor_type', 'actor_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', eventId)
@@ -164,7 +164,7 @@ export const notificationDispatch = defineCommand({
         const e = z.object({ proposalId: zId }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const proposal = await ctx.trx
-          .selectFrom('crove_kernel.proposal')
+          .selectFrom('ludy_kernel.proposal')
           .select(['id', 'command', 'status', 'legal_entity_id'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', e.data.proposalId)
@@ -188,8 +188,8 @@ export const notificationDispatch = defineCommand({
         const e = z.object({ fileId: zId, version: z.number().int().positive() }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const file = await ctx.trx
-          .selectFrom('crove_kernel.file as f')
-          .leftJoin('crove_kernel.extraction as x', (join) => join.onRef('x.org_id', '=', 'f.org_id').onRef('x.file_id', '=', 'f.id').on('x.version', '=', e.data.version))
+          .selectFrom('ludy_kernel.file as f')
+          .leftJoin('ludy_kernel.extraction as x', (join) => join.onRef('x.org_id', '=', 'f.org_id').onRef('x.file_id', '=', 'f.id').on('x.version', '=', e.data.version))
           .select(['f.id', 'f.created_by', 'x.requested_by', 'x.legal_entity_id'])
           .where('f.org_id', '=', ctx.orgId)
           .where('f.id', '=', e.data.fileId)
@@ -221,7 +221,7 @@ export const notificationDispatch = defineCommand({
         const e = z.object({ taskId: zId, positionId: zId.nullable().optional() }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const task = await ctx.trx
-          .selectFrom('crove_kernel.task')
+          .selectFrom('ludy_kernel.task')
           .select(['id', 'assignee_position_id', 'status', 'legal_entity_id'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', e.data.taskId)
@@ -232,8 +232,8 @@ export const notificationDispatch = defineCommand({
         const superseded = await sql<{ exists: boolean }>`
           SELECT EXISTS (
             SELECT 1
-            FROM crove_kernel.outbox_event o
-            JOIN crove_kernel.outbox_event cur
+            FROM ludy_kernel.outbox_event o
+            JOIN ludy_kernel.outbox_event cur
               ON cur.org_id = o.org_id AND cur.id = ${event.id}::uuid
             WHERE o.org_id = ${ctx.orgId}::uuid
               AND o.id <> cur.id
@@ -245,11 +245,11 @@ export const notificationDispatch = defineCommand({
         let users: string[];
         if (task.assignee_position_id === null) {
           users = (
-            await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').execute()
+            await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').execute()
           ).map((r) => r.user_id);
         } else {
           const seat = await ctx.trx
-            .selectFrom('crove_kernel.position')
+            .selectFrom('ludy_kernel.position')
             .select('holder_user_id')
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', task.assignee_position_id)
@@ -281,7 +281,7 @@ export const notificationDispatch = defineCommand({
         // The moved tasks still waiting where they went: one moved again since tells its own holder, and a closed one
         // waits for nobody.
         const waiting = await ctx.trx
-          .selectFrom('crove_kernel.task')
+          .selectFrom('ludy_kernel.task')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', e.data.taskIds)
@@ -292,10 +292,10 @@ export const notificationDispatch = defineCommand({
         const first = waiting[0];
         if (!first) return { sent: 0 };
         const seat = e.data.toPositionId
-          ? await ctx.trx.selectFrom('crove_kernel.position').select('holder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', e.data.toPositionId).executeTakeFirst()
+          ? await ctx.trx.selectFrom('ludy_kernel.position').select('holder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', e.data.toPositionId).executeTakeFirst()
           : undefined;
         const owners = async () =>
-          (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').execute()).map(
+          (await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').execute()).map(
             (r) => r.user_id,
           );
         const sent = await notifyMembers(ctx, {
@@ -318,7 +318,7 @@ export const notificationDispatch = defineCommand({
         if (!e.success || !isAdProviderId(e.data.provider)) return { sent: 0 };
         // Still expired: a connection connected again since is not waiting for anyone.
         const connection = await ctx.trx
-          .selectFrom('crove_kernel.channel_connection')
+          .selectFrom('ludy_kernel.channel_connection')
           .select('status')
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', e.data.connection_id)
@@ -339,18 +339,18 @@ export const notificationDispatch = defineCommand({
         const e = z.object({ proposalId: zId, fileId: zId, differs: z.boolean(), signature: z.enum(['unverified', 'none']) }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const proposal = await ctx.trx
-          .selectFrom('crove_kernel.proposal')
+          .selectFrom('ludy_kernel.proposal')
           .select(['id', 'status', 'decided_by', 'legal_entity_id'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', e.data.proposalId)
           .executeTakeFirst();
-        const file = await ctx.trx.selectFrom('crove_kernel.file').select('created_by').where('org_id', '=', ctx.orgId).where('id', '=', e.data.fileId).executeTakeFirst();
+        const file = await ctx.trx.selectFrom('ludy_kernel.file').select('created_by').where('org_id', '=', ctx.orgId).where('id', '=', e.data.fileId).executeTakeFirst();
         if (!proposal || !file) return { sent: 0 };
         // The one who uploaded the original and the one who approved the posting, while they are members; a mailed original
         // whose approver has left goes to the owners and admins.
         const named = [...new Set([file.created_by, proposal.decided_by].filter((u): u is string => u !== null))];
         const members =
-          named.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', named).execute()).map((r) => r.user_id);
+          named.length === 0 ? [] : (await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', named).execute()).map((r) => r.user_id);
         const users = members.length > 0 ? members : await ownersAndAdmins(ctx);
         const sent = await notifyMembers(ctx, {
           kind: ORIGINAL_FLAGGED,
@@ -446,7 +446,7 @@ export const notificationList = defineQuery({
   handler: async (ctx): Promise<{ items: NotificationItem[]; unread: number; unreadWork: number; muted: string[] }> => {
     const me = requireUser(ctx);
     const settled = sql<boolean>`(n.kind = ${APPROVAL_WAITING} AND NOT EXISTS (
-      SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id AND p.status = 'pending'))`;
+      SELECT 1 FROM ludy_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id AND p.status = 'pending'))`;
     const { rows } = await sql<{
       id: string;
       kind: string;
@@ -461,16 +461,16 @@ export const notificationList = defineQuery({
     }>`
       SELECT n.id, n.kind, n.subject_type, n.subject_id, n.detail, n.created_at, (n.read_at IS NOT NULL OR ${settled}) AS read,
              CASE n.subject_type
-               WHEN 'kernel.proposal' THEN (SELECT p.title FROM crove_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id)
-               WHEN 'kernel.task' THEN (SELECT t.title FROM crove_kernel.task t WHERE t.org_id = n.org_id AND t.id = n.subject_id)
+               WHEN 'kernel.proposal' THEN (SELECT p.title FROM ludy_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id)
+               WHEN 'kernel.task' THEN (SELECT t.title FROM ludy_kernel.task t WHERE t.org_id = n.org_id AND t.id = n.subject_id)
              END AS subject_title,
              CASE WHEN n.subject_type = 'kernel.task'
-               THEN (SELECT t.tainted FROM crove_kernel.task t WHERE t.org_id = n.org_id AND t.id = n.subject_id)
+               THEN (SELECT t.tainted FROM ludy_kernel.task t WHERE t.org_id = n.org_id AND t.id = n.subject_id)
              END AS subject_tainted,
              CASE WHEN n.subject_type = 'kernel.file'
-               THEN (SELECT f.filename FROM crove_kernel.file f WHERE f.org_id = n.org_id AND f.id = n.subject_id)
+               THEN (SELECT f.filename FROM ludy_kernel.file f WHERE f.org_id = n.org_id AND f.id = n.subject_id)
              END AS subject_filename
-      FROM crove_kernel.notification n
+      FROM ludy_kernel.notification n
       WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me}
       ORDER BY n.created_at DESC, n.id DESC
       LIMIT ${NOTIFICATION_LIST_LIMIT}`.execute(ctx.trx);
@@ -492,7 +492,7 @@ export const notificationList = defineQuery({
     }
     const unread = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
-        SELECT 1 FROM crove_kernel.notification n
+        SELECT 1 FROM ludy_kernel.notification n
         WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND n.read_at IS NULL AND NOT ${settled}
         LIMIT ${NOTIFICATION_UNREAD_CAP + 1}
       ) u`.execute(ctx.trx);
@@ -500,13 +500,13 @@ export const notificationList = defineQuery({
     // count them twice. Counted on its own so the cap of `unread` cannot hide the others.
     const unreadWork = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
-        SELECT 1 FROM crove_kernel.notification n
+        SELECT 1 FROM ludy_kernel.notification n
         WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND n.read_at IS NULL AND NOT ${settled}
           AND NOT (n.kind = ${APPROVAL_WAITING}
-                   AND EXISTS (SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id AND p.command LIKE 'finance.%'))
+                   AND EXISTS (SELECT 1 FROM ludy_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id AND p.command LIKE 'finance.%'))
         LIMIT ${NOTIFICATION_UNREAD_CAP + 1}
       ) u`.execute(ctx.trx);
-    const muted = await ctx.trx.selectFrom('crove_kernel.notification_mute').select('kind').where('org_id', '=', ctx.orgId).where('user_id', '=', me).orderBy('kind').execute();
+    const muted = await ctx.trx.selectFrom('ludy_kernel.notification_mute').select('kind').where('org_id', '=', ctx.orgId).where('user_id', '=', me).orderBy('kind').execute();
     return {
       items: rows.map((r) => {
         const resolvedTitle =
@@ -542,7 +542,7 @@ export const notificationRead = defineCommand({
   access: ALL,
   handler: async (ctx, input) => {
     const me = requireUser(ctx);
-    let q = ctx.trx.updateTable('crove_kernel.notification').set({ read_at: ctx.now }).where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('read_at', 'is', null);
+    let q = ctx.trx.updateTable('ludy_kernel.notification').set({ read_at: ctx.now }).where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('read_at', 'is', null);
     if ('ids' in input) q = q.where('id', 'in', input.ids);
     const done = await q.executeTakeFirst();
     return { read: Number(done.numUpdatedRows) };
@@ -560,12 +560,12 @@ export const notificationMute = defineCommand({
     const me = requireUser(ctx);
     if (input.muted) {
       await ctx.trx
-        .insertInto('crove_kernel.notification_mute')
+        .insertInto('ludy_kernel.notification_mute')
         .values({ org_id: ctx.orgId, user_id: me, kind: input.kind, created_at: ctx.now })
         .onConflict((oc) => oc.columns(['org_id', 'user_id', 'kind']).doNothing())
         .execute();
     } else {
-      await ctx.trx.deleteFrom('crove_kernel.notification_mute').where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('kind', '=', input.kind).execute();
+      await ctx.trx.deleteFrom('ludy_kernel.notification_mute').where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('kind', '=', input.kind).execute();
     }
     return { kind: input.kind, muted: input.muted };
   },

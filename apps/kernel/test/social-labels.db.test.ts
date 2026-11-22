@@ -43,12 +43,12 @@ suite('social labels on PostgreSQL (#639)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'admin' | 'member' | 'viewer', string> = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     const connection = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, connection, 'sandbox', `acct-${connection.slice(0, 8)}`, 'Trang thử', owner],
       ),
     );
@@ -73,9 +73,9 @@ suite('social labels on PostgreSQL (#639)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -256,7 +256,7 @@ suite('social labels on PostgreSQL (#639)', () => {
     expect(rows.find((l) => l.startsWith(plain))).toContain(',Bài không nhãn,,');
     const audits = await admin(
       async (c) =>
-        (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.export' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]))
+        (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.export' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]))
           .rows,
     );
     expect(audits.map((a) => a.detail.labelId ?? null)).toEqual([campaign, null]);
@@ -275,7 +275,7 @@ suite('social labels on PostgreSQL (#639)', () => {
       admin(async (c) =>
         (
           await c.query<{ column_name: string }>(
-            "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = $1 AND privilege_type = 'UPDATE' ORDER BY 1",
+            "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = $1 AND privilege_type = 'UPDATE' ORDER BY 1",
             [table],
           )
         ).rows.map((r) => r.column_name),
@@ -287,7 +287,7 @@ suite('social labels on PostgreSQL (#639)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SET LOCAL ROLE ludy_tenant');
           await c.query(statement, params);
         } finally {
           await c.query('ROLLBACK');
@@ -357,7 +357,7 @@ suite('social labels on PostgreSQL (#639)', () => {
     const o = await org();
     const second = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         second,
         'sandbox',

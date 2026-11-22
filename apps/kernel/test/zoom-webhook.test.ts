@@ -79,7 +79,7 @@ describe('the Zoom webhook route', () => {
     expect(await bodyOf(response)).toEqual({ ok: true });
     expect(calls).toHaveLength(1);
     // The provider is a literal of the statement, the host id its one parameter (never concatenated into the SQL).
-    expect(calls[0]?.sql).toContain("crove_kernel.meeting_platform_ring('zoom', $1)");
+    expect(calls[0]?.sql).toContain("ludy_kernel.meeting_platform_ring('zoom', $1)");
     expect(calls[0]?.parameters).toEqual([HOST.toLowerCase()]);
     expect(JSON.stringify(calls)).not.toMatch(/download-token-not-real|Họp khách A/);
     // The transcript notice rings too; both are taken with the previous secret while a rotation is under way.

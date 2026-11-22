@@ -62,7 +62,7 @@ export async function feeAccrualsOf(ctx: Ctx, legalEntityId: string, platform: s
 // The id of an accrual proposal of that platform and month waiting for approval (or approved and not yet run), other than `ownProposalId`.
 export async function pendingFeeAccrualProposal(ctx: Ctx, legalEntityId: string, platform: string, month: string, ownProposalId?: string): Promise<string | null> {
   let query = ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', JOURNAL_VOUCHER_KIND)

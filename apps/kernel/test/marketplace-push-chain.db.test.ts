@@ -181,15 +181,15 @@ suite('Marketplace push chain (#4364)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     const db = createDb(pool);
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
@@ -197,7 +197,7 @@ suite('Marketplace push chain (#4364)', () => {
     api = runtime;
     // The worker's runtime is on the worker login, as in production: it reads the sealed credential as the system.
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registered);
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     expect(config.PUBLIC_URL).toBe(PUBLIC_URL);
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     app = createHttpApp({ config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false }, marketplacePush: { adapters: ['tiktok_shop', 'shopee'] } });
@@ -301,7 +301,7 @@ suite('Marketplace push chain (#4364)', () => {
     sent.length = 0;
     const waiting = shopeeBody(4);
     expect((await post('shopee', shopee.key, waiting, shopeeSign(waiting, `${PUBLIC_URL}/api/marketplace/shopee/webhook/${shopee.key}`))).status).toBe(200);
-    await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, shopee.channelId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, shopee.channelId]);
     // Closed in between: the route does not know the key any more, and what waited is dropped by the claim (nothing is handed out, nothing polled).
     expect((await post('shopee', shopee.key, shopeeBody(5), 'a'.repeat(64))).status).toBe(404);
     expect(await relay()).toEqual({ claimed: 0, tally: { ok: 0, refused: 0, dropped: 0 } });
@@ -313,7 +313,7 @@ suite('Marketplace push chain (#4364)', () => {
   it('keeps the body of every push in no row of the kernel, jobs or finance schemas once the notices are gone: not as text, not as hex, and not in a job the relay sent', async () => {
     expect(await stored()).toEqual([]);
     await admin(async (client) => {
-      const tables = (await client.query<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('crove_kernel', 'crove_jobs', 'crove_finance') AND table_type = 'BASE TABLE'")).rows;
+      const tables = (await client.query<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('ludy_kernel', 'ludy_jobs', 'crove_finance') AND table_type = 'BASE TABLE'")).rows;
       expect(tables.length).toBeGreaterThan(0);
       for (const { table_schema, table_name } of tables) {
         // The row as text shows a bytea column in hex, so the canary is looked for as text and as hex.
@@ -321,7 +321,7 @@ suite('Marketplace push chain (#4364)', () => {
         expect({ table: `${table_schema}.${table_name}`, hit: found[0]?.hit }).toEqual({ table: `${table_schema}.${table_name}`, hit: false });
       }
     });
-    // The queue is a recording fake, so crove_jobs holds nothing here: what a poll job carries is what the relay sent.
+    // The queue is a recording fake, so ludy_jobs holds nothing here: what a poll job carries is what the relay sent.
     expect(JSON.stringify(sent)).not.toContain(CANARY);
   });
 });

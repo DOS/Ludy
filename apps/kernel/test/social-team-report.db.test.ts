@@ -58,7 +58,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
     const { orgId } = await createOrg(rt, asUser(ownerId), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { reviewer: ['admin', await person('reviewer')], second: ['admin', await person('second')], writer: ['member', await person('writer')], leaver: ['member', await person('leaver')], viewer: ['viewer', await person('viewer')] } as const;
     for (const [role, id] of Object.values(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner: ownerId, reviewer: roles.reviewer[1], second: roles.second[1], writer: roles.writer[1], leaver: roles.leaver[1], viewer: roles.viewer[1] };
   }
@@ -66,7 +66,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -94,8 +94,8 @@ suite('social team report on PostgreSQL (#1058)', () => {
   async function submit(o: Org, user: string, postId: string, when: string) {
     await exec(o, user, 'social.post.submit', { postId });
     await owner(
-      `UPDATE crove_kernel.audit_event SET occurred_at = $3 WHERE org_id = $1 AND id = (
-         SELECT id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.submit' AND target_id = $2 ORDER BY occurred_at DESC LIMIT 1)`,
+      `UPDATE ludy_kernel.audit_event SET occurred_at = $3 WHERE org_id = $1 AND id = (
+         SELECT id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.submit' AND target_id = $2 ORDER BY occurred_at DESC LIMIT 1)`,
       [o.orgId, postId, when],
     );
   }
@@ -163,9 +163,9 @@ suite('social team report on PostgreSQL (#1058)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -239,7 +239,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
     await answer(other, lq, q1, 'approved', at('09-02', '12:30'));
 
     // The leaver leaves after all of it.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [a.orgId, a.leaver]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [a.orgId, a.leaver]));
 
     full = await report(a, a.owner);
     rows = new Map(full.members.map((m) => [m.userId, m]));

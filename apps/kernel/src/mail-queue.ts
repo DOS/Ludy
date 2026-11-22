@@ -1,5 +1,5 @@
 // The worker's side of queued mail, step E1b of the Email plan (docs/plan/email.md §3.2, issue #548). A sweep finds
-// the mail waiting to be sent (crove_kernel.mail_queued_due) and queues one job per mail: system and transactional
+// the mail waiting to be sent (ludy_kernel.mail_queued_due) and queues one job per mail: system and transactional
 // mail on kernel-mail-send, marketing on kernel-mail-bulk, worked one at a time with a gap so a campaign never holds
 // up an invoice. A job runs kernel.mail.queue.begin (the suppression check and the 'started' call, committed), renders
 // the mail from its template and merge data, sends it once, and records the outcome with kernel.mail.queue.record.
@@ -77,9 +77,9 @@ interface Sender {
   send(queue: string, data: MailJob, options: Record<string, unknown>): Promise<unknown>;
 }
 
-// Whether the operator holds every org's mail (crove_kernel.global_kill_switch_on('mail'), #886).
+// Whether the operator holds every org's mail (ludy_kernel.global_kill_switch_on('mail'), #886).
 export async function mailHeld(db: Db): Promise<boolean> {
-  const { rows } = await sql<{ on: boolean }>`SELECT crove_kernel.global_kill_switch_on('mail') AS on`.execute(db);
+  const { rows } = await sql<{ on: boolean }>`SELECT ludy_kernel.global_kill_switch_on('mail') AS on`.execute(db);
   return rows[0]?.on === true;
 }
 
@@ -89,7 +89,7 @@ export async function sweepMail(boss: Sender, workerDb: Db, runtime: Runtime, ma
   if (await mailHeld(workerDb)) return 0;
   const repeatable = mailer.enabled && (mailer.sendRetrySafety === 'idempotent' || mailer.sendRetrySafety === 'safe');
   const { rows } = await sql<{ org_id: string; message_id: string; stream: string; state: string; attempts: number }>`
-    SELECT org_id, message_id, stream, state, attempts FROM crove_kernel.mail_queued_due(${SWEEP_LIMIT}::int, ${MAIL_STALE_SECONDS}::int, ${repeatable}::boolean)`.execute(workerDb);
+    SELECT org_id, message_id, stream, state, attempts FROM ludy_kernel.mail_queued_due(${SWEEP_LIMIT}::int, ${MAIL_STALE_SECONDS}::int, ${repeatable}::boolean)`.execute(workerDb);
   let queued = 0;
   for (const row of rows) {
     if (row.state === 'stale') {
@@ -224,11 +224,11 @@ async function withTimeout(mailer: MailProvider, mail: OutboundMail, ms: number)
 }
 
 // Mail retention: the address and subject 13 months after a mail was written, its merge data 30 days after a final
-// status (crove_kernel.mail_retention_purge), in batches until none is left or the run's budget is spent.
+// status (ludy_kernel.mail_retention_purge), in batches until none is left or the run's budget is spent.
 export async function purgeMail(workerDb: Db, batch = 10_000, maxBatches = 100): Promise<Record<string, number>> {
   const cleared: Record<string, number> = {};
   for (let i = 0; i < maxBatches; i++) {
-    const { rows } = await sql<{ store: string; deleted: number; more: boolean }>`SELECT store, deleted, more FROM crove_kernel.mail_retention_purge(${batch}::int)`.execute(workerDb);
+    const { rows } = await sql<{ store: string; deleted: number; more: boolean }>`SELECT store, deleted, more FROM ludy_kernel.mail_retention_purge(${batch}::int)`.execute(workerDb);
     for (const row of rows) cleared[row.store] = (cleared[row.store] ?? 0) + row.deleted;
     const stuck = rows.filter((r) => r.more && r.deleted === 0).map((r) => r.store);
     if (stuck.length > 0) {

@@ -52,17 +52,17 @@ suite('relay batches send on the claim transaction (#1705)', () => {
     }
   }
 
-  // A pending outbox event of the given type, as crove_kernel.emit leaves it; returns its id.
+  // A pending outbox event of the given type, as ludy_kernel.emit leaves it; returns its id.
   const add = (type: string) =>
     admin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `WITH e AS (INSERT INTO crove_kernel.outbox_event (org_id, type, payload) VALUES ($1, $2, '{}') RETURNING org_id, id)
-         INSERT INTO crove_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e RETURNING event_id AS id`,
+        `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload) VALUES ($1, $2, '{}') RETURNING org_id, id)
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e RETURNING event_id AS id`,
         [orgId, type],
       );
       return rows[0]?.id as string;
     });
-  const pending = () => admin(async (c) => (await c.query<{ id: string }>('SELECT event_id AS id FROM crove_kernel.outbox_pending ORDER BY seq')).rows.map((r) => r.id));
+  const pending = () => admin(async (c) => (await c.query<{ id: string }>('SELECT event_id AS id FROM ludy_kernel.outbox_pending ORDER BY seq')).rows.map((r) => r.id));
   const keyOf = (eventId: string) => jobKey(orgId, STANDARD, eventId);
   // The jobs queued under each key, of any state.
   const jobsFor = (eventIds: readonly string[]) =>
@@ -73,7 +73,7 @@ suite('relay batches send on the claim transaction (#1705)', () => {
       );
       return Object.fromEntries(eventIds.map((id) => [id, rows.find((r) => r.key === keyOf(id))?.n ?? 0]));
     });
-  const claim = async (trx: Transaction<Database>) => (await sql<OutboxRow>`SELECT * FROM crove_kernel.outbox_claim(100)`.execute(trx)).rows;
+  const claim = async (trx: Transaction<Database>) => (await sql<OutboxRow>`SELECT * FROM ludy_kernel.outbox_claim(100)`.execute(trx)).rows;
   // The relay's job for an event: one on the standard queue, keyed by the event as the relay keys its jobs.
   const send = (jobs: JobSender, row: OutboxRow) =>
     jobs.send(STANDARD, { orgId: row.org_id, eventId: row.event_id, type: row.type }, { singletonKey: keyOf(row.event_id), retryLimit: 0 });
@@ -92,16 +92,16 @@ suite('relay batches send on the claim transaction (#1705)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const appDb = createDb(appPool);
     const runtime = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const owner = await upsertIdentity(appDb, { issuer: 'relay-batch-test', subject: 'owner', email: 'owner@relay-batch.test', name: null });
     ({ orgId } = await createOrg(runtime, { type: 'user', userId: owner, aal: 'aal1' }, 'Relay batch test'));
     // The worker login, for the claim and for pg-boss, as the worker connects.
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
-    boss = new PgBoss({ connectionString: login('crove_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });
+    boss = new PgBoss({ connectionString: login('ludy_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });
     boss.on('error', () => {});
     await boss.start();
   });
@@ -196,7 +196,7 @@ suite('relay batches send on the claim transaction (#1705)', () => {
 
   it('keeps a per-type relay kill switch: the held rows stay pending and get no job until released', async () => {
     await drain();
-    const set = (engaged: boolean) => admin((c) => c.query('SELECT crove_kernel.global_kill_switch_set($1, $2, $3, $4)', [`relay:${HELD}`, engaged, 'diễn tập', 'ops']));
+    const set = (engaged: boolean) => admin((c) => c.query('SELECT ludy_kernel.global_kill_switch_set($1, $2, $3, $4)', [`relay:${HELD}`, engaged, 'diễn tập', 'ops']));
     await set(true);
     const held = await add(HELD);
     const other = await add(TYPE);

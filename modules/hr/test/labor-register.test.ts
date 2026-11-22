@@ -468,7 +468,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
 
   it('excludes pay metadata and contract terms from employment rows effective after the employee cutoff', async () => {
     const tables: Record<string, Array<Record<string, unknown>>> = {
-      'crove_kernel.legal_entity': [
+      'ludy_kernel.legal_entity': [
         { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
       ],
       'crove_hr.payroll_employee': [
@@ -643,7 +643,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
 
   it('prefers saved Stage 2b-3 contract and probation columns over payroll_line inputs and works without pay runs', async () => {
     const tables: Record<string, Array<Record<string, unknown>>> = {
-      'crove_kernel.legal_entity': [
+      'ludy_kernel.legal_entity': [
         { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
       ],
       'crove_hr.payroll_employee': [
@@ -853,7 +853,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       },
     };
     const tables: Record<string, Array<Record<string, unknown>>> = {
-      'crove_kernel.legal_entity': [
+      'ludy_kernel.legal_entity': [
         { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
       ],
       'crove_hr.department': [
@@ -1016,8 +1016,8 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       },
     };
     const tables: Record<string, Array<Record<string, unknown>>> = {
-      'crove_kernel.tenant': [{ org_id: 'org-1', address: '123 Lê Lợi, Quận 1, TP. Hồ Chí Minh' }],
-      'crove_kernel.legal_entity': [
+      'ludy_kernel.tenant': [{ org_id: 'org-1', address: '123 Lê Lợi, Quận 1, TP. Hồ Chí Minh' }],
+      'ludy_kernel.legal_entity': [
         { id: 'entity-default', org_id: 'org-1', name: 'Công ty Mặc Định', tax_code: '0100000001', is_default: true },
         { id: 'entity-branch', org_id: 'org-1', name: 'Chi nhánh Hai', tax_code: '0100000001-002', is_default: false },
       ],

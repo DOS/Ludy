@@ -57,12 +57,12 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     return url.toString();
   };
 
-  // One transaction as crove_app in the owner's context, committed.
+  // One transaction as ludy_app in the owner's context, committed.
   async function asApp<T>(userId: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
     const c = await appPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const result = await fn(c);
       await c.query('COMMIT');
       return result;
@@ -140,7 +140,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     admin(async (a) => ({
       entries: (await a.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.journal_entry')).rows[0]?.n,
       lines: (await a.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.journal_line')).rows[0]?.n,
-      audit: (await a.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event')).rows[0]?.n,
+      audit: (await a.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.audit_event')).rows[0]?.n,
     }));
 
   beforeAll(async () => {
@@ -152,9 +152,9 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = new pg.Pool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    kyselyPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appPool = new pg.Pool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
+    kyselyPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
     const db = createDb(kyselyPool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     const person = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@expense-variance.test`, name: null });
@@ -163,17 +163,17 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     viewer = await person('viewer');
     ({ orgId } = await createOrg(rt, asUser(owner), 'Biến động chi phí'));
     await admin(async (a) => {
-      main = (await a.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      main = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       const entity = async (name: string) =>
-        (await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'company', $3) RETURNING id`, [orgId, name, owner])).rows[0]?.id as string;
+        (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'company', $3) RETURNING id`, [orgId, name, owner])).rows[0]?.id as string;
       branch = await entity('Công ty con TT99');
       empty = await entity('Pháp nhân chưa có sổ');
       reversals = await entity('Pháp nhân có bút toán đảo');
-      await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, member, viewer]);
+      await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, member, viewer]);
       // The member reads the branch only.
-      await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, branch, owner]);
+      await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member, branch, owner]);
       const party = async (name: string, taxCode: string) =>
-        String((await a.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, $2, $3) RETURNING id`, [orgId, name, taxCode])).rows[0]?.id);
+        String((await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, $2, $3) RETURNING id`, [orgId, name, taxCode])).rows[0]?.id);
       supplierA = await party('Công ty A', '0101234564');
       supplierB = await party('Công ty B', '0301234567');
       // The branch keeps TT99 books for all of 2026, set before it has any entry.

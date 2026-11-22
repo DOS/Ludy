@@ -95,9 +95,9 @@ suite('the "minutes draft ready" notice (#3730)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -106,7 +106,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
       queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries],
     });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 4 });
     pools.push(workerPool);
@@ -118,7 +118,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
     for (const key of ['owner', 'recorder', 'attendee', 'viewer', 'foreign', 'nouse']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'summary-run', subject: key, email: `${key}@summary-run.test`, name: key === 'recorder' ? 'Hà' : null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Tóm tắt chạy')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('foreign'), 'Org khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
   }, 300_000);
 
   afterAll(async () => {
@@ -138,14 +138,14 @@ suite('the "minutes draft ready" notice (#3730)', () => {
   const notices = async (meetingId?: string) =>
     (
       await sqlAdmin<{ user_id: string; subject_type: string | null; subject_id: string | null; detail: Record<string, string>; dedupe_key: string }>(
-        `SELECT user_id, subject_type, subject_id, detail, dedupe_key FROM crove_kernel.notification WHERE org_id = $1 AND kind = $2 ${meetingId ? 'AND subject_id = $3' : ''} ORDER BY created_at`,
+        `SELECT user_id, subject_type, subject_id, detail, dedupe_key FROM ludy_kernel.notification WHERE org_id = $1 AND kind = $2 ${meetingId ? 'AND subject_id = $3' : ''} ORDER BY created_at`,
         meetingId ? [orgId, KIND, meetingId] : [orgId, KIND],
       )
     ).rows;
   const mails = async (meetingId?: string) =>
     (
       await sqlAdmin<{ to_address: string; subject: string | null; source: string; source_id: string | null; payload: Record<string, unknown> | null; status: string }>(
-        `SELECT to_address, subject, source, source_id, payload, status FROM crove_kernel.mail_message WHERE org_id = $1 AND template_key = $2 ${meetingId ? 'AND source_id = $3' : ''} ORDER BY created_at`,
+        `SELECT to_address, subject, source, source_id, payload, status FROM ludy_kernel.mail_message WHERE org_id = $1 AND template_key = $2 ${meetingId ? 'AND source_id = $3' : ''} ORDER BY created_at`,
         meetingId ? [orgId, TEMPLATE, meetingId] : [orgId, TEMPLATE],
       )
     ).rows;
@@ -157,7 +157,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
 
   // The worker's part: the relay routes each event of the type to the dispatch command in NOTIFY_COMMANDS, which runs in the system's context with the event's id only.
   const events = async (meetingId: string) =>
-    (await sqlAdmin<{ id: string; payload: Record<string, unknown> }>(`SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'meetings.summary.ready' AND payload ->> 'meetingId' = $2 ORDER BY created_at`, [orgId, meetingId])).rows;
+    (await sqlAdmin<{ id: string; payload: Record<string, unknown> }>(`SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'meetings.summary.ready' AND payload ->> 'meetingId' = $2 ORDER BY created_at`, [orgId, meetingId])).rows;
   const dispatch = async (eventId: string) => {
     const route = NOTIFY_COMMANDS.get('meetings.summary.ready');
     expect(route).toEqual({ module: 'meetings', command: 'meetings.summary.ready_notice' });
@@ -222,7 +222,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
   });
 
   it('turning the kind off in the notification settings turns off the in-app notice and the email, and the run still finishes', async () => {
-    await sqlAdmin(`INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)`, [orgId, users.recorder, KIND]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)`, [orgId, users.recorder, KIND]);
     try {
       const meetingId = await seedMeeting('recorder');
       const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
@@ -231,7 +231,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
       expect(await notices(meetingId)).toEqual([]);
       expect(await mails(meetingId)).toEqual([]);
     } finally {
-      await sqlAdmin(`DELETE FROM crove_kernel.notification_mute WHERE org_id = $1 AND user_id = $2 AND kind = $3`, [orgId, users.recorder, KIND]);
+      await sqlAdmin(`DELETE FROM ludy_kernel.notification_mute WHERE org_id = $1 AND user_id = $2 AND kind = $3`, [orgId, users.recorder, KIND]);
     }
   });
 
@@ -244,17 +244,17 @@ suite('the "minutes draft ready" notice (#3730)', () => {
     expect(await notices(meetingId)).toHaveLength(1);
     expect(await mails(meetingId)).toHaveLength(1);
     // An event that is not the ready event writes nothing.
-    const other = await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type <> 'meetings.summary.ready' LIMIT 1`, [orgId]);
+    const other = await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type <> 'meetings.summary.ready' LIMIT 1`, [orgId]);
     if (other.rows[0]) expect(await dispatch(other.rows[0].id)).toEqual({ notified: false, mailed: false });
     // A recorder whose account is disabled gets the in-app notice (it is theirs when they return) and no mail.
     const meeting2 = await seedMeeting('recorder');
     await runMeetingSummary(deps(), orgId, asUser('recorder'), meeting2);
-    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.recorder]);
+    await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.recorder]);
     try {
       expect(await dispatchAll(meeting2)).toEqual([{ notified: true, mailed: false }]);
       expect(await mails(meeting2)).toEqual([]);
     } finally {
-      await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.recorder]);
+      await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.recorder]);
     }
   });
 
@@ -297,7 +297,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
     const meetingId = await seedMeeting('recorder');
     const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
     await dispatchAll(meetingId);
-    const audit = await sqlAdmin<{ command: string; detail: unknown }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('meetings.summary.ready', 'meetings.summary.ready_notice') AND detail ->> 'meetingId' = $2`, [orgId, meetingId]);
+    const audit = await sqlAdmin<{ command: string; detail: unknown }>(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('meetings.summary.ready', 'meetings.summary.ready_notice') AND detail ->> 'meetingId' = $2`, [orgId, meetingId]);
     expect(audit.rows.map((r) => r.command).sort()).toEqual(['meetings.summary.ready', 'meetings.summary.ready_notice']);
     const text = JSON.stringify(audit.rows);
     expect(text).toContain(out.runId);

@@ -17,7 +17,7 @@ suite('the Hộp thư proposal twins (#3863)', () => {
   beforeAll(async () => {
     h = await startHarness('engage_inbox');
     connectionId = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
   }, 300_000);
   afterAll(async () => {
     await h?.stop();
@@ -29,12 +29,12 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     const messageId = `m-${threadId}`;
     const event: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId, direction: 'in', contact: { id: contactId, name: 'Trần Thị Khách' }, text, at: new Date(Date.UTC(2026, 10, 2, 3, 0, tick++)).toISOString() };
     await h.system<ConversationIngested>('conversations', 'kernel.conversation.ingest', { connectionId, events: [event] });
-    const conversation = (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
-    const message = (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = $3', [h.orgId, conversation, 'in'])).rows[0]?.id as string;
+    const conversation = (await h.q<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
+    const message = (await h.q<{ id: string }>('SELECT id FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = $3', [h.orgId, conversation, 'in'])).rows[0]?.id as string;
     return { conversation, message };
   }
-  const outgoing = async (conversation: string) => (await h.q<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [h.orgId, conversation])).rows[0]?.n ?? 0;
-  const hiddenAt = async (message: string) => (await h.q<{ hidden_at: Date | null; hide_request: unknown }>('SELECT hidden_at, hide_request FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [h.orgId, message])).rows[0];
+  const outgoing = async (conversation: string) => (await h.q<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [h.orgId, conversation])).rows[0]?.n ?? 0;
+  const hiddenAt = async (message: string) => (await h.q<{ hidden_at: Date | null; hide_request: unknown }>('SELECT hidden_at, hide_request FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [h.orgId, message])).rows[0];
 
   it('reply: waits as a tainted proposal, sends nothing until a person approves, then sends once; the reply window is judged at the approval', async () => {
     const { conversation } = await comment('Giá bao nhiêu vậy shop?');
@@ -50,13 +50,13 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     expect(await h.ran('kernel.conversation.reply')).toBe(0);
 
     // The window closes while it waits: the approval is refused by the reply's own check, the proposal stays pending, nothing is sent.
-    await h.q("UPDATE crove_kernel.conversation SET reply_window_until = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [h.orgId, conversation]);
+    await h.q("UPDATE ludy_kernel.conversation SET reply_window_until = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [h.orgId, conversation]);
     await expect(h.approve(made.proposalId)).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED' });
     expect((await h.proposal(made.proposalId)).status).toBe('pending');
     expect(await outgoing(conversation)).toBe(0);
 
     // Open again: approved, it runs once and the proposal is executed.
-    await h.q('UPDATE crove_kernel.conversation SET reply_window_until = NULL WHERE org_id = $1 AND id = $2', [h.orgId, conversation]);
+    await h.q('UPDATE ludy_kernel.conversation SET reply_window_until = NULL WHERE org_id = $1 AND id = $2', [h.orgId, conversation]);
     await h.approve(made.proposalId);
     expect((await h.proposal(made.proposalId)).status).toBe('executed');
     expect(await outgoing(conversation)).toBe(1);
@@ -135,7 +135,7 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     expect((await h.proposal(made.proposalId)).payload).toMatchObject({ conversationId: conversation });
     // And a payload that reached the table in capitals by any other way (an older row) is found by the erasure all the same.
     const hide = await h.propose(actor, 'kernel.conversation.hide_approved', { messageId: message, hidden: true });
-    await h.q("UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{messageId}', to_jsonb(upper(payload ->> 'messageId'))) WHERE org_id = $1 AND id = $2", [h.orgId, hide.proposalId]);
+    await h.q("UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{messageId}', to_jsonb(upper(payload ->> 'messageId'))) WHERE org_id = $1 AND id = $2", [h.orgId, hide.proposalId]);
     expect(((await h.proposal(hide.proposalId)).payload as { messageId: string }).messageId).toBe(message.toUpperCase());
     await h.runtime.execute('kernel.conversation.erase_contact', { conversationId: conversation, confirm: true }, { actor: h.person(h.owner, true), orgId: h.orgId });
     for (const id of [made.proposalId, hide.proposalId]) {
@@ -157,7 +157,7 @@ suite('the Hộp thư proposal twins (#3863)', () => {
       ],
     } satisfies { connectionId: string; events: ConversationEvent[] });
     const own = await comment('Tin của khách B ở thread khác', `ub-${threadId}`);
-    const bMessage = (await h.q<{ id: string }>(`SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation_identity i ON i.org_id = m.org_id AND i.id = m.author_identity_id WHERE m.org_id = $1 AND i.external_user_id = $2 AND m.external_message_id = $3`, [h.orgId, `ub-${threadId}`, `b-${threadId}`])).rows[0]?.id as string;
+    const bMessage = (await h.q<{ id: string }>(`SELECT m.id FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation_identity i ON i.org_id = m.org_id AND i.id = m.author_identity_id WHERE m.org_id = $1 AND i.external_user_id = $2 AND m.external_message_id = $3`, [h.orgId, `ub-${threadId}`, `b-${threadId}`])).rows[0]?.id as string;
     expect(bMessage).toBeTruthy();
     const { actor } = await h.grant();
     const hide = await h.propose(actor, 'kernel.conversation.hide_approved', { messageId: bMessage, hidden: true });
@@ -192,7 +192,7 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     // The text may be a reply in a thread a member or a viewer may not read (a private message, an email): only the people who approve, owners and admins, see it.
     for (const role of ['member', 'viewer'] as const) {
       const id = await upsertIdentity(h.db, { issuer: 'engage-inbox', subject: `${role}-${randomUUID()}`, email: `${role}-${randomUUID().slice(0, 8)}@engage-inbox.test`, name: role });
-      await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
+      await h.q('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
       const asRole = await h.runtime.query<{ engage: unknown; kind: string; title: string }>('kernel.inbox.get', { id: made.proposalId }, { actor: h.person(id), orgId: h.orgId });
       expect(asRole.engage, role).toBeNull();
       expect(JSON.stringify(asRole), role).not.toContain('Dạ <b>100k</b> ạ');

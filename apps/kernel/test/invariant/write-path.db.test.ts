@@ -42,7 +42,7 @@ suite('one write path on PostgreSQL (#680)', () => {
 
   // A query and a command that insert the same kind of row on ctx.trx.
   const party = (ctx: QueryContext) =>
-    ctx.trx.insertInto('crove_kernel.party').values({ org_id: ctx.orgId, name: `write-path ${randomUUID()}` }).returning('id').executeTakeFirstOrThrow();
+    ctx.trx.insertInto('ludy_kernel.party').values({ org_id: ctx.orgId, name: `write-path ${randomUUID()}` }).returning('id').executeTakeFirstOrThrow();
   const writingQuery = defineQuery({ name: 'test.write_path.query_writes', input: z.object({}), access: ['owner'], handler: (ctx) => party(ctx) });
   const writingCommand = defineCommand({ sideEffect: 'none', name: 'test.write_path.command_writes', input: z.object({}), risk: 'R0', access: ['owner'], handler: (ctx) => party(ctx) });
 

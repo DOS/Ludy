@@ -51,7 +51,7 @@ export const summaryFigures = defineQuery({
     const ids = [...new Set(input.connectionIds ?? [])];
     refuseOutside(scope, ids);
     if (ids.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
       if (found.length !== ids.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     }
     if (input.labelId) {
@@ -80,7 +80,7 @@ export const summaryFigures = defineQuery({
     const top = await topPosts(ctx.trx, ctx.orgId, span, filter);
     const conns = [...new Set([...totals.channels.map((c) => c.connectionId), ...top.map((p) => p.conn)])];
     const names = new Map(
-      conns.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', conns).execute()).map((c) => [c.id, c.display_name] as const),
+      conns.length === 0 ? [] : (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', conns).execute()).map((c) => [c.id, c.display_name] as const),
     );
     // The goals as the client report shows them: a period of exactly one month, no label; the org's own only when the
     // caller sees and chose every channel (a limited member gets their channels' goals only, as social.goal.progress).
@@ -110,7 +110,7 @@ async function topPosts(trx: Trx, orgId: string, span: Span, filter: SpanFilter)
     filter.external && !filter.labelId
       ? sql`UNION ALL
         SELECT e.channel_connection_id, c.provider, e.excerpt, e.published_at, e.metrics FROM crove_social.external_post e
-        JOIN crove_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
+        JOIN ludy_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
         WHERE e.org_id = ${orgId} AND ${inSpan(span, 'e.published_at')} AND ${channelKept(filter, 'e.channel_connection_id')}
           AND NOT crove_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)`
       : sql``;

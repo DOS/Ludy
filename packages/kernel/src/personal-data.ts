@@ -71,7 +71,7 @@ export interface PersonalDataColumn {
   // Private items (ADR-0037): the finder lists a row only when it is shared ('unless_shared': its visibility is 'org'),
   // or never ('always'); private ones are counted per author through crove_notes.private_matches instead, with no text.
   privateRows?: 'unless_shared' | 'always';
-  // A machinery table closed to crove_tenant (such as crove_sign.signing_otp): findPersonalData skips direct SELECT,
+  // A machinery table closed to ludy_tenant (such as crove_sign.signing_otp): findPersonalData skips direct SELECT,
   // while erase invokes the table's narrow SECURITY DEFINER helper.
   machinery?: true;
   // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
@@ -83,18 +83,18 @@ export interface PersonalDataColumn {
 // Keyed by schema.table.column.
 export const PERSONAL_DATA_COLUMNS = {
   // Parties: suppliers, customers and other counterparties, people among them.
-  'crove_kernel.party.name': {
+  'ludy_kernel.party.name': {
     kind: 'name',
     handling: 'keep_legal',
     reason: 'The legal name of a party on recorded invoices and vouchers is part of the accounting records; a party with no document is erased',
   },
-  'crove_kernel.party.tax_code': {
+  'ludy_kernel.party.tax_code': {
     kind: 'tax_code',
     handling: 'keep_legal',
     reason: 'The tax code of a party on recorded invoices and vouchers is part of the accounting records; a party with no document is erased',
   },
-  'crove_kernel.party.email': { kind: 'email', handling: 'erase', reason: 'Contact detail, not part of the books' },
-  'crove_kernel.party.phone': { kind: 'phone', handling: 'erase', reason: 'Contact detail, not part of the books' },
+  'ludy_kernel.party.email': { kind: 'email', handling: 'erase', reason: 'Contact detail, not part of the books' },
+  'ludy_kernel.party.phone': { kind: 'phone', handling: 'erase', reason: 'Contact detail, not part of the books' },
   // A visitor's booking on a public booking page (#1318).
   'crove_crm.booking.visitor_name': { kind: 'name', handling: 'erase', reason: 'The name a visitor gave when booking a meeting' },
   'crove_crm.booking.email': { kind: 'email', handling: 'erase', reason: 'The address a visitor gave when booking a meeting' },
@@ -106,59 +106,59 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_crm.import_row.phone': { kind: 'phone', handling: 'erase', reason: 'The number as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
   'crove_crm.import_row.tax_code': { kind: 'tax_code', handling: 'erase', reason: 'The tax code as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
   'crove_crm.import_row.address': { kind: 'address', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
-  'crove_kernel.party.address': {
+  'ludy_kernel.party.address': {
     kind: 'address',
     handling: 'erase',
     reason: 'Contact detail; the address printed on an invoice stays in the stored invoice file',
   },
   // Invites and mail.
-  'crove_kernel.member_invite.email': {
+  'ludy_kernel.member_invite.email': {
     kind: 'email',
     handling: 'keep_record',
     reason: 'An invite is an append-only record of who was invited by whom; the retention purge deletes it 90 days after it is accepted, revoked or expired',
   },
-  'crove_kernel.mail_message.to_address': {
+  'ludy_kernel.mail_message.to_address': {
     kind: 'email',
     handling: 'erase',
     reason: 'The recipient of a mail Crove sent; the keyed hash stays so a suppression still holds. A mail already delivered cannot be recalled: the erasure drops the copy Crove holds (and, for a meeting follow-up mail, the copy of its text), not the copies in the recipients\' mailboxes',
   },
-  'crove_kernel.mail_message.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash of the recipient (crove_kernel.mail_address_hash), not the address' },
-  'crove_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
-  'crove_kernel.inbound_message.from_address': { kind: 'email', handling: 'erase', reason: 'The sender of a forwarded mail; the stored file keeps the document itself' },
-  'crove_kernel.inbound_message.body_text': { kind: 'other', handling: 'erase', reason: 'The text of a forwarded mail (#779), which may name or describe its sender; erased with the address of its sender' },
-  'crove_kernel.conversation_identity.display_name': {
+  'ludy_kernel.mail_message.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash of the recipient (ludy_kernel.mail_address_hash), not the address' },
+  'ludy_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
+  'ludy_kernel.inbound_message.from_address': { kind: 'email', handling: 'erase', reason: 'The sender of a forwarded mail; the stored file keeps the document itself' },
+  'ludy_kernel.inbound_message.body_text': { kind: 'other', handling: 'erase', reason: 'The text of a forwarded mail (#779), which may name or describe its sender; erased with the address of its sender' },
+  'ludy_kernel.conversation_identity.display_name': {
     kind: 'name',
     handling: 'keep_record',
     reason:
       'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
   },
-  'crove_kernel.conversation_identity.external_user_id': {
+  'ludy_kernel.conversation_identity.external_user_id': {
     kind: 'email',
     handling: 'keep_record',
     reason:
       "For an email conversation the customer's address (#2439), found by a search of that address: erased with its threads by kernel.conversation.erase_contact, the retention purge and the offboarding of the org, as the display name is, so the generic erase leaves it alone",
   },
-  'crove_kernel.conversation_message.email_refs': {
+  'ludy_kernel.conversation_message.email_refs': {
     kind: 'other',
     handling: 'not_personal',
     reason:
       'The Message-IDs a mail answers (#2439), kept only to join a reply to its thread: opaque ids made by mail programs, not addresses or text. They go with the message when the contact is erased, the retention purge runs or the org is offboarded',
   },
-  'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
+  'ludy_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
-  'crove_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },
-  'crove_kernel.tenant.address': { kind: 'address', handling: 'keep_org', reason: "The business's registered address, printed on its returns" },
-  'crove_kernel.tenant.contact_email': { kind: 'email', handling: 'erase', reason: 'A contact person of the business' },
+  'ludy_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },
+  'ludy_kernel.tenant.address': { kind: 'address', handling: 'keep_org', reason: "The business's registered address, printed on its returns" },
+  'ludy_kernel.tenant.contact_email': { kind: 'email', handling: 'erase', reason: 'A contact person of the business' },
   // Legal entities (#1278): the companies, branches and household businesses the org keeps books for. In an accounting
   // firm's org they are its clients, and a household's name and 12-digit code are usually its owner's name and national
   // ID number, so only the default entity, the org itself, is the org's own identity (#1312).
-  'crove_kernel.legal_entity.name': {
+  'ludy_kernel.legal_entity.name': {
     kind: 'name',
     handling: 'keep_legal',
     reason: "The legal name of a business or household the org keeps books for; a household's is usually its owner's name. Kept with its books",
     override: { when: 'is_default', handling: 'keep_org', reason: "The name of the org's default legal entity, the business itself" },
   },
-  'crove_kernel.legal_entity.tax_code': {
+  'ludy_kernel.legal_entity.tax_code': {
     kind: 'tax_code',
     handling: 'keep_legal',
     reason: "The tax code of a business or household the org keeps books for; a household's is its owner's national ID number. Kept with its books",
@@ -172,38 +172,38 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: "The name of the household's representative, printed on its books of Circular 152 beside the signature; part of the accounting records, kept with them and removed with the org",
   },
   // Agents and connected accounts.
-  'crove_kernel.agent.display_name': { kind: 'other', handling: 'not_personal', reason: 'The name of an AI agent' },
-  'crove_kernel.channel_connection.display_name': {
+  'ludy_kernel.agent.display_name': { kind: 'other', handling: 'not_personal', reason: 'The name of an AI agent' },
+  'ludy_kernel.channel_connection.display_name': {
     kind: 'name',
     handling: 'erase',
     reason: 'The name of a connected social account, which may be a person; disconnecting removes the account',
   },
   // The sealed secrets of connected accounts (#3854, #3875): the MISA AMIS access code is one of them, a credential of the org's own account that may name a person who made it. The column holds only the sealed
   // envelope (sealed with the channel broker's key, bound to the org, the provider and the entity); it is closed to the tenant role, so the finder does not read it, and it is deleted when the connection is closed.
-  'crove_kernel.credential.envelope': {
+  'ludy_kernel.credential.envelope': {
     kind: 'other',
     handling: 'keep_org',
     machinery: true,
     reason: 'The sealed secret of a connected account (a social token, the MISA AMIS access code); never readable by the tenant, deleted when the connection is closed (disconnect) and with the org',
   },
   // A member's connected outside calendar (#2123): the member's own account address, kept only for them.
-  'crove_kernel.calendar_connection.display_name': {
+  'ludy_kernel.calendar_connection.display_name': {
     kind: 'email',
     handling: 'erase',
     reason: "The member's own address in an outside calendar (their Google account), the same value as external_account; disconnecting removes it, and it is not exported with the org",
   },
-  'crove_kernel.calendar_connection.external_account': {
+  'ludy_kernel.calendar_connection.external_account': {
     kind: 'email',
     handling: 'erase',
     reason: "The member's own address in an outside calendar (their Google account); disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
   },
   // A member's connected meeting platform (meetings integrations C1, #3173): the member's own account on Google Meet, Zoom or Microsoft Teams, kept only for them.
-  'crove_kernel.meeting_platform_connection.display_name': {
+  'ludy_kernel.meeting_platform_connection.display_name': {
     kind: 'email',
     handling: 'erase',
     reason: "The member's own account on a meeting platform (their address there), the same value as external_account; disconnecting removes it, and it is not exported with the org",
   },
-  'crove_kernel.meeting_platform_connection.external_account': {
+  'ludy_kernel.meeting_platform_connection.external_account': {
     kind: 'email',
     handling: 'erase',
     reason: "The member's own account on a meeting platform; disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
@@ -212,7 +212,7 @@ export const PERSONAL_DATA_COLUMNS = {
   // The title of a recording a meeting platform offers the member (meetings integrations C1, #3173), read by that member alone through row security. A suggested or dismissed row is deleted 14 days after the
   // recording's date; a failed or imported row keeps it until the member disconnects the platform, the org is purged or the retry is dismissed; an import also starts the new meeting's own title as a copy of it, and
   // that copy follows the meeting's text rules, not this row's.
-  'crove_kernel.meeting_platform_recording.title': {
+  'ludy_kernel.meeting_platform_recording.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The title of a recording a meeting platform offers the member, which may name or describe a person: read by that member alone; a suggestion is deleted 14 days after the recording, a failed or imported row keeps it until the member disconnects the platform or the org is purged, and an import copies it into the new meeting's own title",
@@ -268,12 +268,12 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_finance.portal_invoice_row.seller_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   // Free text that can name a person (#1948): searched for the value anywhere inside it. Social's posts and comments
   // are left out while Social is paused (decision D5).
-  'crove_kernel.activity.summary': {
+  'ludy_kernel.activity.summary': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A line of a record's timeline, which may quote a person's email or phone; the value is replaced inside it",
   },
-  'crove_kernel.task_comment.body': {
+  'ludy_kernel.task_comment.body': {
     kind: 'free_text',
     handling: 'keep_record',
     reason: 'A comment on a task is an append-only record of the work, which the erase command cannot change; it goes with the org',
@@ -344,17 +344,17 @@ export const PERSONAL_DATA_COLUMNS = {
   },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
-  'crove_kernel.task.title': {
+  'ludy_kernel.task.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A task's title, which may quote a person's email or phone; the value is replaced inside it",
   },
-  'crove_kernel.task.description': {
+  'ludy_kernel.task.description': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A task's description, which may quote a person's email or phone; the value is replaced inside it",
   },
-  'crove_kernel.task.checklist': {
+  'ludy_kernel.task.checklist': {
     kind: 'free_text',
     handling: 'erase',
     jsonbSteps: true,
@@ -709,7 +709,7 @@ export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
 export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 
 // Columns that hold a value sealed under its subject's key (ADR-0017, #2640; `<schema>.<table>.<column>`, the place ctx.seal takes). An erasure
-// deletes the subject's key (crove_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling
+// deletes the subject's key (ludy_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling
 // `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
 // here is in no other registry above (apps/kernel/test/personal-data.test.ts).
 export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {
@@ -743,13 +743,13 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
   },
 };
 
-// The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,
+// The column names the invariant test treats as personal data. A column of ludy_kernel, crove_finance, crove_social,
 // crove_crm, crove_notes, crove_hr or crove_meetings whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
 // sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['ludy_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column
@@ -773,16 +773,16 @@ export function personalDataProbe(value: string): Probe | null {
 }
 
 // Free text (#1678, shared with #1948): whether a text column mentions the probe's email address or digits among other
-// words, and the text with every mention replaced by a mark. Both go through crove_kernel.text_mentions and
+// words, and the text with every mention replaced by a mark. Both go through ludy_kernel.text_mentions and
 // text_redact (20261106200000), which hold the one pattern: a whole address, not part of a longer one; digits with the
 // spaces, dots, brackets or dashes people write between them, and a phone with or without +84. A column of another
 // type is read as text (an array or jsonb as its text form, where an address or a number reads as itself).
 export function freeTextMatch(probe: Probe, column: RawBuilder<unknown>): RawBuilder<boolean> {
-  return sql<boolean>`crove_kernel.text_mentions(${column}::text, ${probe.kind}, ${probeValue(probe)})`;
+  return sql<boolean>`ludy_kernel.text_mentions(${column}::text, ${probe.kind}, ${probeValue(probe)})`;
 }
 
 export function freeTextRedact(probe: Probe, column: RawBuilder<unknown>, mark: string): RawBuilder<string> {
-  return sql<string>`crove_kernel.text_redact(${column}::text, ${probe.kind}, ${probeValue(probe)}, ${mark})`;
+  return sql<string>`ludy_kernel.text_redact(${column}::text, ${probe.kind}, ${probeValue(probe)}, ${mark})`;
 }
 
 const templateTasksMatch = (probe: Probe, column: RawBuilder<unknown>): RawBuilder<boolean> => sql<boolean>`
@@ -987,7 +987,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   // Project weekly status mails (#2609): summary and subject are free text typed by a manager or seeded by AI; search both for personal data.
   const weeklyMails = await sql<{ id: string; org_id: string; source: string; source_id: string | null; status: string; subject: string | null; created_at: Date }>`
     SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
-      FROM crove_kernel.mail_message m
+      FROM ludy_kernel.mail_message m
      WHERE m.org_id = ${orgId}::uuid
        AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
        AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
@@ -997,7 +997,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   if (weeklyMails.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
   for (const row of weeklyMails.rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
     matches.push({
-      column: 'crove_kernel.mail_message.payload',
+      column: 'ludy_kernel.mail_message.payload',
       handling: 'erase',
       reason: PROJECT_WEEKLY_MAIL_REASON,
       rowId: row.id,
@@ -1118,13 +1118,13 @@ export function heldFilesReason(until: Date | null): string {
 // shorter number may be an amount or a voucher number there, so those rows are listed for the owner instead, with this
 // reason.
 export const ACTIVITY_REDACT_MIN_DIGITS = 10;
-// What a quoted value becomes in free text the erasure changes, as crove_kernel.personal_data_redact_activity writes it.
+// What a quoted value becomes in free text the erasure changes, as ludy_kernel.personal_data_redact_activity writes it.
 export const REDACTED_MARK = '[đã xóa]';
 const SHORT_NUMBER_COLUMNS = new Set([
-  'crove_kernel.activity.summary',
-  'crove_kernel.task.title',
-  'crove_kernel.task.description',
-  'crove_kernel.task.checklist',
+  'ludy_kernel.activity.summary',
+  'ludy_kernel.task.title',
+  'ludy_kernel.task.description',
+  'ludy_kernel.task.checklist',
   'crove_projects.project.name',
   'crove_projects.project.description',
   'crove_projects.project.template_tasks',
@@ -1215,7 +1215,7 @@ export const personalDataNotify = defineCommand({
     // The authors a notification reaches: members now, but the owner sending it (dispatch leaves out the actor).
     const actor = ctx.actor.userId;
     const members = named.length === 0 ? [] : await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select('user_id')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', 'in', named.map((a) => a.authorUserId))
@@ -1293,14 +1293,14 @@ export const personalDataErase = defineCommand({
              (EXISTS (SELECT 1 FROM crove_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
-        FROM crove_kernel.party p
+        FROM ludy_kernel.party p
        WHERE p.org_id = ${ctx.orgId}::uuid AND ${partyMatch}
        FOR UPDATE OF p`.execute(ctx.trx);
     let keptParties = 0;
     for (const party of parties) {
       const forget = !party.documented;
       await ctx.trx
-        .updateTable('crove_kernel.party')
+        .updateTable('ludy_kernel.party')
         .set((eb) => ({
           email: null,
           phone: null,
@@ -1319,21 +1319,21 @@ export const personalDataErase = defineCommand({
       if (forget) {
         // The matched parties count their own link in the loop; the others are counted here.
         const unlinked = await ctx.trx
-          .updateTable('crove_kernel.party')
+          .updateTable('ludy_kernel.party')
           .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
           .where('org_id', '=', ctx.orgId)
           .where('company_id', '=', party.id)
           .$if(parties.length > 0, (qb) => qb.where('id', 'not in', parties.map((p) => p.id)))
           .executeTakeFirst();
-        add('crove_kernel.party.company_id', Number(unlinked.numUpdatedRows));
+        add('ludy_kernel.party.company_id', Number(unlinked.numUpdatedRows));
       }
-      add('crove_kernel.party.email', Number(party.email));
-      add('crove_kernel.party.phone', Number(party.phone));
-      add('crove_kernel.party.address', Number(party.address));
-      add('crove_kernel.party.company_id', Number(party.company));
+      add('ludy_kernel.party.email', Number(party.email));
+      add('ludy_kernel.party.phone', Number(party.phone));
+      add('ludy_kernel.party.address', Number(party.address));
+      add('ludy_kernel.party.company_id', Number(party.company));
       if (forget) {
-        add('crove_kernel.party.name', 1);
-        add('crove_kernel.party.tax_code', Number(party.tax_code));
+        add('ludy_kernel.party.name', 1);
+        add('ludy_kernel.party.tax_code', Number(party.tax_code));
       } else {
         keptParties += 1;
       }
@@ -1411,7 +1411,7 @@ export const personalDataErase = defineCommand({
           duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
           conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
           invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
-          new_companies = (SELECT count(DISTINCT crove_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
+          new_companies = (SELECT count(DISTINCT ludy_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
                            WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new' AND r.company_state = 'new')
         WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
     }
@@ -1444,20 +1444,20 @@ export const personalDataErase = defineCommand({
     if (probe.kind === 'email') {
       // A mail from the person goes with its text (#779), which may name or describe them.
       const { rows: inbound } = await sql<{ body_text: boolean }>`
-        UPDATE crove_kernel.inbound_message t SET from_address = NULL, body_text = NULL
-          FROM crove_kernel.inbound_message o
+        UPDATE ludy_kernel.inbound_message t SET from_address = NULL, body_text = NULL
+          FROM ludy_kernel.inbound_message o
          WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND ${match('email', 't.from_address') ?? never}
          RETURNING o.body_text IS NOT NULL AS body_text`.execute(ctx.trx);
-      add('crove_kernel.inbound_message.from_address', inbound.length);
-      add('crove_kernel.inbound_message.body_text', inbound.filter((m) => m.body_text).length);
+      add('ludy_kernel.inbound_message.from_address', inbound.length);
+      add('ludy_kernel.inbound_message.body_text', inbound.filter((m) => m.body_text).length);
       const mails = await sql`
-        UPDATE crove_kernel.mail_message t SET to_address = NULL
+        UPDATE ludy_kernel.mail_message t SET to_address = NULL
          WHERE t.org_id = ${ctx.orgId}::uuid AND ${match('email', 't.to_address') ?? never}`.execute(ctx.trx);
-      add('crove_kernel.mail_message.to_address', Number(mails.numAffectedRows ?? 0));
+      add('ludy_kernel.mail_message.to_address', Number(mails.numAffectedRows ?? 0));
       const contact = await sql`
-        UPDATE crove_kernel.tenant t SET contact_email = NULL
+        UPDATE ludy_kernel.tenant t SET contact_email = NULL
          WHERE t.org_id = ${ctx.orgId}::uuid AND ${match('email', 't.contact_email') ?? never}`.execute(ctx.trx);
-      add('crove_kernel.tenant.contact_email', Number(contact.numAffectedRows ?? 0));
+      add('ludy_kernel.tenant.contact_email', Number(contact.numAffectedRows ?? 0));
       // A schedule keeps its other recipients; one left with nobody is deleted (it mailed only this person).
       // Deleted first, so an address listed twice in different cases never leaves an empty list.
       const dropped = await sql`
@@ -1696,7 +1696,7 @@ export const personalDataErase = defineCommand({
       const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${r.meeting_id}`}, 0)) AS ok`.execute(ctx.trx);
       if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa hoặc đang gửi thư cùng lúc; hãy thử lại sau ít phút');
       const dropped = await ctx.trx
-        .updateTable('crove_kernel.mail_message')
+        .updateTable('ludy_kernel.mail_message')
         .set({ payload: null, subject: null })
         .where('org_id', '=', ctx.orgId)
         .where('source', '=', FOLLOWUP_MAIL_SOURCE)
@@ -1719,7 +1719,7 @@ export const personalDataErase = defineCommand({
             SELECT m.source_id,
                    EXISTS (SELECT 1 FROM crove_meetings.meeting g WHERE g.org_id = m.org_id AND g.id = m.source_id) AS readable,
                    m.payload IS NOT NULL AS text_kept
-              FROM crove_kernel.mail_message m
+              FROM ludy_kernel.mail_message m
              WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
                AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})`.execute(ctx.trx)
         ).rows,
@@ -1740,7 +1740,7 @@ export const personalDataErase = defineCommand({
       if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa hoặc đang gửi thư cùng lúc; hãy thử lại sau ít phút');
       // Selected again by the meeting once the lock is held, so a send that committed after the scan above is dropped too.
       const dropped = await sql<{ status: string }>`
-        UPDATE crove_kernel.mail_message m SET payload = NULL, subject = NULL
+        UPDATE ludy_kernel.mail_message m SET payload = NULL, subject = NULL
          WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND m.source_id = ${meetingId}::uuid
            AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
            AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
@@ -1768,8 +1768,8 @@ export const personalDataErase = defineCommand({
     // too).
     if (!shortNumber) {
       const { rows: redacted } = await sql<{ rows: number }>`
-        SELECT crove_kernel.personal_data_redact_activity(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-      add('crove_kernel.activity.summary', Number(redacted[0]?.rows ?? 0));
+        SELECT ludy_kernel.personal_data_redact_activity(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+      add('ludy_kernel.activity.summary', Number(redacted[0]?.rows ?? 0));
 
       // MISA AMIS's refusal text on a pushed voucher (#4015): cleared on the refused rows that quote the value, through the owner-only definer (the table's guard lets a tenant role move a row only along its graph);
       // the row and its state stay.
@@ -1801,7 +1801,7 @@ export const personalDataErase = defineCommand({
         ${REDACTED_MARK}
       )`;
       const { rows: tasks } = await sql<{ title: boolean; description: boolean; checklist: boolean }>`
-        UPDATE crove_kernel.task t
+        UPDATE ludy_kernel.task t
            SET title = CASE WHEN ${title} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), REDACTED_MARK)}, 300) ELSE t.title END,
                description = CASE WHEN ${description} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.description'), REDACTED_MARK)}, 10000)
                                   ELSE t.description END,
@@ -1819,15 +1819,15 @@ export const personalDataErase = defineCommand({
                                   FROM pg_catalog.jsonb_array_elements(t.checklist) WITH ORDINALITY AS s(step, ord)
                                 ), '[]'::jsonb)
                                 ELSE t.checklist END
-          FROM crove_kernel.task o
+          FROM ludy_kernel.task o
          WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid
            AND (${title} OR coalesce(${description}, false) OR ${checklist})
          RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
                    coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
                    ${oldChecklist} AS checklist`.execute(ctx.trx);
-      add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
-      add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
-      add('crove_kernel.task.checklist', tasks.filter((t) => t.checklist).length);
+      add('ludy_kernel.task.title', tasks.filter((t) => t.title).length);
+      add('ludy_kernel.task.description', tasks.filter((t) => t.description).length);
+      add('ludy_kernel.task.checklist', tasks.filter((t) => t.checklist).length);
 
       // Take the exclusive advisory lock paired with projects.weekly_status.send_mail's shared lock before dropping weekly mails and redacting projects:
       // a concurrent send_mail either committed before this lock or sees redacted project text after it; if one is mid-flight, fail fast with PERSONAL_DATA_BUSY.
@@ -1839,7 +1839,7 @@ export const personalDataErase = defineCommand({
       // Project weekly status mails that quote the person directly or belong to a project whose name or description quoted them (#2609):
       // drop payload and subject before redacting crove_projects.project so source_id matches still see unredacted project text.
       const { rows: droppedWeekly } = await sql<{ status: string }>`
-        UPDATE crove_kernel.mail_message m
+        UPDATE ludy_kernel.mail_message m
            SET payload = NULL, subject = NULL
          WHERE m.org_id = ${ctx.orgId}::uuid
            AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
@@ -1858,7 +1858,7 @@ export const personalDataErase = defineCommand({
          RETURNING m.status`.execute(ctx.trx);
       projectWeeklyMails = droppedWeekly.length;
       projectWeeklyDelivered = droppedWeekly.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
-      add('crove_kernel.mail_message.payload', projectWeeklyMails);
+      add('ludy_kernel.mail_message.payload', projectWeeklyMails);
       // Projects and project templates that quote the person (#2591, #2607): replace mentions in name, description, and template_tasks, bounded to column limits.
       const projectName = freeTextMatch(probe, sql.ref('p.name'));
       const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
@@ -2010,7 +2010,7 @@ export const personalDataErase = defineCommand({
             ? ACTIVITY_SHORT_NUMBER_REASON
             : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
               ? MEETING_TEXT_SHORT_NUMBER_REASON
-              : m.column === 'crove_kernel.mail_message.payload'
+              : m.column === 'ludy_kernel.mail_message.payload'
                 ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
                 : m.reason;
       const group = `${m.column}\n${reason}`;
@@ -2028,10 +2028,10 @@ export const personalDataErase = defineCommand({
                CASE WHEN bool_and(f.held_until IS NOT NULL) THEN min(f.held_until) END AS until
           FROM crove_finance.purchase_document d
           JOIN crove_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
-          JOIN crove_kernel.file f ON f.org_id = d.org_id AND f.id = d.source_file_id
+          JOIN ludy_kernel.file f ON f.org_id = d.org_id AND f.id = d.source_file_id
          WHERE d.org_id = ${ctx.orgId}::uuid AND d.party_id = ANY(${partyIds}::uuid[])`.execute(ctx.trx);
       const files = Number(held[0]?.files ?? 0);
-      if (files > 0) kept.set('crove_kernel.file', { column: 'crove_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
+      if (files > 0) kept.set('ludy_kernel.file', { column: 'ludy_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }
     // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
     if (redaction === null || shortMeetingCounts === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
@@ -2047,10 +2047,10 @@ export const personalDataErase = defineCommand({
     if (followupSkipped) kept.set('crove_meetings.followup_mail.skipped', { column: 'crove_meetings.followup_mail', rows: 0, reason: FOLLOWUP_MAIL_SKIPPED_REASON });
     if (followupShort > 0) kept.set('crove_meetings.followup_mail.short', { column: 'crove_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
     if (followupHidden > 0) kept.set('crove_meetings.followup_mail', { column: 'crove_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
-    if (followupDelivered > 0) kept.set('crove_kernel.mail_message.payload', { column: 'crove_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
+    if (followupDelivered > 0) kept.set('ludy_kernel.mail_message.payload', { column: 'ludy_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
     if (projectWeeklyDelivered > 0) {
-      kept.set('crove_kernel.mail_message.payload.projects', {
-        column: 'crove_kernel.mail_message.payload',
+      kept.set('ludy_kernel.mail_message.payload.projects', {
+        column: 'ludy_kernel.mail_message.payload',
         rows: projectWeeklyDelivered,
         reason: PROJECT_WEEKLY_MAIL_DELIVERED_REASON,
       });
@@ -2060,12 +2060,12 @@ export const personalDataErase = defineCommand({
     if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
     // What each member's Vy keeps privately (ADR-0049): sealed to its member, so the erasure cannot read it; it expires on its own. Counted per org, never read.
     const vyResults = Number(
-      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM crove_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
+      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM ludy_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
     );
     const meetingCounts = (
       await sql<{ translations: string; live_lines: string }>`SELECT COALESCE(pg_catalog.sum(translations), 0)::text AS translations, COALESCE(pg_catalog.sum(live_lines), 0)::text AS live_lines FROM crove_meetings.member_private_counts()`.execute(ctx.trx)
     ).rows[0];
-    if (vyResults > 0) kept.set('crove_kernel.member_vy_result.body', { column: 'crove_kernel.member_vy_result.body', rows: vyResults, reason: MEMBER_VY_RESULT_REASON });
+    if (vyResults > 0) kept.set('ludy_kernel.member_vy_result.body', { column: 'ludy_kernel.member_vy_result.body', rows: vyResults, reason: MEMBER_VY_RESULT_REASON });
     // A member's translations of meetings and the preview lines of the meetings they recorded (#3584): private to that member, counted per org as the results are, never read.
     const vyTranslations = Number(meetingCounts?.translations ?? 0);
     if (vyTranslations > 0) kept.set('crove_meetings.translation.body', { column: 'crove_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });

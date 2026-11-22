@@ -94,7 +94,7 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
   // A supplier with an account, a received invoice and one approved payment (released from the hold, as only the database owner can arrange).
   async function approvedPayment(): Promise<string> {
     const party = randomUUID();
-    await rows("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, party]);
+    await rows("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Nhà cung cấp thử')", [orgId, party]);
     await exec('finance.supplier_bank_account.add', { partyId: party, bankName: 'Vietcombank', accountHolder: HOLDER, accountNumber: NUMBER });
     const doc = randomUUID();
     const entry = randomUUID();
@@ -135,9 +135,9 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     const db = createDb(pool);
@@ -158,7 +158,7 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
     const body = (await created.json()) as { json: { slug: string; orgId: string } };
     slug = body.json.slug;
     orgId = body.json.orgId;
-    ownerId = (await rows<{ user_id: string }>(`SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'`, [orgId]))[0]?.user_id as string;
+    ownerId = (await rows<{ user_id: string }>(`SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'`, [orgId]))[0]?.user_id as string;
   }, 180_000);
 
   afterAll(async () => {
@@ -187,7 +187,7 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
     expect(marked).toMatchObject({ export_count: 1, exported_by: ownerId });
     expect(marked?.exported_at).not.toBeNull();
     // The audit rows hold no name, number or amount.
-    const auditRows = await rows('SELECT to_jsonb(a) AS a FROM crove_kernel.audit_event a WHERE a.org_id = $1 AND a.command LIKE $2', [orgId, 'finance.supplier_payment.bank_file.%']);
+    const auditRows = await rows('SELECT to_jsonb(a) AS a FROM ludy_kernel.audit_event a WHERE a.org_id = $1 AND a.command LIKE $2', [orgId, 'finance.supplier_payment.bank_file.%']);
     for (const secret of ['012345678901', 'Canary']) expect(JSON.stringify(auditRows)).not.toContain(secret);
     expectNoAmount(auditRows, ['110']);
     // A second request: refused, naming the payment and the time of the first file, no bytes and no new marker.
@@ -202,7 +202,7 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
     const second = await get(url([id], '&reexport=1'));
     expect(second.status).toBe(200);
     expect((await markers(id))?.export_count).toBe(2);
-    expect(JSON.stringify(await rows('SELECT to_jsonb(a) AS a FROM crove_kernel.audit_event a WHERE a.org_id = $1 AND a.command = $2', [orgId, 'finance.supplier_payment.bank_file.export']))).toMatch(/"reexport":\s*true/);
+    expect(JSON.stringify(await rows('SELECT to_jsonb(a) AS a FROM ludy_kernel.audit_event a WHERE a.org_id = $1 AND a.command = $2', [orgId, 'finance.supplier_payment.bank_file.export']))).toMatch(/"reexport":\s*true/);
   });
 
   it('gives one file and one refusal to two requests racing for the same payment', async () => {

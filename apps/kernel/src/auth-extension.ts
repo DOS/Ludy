@@ -5,7 +5,7 @@
 // the member approves for one org), trades a one-time PKCE code for an opaque token, and sends that token as a bearer
 // token. `authenticate()` treats it as its own kind of credential:
 //   - the token is `crx_` and 43 random base64url characters; only its SHA-256 reaches the database, and only the
-//     crove_kernel.verify_extension_token definer can turn that hash back into a (token, org, member, scopes) row;
+//     ludy_kernel.verify_extension_token definer can turn that hash back into a (token, org, member, scopes) row;
 //   - the row exists only while the token is not revoked or expired, its org is active and its member is still an
 //     owner, admin or member who joined before the token was made;
 //   - the request then runs as that member in that org, with an actor that carries the token's id and scopes, so the
@@ -79,7 +79,7 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
   let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>;
   try {
     ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>`
-      SELECT token_id, org_id, user_id, scopes, expires_at FROM crove_kernel.verify_extension_token(${hashExtensionSecret(token)}::bytea, ${null}::text)`.execute(db));
+      SELECT token_id, org_id, user_id, scopes, expires_at FROM ludy_kernel.verify_extension_token(${hashExtensionSecret(token)}::bytea, ${null}::text)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
   }
@@ -96,7 +96,7 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
 // no standing: a revoked or expired token still answers here and is then refused by verifyExtensionBearer as before.
 export async function extensionTokenAccountEmail(db: Db, token: string): Promise<string | null> {
   try {
-    const { rows } = await sql<{ email: string | null }>`SELECT crove_kernel.extension_token_account_email(${hashExtensionSecret(token)}::bytea) AS email`.execute(db);
+    const { rows } = await sql<{ email: string | null }>`SELECT ludy_kernel.extension_token_account_email(${hashExtensionSecret(token)}::bytea) AS email`.execute(db);
     return rows[0]?.email ?? null;
   } catch (error) {
     throw toDomainError(error);
@@ -126,7 +126,7 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
   try {
     ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; code_id: string }>`
       SELECT token_id, org_id, user_id, scopes, expires_at, code_id
-      FROM crove_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea, ${extensionId}::text)`.execute(db));
+      FROM ludy_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea, ${extensionId}::text)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
   }
@@ -143,7 +143,7 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
 // it as a system revoke. true when a row was revoked. Never throws: the caller is already handling a failure.
 export async function voidUndeliveredExtensionToken(db: Db, token: string): Promise<boolean> {
   try {
-    const { rows } = await sql<{ voided: boolean }>`SELECT crove_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
+    const { rows } = await sql<{ voided: boolean }>`SELECT ludy_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
     return rows[0]?.voided === true;
   } catch (error) {
     // Never the token or its hash: the class of the failure only.

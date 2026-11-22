@@ -341,7 +341,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
           ],
         };
       }
-      if (sqlLower.includes('from "crove_kernel"."file"')) {
+      if (sqlLower.includes('from "ludy_kernel"."file"')) {
         const fileId = compiled.parameters[1];
         if (fileId === SEALED_FILE_ID) {
           return {
@@ -393,13 +393,13 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
       if (sqlLower.includes('member_emails')) {
         return { rows: [{ email: 'seller@example.com' }] };
       }
-      if (sqlLower.includes('from "crove_kernel"."tenant"')) {
+      if (sqlLower.includes('from "ludy_kernel"."tenant"')) {
         return { rows: [{ name: 'Cong ty Co phan ABC' }] };
       }
       if (sqlLower.includes('mail_address_hash')) {
         return { rows: [{ hash: 'f'.repeat(64) }] };
       }
-      if (sqlLower.includes('mail_suppression') || sqlLower.includes('from "crove_kernel"."mail_event"')) {
+      if (sqlLower.includes('mail_suppression') || sqlLower.includes('from "ludy_kernel"."mail_event"')) {
         return { rows: [] };
       }
       return { rows: [{ id: '01900000-0000-7000-8000-000000000802' }] };
@@ -540,7 +540,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
             ],
           };
         }
-        if (sqlLower.includes('from "crove_kernel"."file"')) {
+        if (sqlLower.includes('from "ludy_kernel"."file"')) {
           const fileId = compiled.parameters[1];
           return {
             rows: [
@@ -578,16 +578,16 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
         if (sqlLower.includes('member_emails')) {
           return { rows: [{ email: 'sender@example.com' }] };
         }
-        if (sqlLower.includes('from "crove_kernel"."tenant"')) {
+        if (sqlLower.includes('from "ludy_kernel"."tenant"')) {
           return { rows: [{ name: 'Cong ty Co phan ABC' }] };
         }
         if (sqlLower.includes('mail_address_hash')) {
           return { rows: [{ hash: 'f'.repeat(64) }] };
         }
-        if (sqlLower.includes('mail_suppression') || sqlLower.includes('from "crove_kernel"."mail_event"')) {
+        if (sqlLower.includes('mail_suppression') || sqlLower.includes('from "ludy_kernel"."mail_event"')) {
           return { rows: [] };
         }
-        if (sqlLower.includes('insert into "crove_kernel"."mail_message"')) {
+        if (sqlLower.includes('insert into "ludy_kernel"."mail_message"')) {
           const toParam = compiled.parameters.find(
             (p): p is string => typeof p === 'string' && p.includes('@') && !p.startsWith('<'),
           );

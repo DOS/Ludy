@@ -107,11 +107,11 @@ async function existingFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, rows: reado
   const phones = [...new Set(rows.flatMap((r) => phoneKey(r.phone) ?? []))];
   if (taxCodes.length + emails.length + phones.length === 0) return [];
   const { rows: found } = await sql<Existing>`
-    SELECT id, name, tax_code, email, phone FROM crove_kernel.party
+    SELECT id, name, tax_code, email, phone FROM ludy_kernel.party
     WHERE org_id = ${ctx.orgId}::uuid AND duplicate_of IS NULL AND (
       tax_code = ANY(${taxCodes}::text[])
       OR pg_catalog.lower(email) = ANY(${emails}::text[])
-      OR crove_kernel.phone_key(phone) = ANY(${phones}::text[]))`.execute(ctx.trx);
+      OR ludy_kernel.phone_key(phone) = ANY(${phones}::text[]))`.execute(ctx.trx);
   return found;
 }
 
@@ -198,7 +198,7 @@ function usableCompany(cell: string | null): string | null {
 async function foldAll(ctx: Pick<QueryContext, 'trx'>, texts: readonly string[]): Promise<Map<string, string>> {
   const unique = [...new Set(texts)];
   if (unique.length === 0) return new Map();
-  const { rows } = await sql<{ text: string; key: string }>`SELECT c.text, crove_kernel.search_fold(c.text) AS key FROM pg_catalog.unnest(${unique}::text[]) AS c (text)`.execute(ctx.trx);
+  const { rows } = await sql<{ text: string; key: string }>`SELECT c.text, ludy_kernel.search_fold(c.text) AS key FROM pg_catalog.unnest(${unique}::text[]) AS c (text)`.execute(ctx.trx);
   return new Map(rows.map((r) => [r.text, r.key]));
 }
 
@@ -230,8 +230,8 @@ async function resolveCompanies(ctx: Pick<QueryContext, 'trx' | 'orgId'>, cells:
     const taxes = [...new Set(taxOf.values())];
     const { rows } = await sql<{ tax_code: string; id: string; name: string }>`
       SELECT p.tax_code, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
-      FROM crove_kernel.party p
-      LEFT JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
+      FROM ludy_kernel.party p
+      LEFT JOIN ludy_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.tax_code = ANY(${taxes}::text[]) AND coalesce(k.kind, p.kind) = 'organization'`.execute(ctx.trx);
     const byTax = new Map(rows.map((r) => [r.tax_code, r]));
     for (const [cell, tax] of taxOf) {
@@ -246,10 +246,10 @@ async function resolveCompanies(ctx: Pick<QueryContext, 'trx' | 'orgId'>, cells:
     const { rows: found } = keys.length === 0
       ? { rows: [] as { key: string; id: string; name: string }[] }
       : await sql<{ key: string; id: string; name: string }>`
-          SELECT crove_kernel.search_fold(p.name) AS key, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
-          FROM crove_kernel.party p
-          LEFT JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
-          WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND coalesce(k.kind, p.kind) = 'organization' AND crove_kernel.search_fold(p.name) = ANY(${keys}::text[])`.execute(ctx.trx);
+          SELECT ludy_kernel.search_fold(p.name) AS key, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
+          FROM ludy_kernel.party p
+          LEFT JOIN ludy_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
+          WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND coalesce(k.kind, p.kind) = 'organization' AND ludy_kernel.search_fold(p.name) = ANY(${keys}::text[])`.execute(ctx.trx);
     const byKey = new Map<string, Map<string, string>>();
     for (const f of found) byKey.set(f.key, (byKey.get(f.key) ?? new Map<string, string>()).set(f.id, f.name));
     for (const cell of names) {
@@ -446,8 +446,8 @@ async function previewOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'ro
   const limit = input.limit ?? IMPORT_PREVIEW_PAGE;
   let q = ctx.trx
     .selectFrom('crove_crm.import_row as r')
-    .leftJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.match_party_id'))
-    .leftJoin('crove_kernel.party as cp', (j) => j.onRef('cp.org_id', '=', 'r.org_id').onRef('cp.id', '=', 'r.company_party_id'))
+    .leftJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.match_party_id'))
+    .leftJoin('ludy_kernel.party as cp', (j) => j.onRef('cp.org_id', '=', 'r.org_id').onRef('cp.id', '=', 'r.company_party_id'))
     .select(['r.row_no', 'r.kind', 'r.name', 'r.tax_code', 'r.email', 'r.phone', 'r.address', 'r.outcome', 'r.reason', 'r.match_party_id', 'p.name as match_name', 'r.company_name', 'r.company_state', 'r.company_party_id', 'cp.name as company_match_name'])
     .where('r.org_id', '=', ctx.orgId)
     .where('r.batch_id', '=', input.batchId)
@@ -567,7 +567,7 @@ export const importCommit = defineCommand({
         ? []
         : (
             await ctx.trx
-              .selectFrom('crove_kernel.party')
+              .selectFrom('ludy_kernel.party')
               .select('id')
               .where('org_id', '=', ctx.orgId)
               .where('id', 'in', matchedIds)
@@ -600,7 +600,7 @@ export const importCommit = defineCommand({
       if (made !== undefined) return made;
       const id = randomUUID();
       await ctx.trx
-        .insertInto('crove_kernel.party')
+        .insertInto('ludy_kernel.party')
         .values({ id, org_id: ctx.orgId, kind: 'organization', name: c.company, tax_code: null, address: null, email: null, phone: null, source_trust: 'external', created_at: ctx.now, updated_at: ctx.now })
         .execute();
       madeCompanies.set(verdict.key, id);
@@ -626,7 +626,7 @@ export const importCommit = defineCommand({
         const id = randomUUID();
         // The id is given and nothing returned: a RETURNING check cannot see the entity link the party's trigger adds (#1280).
         const inserted = await ctx.trx
-          .insertInto('crove_kernel.party')
+          .insertInto('ludy_kernel.party')
           .values({ id, org_id: ctx.orgId, kind: c.kind, name: c.name, tax_code: c.taxCode, address: c.address, email: c.email, phone: c.phone, source_trust: 'external', created_at: ctx.now, updated_at: ctx.now })
           .onConflict((oc) => oc.columns(['org_id', 'tax_code']).where('tax_code', 'is not', null).doNothing())
           .executeTakeFirst();
@@ -645,7 +645,7 @@ export const importCommit = defineCommand({
         // transaction, so its version stays 1 (the guard of company_id checks the company).
         const companyId = c.kind === 'person' ? await companyForNewRow(c) : null;
         if (companyId !== null) {
-          await ctx.trx.updateTable('crove_kernel.party').set({ company_id: companyId }).where('org_id', '=', ctx.orgId).where('id', '=', id).execute();
+          await ctx.trx.updateTable('ludy_kernel.party').set({ company_id: companyId }).where('org_id', '=', ctx.orgId).where('id', '=', id).execute();
           linked++;
           await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
         }
@@ -659,7 +659,7 @@ export const importCommit = defineCommand({
         const party = byId.get(v.matchId);
         // Empty fields only, read again under the row lock: a value somebody typed is never replaced.
         const locked = await ctx.trx
-          .selectFrom('crove_kernel.party')
+          .selectFrom('ludy_kernel.party')
           .select(['id', 'kind', 'email', 'phone', 'address', 'company_id', 'version'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', v.matchId)
@@ -678,7 +678,7 @@ export const importCommit = defineCommand({
           };
           if (Object.keys(set).length > 0) {
             await ctx.trx
-              .updateTable('crove_kernel.party')
+              .updateTable('ludy_kernel.party')
               // What was written came from a spreadsheet: the party drops to 'external', the lowest trust (external < user <
               // system), so a verified or invoice-sourced party does not keep a higher one. A party left unchanged keeps its trust.
               .set({ ...set, source_trust: 'external', version: locked.version + 1, updated_at: ctx.now })

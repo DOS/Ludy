@@ -140,7 +140,7 @@ export const externalPostImport = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input) => {
     requireSystem(ctx);
-    const connection = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    const connection = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     const byId = new Map(input.posts.map((p) => [p.externalId, p] as const));
     const listed = [...byId.values()];
@@ -275,7 +275,7 @@ export const metricsExternal = defineQuery({
     }>`
       SELECT e.id, e.channel_connection_id, c.provider, e.excerpt, e.published_at, e.permalink, e.metrics, e.captured_at
       FROM crove_social.external_post e
-      JOIN crove_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
+      JOIN ludy_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
       WHERE e.org_id = ${ctx.orgId}
         AND e.published_at > pg_catalog.now() - pg_catalog.make_interval(days => ${input.days ?? 30}::int)
         AND NOT crove_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)
@@ -308,7 +308,7 @@ export const externalPostChannel = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<{ scopes: string[] }> => {
     requireSystem(ctx);
-    const row = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     return { scopes: [...row.scopes] };
   },

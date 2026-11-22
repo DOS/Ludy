@@ -16,7 +16,7 @@ suite('the Social proposal twins (#3863)', () => {
   beforeAll(async () => {
     h = await startHarness('engage_social');
     connectionId = randomUUID();
-    await h.q("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
+    await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
   }, 300_000);
   afterAll(async () => {
     await h?.stop();

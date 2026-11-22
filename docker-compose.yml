@@ -36,7 +36,7 @@ services:
       # Keep bundled issuer default crove-auth until #3970/#3972 migrates user_account.issuer.
       AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
       ADMIN_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-password}@db:5432/postgres
-      DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
+      DATABASE_URL: postgres://ludy_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
       # The context token key (#1822): migrate installs it in the database; the same value goes to crove below.
       LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
     depends_on:
@@ -109,7 +109,7 @@ services:
       # Keep bundled issuer default crove-auth until #3970/#3972 migrates user_account.issuer.
       AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
       ADMIN_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-local-postgres-password}@db:5432/postgres
-      DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
+      DATABASE_URL: postgres://ludy_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
     depends_on:
       auth:
         condition: service_healthy
@@ -144,8 +144,8 @@ services:
       # R3 (approve, membership changes) needs MFA in the last 5 minutes; the app asks for a code, or to enable
       # two-factor first. off is accepted on localhost only.
       AUTH_STEP_UP: ${AUTH_STEP_UP:-required}
-      DATABASE_URL: postgres://crove_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
-      WORKER_DATABASE_URL: postgres://crove_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
+      DATABASE_URL: postgres://ludy_app:${LUDY_APP_DB_PASSWORD:-${CROVE_APP_DB_PASSWORD:-local-app-password}}@db:5432/postgres
+      WORKER_DATABASE_URL: postgres://ludy_worker:${LUDY_WORKER_DB_PASSWORD:-${CROVE_WORKER_DB_PASSWORD:-local-worker-password}}@db:5432/postgres
       # Signs every user context the app enters (#1822, ADR-0028 section 9); the value migrate installed.
       LUDY_CONTEXT_TOKEN_KEY: ${LUDY_CONTEXT_TOKEN_KEY:-${CROVE_CONTEXT_TOKEN_KEY:-}}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
@@ -498,7 +498,7 @@ services:
     healthcheck:
       disable: true
     environment:
-      PROBER_DATABASE_URL: postgres://crove_prober:${LUDY_PROBER_DB_PASSWORD:-${CROVE_PROBER_DB_PASSWORD:-local-prober-password}}@db:5432/postgres
+      PROBER_DATABASE_URL: postgres://ludy_prober:${LUDY_PROBER_DB_PASSWORD:-${CROVE_PROBER_DB_PASSWORD:-local-prober-password}}@db:5432/postgres
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       # JSON log lines, as for the API and the worker (#2175).
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -569,7 +569,7 @@ services:
     healthcheck:
       disable: true
     environment:
-      REPORTER_DATABASE_URL: postgres://crove_reporter:${LUDY_REPORTER_DB_PASSWORD:-${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}}@db:5432/postgres
+      REPORTER_DATABASE_URL: postgres://ludy_reporter:${LUDY_REPORTER_DB_PASSWORD:-${CROVE_REPORTER_DB_PASSWORD:-local-reporter-password}}@db:5432/postgres
       # The prober's webhook settings, used only by --post.
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}

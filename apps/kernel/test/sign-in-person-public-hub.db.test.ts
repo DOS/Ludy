@@ -301,7 +301,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'slice4d-app-pw', crove_worker: 'slice4d-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'slice4d-app-pw', ludy_worker: 'slice4d-worker-pw' });
 
     const login = (u: string, pw: string) => {
       const url = new URL(adminUrl);
@@ -310,8 +310,8 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
       return url.toString();
     };
 
-    const appUrl = login('crove_app', 'slice4d-app-pw');
-    const workerUrl = login('crove_worker', 'slice4d-worker-pw');
+    const appUrl = login('ludy_app', 'slice4d-app-pw');
+    const workerUrl = login('ludy_worker', 'slice4d-worker-pw');
 
     pool = createPool({ connectionString: appUrl, max: 6 });
     workerPool = createPool({ connectionString: workerUrl, max: 3 });
@@ -389,7 +389,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
         [orgId, memberUserId, viewerUserId],
       );
     });
@@ -655,7 +655,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     // while an active unexpired in-person host token exists, skipping send and leaving the in-person token unrevoked.
     const queuedInviteId = await admin(async (c) => {
       const res = await c.query<{ id: string }>(
-        `SELECT id FROM crove_kernel.mail_message
+        `SELECT id FROM ludy_kernel.mail_message
          WHERE org_id = $1 AND source_id = $2 AND template_key = 'sign.invite'
          ORDER BY created_at DESC LIMIT 1`,
         [orgId, s2.signerId],
@@ -667,7 +667,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     const workerClient = await workerPool!.connect();
     try {
       await workerClient.query('BEGIN');
-      await workerClient.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       const issuedRow = await workerClient.query<{ issued: unknown }>(
         `SELECT crove_sign.public_mail_token_issue($1::uuid, $2::uuid, $3::uuid, now() + interval '7 days', now()) AS issued`,
         [envelopeId, s2.signerId, queuedInviteId],
@@ -862,7 +862,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     const drainQueuedMails = async () => {
       const rows = await admin(async (c) => {
         const { rows: queued } = await c.query<{ id: string }>(
-          `SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at ASC`,
+          `SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND status = 'queued' ORDER BY created_at ASC`,
           [orgId],
         );
         return queued;

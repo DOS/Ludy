@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854; plan accounting-software-sync.md step 4), modeled on the marketplace connection (#2519):
 // - finance.misa_amis_connection.target (owners and admins; query): the legal entity a connect is for, resolved before anything is sealed.
-// - finance.misa_amis_connection.connect (owners and admins; R2 external): runs kernel.channel.connect (provider `accounting_misa_amis`, the access code sealed in crove_kernel.credential)
+// - finance.misa_amis_connection.connect (owners and admins; R2 external): runs kernel.channel.connect (provider `accounting_misa_amis`, the access code sealed in ludy_kernel.credential)
 //   and files the connection under the legal entity in ONE transaction. It sees no credential: the sealing is the API edge's, and only a worker opens it.
 // - finance.misa_amis_connection.unlink (same; R2): deletes the row. The API asks `can_disconnect` (no voucher awaiting MISA's answer), then revokes the channel connection, which drops the credential.
 // - finance.misa_amis_connection.request_test (owners and admins; R2 external): queues the connection test (S2b, #3885). The worker's job opens the access code, asks AMIS for a token and the company's
@@ -117,7 +117,7 @@ export const misaAmisConnectionUnlink = defineCommand({
     // Only a connection that is no longer live: the credential goes first (the API revokes the channel connection before this), so no live credential is left without its row.
     const live = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('c.id')
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -148,7 +148,7 @@ export const misaAmisConnectionRequestTest = defineCommand({
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('ch.status')
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -172,7 +172,7 @@ export const misaAmisConnectionTestTarget = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisTestTarget> => {
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -213,7 +213,7 @@ export const misaAmisConnectionList = defineQuery({
   handler: async (ctx): Promise<MisaAmisConnection[]> => {
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
-      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'c.default_sales_stock_code', 'c.unit_aliases', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')

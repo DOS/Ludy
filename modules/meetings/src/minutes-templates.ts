@@ -32,7 +32,7 @@ const invalidSections = () => new DomainError('MINUTES_TEMPLATE_SECTIONS_INVALID
 
 // An owner or admin of the org, as the caller. The database policy says the same; the command answers 403 first.
 async function isOwnerOrAdmin(trx: Trx, orgId: string, userId: string): Promise<boolean> {
-  const row = await trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', orgId).where('user_id', '=', userId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', orgId).where('user_id', '=', userId).executeTakeFirst();
   return row?.role === 'owner' || row?.role === 'admin';
 }
 

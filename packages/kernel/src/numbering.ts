@@ -1,10 +1,10 @@
 // Gapless numbering (ADR-0021 section 2, issue #1401): the commands and the query around the kernel's number series.
 // Numbers are taken by ctx.numbering.allocate inside a posting command (and, for cash and journal vouchers, by the
 // database's own insert triggers); they are never deleted or reused. A number declared void keeps its allocation row and
-// gets a second, append-only row in crove_kernel.number_void.
+// gets a second, append-only row in ludy_kernel.number_void.
 //
 // - kernel.number.void (R2, owners and admins): declares one allocated number void, with a reason. The database checks
-//   the actor and the allocation again (crove_kernel.void_number), and refuses a second void of the same number.
+//   the actor and the allocation again (ludy_kernel.void_number), and refuses a second void of the same number.
 // - kernel.number.policy.set (R2, owners and admins): the reset policy of a document type in a legal entity: 'yearly'
 //   (the default), 'monthly' or 'never', chosen before the document type's first number; once it has numbers, its
 //   reset stays (CONFLICT), so no period is numbered from 1 again beside numbers it already holds.
@@ -31,7 +31,7 @@ const notFound = () => new DomainError('NOT_FOUND', 404, 'Không tìm thấy s�
 
 // The legal entity the input names, or the org's default, as the caller sees it (le_scope hides the others).
 async function entityOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string | undefined | null): Promise<string> {
-  let q = ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId);
+  let q = ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId);
   q = legalEntityId ? q.where('id', '=', legalEntityId) : q.where('is_default', '=', true);
   const row = await q.executeTakeFirst();
   if (!row) throw new DomainError('LEGAL_ENTITY_NOT_FOUND', 422, 'Không tìm thấy pháp nhân này trong tổ chức');
@@ -60,9 +60,9 @@ export const numberVoid = defineCommand({
   handler: async (ctx, input): Promise<NumberVoided> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const allocation = await ctx.trx
-      .selectFrom('crove_kernel.number_allocation as a')
-      .innerJoin('crove_kernel.number_series as s', (join) => join.onRef('s.org_id', '=', 'a.org_id').onRef('s.id', '=', 'a.series_id'))
-      .leftJoin('crove_kernel.number_void as v', (join) => join.onRef('v.org_id', '=', 'a.org_id').onRef('v.allocation_id', '=', 'a.id'))
+      .selectFrom('ludy_kernel.number_allocation as a')
+      .innerJoin('ludy_kernel.number_series as s', (join) => join.onRef('s.org_id', '=', 'a.org_id').onRef('s.id', '=', 'a.series_id'))
+      .leftJoin('ludy_kernel.number_void as v', (join) => join.onRef('v.org_id', '=', 'a.org_id').onRef('v.allocation_id', '=', 'a.id'))
       .select(['a.id', 'a.number', 'a.target_type', 'a.target_id', 'a.legal_entity_id', 's.doc_type', 's.period_key', 'v.id as void_id'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.allocationId)
@@ -85,7 +85,7 @@ export const numberVoid = defineCommand({
     ctx.audit({ ...voided, targetType: allocation.target_type, targetId: allocation.target_id, reason: input.reason });
     // The allocation's entity, whatever its target type: the row is read only where that entity is (#1728), and for a
     // target type the trigger maps, the database checks it is the record's own. The reason a member typed stays on the
-    // void row (crove_kernel.number_void), read under its entity's scope, not in the timeline's text (#1825).
+    // void row (ludy_kernel.number_void), read under its entity's scope, not in the timeline's text (#1825).
     await ctx.activity(allocation.target_type, allocation.target_id, 'number.voided', `Hủy số ${number} (${allocation.doc_type}, ${allocation.period_key})`, {
       legalEntityId: allocation.legal_entity_id,
     });
@@ -108,7 +108,7 @@ export const numberPolicySet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const legalEntityId = await entityOf(ctx, input.legalEntityId);
     const { rows } = await sql<{ previous: NumberReset }>`
-      SELECT crove_kernel.number_series_policy_set(${legalEntityId}::uuid, ${input.docType}::text, ${input.reset}::text) AS previous`
+      SELECT ludy_kernel.number_series_policy_set(${legalEntityId}::uuid, ${input.docType}::text, ${input.reset}::text) AS previous`
       .execute(ctx.trx)
       .catch((error: { code?: string; message?: string }) => {
         // The document type already has numbers (review of #1573).
@@ -140,7 +140,7 @@ export const numberPolicySchedule = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const legalEntityId = await entityOf(ctx, input.legalEntityId);
     const { rows } = await sql<{ previous: NumberReset }>`
-      SELECT crove_kernel.number_series_policy_schedule(${legalEntityId}::uuid, ${input.docType}::text, ${input.reset}::text, ${input.from}::date) AS previous`
+      SELECT ludy_kernel.number_series_policy_schedule(${legalEntityId}::uuid, ${input.docType}::text, ${input.reset}::text, ${input.from}::date) AS previous`
       .execute(ctx.trx)
       .catch((error: { code?: string; message?: string }) => {
         if (error?.code === '22023' && error.message === 'NUMBER_RESET_FROM_PAST') {
@@ -194,7 +194,7 @@ export const numberAllocations = defineQuery({
   handler: async (ctx, input): Promise<NumberSeriesPage> => {
     const legalEntityId = await entityOf(ctx, input.legalEntityId);
     const series = await ctx.trx
-      .selectFrom('crove_kernel.number_series')
+      .selectFrom('ludy_kernel.number_series')
       .select(['id', 'next_number'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -204,8 +204,8 @@ export const numberAllocations = defineQuery({
     const page = { legalEntityId, docType: input.docType, periodKey: input.periodKey };
     if (!series) return { ...page, nextNumber: 1, items: [], more: false };
     let q = ctx.trx
-      .selectFrom('crove_kernel.number_allocation as a')
-      .leftJoin('crove_kernel.number_void as v', (join) => join.onRef('v.org_id', '=', 'a.org_id').onRef('v.allocation_id', '=', 'a.id'))
+      .selectFrom('ludy_kernel.number_allocation as a')
+      .leftJoin('ludy_kernel.number_void as v', (join) => join.onRef('v.org_id', '=', 'a.org_id').onRef('v.allocation_id', '=', 'a.id'))
       .select(['a.id', 'a.number', 'a.target_type', 'a.target_id', 'a.allocated_by', 'a.allocated_at', 'v.id as void_id', 'v.reason', 'v.voided_by', 'v.voided_at'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.series_id', '=', series.id)

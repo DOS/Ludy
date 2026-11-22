@@ -354,10 +354,10 @@ export const projectTemplateCreate = defineCommand({
           'Dự án riêng tư không thể lưu thành mẫu dùng chung cho toàn công ty',
         );
       }
-      // Query crove_kernel.task directly in caller's ctx.trx so le_scope RLS hides out-of-entity tasks from snapshot.
+      // Query ludy_kernel.task directly in caller's ctx.trx so le_scope RLS hides out-of-entity tasks from snapshot.
       const rows = await ctx.trx
         .selectFrom('crove_projects.project_task as pt')
-        .innerJoin('crove_kernel.task as t', (join) =>
+        .innerJoin('ludy_kernel.task as t', (join) =>
           join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
         )
         .select(['t.id', 't.title', 't.description', 't.due', 't.tainted'])

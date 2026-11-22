@@ -34,9 +34,9 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const pool = createPool({ connectionString: app.toString(), max: 2 });
     const db = createDb(pool);
@@ -59,11 +59,11 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query(`INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Mẫu', '0100000001')`, [orgId]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Mẫu', '0100000001')`, [orgId]);
       await c.query(
         `CREATE TEMP TABLE seeded ON COMMIT DROP AS
-         SELECT g, crove_kernel.uuid_v7() AS doc_id, crove_kernel.uuid_v7() AS entry_id,
-                (SELECT p.id FROM crove_kernel.party p WHERE p.org_id = $1) AS party_id,
+         SELECT g, ludy_kernel.uuid_v7() AS doc_id, ludy_kernel.uuid_v7() AS entry_id,
+                (SELECT p.id FROM ludy_kernel.party p WHERE p.org_id = $1) AS party_id,
                 DATE '2024-01-01' + (g % 300) AS day, (100000 + g)::numeric AS total
          FROM pg_catalog.generate_series(1, $2::int) g`,
         [orgId, ENTRIES],

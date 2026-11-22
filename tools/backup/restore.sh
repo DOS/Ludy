@@ -271,7 +271,7 @@ STEP="starting $RESTORE_PRESTART"
 # shellcheck disable=SC2086
 dc up -d --wait $RESTORE_PRESTART
 STEP="checking that the target database is empty"
-[ "$(db_psql -d postgres -tA -c "SELECT pg_catalog.to_regclass('crove_meta.schema_migrations') IS NULL")" = t ] ||
+[ "$(db_psql -d postgres -tA -c "SELECT pg_catalog.to_regclass('ludy_meta.schema_migrations') IS NULL AND pg_catalog.to_regclass('crove_meta.schema_migrations') IS NULL")" = t ] ||
   { STEP="the target database already holds Crove: restore needs an empty database volume (a new project or docker compose down -v)"; false; }
 STEP="loading the roles"
 # The superuser exists in every cluster; every other role comes from the backup, without a password.
@@ -303,7 +303,7 @@ future="$(db_psql -d postgres -tA -c 'SELECT count(*) FROM crove_finance.journal
 [ "$future" = 0 ] || { STEP="ledger stamps: $future journal entries are stamped in the future of this cluster; fix the clock (NTP) first"; false; }
 log "ledger: no journal entry stamped in the future"
 STEP="new context key (docs/runbooks/context-key-rotation.md)"
-db_psql -d postgres -tA -c 'SELECT crove_kernel.context_key_rotate()' >/dev/null
+db_psql -d postgres -tA -c 'SELECT ludy_kernel.context_key_rotate()' >/dev/null
 log "context key: a new key was made (the backup holds none)"
 phase_done "database checks"
 
@@ -349,7 +349,7 @@ CREATE TEMP TABLE remap AS
   SELECT f.org_id, f.id, f.storage_key, f.generation AS old_generation,
          CASE WHEN coalesce(o.version_id, '') IN ('', 'null') THEN 'content:' || f.sha256 ELSE 's3:' || o.version_id END AS new_generation,
          o.key IS NOT NULL AS found
-    FROM crove_kernel.file f
+    FROM ludy_kernel.file f
     LEFT JOIN (SELECT j->>'key' AS key, j->>'versionId' AS version_id
                  FROM (SELECT line::jsonb AS j FROM restored_object) s
                 WHERE j->>'type' = 'file' AND coalesce((j->>'isLatest')::boolean, true)
@@ -360,7 +360,7 @@ COPY (SELECT CASE WHEN found THEN 'remapped' ELSE 'MISSING' END, storage_key, ol
 SELECT CASE WHEN coalesce(bool_and(found), true) THEN 'true' ELSE 'false' END AS all_found FROM remap \gset
 \if :all_found
 SET LOCAL session_replication_role = replica;
-UPDATE crove_kernel.file f SET generation = r.new_generation
+UPDATE ludy_kernel.file f SET generation = r.new_generation
   FROM remap r WHERE f.org_id = r.org_id AND f.id = r.id AND f.generation IS DISTINCT FROM r.new_generation;
 COMMIT;
 \else
@@ -379,8 +379,8 @@ phase_done "file restore"
 STEP="reading back a sample of blobs"
 limit=ALL
 [ "$RESTORE_SAMPLE" -eq 0 ] || limit="$RESTORE_SAMPLE"
-db_psql -d postgres -c "COPY (SELECT storage_key, sha256, coalesce(generation, '') FROM crove_kernel.file ORDER BY random() LIMIT $limit) TO STDOUT" >"$WORK/sample.tsv"
-total_files="$(db_psql -d postgres -tA -c 'SELECT count(*) FROM crove_kernel.file')"
+db_psql -d postgres -c "COPY (SELECT storage_key, sha256, coalesce(generation, '') FROM ludy_kernel.file ORDER BY random() LIMIT $limit) TO STDOUT" >"$WORK/sample.tsv"
+total_files="$(db_psql -d postgres -tA -c 'SELECT count(*) FROM ludy_kernel.file')"
 # Each line read back is the blob's sha256, or MISSING when there is no blob (never the hash of empty input, which a
 # row of an empty file would match).
 if [ "$STORAGE" = local ]; then
@@ -482,7 +482,7 @@ fi
 rebind_failed=0
 if [ "$STORAGE" = s3 ] && [ "$RESTORE_FILES" = copy ]; then
   STEP="re-recording org exports with the restored object versions (main.ts exports-rebind)"
-  orgs="$(db_psql -d postgres -tA -c "SELECT DISTINCT org_id FROM crove_kernel.audit_event WHERE command = 'kernel.org.export.record' AND outcome = 'ok' ORDER BY 1")"
+  orgs="$(db_psql -d postgres -tA -c "SELECT DISTINCT org_id FROM ludy_kernel.audit_event WHERE command = 'kernel.org.export.record' AND outcome = 'ok' ORDER BY 1")"
   if [ -n "$orgs" ]; then
     # shellcheck disable=SC2086
     if ! dc run --rm --no-deps -T "$worker" exports-rebind $orgs </dev/null; then

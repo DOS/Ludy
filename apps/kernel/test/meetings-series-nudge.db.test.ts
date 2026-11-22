@@ -47,7 +47,7 @@ suite('the series nudge (#3542)', () => {
   // A member's calendar connection and an event of theirs, starting `startMinutes` from now, in `series` (a series id as the sweep keeps it).
   async function connection(who: string): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', $4, $4, $5, true)`, [
+    await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', $4, $4, $5, true)`, [
       orgId,
       id,
       users[who],
@@ -79,7 +79,7 @@ suite('the series nudge (#3542)', () => {
   }
   async function seat(title: string, holder: string): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[holder]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[holder]]);
     return id;
   }
   // An item of a meeting, published, parsed to `parsed`, accepted when `task` (a status) is given, with the task in `seat`.
@@ -88,7 +88,7 @@ suite('the series nudge (#3542)', () => {
     let taskId: string | null = null;
     if (over.task !== undefined) {
       taskId = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status, assignee_position_id) VALUES ($1, $2, $3, 'human', 'system', $4, $5)`, [orgId, taskId, title, over.task, over.seat ?? null]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status, assignee_position_id) VALUES ($1, $2, $3, 'human', 'system', $4, $5)`, [orgId, taskId, title, over.task, over.seat ?? null]);
     }
     await sqlAdmin(
       `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
@@ -99,7 +99,7 @@ suite('the series nudge (#3542)', () => {
   const notices = async (who?: string) =>
     (
       await sqlAdmin<{ user_id: string; subject_id: string | null; detail: Record<string, string>; dedupe_key: string }>(
-        `SELECT user_id, subject_id, detail, dedupe_key FROM crove_kernel.notification WHERE org_id = $1 AND kind = $2 ${who ? 'AND user_id = $3' : ''} ORDER BY created_at`,
+        `SELECT user_id, subject_id, detail, dedupe_key FROM ludy_kernel.notification WHERE org_id = $1 AND kind = $2 ${who ? 'AND user_id = $3' : ''} ORDER BY created_at`,
         who ? [orgId, KIND, users[who]] : [orgId, KIND],
       )
     ).rows;
@@ -113,15 +113,15 @@ suite('the series nudge (#3542)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
@@ -129,16 +129,16 @@ suite('the series nudge (#3542)', () => {
     appRuntime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'rec', 'lan', 'nam', 'other']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'nudge', subject: key, email: `${key}@nudge.test`, name: key });
     orgId = (await createOrg(appRuntime, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Công ty Nhắc việc')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.rec, users.lan, users.nam, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.rec, users.lan, users.nam, users.other]);
   }, 300_000);
 
   beforeEach(async () => {
-    await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
-    await sqlAdmin('DELETE FROM crove_kernel.task WHERE org_id = $1', [orgId]);
-    await sqlAdmin(`DELETE FROM crove_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
-    await sqlAdmin('DELETE FROM crove_kernel.notification WHERE org_id = $1', [orgId]);
-    await sqlAdmin('DELETE FROM crove_kernel.notification_mute WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.task WHERE org_id = $1', [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.notification WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.notification_mute WHERE org_id = $1', [orgId]);
   });
 
   afterAll(async () => {
@@ -216,12 +216,12 @@ suite('the series nudge (#3542)', () => {
     await item(earlier, 'Việc của Nam', { task: 'todo', parsed: 'nam' });
     await calendarEvent('lan', 15, series);
     await calendarEvent('nam', 15, series);
-    await sqlAdmin('INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)', [orgId, users.lan, KIND]);
-    await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.nam]);
+    await sqlAdmin('INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)', [orgId, users.lan, KIND]);
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.nam]);
     // A muted kind or a former member is not even listed, so it cannot push the others past the limit.
     expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
     expect(await notices()).toHaveLength(0);
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.nam]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.nam]);
   });
 
   it('goes on with the rest on the next pass when a pass hits its limit, never listing what was told again', async () => {
@@ -262,17 +262,17 @@ suite('the series nudge (#3542)', () => {
     const lanConnection = await calendarEvent('lan', 15, series);
     await calendarEvent('nam', 15, series);
     // The token was refused: the cache stays, but it may be stale (an occurrence cancelled since).
-    await sqlAdmin(`UPDATE crove_kernel.calendar_connection SET status = 'expired' WHERE org_id = $1 AND id = $2`, [orgId, lanConnection]);
+    await sqlAdmin(`UPDATE ludy_kernel.calendar_connection SET status = 'expired' WHERE org_id = $1 AND id = $2`, [orgId, lanConnection]);
     expect(await sweep()).toMatchObject({ found: 1, sent: 1 });
     expect(await notices('lan')).toHaveLength(0);
     expect(await notices('nam')).toHaveLength(1);
     // Meetings off for the org: the definer lists nothing at all.
-    await sqlAdmin('DELETE FROM crove_kernel.notification WHERE org_id = $1', [orgId]);
-    await sqlAdmin(`UPDATE crove_kernel.tenant SET apps_off = ARRAY['meetings'] WHERE org_id = $1`, [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.notification WHERE org_id = $1', [orgId]);
+    await sqlAdmin(`UPDATE ludy_kernel.tenant SET apps_off = ARRAY['meetings'] WHERE org_id = $1`, [orgId]);
     try {
       expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
     } finally {
-      await sqlAdmin(`UPDATE crove_kernel.tenant SET apps_off = '{}' WHERE org_id = $1`, [orgId]);
+      await sqlAdmin(`UPDATE ludy_kernel.tenant SET apps_off = '{}' WHERE org_id = $1`, [orgId]);
     }
     expect(await notices()).toHaveLength(0);
   });
@@ -289,7 +289,7 @@ suite('the series nudge (#3542)', () => {
     );
     const args = { userId: users.lan as string, seriesId: series, startsAt };
     // The task is done between the sweep and the command.
-    await sqlAdmin(`UPDATE crove_kernel.task SET status = 'done' WHERE org_id = $1`, [orgId]);
+    await sqlAdmin(`UPDATE ludy_kernel.task SET status = 'done' WHERE org_id = $1`, [orgId]);
     expect(await worker.execute('meetings.series.nudge', args, { actor: SYSTEM, orgId })).toEqual({ sent: 0 });
     // A person cannot run it, nor read what the sweep reads.
     expect(await refuses(appRuntime.execute('meetings.series.nudge', args, { actor: { type: 'user', userId: users.lan as string, aal: 'aal1' }, orgId }))).toMatch(/FORBIDDEN|ACCESS|NOT_ALLOWED/);

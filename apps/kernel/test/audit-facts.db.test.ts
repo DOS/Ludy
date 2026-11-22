@@ -59,7 +59,7 @@ suite('audit facts keep no classified value (#1626)', () => {
   const execute = <T>(name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const details = async (command: string) =>
     admin(async (c) =>
-      (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id`, [o.orgId, command])).rows.map(
+      (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id`, [o.orgId, command])).rows.map(
         (r) => r.detail,
       ),
     );
@@ -70,9 +70,9 @@ suite('audit facts keep no classified value (#1626)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -81,7 +81,7 @@ suite('audit facts keep no classified value (#1626)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     o = { orgId, owner, member: await person('member') };
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, o.member]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, o.member]));
   });
 
   afterAll(async () => {
@@ -101,7 +101,7 @@ suite('audit facts keep no classified value (#1626)', () => {
     // A person as a party: edited with every field, then marked as a duplicate of another and unmarked.
     const [party, other] = await admin(async (c) =>
       (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, source_trust) VALUES ($1, 'Khách lẻ', 'external'), ($1, $2, 'external') RETURNING id`, [
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, source_trust) VALUES ($1, 'Khách lẻ', 'external'), ($1, $2, 'external') RETURNING id`, [
           o.orgId,
           PARTY_NAME_2,
         ])
@@ -140,15 +140,15 @@ suite('audit facts keep no classified value (#1626)', () => {
     expect(await details('kernel.party.link_for_tax_code')).toEqual([expect.objectContaining({ taxCode: { redacted: 'national_id_if_individual' } })]);
 
     // Not one value in any row of the org, whatever the command.
-    const all = await admin(async (c) => (await c.query<{ detail: unknown }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows);
+    const all = await admin(async (c) => (await c.query<{ detail: unknown }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows);
     const text = JSON.stringify(all);
     for (const value of RAW_VALUES) expect(text, value).not.toContain(value);
     // Nor in any activity summary of the org (#1634): the timeline names what happened, the record shows the values.
-    const summaries = await admin(async (c) => (await c.query<{ summary: string }>('SELECT summary FROM crove_kernel.activity WHERE org_id = $1', [o.orgId])).rows);
+    const summaries = await admin(async (c) => (await c.query<{ summary: string }>('SELECT summary FROM ludy_kernel.activity WHERE org_id = $1', [o.orgId])).rows);
     expect(summaries.length).toBeGreaterThan(0);
     for (const value of RAW_VALUES) expect(JSON.stringify(summaries), value).not.toContain(value);
     // The values themselves were stored where they belong.
-    const stored = await admin(async (c) => (await c.query('SELECT tax_code, address FROM crove_kernel.tenant WHERE org_id = $1', [o.orgId])).rows[0]);
+    const stored = await admin(async (c) => (await c.query('SELECT tax_code, address FROM ludy_kernel.tenant WHERE org_id = $1', [o.orgId])).rows[0]);
     expect(stored).toEqual({ tax_code: ORG_TAX_CODE_2, address: null });
   });
 
@@ -159,13 +159,13 @@ suite('audit facts keep no classified value (#1626)', () => {
       connect(appUrl, async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+          await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
           await c.query(
-            `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+            `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
              VALUES ($1, 'user', $2, 'kernel.org.set_tax_code', gen_random_uuid(), 'ok', repeat('0', 64), $3::jsonb)`,
             [orgId, owner, JSON.stringify(detail)],
           );
-          await c.query('UPDATE crove_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, code]);
+          await c.query('UPDATE ludy_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, code]);
           await c.query('COMMIT');
         } catch (error) {
           await c.query('ROLLBACK').catch(() => {});
@@ -173,7 +173,7 @@ suite('audit facts keep no classified value (#1626)', () => {
         }
       });
     const marker = { redacted: 'national_id_if_individual' };
-    const current = () => admin(async (c) => (await c.query<{ tax_code: string | null }>('SELECT tax_code FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.tax_code);
+    const current = () => admin(async (c) => (await c.query<{ tax_code: string | null }>('SELECT tax_code FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.tax_code);
 
     // Another class's marker, or an empty one, does not count.
     await expect(commit({ previous: null, taxCode: { redacted: 'pii' } }, ORG_TAX_CODE)).rejects.toThrow(/TAX_CODE_UNAUDITED/);

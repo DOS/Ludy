@@ -101,7 +101,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
     const generation = options.bytes ? await putFile(new LocalDiskStore(dir), key, bytes, options.contentType ?? 'image/jpeg', sha) : `content:${sha}`;
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'banh-mi.jpg', $6, $7, $8)`,
         [orgId, id, sha, key, generation, options.contentType ?? 'image/jpeg', options.sizeBytes ?? bytes.byteLength, options.source ?? 'social'],
       ),
@@ -112,7 +112,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
   async function connection(orgId: string, provider: string, by: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         provider,
@@ -128,7 +128,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
   async function snapshot(): Promise<Record<string, string>> {
     return admin(async (c) => {
       const { rows: tables } = await c.query<{ name: string }>(
-        `SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_catalog.pg_tables WHERE schemaname LIKE 'crove\\_%' ORDER BY 1`,
+        `SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_catalog.pg_tables WHERE schemaname LIKE 'ludy\\_%' OR schemaname LIKE 'crove\\_%' ORDER BY 1`,
       );
       const hashes: Record<string, string> = {};
       for (const t of tables) {
@@ -148,9 +148,9 @@ suite('AI alt text suggestions through the API (#1121)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -195,7 +195,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
     const second = await rpc('org/create', await tokenFor(other), { name: 'Tiệm khác', idempotencyKey: randomUUID() }, { slug: null });
     expect(second.status).toBe(200);
     otherOrg = { slug: String(second.body?.slug), orgId: String(second.body?.orgId) };
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]));
     files = {
       photo: await file(org.orgId, { bytes: photo }),
       video: await file(org.orgId, { contentType: 'video/mp4' }),
@@ -220,7 +220,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
   it('fills the suggestion with the recorded answer from the stored image, in the language asked, and writes nothing', async () => {
     const before = await snapshot();
     // The snapshot sees the tables a suggestion could touch.
-    expect(Object.keys(before)).toEqual(expect.arrayContaining(['crove_kernel.file', 'crove_kernel.audit_event', 'crove_social.post', 'crove_social.post_media']));
+    expect(Object.keys(before)).toEqual(expect.arrayContaining(['ludy_kernel.file', 'ludy_kernel.audit_event', 'crove_social.post', 'crove_social.post_media']));
     const answer = await rpc('social/posts/describeImage', await tokenFor(owner), { fileId: files.photo, language: 'vi', connectionIds: [channels.pinterest] });
     expect(answer).toMatchObject({ status: 200, body: { altText: RECORDED.altText } });
     expect(asked).toHaveLength(1);
@@ -267,8 +267,8 @@ suite('AI alt text suggestions through the API (#1121)', () => {
     member.userId = String((await rpc('me/get', await tokenFor(member), undefined, { slug: null })).body?.userId);
     const mine = await connection(org.orgId, 'mastodon', owner.userId);
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
-      await c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, mine, owner.userId]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
+      await c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, mine, owner.userId]);
     });
     const count = asked.length;
     const token = await tokenFor(member);
@@ -289,7 +289,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
     // Another org member's ask, so the owner's budget the next test counts stays untouched.
     const member: Account = { subject: randomUUID(), email: `capped-${randomUUID().slice(0, 8)}@alt-text.test`, session: randomUUID(), userId: '' };
     member.userId = String((await rpc('me/get', await tokenFor(member), undefined, { slug: null })).body?.userId);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]));
     expect(await rpc('social/posts/describeImage', await tokenFor(member), { fileId: short, language: 'vi' })).toMatchObject({ status: 503, body: { code: 'AI_ALT_TEXT_FAILED' } });
     expect(asked).toHaveLength(count);
   });

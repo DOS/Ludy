@@ -23,7 +23,7 @@ import { stripSqlComments } from './manifest-entities.ts';
 
 type Risk = PermissionDeclaration['risk'];
 const RANK: Record<Risk, number> = { R0: 0, R1: 1, R2: 2, R3: 3 };
-// The shape crove_kernel.role_permission's CHECK and the runtime's register() accept.
+// The shape ludy_kernel.role_permission's CHECK and the runtime's register() accept.
 const KEY = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
 export type Manifests = Record<string, { manifest: ModuleManifest; file: string }>;
@@ -171,11 +171,11 @@ export function routePermissionUses(manifests: Manifests): PermissionUse[] {
 // member_has_permission is the one resolution ctx_has_permission calls (ADR-0049 decision 10), member_permission_set writes the one
 // exception it reads (only vy.use), and role_assignment_check asks whether a role grants anything a viewer may not hold.
 const PERMISSION_CHECKERS: ReadonlySet<string> = new Set([
-  'function crove_kernel.ctx_has_permission',
-  'function crove_kernel.ctx_permission_entities',
-  'function crove_kernel.member_has_permission',
-  'function crove_kernel.member_permission_set',
-  'function crove_kernel.role_assignment_check',
+  'function ludy_kernel.ctx_has_permission',
+  'function ludy_kernel.ctx_permission_entities',
+  'function ludy_kernel.member_has_permission',
+  'function ludy_kernel.member_permission_set',
+  'function ludy_kernel.role_assignment_check',
 ]);
 // The quoted literals of a SQL fragment ('...'::text included), with doubled quotes undone.
 const sqlLiterals = (fragment: string): string[] => [...fragment.matchAll(/'((?:[^']|'')*)'/g)].map((m) => (m[1] as string).replaceAll("''", "'"));
@@ -183,7 +183,7 @@ const SQL_IDENT = /^[a-z_][a-z0-9_$]*$/i;
 
 // The permissions a database function's body or a row-level security policy names (#1630, #1641), and what it names
 // in a form this cannot attribute (#1641). A key is read from:
-//   crove_kernel.ctx_has_permission('<key>');
+//   ludy_kernel.ctx_has_permission('<key>');
 //   a comparison of a permission column (role_permission.permission, p.permission): = '<key>', IN ('<key>', ...),
 //   = ANY (ARRAY['<key>', ...]) and = ANY ('{<key>,...}'), with or without ::text casts as PostgreSQL deparses them;
 //   in each of these, a PL/pgSQL variable instead of the literal, when the body assigns it literals (v := '<key>',
@@ -379,11 +379,11 @@ export function permissionProblems(manifests: Manifests, input: { uses: readonly
     const seeded = new Set(input.grants.map((g) => `${g.role_key} ${g.permission}`));
     for (const g of input.grants) {
       const entry = declared.get(g.permission);
-      if (!entry) problems.push(`crove_kernel.role_permission (${g.role_key}, ${g.permission}): no manifest declares ${g.permission}; declare it in ${owner(g.permission)}`);
-      else if (!(entry.decl.defaultRoles as readonly string[]).includes(g.role_key)) problems.push(`crove_kernel.role_permission (${g.role_key}, ${g.permission}): ${entry.file} does not list ${g.role_key} among the default roles of ${g.permission}`);
+      if (!entry) problems.push(`ludy_kernel.role_permission (${g.role_key}, ${g.permission}): no manifest declares ${g.permission}; declare it in ${owner(g.permission)}`);
+      else if (!(entry.decl.defaultRoles as readonly string[]).includes(g.role_key)) problems.push(`ludy_kernel.role_permission (${g.role_key}, ${g.permission}): ${entry.file} does not list ${g.role_key} among the default roles of ${g.permission}`);
     }
     for (const [key, { decl, file }] of declared) {
-      for (const role of decl.defaultRoles) if (!seeded.has(`${role} ${key}`)) problems.push(`${file}: ${key} lists the default role ${role}, but no crove_kernel.role_permission row grants it`);
+      for (const role of decl.defaultRoles) if (!seeded.has(`${role} ${key}`)) problems.push(`${file}: ${key} lists the default role ${role}, but no ludy_kernel.role_permission row grants it`);
       if (!input.uses.some((u) => u.permission === key)) problems.push(`${file}: ${key} is declared, but no command, approval policy or database function checks it`);
     }
   }

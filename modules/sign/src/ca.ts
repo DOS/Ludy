@@ -655,7 +655,7 @@ export const caRequestJobBegin = defineCommand({
   target: (input) => ({ type: 'sign.ca_signing_request', id: input.requestId }),
   writes: [
     tableWrite(signManifest.tables, 'crove_sign', 'ca_signing_request', ['digest_sha256', 'updated_at']),
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'external_call', [
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'external_call', [
       'org_id',
       'key',
       'module',
@@ -756,7 +756,7 @@ export const caRequestJobBegin = defineCommand({
     if (req.external_tx_id !== null) {
       const callKey = pollCallKey(req.idempotency_key, req.poll_attempts + 1);
       await ctx.trx
-        .insertInto('crove_kernel.external_call')
+        .insertInto('ludy_kernel.external_call')
         .values({
           org_id: ctx.orgId,
           key: callKey,
@@ -778,7 +778,7 @@ export const caRequestJobBegin = defineCommand({
     // No external_tx_id stored yet: check external_call ledger before ever calling initiateSign (reconcile_only).
     const initKey = initiateCallKey(req.idempotency_key);
     const existingCall = await ctx.trx
-      .selectFrom('crove_kernel.external_call')
+      .selectFrom('ludy_kernel.external_call')
       .select(['state', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', initKey)
@@ -803,7 +803,7 @@ export const caRequestJobBegin = defineCommand({
           .execute();
       }
       await ctx.trx
-        .insertInto('crove_kernel.external_call')
+        .insertInto('ludy_kernel.external_call')
         .values({
           org_id: ctx.orgId,
           key: initKey,
@@ -893,7 +893,7 @@ export const caRequestJobRecord = defineCommand({
       'signed_at',
       'updated_at',
     ]),
-    tableWrite(kernelManifest.tables, 'crove_kernel', 'external_call', [
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'external_call', [
       'state',
       'external_ref',
       'error_kind',
@@ -937,7 +937,7 @@ export const caRequestJobRecord = defineCommand({
           .where('id', '=', req.id)
           .execute();
         await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({
             state: 'failed',
             external_ref: input.externalTxId,
@@ -979,7 +979,7 @@ export const caRequestJobRecord = defineCommand({
         .where('id', '=', req.id)
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({
           state: 'succeeded',
           external_ref: input.externalTxId,
@@ -1011,7 +1011,7 @@ export const caRequestJobRecord = defineCommand({
         .where('id', '=', req.id)
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({
           state: 'succeeded',
           external_ref: input.externalTxId,
@@ -1043,7 +1043,7 @@ export const caRequestJobRecord = defineCommand({
           .where('id', '=', req.id)
           .execute();
         await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({
             state: 'failed',
             error_kind: 'transient',
@@ -1088,7 +1088,7 @@ export const caRequestJobRecord = defineCommand({
         .where('id', '=', req.id)
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({
           state: 'ambiguous',
           error_kind: 'transient',
@@ -1117,7 +1117,7 @@ export const caRequestJobRecord = defineCommand({
       .where('id', '=', req.id)
       .execute();
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({
         state: 'failed',
         ...(input.externalTxId ? { external_ref: input.externalTxId } : {}),
@@ -1201,7 +1201,7 @@ export const caRequestJobComplete = defineCommand({
     }
 
     const padesFile = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'content_type', 'source', 'storage_key', 'generation', 'sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.padesFileId)

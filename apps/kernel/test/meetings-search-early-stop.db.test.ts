@@ -15,6 +15,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -43,7 +44,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(users[who] as string, org)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(users[who] as string, org)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -82,15 +83,15 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     await sqlAdmin(`ALTER DATABASE ${dbName} SET track_functions = 'all'`);
     // The statement of 20261226000000, kept under another name in this test database only, as the reference.
-    const original = readFileSync(`${MIGRATIONS}/20261226000000_crove_meetings_search.sql`, 'utf8');
+    const original = rewriteHistoricalCoreSql(readFileSync(`${MIGRATIONS}/20261226000000_crove_meetings_search.sql`, 'utf8'));
     const body = original.slice(original.indexOf('CREATE OR REPLACE FUNCTION crove_meetings.search_segment_ids'), original.indexOf('REVOKE ALL ON FUNCTION crove_meetings.search_segment_ids'));
     await sqlAdmin(body.replace('search_segment_ids', 'search_segment_ids_reference'));
-    await sqlAdmin('GRANT EXECUTE ON FUNCTION crove_meetings.search_segment_ids_reference(text, integer, integer) TO crove_tenant');
+    await sqlAdmin('GRANT EXECUTE ON FUNCTION crove_meetings.search_segment_ids_reference(text, integer, integer) TO ludy_tenant');
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: url.toString(), max: 2 });
@@ -98,7 +99,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     for (const key of ['owner', 'admin', 'recorder', 'reader', 'stranger', 'viewer']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'meetings-early', subject: key, email: `${key}@meetings-early.test`, name: null });
     const runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
     orgId = (await createOrg(runtime, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Tìm sớm')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [orgId, users.admin, users.recorder, users.reader, users.stranger, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [orgId, users.admin, users.recorder, users.reader, users.stranger, users.viewer]);
     const day = (g: number) => `2026-0${1 + (g % 9)}-${String(1 + (g % 27)).padStart(2, '0')}T0${g % 9}:00:00Z`;
     // 90 meetings shared with the org: every line says "giá" (common), a third also "báo giá", 1 in 30 "chiết khấu"; and meeting 7 alone holds "đặc biệt" in a line of its own.
     await meetings(90, 'recorder', 'org', [], day, (g) => [`Nói về giá hàng tuần ${g}`, g % 3 === 0 ? 'Gửi báo giá cho khách' : 'Giá đã chốt', g % 30 === 0 ? 'Cho chiết khấu mười phần trăm' : 'Giá tốt nhé', g === 7 ? 'Việc đặc biệt giá riêng' : 'Hết giờ']);
@@ -216,7 +217,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     ).rows[0];
     expect(acl).toMatchObject({ secdef: true, public_exec: false });
     expect(acl?.config?.some((s) => s === 'search_path=pg_catalog, pg_temp')).toBe(true);
-    // Granted to its owner and crove_tenant, and to nobody else (the reference function keeps the default grant to PUBLIC, which is why its ACL is not compared).
-    expect(acl?.acl).toMatch(/^\{[a-z_]+=X\/[a-z_]+,crove_tenant=X\/[a-z_]+\}$/);
+    // Granted to its owner and ludy_tenant, and to nobody else (the reference function keeps the default grant to PUBLIC, which is why its ACL is not compared).
+    expect(acl?.acl).toMatch(/^\{[a-z_]+=X\/[a-z_]+,ludy_tenant=X\/[a-z_]+\}$/);
   });
 });

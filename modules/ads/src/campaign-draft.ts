@@ -128,7 +128,7 @@ async function planContext(ctx: Db, account: { id: string; currency: string | nu
   const base = known ?? (await contextBase(ctx, account.id));
   let pageOk: boolean | null = null;
   if (pageConnectionId) {
-    const page = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', pageConnectionId).executeTakeFirst();
+    const page = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', pageConnectionId).executeTakeFirst();
     pageOk = page !== undefined && page.provider === 'facebook_page' && page.status === 'active';
   }
   return {
@@ -162,7 +162,7 @@ export async function accountOf(ctx: Db, adAccountId: string, lock = false) {
 // The open request for approval of a draft, if one waits in the Inbox.
 export async function pendingProposal(ctx: Db, draftId: string): Promise<string | null> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', ADS_CAMPAIGN_LAUNCH_COMMAND)
@@ -241,11 +241,11 @@ function stillDrafted(aiFields: readonly string[], before: AdsCampaignPlanDraft,
 // came from is another module's table: its id is kept as it is, and the screen that offers it offers the org's own posts.)
 async function refuseUnknownReferences(ctx: Db, plan: AdsCampaignPlanDraft): Promise<void> {
   if (plan.pageConnectionId) {
-    const page = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', plan.pageConnectionId).executeTakeFirst();
+    const page = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', plan.pageConnectionId).executeTakeFirst();
     if (!page) throw new DomainError('ADS_DRAFT_REFERENCE', 422, 'Kênh hoặc trang đã chọn không thuộc tổ chức này');
   }
   if (plan.mediaFileId) {
-    const file = await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', plan.mediaFileId).executeTakeFirst();
+    const file = await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', plan.mediaFileId).executeTakeFirst();
     if (!file) throw new DomainError('ADS_DRAFT_REFERENCE', 422, 'Tệp đã chọn không thuộc tổ chức này');
   }
 }
@@ -434,7 +434,7 @@ export const adsCampaignLaunch = defineCommand({
     const plan = completePlan(draft);
     // The proposal belongs to the legal entity the account was in when it was asked for (#1538); an account moved to another entity since is another
     // approval's business: a new request.
-    const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+    const proposal = await ctx.trx.selectFrom('ludy_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
     // The plan that was asked for is the plan that stands: a change after the request is a new request. What the card showed (the plan, the account,
     // the days) is the plan the hash binds, not only the hash.
     if (

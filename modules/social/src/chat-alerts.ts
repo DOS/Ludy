@@ -8,7 +8,7 @@
 // channel credential is (ADR-0025): crove_social.chat_alert holds no secret, and the sealed target sits in the
 // definer-only crove_social.chat_alert_target. The API checks a target with the platform and seals it, and the save
 // command seals it in (chat_alert_target_put); nothing in the API reads it back. Only the worker does, through
-// chat_alert_target_get (granted to crove_worker alone, refused once the member who saved it is no longer an owner or
+// chat_alert_target_get (granted to ludy_worker alone, refused once the member who saved it is no longer an owner or
 // admin): social.chat_alert.prepare for an alert, social.chat_alert.target for an owner's test line, which the test
 // command only asks for (an outbox event the worker turns into a job) and the worker records (social.chat_alert.tested).
 // No answer carries the target, and no audit row holds more than its kind and kinds.
@@ -318,7 +318,7 @@ const CHANNELS_NAMED = 3;
 async function channelNames(ctx: QueryContext, postId: string, filter: { variantId: string } | { status: 'in_review' }): Promise<string[]> {
   let q = ctx.trx
     .selectFrom('crove_social.post_variant as v')
-    .leftJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+    .leftJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
     .select(['v.provider', 'c.display_name'])
     .where('v.org_id', '=', ctx.orgId)
     .where('v.post_id', '=', postId);
@@ -381,7 +381,7 @@ export const chatAlertPrepare = defineQuery({
   input: z.strictObject({ eventId: zId }),
   access: 'system',
   handler: async (ctx, input): Promise<{ alert: SealedChatAlert; facts: ChatAlertFacts } | null> => {
-    const event = await ctx.trx.selectFrom('crove_kernel.outbox_event').select(['type', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
+    const event = await ctx.trx.selectFrom('ludy_kernel.outbox_event').select(['type', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
     if (!event) return null;
     const kind = chatAlertKindOf(event.type);
     if (!kind) return null;
@@ -392,7 +392,7 @@ export const chatAlertPrepare = defineQuery({
     const post = facts.postId === null ? null : await ctx.trx.selectFrom('crove_social.post').select(['title', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', facts.postId).executeTakeFirst();
     // Gone since (deleted): nothing to open. A combined alert (no post) has none to find.
     if (facts.postId !== null && !post) return null;
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('slug').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('slug').where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!org) return null;
     const postText = post ? [...(post.title?.trim() || post.body || '')].slice(0, 400).join('') || null : null;
     return { alert: await sealedOf(ctx, row), facts: { ...facts, slug: org.slug, postText } };

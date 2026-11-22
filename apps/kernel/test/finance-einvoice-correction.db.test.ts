@@ -89,14 +89,14 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Hóa Đơn ${randomUUID().slice(0, 6)}`);
     const adminUser = await identity('admin');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
     // The org's tax code is its default entity's (kernel.org.set_tax_code keeps the two the same).
     await execute({ orgId, owner }, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id ?? '';
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id ?? '';
     if (options.connection) {
       const channel = randomUUID();
       await admin(async (c) => {
-        await c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
+        await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
         await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
@@ -136,16 +136,16 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -174,7 +174,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
   const agreementFile = async (o: Org): Promise<string> => {
     const id = randomUUID();
     const sha = randomUUID().replaceAll('-', '').repeat(2);
-    await rows('INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, 100, $7)', [
+    await rows('INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, 100, $7)', [
       o.orgId, id, sha, `org/${o.orgId}/${sha}`, 'bien-ban-thoa-thuan.pdf', 'application/pdf', 'agreement',
     ]);
     return id;
@@ -462,9 +462,9 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
         { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
       );
     const stored = await ingest('agreement');
-    expect(await rows('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, stored.fileId])).toEqual([{ source: 'agreement' }]);
+    expect(await rows('SELECT source FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, stored.fileId])).toEqual([{ source: 'agreement' }]);
     // Nothing reads it: no extraction is queued, so it never reaches the Inbox.
-    expect(await rows('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, stored.fileId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, stored.fileId])).toHaveLength(0);
     // The same bytes as a document are refused, so an agreement never becomes an invoice and an invoice never an agreement.
     expect(await refusal(ingest('upload'))).toBe('FILE_SOURCE_CONFLICT');
     // The file is accepted as the agreement of a correction.
@@ -476,11 +476,11 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const o = await org();
     const original = await issued(o, sandbox());
     // A document of the org (an Inbox file) is no agreement, even though it is a file of the org.
-    const document = await rows<{ id: string }>("SELECT id FROM crove_kernel.file WHERE org_id = $1 AND source = 'upload' LIMIT 1", [o.orgId]);
+    const document = await rows<{ id: string }>("SELECT id FROM ludy_kernel.file WHERE org_id = $1 AND source = 'upload' LIMIT 1", [o.orgId]);
     const documentId = document[0]?.id ?? (await (async () => {
       const sha = sha256Hex(new TextEncoder().encode(`document ${randomUUID()}`));
       const id = randomUUID();
-      await rows('INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, 10, $7)', [o.orgId, id, sha, `org/${o.orgId}/${sha}`, 'hd.pdf', 'application/pdf', 'upload']);
+      await rows('INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, $6, 10, $7)', [o.orgId, id, sha, `org/${o.orgId}/${sha}`, 'hd.pdf', 'application/pdf', 'upload']);
       return id;
     })());
     expect(await refusal(start(o, original.draftId, 'adjustment', { agreementFileId: documentId }))).toBe('EINVOICE_AGREEMENT_FILE_NOT_FOUND');
@@ -506,7 +506,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const agreement = await store('agreement');
     const emailed = await store('email');
     expect(emailed).toEqual({ fileId: agreement.fileId, duplicate: true });
-    expect(await rows('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, agreement.fileId])).toEqual([{ source: 'agreement' }]);
+    expect(await rows('SELECT source FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, agreement.fileId])).toEqual([{ source: 'agreement' }]);
   });
   it('proposes the VAT rate of a correction by the nature picked, stores the basis the person confirmed and refuses one that does not match (#3709)', async () => {
     const o = await org();
@@ -545,7 +545,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const adjusting = await start(o, original.draftId, 'adjustment', { rateNature: 'amount_change', rateBasis: 'correction_date' });
     expect(adjusting.correction).toMatchObject({ kind: 'adjustment', rateBasis: 'correction_date' });
     expect((await rows<{ correction_rate_basis: string | null }>('SELECT correction_rate_basis FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, adjusting.id]))[0]?.correction_rate_basis).toBe('correction_date');
-    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
     expect(audit[0]?.detail).toMatchObject({ rateNature: 'amount_change', rateBasis: 'correction_date' });
 
     // The 8% of the correcting draft is judged on the confirmed basis: a draft dated 2027 and left at 8% is refused on the correction date basis, kept on the original's, and judged on the original's

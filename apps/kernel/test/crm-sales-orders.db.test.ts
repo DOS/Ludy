@@ -59,13 +59,13 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     // A tax code is unique within an org (party_tax_code_uq), so only the org's first customer has one; the others have none.
     let customers = 0;
     const party = (name: string) =>
       admin((c) =>
         c
-          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', $3, '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, customers++ === 0 ? '0312345678' : null])
+          .query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', $3, '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, customers++ === 0 ? '0312345678' : null])
           .then((r) => r.rows[0]!.id),
       );
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
@@ -109,9 +109,9 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -358,7 +358,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     await o.exec(o.member, 'crm.sales_order.cancel', { orderId: order.id, version: order.version, reason: REASON });
     await o.exec(o.member, 'crm.quote.decline', { quoteId: second.quote.id, version: second.quote.version, reason: `${REASON} lần hai` });
     const audit = await admin((c) =>
-      c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND (command LIKE 'crm.quote.accept' OR command LIKE 'crm.quote.decline' OR command LIKE 'crm.sales_order%') AND outcome = 'ok' ORDER BY id", [o.orgId]),
+      c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND (command LIKE 'crm.quote.accept' OR command LIKE 'crm.quote.decline' OR command LIKE 'crm.sales_order%') AND outcome = 'ok' ORDER BY id", [o.orgId]),
     );
     expect(audit.rows.map((r) => r.command)).toEqual(['crm.quote.accept', 'crm.sales_order.cancel', 'crm.quote.decline']);
     const text = JSON.stringify(audit.rows);

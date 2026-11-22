@@ -40,7 +40,7 @@ const begin = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input) => {
-    await sql`SELECT crove_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${input.meetingId}::uuid, ${input.stagingKey})`.execute(ctx.trx).catch((error) => {
+    await sql`SELECT ludy_kernel.meeting_platform_recording_begin(${input.recordingId}::uuid, ${input.meetingId}::uuid, ${input.stagingKey})`.execute(ctx.trx).catch((error) => {
       const message = (error as { message?: string } | null)?.message ?? 'ERR';
       throw new DomainError(message, 409, message);
     });
@@ -105,16 +105,16 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     const pool = createPool({ connectionString: appUrl, max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(pool, workerPool);
     const db = createDb(pool);
     workerDb = createDb(workerPool);
@@ -181,7 +181,7 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
     expect(first.listed).toBeGreaterThanOrEqual(1);
     const listed = await recordings();
     expect(listed.map((r) => [r.status, r.hasAudio, r.hasVideo]).sort()).toEqual([['suggested', false, true], ['suggested', true, false]]);
-    const idOf = async (externalId: string) => (await sqlAdmin<{ id: string }>('SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2', [connectionId, externalId])).rows[0]?.id as string;
+    const idOf = async (externalId: string) => (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2', [connectionId, externalId])).rows[0]?.id as string;
     const key = `staging/${randomBytes(32).toString('hex')}`;
     const stageKey = (recordingId: string, meetingId: string, stagingKey: string) => clicker.execute('test.mp.begin', { recordingId, meetingId, stagingKey }, { actor: { type: 'user', userId: member.userId, aal: 'aal1' }, orgId: org.orgId });
     // A video-only recording begins since C2a (the module's command refuses it where no sandbox can take its audio out; this test begins at the definer): it is queued like any other row.

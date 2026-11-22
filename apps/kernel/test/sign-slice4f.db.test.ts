@@ -190,7 +190,7 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -198,8 +198,8 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -692,10 +692,10 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
     expect(resOn.body.ai).toBe('used');
     expect((resOn.body.riskDeltas as unknown[]).length).toBe(1);
 
-    // Verify crove_kernel.org_usage recorded metric = 'ai_cost', feature = 'sign.version_diff'
+    // Verify ludy_kernel.org_usage recorded metric = 'ai_cost', feature = 'sign.version_diff'
     await admin(async (client) => {
       const { rows } = await client.query<{ feature: string; module: string }>(
-        `SELECT feature, module FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'sign.version_diff'`,
+        `SELECT feature, module FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'sign.version_diff'`,
         [org.orgId],
       );
       expect(rows).toEqual([{ feature: 'sign.version_diff', module: 'sign' }]);
@@ -854,7 +854,7 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
 
     await admin(async (client) => {
       const { rows } = await client.query<{ feature: string; module: string }>(
-        `SELECT feature, module FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'sign.contract_draft'`,
+        `SELECT feature, module FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'sign.contract_draft'`,
         [org.orgId],
       );
       expect(rows).toEqual([{ feature: 'sign.contract_draft', module: 'sign' }]);

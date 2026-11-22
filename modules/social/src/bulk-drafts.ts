@@ -38,7 +38,7 @@ async function setChannels(ctx: CommandContext, setId: string): Promise<string[]
 
 // The org's live connections among ids, in their order; every id must be one.
 async function liveChannels(ctx: CommandContext, ids: readonly string[], fromSet: boolean): Promise<Array<{ id: string; provider: ReturnType<typeof providerOf> }>> {
-  const rows = ids.length === 0 ? [] : await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', [...ids]).where('status', '<>', 'revoked').execute();
+  const rows = ids.length === 0 ? [] : await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', [...ids]).where('status', '<>', 'revoked').execute();
   const byId = new Map(rows.map((r) => [r.id, r.provider]));
   // A set drops the channels disconnected since it was saved, as the composer shows it; channels named one by one
   // must all be live.
@@ -56,7 +56,7 @@ interface LibraryFile {
 // The files named, in their order: each an image or a video of the org uploaded for Social.
 async function libraryFiles(ctx: CommandContext, ids: readonly string[]): Promise<LibraryFile[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'filename', 'content_type', 'size_bytes', 'source', 'duration_ms', 'image_width', 'image_height'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...ids])

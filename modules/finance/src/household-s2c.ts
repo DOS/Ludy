@@ -78,7 +78,7 @@ export const householdS2c = defineQuery({
       if (row.status !== 'confirmed') unconfirmed.push({ kind: 'group', key: prefix, effectiveFrom: row.effective_from });
     }
 
-    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
+    const entityRow = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
     return zHouseholdS2c.parse({
       period: { period: w.ledger.period.period, from: w.from, to: w.to },
       household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },

@@ -42,8 +42,8 @@ export const postAssign = defineCommand({
     }
     // A new assignee must be a member; keeping one who has since left (to change only the due date) is allowed.
     if (input.assigneeUserId && input.assigneeUserId !== post.assignee_user_id) {
-      // Only a member of the org (crove_kernel.member_profiles answers for members only).
-      const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_profiles(${[input.assigneeUserId]}::uuid[])`.execute(ctx.trx);
+      // Only a member of the org (ludy_kernel.member_profiles answers for members only).
+      const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_profiles(${[input.assigneeUserId]}::uuid[])`.execute(ctx.trx);
       if (rows.length === 0) throw new DomainError('ASSIGNEE_NOT_MEMBER', 422, 'Người được giao không phải thành viên của tổ chức');
     }
     const dueAt = input.dueAt ? new Date(Date.parse(input.dueAt)) : null;

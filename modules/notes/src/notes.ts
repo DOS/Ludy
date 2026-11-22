@@ -667,11 +667,11 @@ export const noteSearch = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)
       .where(
-        sql<boolean>`(note.search @@ crove_kernel.search_query(${input.q}) OR EXISTS (
+        sql<boolean>`(note.search @@ ludy_kernel.search_query(${input.q}) OR EXISTS (
           SELECT 1 FROM crove_notes.attachment a
-           WHERE a.org_id = note.org_id AND a.note_id = note.id AND a.search @@ crove_kernel.search_query(${input.q})))`,
+           WHERE a.org_id = note.org_id AND a.note_id = note.id AND a.search @@ ludy_kernel.search_query(${input.q})))`,
       )
-      .orderBy(sql`pg_catalog.ts_rank(note.search, crove_kernel.search_query(${input.q}))`, 'desc')
+      .orderBy(sql`pg_catalog.ts_rank(note.search, ludy_kernel.search_query(${input.q}))`, 'desc')
       .orderBy('updated_at', 'desc')
       .orderBy('id')
       .limit(input.limit)

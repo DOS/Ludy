@@ -53,10 +53,10 @@ suite('back-pressure on PostgreSQL (#894)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const appDb = createDb(appPool);
     const runtime = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const owner = await upsertIdentity(appDb, { issuer: 'backpressure-test', subject: 'owner', email: 'owner@backpressure.test', name: null });
@@ -74,14 +74,14 @@ suite('back-pressure on PostgreSQL (#894)', () => {
   });
 
   it('reads 0 with nothing pending and the age of the oldest pending event otherwise', async () => {
-    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_pending'));
     expect(await outboxLagSeconds(workerDb)).toBe(0);
     await admin(async (c) => {
       for (const age of ['10 minutes', '2 minutes']) {
         await c.query(
-          `WITH e AS (INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at)
+          `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                       VALUES ($1, 'test.lag', '{}', now() - $2::interval) RETURNING org_id, id)
-           INSERT INTO crove_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
+           INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
           [orgId, age],
         );
       }
@@ -119,7 +119,7 @@ suite('back-pressure on PostgreSQL (#894)', () => {
       expect(ran).toEqual(['before']);
 
       // The relay caught up: the queued job runs.
-      await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+      await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_pending'));
       await check();
       expect(work.paused).toBe(false);
       await waitFor('during');
