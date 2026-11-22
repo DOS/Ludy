@@ -3538,6 +3538,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // (constant-time) and the push must name the connection's own shop or seller, and each connection with a good push gets ONE coalesced poll (ids only: the body is never in a job). A refused one is counted on its hook after the batch
       // commits (ten in an hour stop it). The claim deletes the pushes as it takes them, and the claim and the sends share one transaction, so a failure leaves them waiting (the sweep deletes any older than ten minutes).
       // Nothing of a push is logged: the line below carries counts.
+      // The steps below are mirrored by apps/kernel/test/marketplace-push-chain.db.test.ts (its relay()): a change to this loop must be made there too, or the chain test no longer tests what runs.
       const pushProviders = deps.channels?.marketplaceProviders;
       // A failure of the relay (the database, a broker) must not skip the other relays and sweeps that follow: it is logged by its class only, and the pushes stay waiting (or are swept) for the next round.
       try {
