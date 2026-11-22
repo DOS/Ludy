@@ -15570,6 +15570,7 @@ export const vi = {
     },
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
+      month_close: 'Xem những việc còn mở khi chốt sổ tháng',
       signals: {
         overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',
         supplier_bank_changes: 'Xem nhà cung cấp nào vừa đổi tài khoản ngân hàng, để cảnh báo khi có khoản chi đang chờ',

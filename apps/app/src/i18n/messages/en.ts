@@ -15570,6 +15570,7 @@ export const en = {
     },
     finance: {
       today: 'Read what needs you in accounting today',
+      month_close: 'Read what is still open for the month close',
       signals: {
         overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',
         supplier_bank_changes: 'Read which suppliers changed their bank account recently, to warn when a payment is waiting',
