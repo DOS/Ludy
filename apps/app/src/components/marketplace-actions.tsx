@@ -3,11 +3,11 @@
 // bank lines the platform's transfer may be) and the platform's fee invoices that (clearing is retired, so none is listed). Read by code (marketplace.worklist), no model call. Each button only asks for the
 // proposal (inbox.request of the finance command) and links to it in the Inbox: nothing posts from here, a second person approves there. While the accountant has not confirmed the account map (#2520) the
 // three are disabled under one line that says so, instead of letting a request fail. Nothing is shown when nothing waits.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MarketplaceFeeAccrual, MarketplaceFeeAccrualReversal, MarketplaceInvoiceToClear, MarketplacePayoutAdjustment, MarketplacePayoutToMatch, MarketplaceSettlementToPost } from '@ludy/kernel-contract';
+import type { MarketplaceFeeAccrual, MarketplaceFeeAccrualReversal, MarketplaceInvoiceToClear, MarketplacePayoutAdjustment, MarketplacePayoutToMatch, MarketplaceReturnToConfirm, MarketplaceSettlementToPost } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
@@ -278,6 +278,46 @@ function AccrualRow({ a, open }: { a: MarketplaceFeeAccrual; open: boolean }) {
   );
 }
 
+// A line that came back (#4355): the platform's status only offers the question, a person says whether the goods are back. `Goods are back` writes the stock-in (priced by the month close), `not back` moves nothing.
+// It posts nothing and needs no account map, so the account map's gate does not hold it. The answer is final, and the row leaves the list.
+function ReturnRow({ r }: { r: MarketplaceReturnToConfirm }) {
+  const t = useTranslations('marketplaceActions');
+  const f = useFormat();
+  const queryClient = useQueryClient();
+  // One key per answer, kept for the life of the row, so a retry of the same answer returns the same result.
+  const [keys] = useState(() => ({ back: crypto.randomUUID(), not_back: crypto.randomUUID() }));
+  const answer = useMutation({
+    mutationFn: (decision: 'back' | 'not_back') => client.marketplace.returns.decide({ orderLineId: r.orderLineId, decision, idempotencyKey: keys[decision] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.marketplace.worklist.key() }),
+  });
+  return (
+    <TableRow data-testid="marketplace-action-return">
+      <TableCell className="px-4 py-3">{r.platformName}</TableCell>
+      <TableCell className="px-4 py-3">{r.orderNo}</TableCell>
+      <TableCell className="px-4 py-3">{r.itemCode} {r.itemName}</TableCell>
+      <TableCell className={NUM}>{f.number(r.quantity)} {r.unit}</TableCell>
+      <TableCell className="px-4 py-3">{t(`returnStage_${r.stage}`)}</TableCell>
+      <TableCell className="px-4 py-3 text-right">
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" className="min-h-11" loading={answer.isPending && answer.variables === 'back'} disabled={answer.isPending} onClick={() => answer.mutate('back')} data-testid="marketplace-return-back">
+              {t('goodsBack')}
+            </Button>
+            <Button size="sm" variant="outline" className="min-h-11" loading={answer.isPending && answer.variables === 'not_back'} disabled={answer.isPending} onClick={() => answer.mutate('not_back')} data-testid="marketplace-return-not-back">
+              {t('goodsNotBack')}
+            </Button>
+          </div>
+          {answer.error && (
+            <span className="max-w-72 text-right text-xs text-destructive" data-testid="marketplace-return-error">
+              {errorMessage(answer.error)}
+            </span>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 // The reversal of a standing accrual, from the first day of the next month: the generic reversal of the entry, dated that day.
 function AccrualReversalRow({ r, open }: { r: MarketplaceFeeAccrualReversal; open: boolean }) {
   const t = useTranslations('marketplaceActions');
@@ -325,7 +365,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
   const worklist = useQuery({ ...orpc.marketplace.worklist.queryOptions({ input: legalEntityId === undefined ? {} : { legalEntityId } }), enabled: ready, retry: false });
   const data = worklist.data;
   if (!data) return null;
-  if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0 && data.accruals.length === 0 && data.accrualReversals.length === 0) return null;
+  if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0 && data.accruals.length === 0 && data.accrualReversals.length === 0 && data.returns.length === 0) return null;
   const open = data.postingConfirmed;
   // A settlement entry needs the sales path only (#4303 S3b): its rows follow that, the payout, fee and invoice rows follow `open`.
   const salesOpen = data.salesPostingConfirmed;
@@ -345,6 +385,17 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
           <DataTable head={[t('platform'), t('period'), t('month'), t('net'), '']} numeric={[3]}>
             {data.settlements.map((s) => (
               <SettlementRow key={s.id} s={s} open={salesOpen} />
+            ))}
+          </DataTable>
+        </div>
+      )}
+      {data.returns.length > 0 && (
+        <div data-testid="marketplace-actions-returns">
+          <h3 className="mb-1 text-sm font-medium">{t('returnsTitle')}</h3>
+          <p className="mb-2 text-sm text-subtle-foreground">{t('returnsHint')}</p>
+          <DataTable head={[t('platform'), t('orderNo'), t('returnItem'), t('returnQuantity'), t('returnState'), '']} numeric={[3]}>
+            {data.returns.map((r) => (
+              <ReturnRow key={r.orderLineId} r={r} />
             ))}
           </DataTable>
         </div>

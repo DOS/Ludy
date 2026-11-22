@@ -204,7 +204,7 @@ import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMis
 import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketplaceColumnsFile, zMarketplaceColumnsProposal, zMarketplaceColumnsProposalAsk, zMarketplaceColumnsStatus } from './marketplace-columns.ts';
 import { zMarketplaceColumnProfile, zMarketplaceColumnProfileQuery, zMarketplaceColumnsConfirm, zMarketplaceColumnsConfirmed } from './marketplace-column-profile.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
-import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceReturnDecide, zMarketplaceReturnDecided, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
@@ -2758,6 +2758,11 @@ export const contract = {
     vatRates: {
       list: oc.input(zMarketplaceVatRatesGet).output(zMarketplaceVatRates),
       set: oc.input(zMarketplaceVatRateSet.extend({ idempotencyKey: zId })).output(zMarketplaceVatRates),
+    },
+    // The answer to "are the goods back?" for a marketplace line that came back (#4355, rule 8 of #2520): `back` writes the stock-in, `not_back` moves nothing; the work list offers the lines (`returns`). Owners, admins and
+    // members, a person only (R1, audited). MARKETPLACE_RETURN_NOT_FOUND (404), MARKETPLACE_RETURN_NOT_OFFERED (422), MARKETPLACE_RETURN_DECIDED (409), MARKETPLACE_RETURN_COMPENSATED (409), FORBIDDEN (403) for an agent.
+    returns: {
+      decide: oc.input(zMarketplaceReturnDecide.extend({ idempotencyKey: zId })).output(zMarketplaceReturnDecided),
     },
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.

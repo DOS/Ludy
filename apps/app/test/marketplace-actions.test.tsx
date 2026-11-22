@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MarketplaceWorklist } from '@ludy/kernel-contract';
+import type { MarketplaceReturnToConfirm, MarketplaceWorklist } from '@ludy/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -44,10 +44,26 @@ const lineA = '00000000-0000-4000-8000-0000000000b1';
 const lineB = '00000000-0000-4000-8000-0000000000b2';
 const documentId = '00000000-0000-4000-8000-0000000000c1';
 
-const EMPTY: MarketplaceWorklist = { postingConfirmed: true, salesPostingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [], accruals: [], accrualReversals: [] };
+const RETURNED: MarketplaceReturnToConfirm = {
+  orderLineId: lineA,
+  legalEntityId: entity,
+  platform: 'shopee',
+  platformName: 'Shopee',
+  orderNo: '2611A1',
+  sku: 'QC-1',
+  itemCode: 'QC-1',
+  itemName: 'Áo thun',
+  unit: 'cái',
+  quantity: '2',
+  stage: 'returned',
+  shippedAt: '2026-11-02',
+};
+
+const EMPTY: MarketplaceWorklist = { postingConfirmed: true, salesPostingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [], accruals: [], accrualReversals: [], returns: [] };
 const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => ({
   postingConfirmed: true,
   salesPostingConfirmed: true,
+  returns: [],
   halfReversed: [],
   accruals: [],
   accrualReversals: [],
@@ -118,6 +134,24 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     const settlementsOnly = render({ ...EMPTY, postingConfirmed: false, settlements: FULL().settlements });
     expect(disabled(settlementsOnly, 'marketplace-post')).toBe(false);
     expect(settlementsOnly).not.toContain('data-testid="marketplace-gate"');
+  });
+
+  it('lists the lines that came back with the two answers, not held by the account map, and asks the server for nothing (#4355)', () => {
+    // Nothing else waits and the account map is closed: the answers are still open, and no gate line is shown for them.
+    const only = render({ ...EMPTY, postingConfirmed: false, salesPostingConfirmed: false, returns: [RETURNED, { ...RETURNED, orderLineId: lineB, orderNo: '2611A2', stage: 'cancelled' }] });
+    expect(only).toContain('data-testid="marketplace-actions-returns"');
+    expect((only.match(/data-testid="marketplace-action-return"/g) ?? []).length).toBe(2);
+    expect(disabled(only, 'marketplace-return-back')).toBe(false);
+    expect(disabled(only, 'marketplace-return-not-back')).toBe(false);
+    expect(only).not.toContain('data-testid="marketplace-gate"');
+    for (const text of ['Returned lines: are the goods back?', '2611A1', '2611A2', 'QC-1 Áo thun', 'Goods are back', 'Goods are not back', 'Returned', 'Cancelled after shipping', 'Uncertain (#2520)']) expect(only).toContain(text);
+    // The settlement rows beside it keep their own gates.
+    const withSettlement = render(FULL({ postingConfirmed: false, salesPostingConfirmed: true, returns: [RETURNED] }));
+    expect(disabled(withSettlement, 'marketplace-return-back')).toBe(false);
+    expect(disabled(withSettlement, 'marketplace-record')).toBe(true);
+    const vi = render({ ...EMPTY, returns: [RETURNED] }, 'vi');
+    for (const text of ['Dòng bị trả lại: hàng đã về chưa?', 'Hàng đã về', 'Hàng không về', 'Đã trả lại']) expect(vi).toContain(text);
+    expect(cache.calls).toEqual([]);
   });
 
   it('once the map is confirmed shows no gate line and the three actions enabled', () => {

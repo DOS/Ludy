@@ -11,6 +11,7 @@
 // - invoices to clear: the platform's posted fee invoices that still have something to clear while fees wait on 1388, with what a clearing would take now.
 // `postingConfirmed` is false while the accountant has not confirmed the account map of an entity in view (#2520): every request would be refused, so the screen shows the actions disabled.
 // `salesPostingConfirmed` is the same read for the sales path alone: the settlement entries need no other path (finance.marketplace_settlement.record gates on 'sales'), so its rows follow it, not the payout and fee paths (#4303 S3b).
+// `returns` are the lines that came back and wait for "are the goods back?" (#4355): a stock question, so no account map holds them.
 import { sql } from 'kysely';
 import { MARKETPLACE_FEE_CLEARING_COMMAND, MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX, zMarketplaceBalanceInput, type MarketplaceWorklist } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
@@ -21,6 +22,7 @@ import { balanceOf, invoiceCleared, invoicePayable, standingInvoiceEntry } from 
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
+import { returnsToConfirm } from './marketplace-return.ts';
 import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 import type { SettlementVatRate } from './marketplace-settlement-posting.ts';
@@ -255,6 +257,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         halfReversed,
         accruals,
         accrualReversals,
+        returns: await returnsToConfirm(ctx, input.legalEntityId),
       };
     },
   });
