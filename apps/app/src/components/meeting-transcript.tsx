@@ -38,8 +38,13 @@ function Line({ segment, editable, focused, focusToken, translation }: { segment
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
   const [speaker, setSpeaker] = useState(segment.speakerLabel);
+  const prevServerRef = useRef({ text: segment.text, speakerLabel: segment.speakerLabel });
   useEffect(() => {
-    if (!editing) {
+    if (prevServerRef.current.text !== segment.text || prevServerRef.current.speakerLabel !== segment.speakerLabel) {
+      prevServerRef.current = { text: segment.text, speakerLabel: segment.speakerLabel };
+      setText(segment.text);
+      setSpeaker(segment.speakerLabel);
+    } else if (!editing) {
       setText(segment.text);
       setSpeaker(segment.speakerLabel);
     }
@@ -275,7 +280,7 @@ export function MeetingTranscript({
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe key={`vy-transcribe-${redactedEpoch}`} meetingId={meetingId} hasDraft={draft} />}
-      <TranscriptTranslationPanel meetingId={meetingId} target={target} onTarget={setTarget} />
+      <TranscriptTranslationPanel key={`tt-${redactedEpoch}`} meetingId={meetingId} target={target} onTarget={setTarget} />
       <Card>
       <CardHeader>
         <CardTitle role="heading" aria-level={2} className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
@@ -323,7 +328,7 @@ export function MeetingTranscript({
         <ul className="divide-y">
           {transcript.segments.map((segment) => (
             <Line
-              key={`${segment.id}-${redactedEpoch}`}
+              key={segment.id}
               segment={segment}
               editable={transcript.isRecorder}
               focused={segment.id === focusedId}

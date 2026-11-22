@@ -14,7 +14,7 @@ const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page
 const PHONE = '0912 345 678';
 const EMAIL = 'khach@example.com';
 const CCCD = '001200000001';
-const MST = '0100000003';
+const MST = '5900000018';
 const BANK = '1234567890123456';
 
 async function scanDialogA11y(page: Page, label: string): Promise<string[]> {
@@ -52,8 +52,10 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
   await signInNewUser(page, recorderEmail);
   const slug = await createOrg(page, 'Công ty Ẩn Thông Tin');
 
-  const reader = await browser.newPage();
-  await reader.goto('/');
+  const readerContext = await browser.newContext();
+  const reader = await readerContext.newPage();
+  try {
+    await reader.goto('/');
   await signInNewUser(reader, readerEmail);
   exec(
     `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
@@ -287,6 +289,7 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
     await expect(reader.locator('html')).toHaveClass(/\bdark\b/);
     expect(await scanPageA11y(reader, 'dark 360px reader')).toEqual([]);
   });
-
-  await reader.close();
+  } finally {
+    await readerContext.close();
+  }
 });

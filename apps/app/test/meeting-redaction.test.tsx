@@ -145,7 +145,7 @@ describe('meeting redaction helpers (#4001 Slice 3)', () => {
       segments: [
         { id: UUID_SEG, startSeconds: 15, endSeconds: 20, speakerLabel: 'Anh Minh 0900 000 001', text: 'Gọi 0912 345 678', stage: 'draft' as const, corrected: false, source: 'ludy' as const },
       ],
-      draftResult: { id: UUID_RES, feature: 'manual' as const, stage: 'draft' as const, summary: 'Email a@example.com', decisions: ['MST 0100000003'], tainted: false },
+      draftResult: { id: UUID_RES, feature: 'manual' as const, stage: 'draft' as const, summary: 'Email a@example.com', decisions: ['MST 5900000018'], tainted: false },
       items: [
         {
           id: UUID_ITEM,
@@ -172,7 +172,7 @@ describe('meeting redaction helpers (#4001 Slice 3)', () => {
     expect(resolveCandidateSource(makeCandidate({ surface: 'transcript_segment.text' }), sources)).toEqual({ text: 'Gọi 0912 345 678', speaker: 'Anh Minh 0900 000 001' });
     expect(resolveCandidateSource(makeCandidate({ surface: 'transcript_segment.speaker_label' }), sources)).toEqual({ text: 'Anh Minh 0900 000 001' });
     expect(resolveCandidateSource(makeCandidate({ surface: 'meeting_result.summary', targetId: UUID_RES }), sources)).toEqual({ text: 'Email a@example.com' });
-    expect(resolveCandidateSource(makeCandidate({ surface: 'meeting_result.decision', targetId: UUID_RES, decisionIndex: 0 }), sources)).toEqual({ text: 'MST 0100000003' });
+    expect(resolveCandidateSource(makeCandidate({ surface: 'meeting_result.decision', targetId: UUID_RES, decisionIndex: 0 }), sources)).toEqual({ text: 'MST 5900000018' });
     expect(resolveCandidateSource(makeCandidate({ surface: 'action_item.title', targetId: UUID_ITEM }), sources)).toEqual({ text: 'STK 1234567890123456', speaker: 'Chị Lan 0912 345 678' });
     expect(resolveCandidateSource(makeCandidate({ surface: 'action_item.who_drafted', targetId: UUID_ITEM }), sources)).toEqual({ text: 'Chị Lan 0912 345 678' });
     expect(resolveCandidateSource(makeCandidate({ surface: 'action_item.when_drafted', targetId: UUID_ITEM }), sources)).toEqual({ text: 'gọi 0912 345 678', speaker: 'Chị Lan 0912 345 678' });
@@ -335,7 +335,7 @@ describe('meeting redaction SSR components (#4001 Slice 3)', () => {
     const candidates: RedactionCandidate[] = [
       makeCandidate({ surface: 'meeting.title', targetId: UUID_MEETING, kind: 'phone', startPos: 5, endPos: 17, matchText: '0912 345 678', mark: REDACTION_MARK_BY_KIND.phone, startSeconds: null }),
       makeCandidate({ surface: 'transcript_segment.text', targetId: UUID_SEG, kind: 'email', startPos: 7, endPos: 24, matchText: 'a@example.com', mark: REDACTION_MARK_BY_KIND.email, startSeconds: 75 }),
-      makeCandidate({ surface: 'meeting_result.decision', targetId: UUID_RES, decisionIndex: 0, kind: 'tax_code', startPos: 5, endPos: 15, matchText: '0100000003', mark: REDACTION_MARK_BY_KIND.tax_code, startSeconds: null }),
+      makeCandidate({ surface: 'meeting_result.decision', targetId: UUID_RES, decisionIndex: 0, kind: 'tax_code', startPos: 5, endPos: 15, matchText: '5900000018', mark: REDACTION_MARK_BY_KIND.tax_code, startSeconds: null }),
     ];
     const data: TranscriptRedactCandidates = {
       meetingId: UUID_MEETING,
@@ -346,7 +346,7 @@ describe('meeting redaction SSR components (#4001 Slice 3)', () => {
     const sources = {
       meetingTitle: 'Họp 0912 345 678',
       segments: [{ id: UUID_SEG, startSeconds: 75, endSeconds: 80, speakerLabel: 'Anh Minh', text: 'Email a@example.com nhé', stage: 'draft' as const, corrected: false, source: 'ludy' as const }],
-      draftResult: { id: UUID_RES, feature: 'manual' as const, stage: 'draft' as const, summary: 'S', decisions: ['MST 0100000003'], tainted: false },
+      draftResult: { id: UUID_RES, feature: 'manual' as const, stage: 'draft' as const, summary: 'S', decisions: ['MST 5900000018'], tainted: false },
     };
 
     const htmlVi = render(

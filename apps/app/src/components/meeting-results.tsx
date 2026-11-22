@@ -108,15 +108,16 @@ function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meet
   );
   const [lines, setLines] = useState(decisions.join('\n'));
   const decisionsKey = decisions.join('\n');
-  const prevServerRef = useRef({ summary, decisionsKey, template, copy });
+  const copyHash = copy?.hash ?? null;
+  const prevServerRef = useRef({ summary, decisionsKey, template, copyHash });
   useEffect(() => {
     if (
       prevServerRef.current.summary !== summary ||
       prevServerRef.current.decisionsKey !== decisionsKey ||
       prevServerRef.current.template !== template ||
-      prevServerRef.current.copy !== copy
+      prevServerRef.current.copyHash !== copyHash
     ) {
-      prevServerRef.current = { summary, decisionsKey, template, copy };
+      prevServerRef.current = { summary, decisionsKey, template, copyHash };
       const currentDefs = templateSections(template, copy?.sections ?? null);
       const nextParsed = currentDefs.length === 0 ? null : textToSections(template, summary, copy?.sections ?? null);
       setText(summary);
@@ -125,7 +126,7 @@ function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meet
       );
       setLines(decisionsKey);
     }
-  }, [summary, decisionsKey, template, copy]);
+  }, [summary, decisionsKey, template, copy, copyHash]);
   const decisionList = lines.split('\n').map((l) => l.trim()).filter(Boolean);
   const sections = defs.map((d) => ({ key: d.key, text: (values[d.key] ?? '').trim() })).filter((x) => x.text !== '');
   // A section holds at most 1200 characters; text reflowed into the first one can be longer, and the recorder splits it before saving.

@@ -3,7 +3,7 @@
 // deterministic detection only (works with AI off), recorder-only, never blocks publish,
 // zero original text kept on confirm, and drops the recorder's private Vy results and draft translations.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   REDACTION_CANDIDATES_MAX,
@@ -169,59 +169,79 @@ export function toRedactionSelections(
     }));
 }
 
-export function resolveCandidateSource(
+interface CandidateSourceLookup {
+  meetingTitle: string | undefined;
+  draftResult: MeetingResults['draft'] | undefined;
+  getSegment: (id: string) => TranscriptSegment | undefined;
+  getItem: (id: string) => ActionItemView | undefined;
+  getChapter: (id: string) => Chapter | undefined;
+}
+
+function resolveFromLookup(
   candidate: RedactionCandidate,
-  sources: RedactionSurfaceSources,
+  lookup: CandidateSourceLookup,
 ): { text?: string; speaker?: string } {
   switch (candidate.surface) {
     case 'meeting.title':
-      return sources.meetingTitle !== undefined ? { text: sources.meetingTitle } : {};
+      return lookup.meetingTitle !== undefined ? { text: lookup.meetingTitle } : {};
     case 'transcript_segment.text': {
-      const seg = sources.segments?.find((s) => s.id === candidate.targetId);
+      const seg = lookup.getSegment(candidate.targetId);
       return seg ? { text: seg.text, speaker: seg.speakerLabel } : {};
     }
     case 'transcript_segment.speaker_label': {
-      const seg = sources.segments?.find((s) => s.id === candidate.targetId);
+      const seg = lookup.getSegment(candidate.targetId);
       return seg ? { text: seg.speakerLabel } : {};
     }
     case 'meeting_result.summary':
-      return sources.draftResult && sources.draftResult.id === candidate.targetId ? { text: sources.draftResult.summary } : {};
+      return lookup.draftResult && lookup.draftResult.id === candidate.targetId ? { text: lookup.draftResult.summary } : {};
     case 'meeting_result.decision': {
-      if (!sources.draftResult || sources.draftResult.id !== candidate.targetId || candidate.decisionIndex === null) return {};
-      const decision = sources.draftResult.decisions[candidate.decisionIndex];
+      if (!lookup.draftResult || lookup.draftResult.id !== candidate.targetId || candidate.decisionIndex === null) return {};
+      const decision = lookup.draftResult.decisions[candidate.decisionIndex];
       return decision !== undefined ? { text: decision } : {};
     }
     case 'action_item.title': {
-      const item = sources.items?.find((i) => i.id === candidate.targetId);
+      const item = lookup.getItem(candidate.targetId);
       if (!item) return {};
       return item.who ? { text: item.title, speaker: item.who } : { text: item.title };
     }
     case 'action_item.who_drafted': {
-      const item = sources.items?.find((i) => i.id === candidate.targetId);
+      const item = lookup.getItem(candidate.targetId);
       return item ? { text: item.who } : {};
     }
     case 'action_item.when_drafted': {
-      const item = sources.items?.find((i) => i.id === candidate.targetId);
+      const item = lookup.getItem(candidate.targetId);
       if (!item) return {};
       return item.who ? { text: item.when, speaker: item.who } : { text: item.when };
     }
     case 'meeting_chapter.title': {
-      const chap = sources.draftChapters?.find((c) => c.id === candidate.targetId);
+      const chap = lookup.getChapter(candidate.targetId);
       return chap ? { text: chap.title } : {};
     }
   }
 }
 
-// Builds a bounded context excerpt around a 1-based Unicode code point span returned by crove_kernel.text_detect.
-export function buildCandidateExcerpt(
+export function resolveCandidateSource(
+  candidate: RedactionCandidate,
+  sources: RedactionSurfaceSources,
+): { text?: string; speaker?: string } {
+  return resolveFromLookup(candidate, {
+    meetingTitle: sources.meetingTitle,
+    draftResult: sources.draftResult,
+    getSegment: (id) => sources.segments?.find((s) => s.id === id),
+    getItem: (id) => sources.items?.find((i) => i.id === id),
+    getChapter: (id) => sources.draftChapters?.find((c) => c.id === id),
+  });
+}
+
+function buildExcerptFromChars(
   sourceText: string | undefined,
   startPos: number,
   endPos: number,
   matchText: string,
-  radius = 36,
+  radius: number,
+  chars: readonly string[] | undefined,
 ): RedactionExcerpt {
-  if (!sourceText) return { before: '', match: matchText, after: '' };
-  const chars = Array.from(sourceText);
+  if (!sourceText || !chars) return { before: '', match: matchText, after: '' };
   const startIdx = startPos - 1;
   const endIdx = endPos - 1;
   if (startIdx >= 0 && endIdx <= chars.length && startIdx < endIdx && chars.slice(startIdx, endIdx).join('') === matchText) {
@@ -232,6 +252,24 @@ export function buildCandidateExcerpt(
     return { before, match: matchText, after };
   }
   return { before: '', match: matchText, after: '' };
+}
+
+// Builds a bounded context excerpt around a 1-based Unicode code point span returned by crove_kernel.text_detect.
+export function buildCandidateExcerpt(
+  sourceText: string | undefined,
+  startPos: number,
+  endPos: number,
+  matchText: string,
+  radius = 36,
+): RedactionExcerpt {
+  return buildExcerptFromChars(
+    sourceText,
+    startPos,
+    endPos,
+    matchText,
+    radius,
+    sourceText ? Array.from(sourceText) : undefined,
+  );
 }
 
 export function useRedactCandidatesQuery(meetingId: string, enabled: boolean) {
@@ -292,6 +330,68 @@ export function RedactionNudge({
   );
 }
 
+interface PreparedCandidate {
+  key: string;
+  candidate: RedactionCandidate;
+  speaker: string | undefined;
+  timeText: string | null;
+  excerpt: RedactionExcerpt;
+}
+
+const CandidateRow = memo(function CandidateRow({
+  entry,
+  checked,
+  disabled,
+  onToggleKey,
+}: {
+  entry: PreparedCandidate;
+  checked: boolean;
+  disabled: boolean;
+  onToggleKey: (key: string, checked: boolean) => void;
+}) {
+  const t = useTranslations('meetings.redaction');
+  const { key, candidate, speaker, timeText, excerpt } = entry;
+  const kindLabel = t(`kinds.${candidate.kind as RedactionKind}`);
+
+  return (
+    <li data-testid="redaction-candidate" data-surface={candidate.surface} data-kind={candidate.kind}>
+      <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 text-sm">
+        <Checkbox
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(next) => onToggleKey(key, next === true)}
+          aria-label={t('checkboxLabel', { kind: kindLabel, match: candidate.matchText })}
+          className="mt-1 max-md:size-5"
+        />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{kindLabel}</Badge>
+            {candidate.surface === 'meeting_result.decision' && candidate.decisionIndex !== null && (
+              <span>{t('decisionLabel', { number: String(candidate.decisionIndex + 1) })}</span>
+            )}
+            {speaker && timeText !== null ? (
+              <span>{t('speakerAt', { speaker, time: timeText })}</span>
+            ) : speaker ? (
+              <span>{speaker}</span>
+            ) : timeText !== null ? (
+              <span className="font-mono">{timeText}</span>
+            ) : null}
+          </div>
+          <p className="break-words text-sm leading-relaxed text-foreground" data-testid="redaction-excerpt">
+            {excerpt.before && <span className="text-muted-foreground">{excerpt.before}</span>}
+            <mark className="rounded bg-warning/20 px-1 font-mono font-medium text-foreground">{excerpt.match}</mark>
+            {excerpt.after && <span className="text-muted-foreground">{excerpt.after}</span>}
+          </p>
+          <p className="text-xs text-muted-foreground" data-testid="redaction-mark">
+            {t('markPrefix')}{' '}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">{candidate.mark}</code>
+          </p>
+        </div>
+      </label>
+    </li>
+  );
+});
+
 export function RedactionReviewContent({
   data,
   isLoading,
@@ -328,19 +428,57 @@ export function RedactionReviewContent({
   const t = useTranslations('meetings.redaction');
   const common = useTranslations('common');
   const candidates = data?.candidates ?? [];
-  const selectedCount = candidates.reduce((acc, c) => (selectedKeys.has(candidateKey(c)) ? acc + 1 : acc), 0);
-  const grouped = useMemo(() => {
-    const bySurface = new Map<RedactionSurface, RedactionCandidate[]>();
+  const { grouped, preparedKeys } = useMemo(() => {
+    const segmentsById = new Map((sources.segments ?? []).map((s) => [s.id, s]));
+    const itemsById = new Map((sources.items ?? []).map((i) => [i.id, i]));
+    const chaptersById = new Map((sources.draftChapters ?? []).map((c) => [c.id, c]));
+    const lookup: CandidateSourceLookup = {
+      meetingTitle: sources.meetingTitle,
+      draftResult: sources.draftResult,
+      getSegment: (id) => segmentsById.get(id),
+      getItem: (id) => itemsById.get(id),
+      getChapter: (id) => chaptersById.get(id),
+    };
+    const charsCache = new Map<string, readonly string[]>();
+    const bySurface = new Map<RedactionSurface, PreparedCandidate[]>();
+    const keys: string[] = [];
+
     for (const candidate of candidates) {
+      const key = candidateKey(candidate);
+      const source = resolveFromLookup(candidate, lookup);
+      let chars: readonly string[] | undefined;
+      if (source.text) {
+        chars = charsCache.get(source.text);
+        if (!chars) {
+          chars = Array.from(source.text);
+          charsCache.set(source.text, chars);
+        }
+      }
+      const entry: PreparedCandidate = {
+        key,
+        candidate,
+        speaker: source.speaker,
+        timeText: candidate.startSeconds !== null ? formatRedactionTimestamp(candidate.startSeconds) : null,
+        excerpt: buildExcerptFromChars(source.text, candidate.startPos, candidate.endPos, candidate.matchText, 36, chars),
+      };
+      keys.push(key);
       const list = bySurface.get(candidate.surface);
-      if (list) list.push(candidate);
-      else bySurface.set(candidate.surface, [candidate]);
+      if (list) list.push(entry);
+      else bySurface.set(candidate.surface, [entry]);
     }
-    return SURFACE_ORDER.flatMap((surface) => {
+
+    const groups = SURFACE_ORDER.flatMap((surface) => {
       const list = bySurface.get(surface);
       return list && list.length > 0 ? [{ surface, items: list }] : [];
     });
-  }, [candidates]);
+
+    return { grouped: groups, preparedKeys: keys };
+  }, [candidates, sources.meetingTitle, sources.segments, sources.draftResult, sources.items, sources.draftChapters]);
+
+  const selectedCount = useMemo(
+    () => preparedKeys.reduce((acc, key) => (selectedKeys.has(key) ? acc + 1 : acc), 0),
+    [preparedKeys, selectedKeys],
+  );
 
   const activeError = submitError ?? queryError;
   const showReload = Boolean(queryError) || isRedactionReloadableError(submitError);
@@ -411,49 +549,17 @@ export function RedactionReviewContent({
                 <Badge variant="secondary">{items.length}</Badge>
               </h3>
               <ul className="space-y-2">
-                {items.map((candidate) => {
-                  const key = candidateKey(candidate);
-                  const checked = selectedKeys.has(key);
-                  const kindLabel = t(`kinds.${candidate.kind as RedactionKind}`);
-                  const source = resolveCandidateSource(candidate, sources);
-                  const excerpt = buildCandidateExcerpt(source.text, candidate.startPos, candidate.endPos, candidate.matchText);
-                  const atCap = !checked && selectedCount >= REDACTION_SELECTIONS_MAX;
+                {items.map((entry) => {
+                  const checked = selectedKeys.has(entry.key);
+                  const disabled = isSubmitting || (!checked && selectedCount >= REDACTION_SELECTIONS_MAX);
                   return (
-                    <li key={key} data-testid="redaction-candidate" data-surface={candidate.surface} data-kind={candidate.kind}>
-                      <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 text-sm">
-                        <Checkbox
-                          checked={checked}
-                          disabled={isSubmitting || atCap}
-                          onCheckedChange={(next) => onToggleKey(key, next === true)}
-                          aria-label={t('checkboxLabel', { kind: kindLabel, match: candidate.matchText })}
-                          className="mt-1 max-md:size-5"
-                        />
-                        <div className="min-w-0 flex-1 space-y-1.5">
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <Badge variant="outline">{kindLabel}</Badge>
-                            {candidate.surface === 'meeting_result.decision' && candidate.decisionIndex !== null && (
-                              <span>{t('decisionLabel', { number: String(candidate.decisionIndex + 1) })}</span>
-                            )}
-                            {source.speaker && candidate.startSeconds !== null ? (
-                              <span>{t('speakerAt', { speaker: source.speaker, time: formatRedactionTimestamp(candidate.startSeconds) })}</span>
-                            ) : source.speaker ? (
-                              <span>{source.speaker}</span>
-                            ) : candidate.startSeconds !== null ? (
-                              <span className="font-mono">{formatRedactionTimestamp(candidate.startSeconds)}</span>
-                            ) : null}
-                          </div>
-                          <p className="break-words text-sm leading-relaxed text-foreground" data-testid="redaction-excerpt">
-                            {excerpt.before && <span className="text-muted-foreground">{excerpt.before}</span>}
-                            <mark className="rounded bg-warning/20 px-1 font-mono font-medium text-foreground">{excerpt.match}</mark>
-                            {excerpt.after && <span className="text-muted-foreground">{excerpt.after}</span>}
-                          </p>
-                          <p className="text-xs text-muted-foreground" data-testid="redaction-mark">
-                            {t('markPrefix')}{' '}
-                            <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">{candidate.mark}</code>
-                          </p>
-                        </div>
-                      </label>
-                    </li>
+                    <CandidateRow
+                      key={entry.key}
+                      entry={entry}
+                      checked={checked}
+                      disabled={disabled}
+                      onToggleKey={onToggleKey}
+                    />
                   );
                 })}
               </ul>
@@ -553,17 +659,42 @@ export function DraftRedactionDialog({
       confirmedCloseRef.current = false;
       redactMutation.reset();
       setSelection(syncSelectedKeys(candidates, new Set(), new Map()));
-      void candidatesQuery.refetch();
+      void candidatesQuery.refetch({ cancelRefetch: false });
       return;
     }
     setSelection((prev) => syncSelectedKeys(candidates, prev.selected, prev.tokens));
   }, [open, candidateFingerprint, candidatesQuery.dataUpdatedAt]);
 
+  const handleToggleKey = useCallback((key: string, checked: boolean) => {
+    setSelection((prev) => ({
+      selected: toggleCandidateSelection(prev.selected, key, checked),
+      tokens: prev.tokens,
+    }));
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    setSelection((prev) => ({
+      selected: defaultSelectedKeys(candidates),
+      tokens: prev.tokens,
+    }));
+  }, [candidates]);
+
+  const handleClearAll = useCallback(() => {
+    setSelection((prev) => ({
+      selected: new Set(),
+      tokens: prev.tokens,
+    }));
+  }, []);
+
+  const handleRescan = () => {
+    redactMutation.reset();
+    void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
+  };
+
   const handleReload = () => {
     redactMutation.reset();
     setSelection({ selected: new Set(), tokens: new Map() });
     void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-    void candidatesQuery.refetch();
   };
 
   return (
@@ -589,29 +720,10 @@ export function DraftRedactionDialog({
           queryError={candidatesQuery.error}
           sources={sources}
           selectedKeys={selection.selected}
-          onToggleKey={(key, checked) =>
-            setSelection((prev) => ({
-              selected: toggleCandidateSelection(prev.selected, key, checked),
-              tokens: prev.tokens,
-            }))
-          }
-          onSelectAll={() =>
-            setSelection((prev) => ({
-              selected: defaultSelectedKeys(candidates),
-              tokens: prev.tokens,
-            }))
-          }
-          onClearAll={() =>
-            setSelection((prev) => ({
-              selected: new Set(),
-              tokens: prev.tokens,
-            }))
-          }
-          onRescan={() => {
-            redactMutation.reset();
-            void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-            void candidatesQuery.refetch();
-          }}
+          onToggleKey={handleToggleKey}
+          onSelectAll={handleSelectAll}
+          onClearAll={handleClearAll}
+          onRescan={handleRescan}
           onConfirm={() => {
             if (!redactMutation.isPending && selection.selected.size > 0) redactMutation.mutate();
           }}
