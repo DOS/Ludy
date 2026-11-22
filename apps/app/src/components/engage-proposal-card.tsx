@@ -24,6 +24,7 @@ const KIND_KEYS = [
   'kernel_conversation_reply',
   'kernel_conversation_reply_privately',
   'kernel_conversation_hide',
+  'kernel_conversation_follow_up',
   'crm_quote_send',
   'crm_booking_move',
   'crm_booking_cancel',
@@ -37,9 +38,9 @@ const KIND_KEYS = [
   'ads_schedule_shorten',
   'ads_manage_cancel',
 ] as const;
-const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn', 'changeId'] as const;
+const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn', 'changeId', 'title', 'assigneePositionId', 'due'] as const;
 // A time the AI wrote as an ISO instant is shown in the reader's own clock beside what was written, so 09:00Z is not read as 09:00 in Vietnam.
-const TIME_KEYS = ['startsAt', 'at', 'slotAt'] as const;
+const TIME_KEYS = ['startsAt', 'at', 'slotAt', 'due'] as const;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 // The words of the `about` lines (a label outside them cannot arrive: the contract's enum is the same list) and of the states a quote and a launch can be in (a state outside them shows as it is).
 const ABOUT_KEYS = [
@@ -65,6 +66,8 @@ const ABOUT_KEYS = [
   'changeKind',
   'changeState',
   'changeTo',
+  'assignee',
+  'assigneeState',
 ] as const satisfies readonly EngageProposalView['about'][number]['label'][];
 // A label the contract adds and this list lacks fails the typecheck here, not on a card.
 const ABOUT_KEYS_ARE_ALL: EngageProposalView['about'][number]['label'] extends (typeof ABOUT_KEYS)[number] ? true : never = true;
@@ -90,6 +93,8 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
     // A resume sets no number or day: the part of the ad it would start again, in words.
     if (a.label === 'changeTo' && isSlotKey(a.value)) return t(`engageAboutValue.slot_${a.value}`);
     if (a.label === 'changeKind' && isChangeKind(a.value)) return t(`engageAboutValue.change_${a.value}`);
+    // An archived or paused seat: its state in words, so the approver sees the task cannot be given to it.
+    if (a.label === 'assigneeState' && (a.value === 'archived' || a.value === 'paused')) return t(`engageAboutValue.seat_${a.value}`);
     return a.value;
   };
   return (
@@ -123,12 +128,18 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
               </dd>
             ) : (
               <dd className="break-words text-base text-foreground" data-testid={`engage-field-${f.key}`}>
-                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.value}
+                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.key === 'assigneePositionId' && f.value === 'null' ? t('engageField.rootSeat') : f.value}
               </dd>
             )}
           </div>
         ))}
       </dl>
+      {kindKey === 'kernel_conversation_follow_up' && (
+        // A task is read by every member, and the title is the AI's text: the approver is told before approving, since the title may carry what the customer wrote in a thread other members cannot read (#4370).
+        <p className="text-sm text-muted-foreground" data-testid="engage-followup-visible">
+          {t('engageFollowUpVisible')}
+        </p>
+      )}
       {client && <p className="text-sm text-muted-foreground">{t('engageWhoAsked', { client: client.client, host: client.host })}</p>}
       {/* What is true now: nothing yet while it waits; once decided, what was decided. */}
       <p role="note" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">

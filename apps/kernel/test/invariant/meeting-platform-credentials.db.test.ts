@@ -10,7 +10,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -78,9 +79,10 @@ const TEXTUAL_NAME = /title|summary|body|text|name|subject|note|transcript|decis
 suite('meeting platform definers return no meeting text (#3173)', () => {
   const dbName = `crove_test_meeting_platform_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -98,7 +100,8 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
   }, 120_000);
 
   afterAll(async () => {
@@ -183,9 +186,9 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
   it('lets no Crove login touch the sealed credential table: the API login and the worker login both get permission denied', async () => {
     for (const [role, password] of [['crove_app', 'test-app-pw'], ['crove_worker', 'test-worker-pw']] as const) {
       const url = new URL(adminUrl);
-      url.username = role;
+      url.username = dbIds ? dbIds.roleName(role) : role;
       url.password = password;
-      const client = new pg.Client({ connectionString: url.toString() });
+      const client = createDbClient({ connectionString: url.toString() }, dbIds);
       await client.connect();
       try {
         for (const statement of [

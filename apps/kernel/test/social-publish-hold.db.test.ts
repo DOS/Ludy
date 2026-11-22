@@ -313,6 +313,69 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     expect(platform.sent).toHaveLength(3);
   });
 
+  it('fails the posts that are over an hour late in one step and tells the team once, with the count (#3462)', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const late = [await duePost(o, { ago: '2 hours' }), await duePost(o, { ago: '3 hours' }), await duePost(o, { queue: true, ago: '90 minutes' })];
+    const recent = await duePost(o, { ago: '5 minutes' });
+    const failLate = (org: Org) => worker.execute<{ failed: number; variantIds: string[] }>('social.publish.fail_late', {}, { actor: system, orgId: org.orgId });
+    const events = (org: Org, type: string) => admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [org.orgId, type])).rows.map((r) => r.payload));
+
+    const hasLate = (org: Org) => worker.query<boolean>('social.publish.has_late', {}, { actor: system, orgId: org.orgId });
+    // A person cannot run it, or ask it.
+    await expect(exec(o, 'social.publish.fail_late', {})).rejects.toMatchObject({ status: 403 });
+    await expect(api.query('social.publish.has_late', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    expect(await hasLate(o)).toBe(true);
+    // A live hold is left to its release.
+    await exec(o, 'social.publishing.hold', { reason: 'Ngày quốc tang' }, o.admin);
+    expect(await hasLate(o)).toBe(false);
+    expect(await failLate(o)).toEqual({ failed: 0, variantIds: [] });
+    await exec(o, 'social.publishing.release', {}, o.admin);
+    // The release failed them already: nothing is left for the sweep step. Make them late again to try it.
+    for (const v of late) await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'scheduled', error_code = NULL, error_kind = NULL WHERE id = $1", [v.id]));
+
+    const done = await failLate(o);
+    expect(done.failed).toBe(3);
+    expect(done.variantIds.sort()).toEqual(late.map((v) => v.id).sort());
+    for (const v of late) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    expect(await status(o, recent.postId)).toEqual({ status: 'scheduled', code: null });
+    // One event for the three, no per-post failed notice; a second run finds nothing.
+    expect(await events(o, 'social.publishing.late_failed')).toEqual([{ count: 3, authors: [o.owner] }]);
+    expect(await events(o, 'social.variant.failed')).toEqual([]);
+    expect(await failLate(o)).toEqual({ failed: 0, variantIds: [] });
+    expect(await hasLate(o)).toBe(false);
+    // The owners, admins and the author are told once; a member who wrote none is not.
+    expect(await deliver(o, 'social.publishing.late_failed')).toBe(1);
+    const told = async (user: string) => (await api.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((n) => n.kind === 'failed' && n.detail.late);
+    for (const user of [o.owner, o.admin]) expect((await told(user)).map((n) => [n.postId, n.detail.count])).toEqual([[null, '3']]);
+    expect(await told(o.member)).toEqual([]);
+    // The late ones never go out by themselves, and the recent one still does.
+    await sweep(platform, [o]);
+    expect(platform.sent).toHaveLength(1);
+
+    // One late post fails with the ordinary notice, as before.
+    const single = await org();
+    const one = await duePost(single, { ago: '2 hours' });
+    expect((await failLate(single)).failed).toBe(1);
+    expect(await events(single, 'social.variant.failed')).toEqual([{ post_id: one.postId, variant_id: one.id }]);
+    expect(await events(single, 'social.publishing.late_failed')).toEqual([]);
+
+    // One post late on two channels is still one post: each channel's ordinary notice, which opens the post.
+    const two = await org();
+    const first = await duePost(two, { ago: '2 hours' });
+    const secondConnection = await connect(two);
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_social.post_variant (org_id, id, post_id, channel_connection_id, provider, status, revision, content_hash, scheduled_at)
+         SELECT org_id, gen_random_uuid(), post_id, $2, provider, status, revision, content_hash, scheduled_at FROM crove_social.post_variant WHERE id = $1`,
+        [first.id, secondConnection],
+      );
+    });
+    expect((await failLate(two)).failed).toBe(2);
+    expect(await events(two, 'social.variant.failed')).toHaveLength(2);
+    expect(await events(two, 'social.publishing.late_failed')).toEqual([]);
+  });
+
   it('runs no first comment, repost, auto-reply or evergreen repost while held (#587, #773, #393)', async () => {
     const o = await org();
     const platform = new Counting();

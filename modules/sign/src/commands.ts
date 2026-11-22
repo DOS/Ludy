@@ -48,6 +48,8 @@ import {
   SIGNING_EVENT_WRITE,
   SIGNING_OTP_INVALIDATE_WRITE,
   SIGNING_TOKEN_WRITE,
+  SIGN_MAX_LINK_HOURS,
+  assertValidEnvelopeExpiry,
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
@@ -65,7 +67,7 @@ export type { IssuedSigningLink };
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const REMIND_COOLDOWN_MS = 5 * 60_000;
-const DEFAULT_LINK_TTL_HOURS = 30 * 24;
+const DEFAULT_LINK_TTL_HOURS = SIGN_MAX_LINK_HOURS;
 export const DEFAULT_RETENTION_DAYS = 30;
 export const DEFAULT_OTP_RETENTION_HOURS = 24;
 const EXPIRE_SWEEP_BATCH = 100;
@@ -190,9 +192,7 @@ export const envelopeCreate = defineCommand({
     }
     assertCanCreateEnvelopeForSource(ctx, input.sourceKind);
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
-    if (expiresAt !== null && expiresAt.getTime() <= ctx.now.getTime()) {
-      throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
-    }
+    assertValidEnvelopeExpiry(expiresAt, ctx.now);
     await assertCanCreateMeetingMinutesEnvelope(ctx, input.sourceKind, sourceId);
 
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
@@ -463,8 +463,8 @@ export const envelopeUpdate = defineCommand({
     }
     const nextExpiresAt =
       input.expiresAt === undefined ? row.expires_at : input.expiresAt === null ? null : new Date(input.expiresAt);
-    if (nextExpiresAt !== null && input.expiresAt !== undefined && nextExpiresAt.getTime() <= ctx.now.getTime()) {
-      throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
+    if (input.expiresAt !== undefined) {
+      assertValidEnvelopeExpiry(nextExpiresAt, ctx.now);
     }
     const nextTitle = input.title ?? row.title;
     const nextSubject = input.subject === undefined ? row.subject : input.subject;
@@ -1007,7 +1007,7 @@ export const signerCreateLink = defineCommand({
   input: z.strictObject({
     envelopeId: zId,
     signerId: zId,
-    expiresInHours: z.number().int().min(1).max(720).default(DEFAULT_LINK_TTL_HOURS),
+    expiresInHours: z.number().int().min(1).max(SIGN_MAX_LINK_HOURS).default(DEFAULT_LINK_TTL_HOURS),
   }),
   risk: 'R2',
   sideEffect: 'internal',
@@ -1019,6 +1019,18 @@ export const signerCreateLink = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    if (
+      row.source_kind !== 'meeting_minutes' &&
+      row.created_by !== userId &&
+      ctx.role !== 'owner' &&
+      ctx.role !== 'admin'
+    ) {
+      throw new DomainError(
+        'SIGN_FORBIDDEN',
+        403,
+        'Only the envelope creator, owner, or admin can issue or rotate signing links',
+      );
+    }
     if (row.status !== 'sent' && row.status !== 'in_progress') {
       throw new DomainError('SIGN_ENVELOPE_NOT_ACTIVE', 409, 'Links can only be minted while envelope is sent or in progress');
     }
@@ -1208,7 +1220,9 @@ export const signerCorrectRecipient = defineCommand({
         mailStatus = mail.status;
       } else {
         const defaultExpiry = new Date(ctx.now.getTime() + DEFAULT_LINK_TTL_HOURS * 3_600_000);
-        const tokenExpiresAt = res.envelopeExpiresAt ? new Date(res.envelopeExpiresAt) : defaultExpiry;
+        const tokenExpiresAt = res.envelopeExpiresAt
+          ? new Date(Math.min(new Date(res.envelopeExpiresAt).getTime(), defaultExpiry.getTime()))
+          : defaultExpiry;
         const rawToken = generateRawSigningToken();
         const tokenHash = hashSigningToken(rawToken);
         const { rows: minted } = await sql<{ id: string }>`

@@ -39,6 +39,8 @@ export type ChatAlertTestCode = (typeof CHAT_ALERT_TEST_CODES)[number];
 export const CHAT_ALERT_EVENTS: Readonly<Record<string, ChatAlertKind>> = {
   'social.post.submitted': 'needs_approval',
   'social.variant.failed': 'failed',
+  // The late posts a long switch-off failed together (#3462): one line with the count.
+  'social.publishing.late_failed': 'failed',
   'social.variant.needs_attention': 'failed',
   'social.variant.published': 'published',
   'social.review.answered': 'client_answered',
@@ -295,7 +297,10 @@ export interface ChatAlertFacts {
   // The event it comes from, where one kind words two (a failed channel, one that needs attention).
   event: string;
   slug: string;
-  postId: string;
+  // null for an alert about many posts at once (count).
+  postId: string | null;
+  // How many posts a combined alert is about (#3462); absent for one post.
+  count?: number;
   // The post's title or the start of its text.
   postText: string | null;
   // The channels it is about (at most three), and how many there are in all.
@@ -345,6 +350,11 @@ async function factsOf(ctx: QueryContext, type: string, payload: unknown): Promi
       const channels = await channelNames(ctx, e.data.post_id, { variantId: e.data.variant_id });
       return { kind, event: type, postId: e.data.post_id, channels, channelCount: channels.length, ...none };
     }
+    case 'social.publishing.late_failed': {
+      const e = z.object({ count: z.number().int().min(2).max(100_000) }).safeParse(payload);
+      if (!e.success) return null;
+      return { kind, event: type, postId: null, count: e.data.count, channels: [], channelCount: 0, ...none };
+    }
     case 'social.review.answered': {
       const e = z.object({ post_id: zId, feedback_id: zId }).safeParse(payload);
       if (!e.success) return null;
@@ -379,12 +389,12 @@ export const chatAlertPrepare = defineQuery({
     if (!row || !row.events.includes(kind)) return null;
     const facts = await factsOf(ctx, event.type, event.payload);
     if (!facts) return null;
-    const post = await ctx.trx.selectFrom('crove_social.post').select(['title', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', facts.postId).executeTakeFirst();
-    // Gone since (deleted): nothing to open.
-    if (!post) return null;
+    const post = facts.postId === null ? null : await ctx.trx.selectFrom('crove_social.post').select(['title', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', facts.postId).executeTakeFirst();
+    // Gone since (deleted): nothing to open. A combined alert (no post) has none to find.
+    if (facts.postId !== null && !post) return null;
     const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('slug').where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!org) return null;
-    const postText = [...(post.title?.trim() || post.body || '')].slice(0, 400).join('') || null;
+    const postText = post ? [...(post.title?.trim() || post.body || '')].slice(0, 400).join('') || null : null;
     return { alert: await sealedOf(ctx, row), facts: { ...facts, slug: org.slug, postText } };
   },
 });

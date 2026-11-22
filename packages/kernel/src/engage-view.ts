@@ -75,6 +75,8 @@ export async function engageAboutOf(trx: Transaction<Database>, orgId: string, c
     case 'kernel.conversation.reply_privately_approved':
     case 'kernel.conversation.hide_approved':
       return conversationAbout(trx, orgId, p);
+    case 'kernel.conversation.follow_up_approved':
+      return followUpAbout(trx, orgId, p);
     case 'crm.booking.move_approved':
     case 'crm.booking.cancel_approved':
       return bookingAbout(trx, orgId, p);
@@ -119,6 +121,19 @@ async function conversationAbout(trx: Transaction<Database>, orgId: string, p: R
   if (row.channel || row.provider) push(out, 'channel', [row.provider, row.channel].filter(Boolean).join(': '));
   push(out, 'contact', row.contact);
   push(out, 'customerMessage', row.said, 600);
+  return out;
+}
+
+// A follow-up task: the thread it links to (as above) and the title of the seat that would get the task (none named: the owner at the root of the chart gets it, which the card says by showing no seat).
+async function followUpAbout(trx: Transaction<Database>, orgId: string, p: Record<string, unknown>): Promise<About> {
+  const out = await conversationAbout(trx, orgId, p);
+  const positionId = idOf(p.assigneePositionId);
+  if (!positionId) return out;
+  const { rows } = await sql<{ title: string | null; status: string | null }>`
+    SELECT po.title AS title, po.status AS status FROM crove_kernel.position po WHERE po.org_id = ${orgId}::uuid AND po.id = ${positionId}::uuid LIMIT 1`.execute(trx);
+  push(out, 'assignee', rows[0]?.title);
+  // A seat that is not active is said on the card (approving would fail closed with POSITION_ARCHIVED for an archived one, #4370): the state is one of the seat's own enum words, never a person's text.
+  if (rows[0]?.status === 'archived' || rows[0]?.status === 'paused') push(out, 'assigneeState', rows[0].status);
   return out;
 }
 

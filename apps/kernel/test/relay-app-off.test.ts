@@ -3,7 +3,9 @@
 // MODULE_OFF is dropped with a line that carries the event id, type and app and never the payload (instead of rolling back the whole claimed batch, which
 // wedged the relay for every org); a keeping event is never dropped; every command a keeping event reaches declares runsWhenOff; and the publish sweep queues
 // nothing for an org whose Social is off.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { NOTIFY_WHEN_OFF_EVENT } from '@ludy/mod-social';
 import { DomainError } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
@@ -89,6 +91,44 @@ describe('the Social publish sweep', () => {
     expect(asked.sort()).toEqual([A, B]);
   });
 
+  it('fails the late variants of an org that is on in one step first, and queues no job for them (#3462)', async () => {
+    const A = '01900000-0000-7000-8000-00000000000a';
+    const B = '01900000-0000-7000-8000-00000000000b';
+    const rows = [
+      { org_id: A, variant_id: 'late1', provider: 'bluesky' },
+      { org_id: A, variant_id: 'late2', provider: 'bluesky' },
+      { org_id: A, variant_id: 'fresh', provider: 'bluesky' },
+      { org_id: B, variant_id: 'off', provider: 'bluesky' },
+    ];
+    const sent: string[] = [];
+    const boss = { send: async (_queue: string, data: { variantId: string }) => void sent.push(data.variantId) } as never;
+    const asked: string[] = [];
+    const queued = await sweepSocialPublishing(boss, dbWith(rows), new Set(['bluesky']), async (orgId) => orgId === A, async (orgId) => {
+      asked.push(orgId);
+      return ['late1', 'late2'];
+    });
+    // Asked once for the org that is on, never for the one that is off.
+    expect(asked).toEqual([A]);
+    expect(queued).toBe(1);
+    expect(sent).toEqual(['fresh']);
+  });
+
+  it('goes on with the jobs when failing the late ones together fails (the begin step still refuses each)', async () => {
+    const rows = [{ org_id: '01900000-0000-7000-8000-00000000000a', variant_id: 'v1', provider: 'bluesky' }];
+    const sent: string[] = [];
+    const boss = { send: async (_queue: string, data: { variantId: string }) => void sent.push(data.variantId) } as never;
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      expect(await sweepSocialPublishing(boss, dbWith(rows), new Set(['bluesky']), async () => true, async () => {
+        throw new Error('database blip');
+      })).toBe(1);
+    } finally {
+      console.warn = warn;
+    }
+    expect(sent).toEqual(['v1']);
+  });
+
   it('asks the orgs together, so a port that hangs for one org does not make the others wait one after another', async () => {
     const orgs = ['a', 'b', 'c'].map((c) => `01900000-0000-7000-8000-00000000000${c}`);
     const rows = orgs.map((org_id, i) => ({ org_id, variant_id: `v${i}`, provider: 'bluesky' }));
@@ -113,5 +153,15 @@ describe('the Social publish sweep', () => {
       throw new Error('connection lost');
     })).toBe(1);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe('the notice of a failed planned takedown while Social is off (#3456)', () => {
+  it('falls back to the narrow dispatch only for that event and only when Social is the app that is off', () => {
+    const source = readFileSync(new URL('../src/worker.ts', import.meta.url), 'utf8');
+    const handler = source.slice(source.indexOf("await boss.work<AgentDispatchJob & { type?: string }>(QUEUES.socialNotify"), source.indexOf('// Browser push (#1238): read what to send'));
+    expect(handler).toContain("job.data.type === NOTIFY_WHEN_OFF_EVENT && moduleOffOf(error) === 'social'");
+    expect(handler).toContain("'social.notification.dispatch_removal'");
+    expect(NOTIFY_WHEN_OFF_EVENT).toBe('social.variant.remove_failed');
   });
 });

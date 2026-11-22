@@ -203,7 +203,7 @@ import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
 import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketplaceColumnsFile, zMarketplaceColumnsProposal, zMarketplaceColumnsProposalAsk, zMarketplaceColumnsStatus } from './marketplace-columns.ts';
 import { zMarketplaceColumnProfile, zMarketplaceColumnProfileQuery, zMarketplaceColumnsConfirm, zMarketplaceColumnsConfirmed } from './marketplace-column-profile.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceProposalNoteAsk, zMarketplaceProposalNote, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceReturnDecide, zMarketplaceReturnDecided, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
@@ -214,7 +214,9 @@ import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPayme
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
+import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
+import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
@@ -2835,6 +2837,8 @@ export const contract = {
     line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
     // The finance coworker's note under the Sàn table for each platform with fees waiting on its 331 (#3711 slice 7): how old they are and what to do, from the books read again on the server. Read only: it posts nothing and changes no figure.
     feeNotes: oc.input(zMarketplaceFeeNotesAsk).output(zMarketplaceFeeNotes),
+    // The finance coworker's note on a pending settlement or payout proposal (#4389): the figures and the Uncertain (#2520) points are chosen by code from the stored proposal; the model only words the figures. Read only: it changes no payload and has no action.
+    proposalNote: oc.input(zMarketplaceProposalNoteAsk).output(zMarketplaceProposalNote.nullable()),
     // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read in the extract sandbox, which only the worker reaches, so `columnsCheck` files a request and queues the worker's
     // job (the sheet alone, or a mapping to check on the real file; a press while one waits returns it), `columns` reads what the worker found (the masked sheet, the check's refusal and a preview of at most 20
     // parsed lines), and `columnsProposal` asks Ly for a first mapping from the masked sheet alone, within the AI budget. Nothing is imported or saved. Owners, admins and members.
@@ -3034,9 +3038,20 @@ export const contract = {
   // period against the period before, the six months' results and the expense mix, all read from the books; explain is the finance coworker's sentence on the
   // biggest change, asked of the model outside any transaction from the aggregated figures only, and its text is dropped when it states a number the figures
   // do not hold (ai says why there is none).
+  financeCashForecast: {
+    get: oc.input(zFinanceCashForecastInput).output(zCashForecast),
+    explain: oc.input(zFinanceCashForecastExplainAsk).output(zCashForecastExplanation),
+  },
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
+  },
+  // The expense variance card of the Tổng quan (#4392), every role, read only: get answers the flagged expense lines of one ended month against the month before and the average of the three
+  // before it, with the suppliers or vouchers behind each; explain is the finance coworker's possible reason per flagged line, asked of the model outside any transaction, and a note that states a number,
+  // a date or a name it was not given is dropped.
+  financeExpenseVariance: {
+    get: oc.input(zFinanceExpenseVarianceInput).output(zFinanceExpenseVariance),
+    explain: oc.input(zFinanceExpenseVarianceExplainAsk).output(zExpenseVarianceExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.

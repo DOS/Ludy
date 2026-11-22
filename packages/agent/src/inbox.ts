@@ -32,6 +32,7 @@ import {
 } from './recruiting-coworker.ts';
 import { ORDER_FIELDS } from '@ludy/l10n-vn';
 import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
+import { checkMarketplaceProposalNote, marketplaceProposalNoteInstructions, marketplaceProposalNotePrompt, type MarketplaceProposalNoteFacts, type MarketplaceProposalNoteResult } from './marketplace-proposal-note.ts';
 import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceFeeNotesPrompt, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from './marketplace-fee-note.ts';
 import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';
 import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
@@ -43,6 +44,9 @@ import { checkStockSurplusNote, stockSurplusInstructions, stockSurplusPrompt, ty
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
+import { ExpenseVarianceCoworker } from './expense-variance-coworker.ts';
+import type { ExpenseVarianceNoteFacts, ExpenseVarianceNotesResult } from './expense-variance.ts';
+import { checkCashForecastSentence, cashForecastInstructions, cashForecastPrompt, cashForecastQuiet, type CashForecastFacts, type CashForecastSentenceResult } from './cash-forecast.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
 import { checkMeetingBrief, meetingBriefInstructions, meetingBriefPrompt, type MeetingBriefFacts, type MeetingBriefResult } from './meeting-brief.ts';
@@ -153,6 +157,9 @@ export type ReminderGenerator = (args: { system: string; prompt: string }) => Pr
 const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
 });
+const zCashForecastOut = z.object({
+  sentence: z.string().describe('Up to three plain sentences on what drives the lowest balance of the cash forecast, in words only: no digit, no amount, no date, no advice and no promise'),
+});
 const zVatLateOut = z.object({
   sentence: z.string().describe('One to three plain sentences naming each late sales invoice and the period of its sale, each written exactly as given, with no other number'),
 });
@@ -175,11 +182,15 @@ const zMisaAmisBlockerNotesOut = z.object({
 const zMarketplaceFeeNotesOut = z.object({
   notes: z.array(z.object({ row: z.number().int().min(1).describe('The number of the row, as given'), text: z.string().describe('One plain sentence on what the fees waiting on the platform account mean and what to do, using only the numbers given for that row') })).describe('One note for each row, under its row number'),
 });
+const zMarketplaceProposalNoteOut = z.object({
+  note: z.string().describe('At most three short sentences that put the figures given in plain words, each number exactly as given'),
+});
 const zMarketplaceColumnsOut = z.object({
   columns: z.array(z.object({ column: z.number().int().min(0).describe('The number of the column, as given'), field: z.enum([...ORDER_FIELDS, 'none']).describe('The standard field this column is, or none') })).describe('One answer for each column given, at most one per column'),
 });
 export type MarketplaceColumnsGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceColumnsOut> | null; usage?: AiUsage }>;
 export type MarketplaceFeeNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceFeeNotesOut> | null; usage?: AiUsage }>;
+export type MarketplaceProposalNoteGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceProposalNoteOut> | null; usage?: AiUsage }>;
 export type MisaAmisBlockerNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaAmisBlockerNotesOut> | null; usage?: AiUsage }>;
 export type MisaCheckLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaCheckLineOut> | null; usage?: AiUsage }>;
 const zBankCandidatesLineOut = z.object({
@@ -203,6 +214,7 @@ export type EInvoiceRateGenerator = (args: { system: string; prompt: string }) =
 export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
+export type CashForecastGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCashForecastOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
 // The finance coworker on stock (#2514): the item a line is about, and the wording of a reorder message.
 const zStockMatchOut = z.object({
@@ -302,6 +314,7 @@ export class InboxReader {
   private readonly generateCrmFollowup: CrmFollowupGenerator;
   private readonly generateMeetingBrief: MeetingBriefGenerator;
   private readonly generateOverview: OverviewGenerator;
+  private readonly generateCashForecast: CashForecastGenerator;
   private readonly generateVatLate: VatLateGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
@@ -310,6 +323,7 @@ export class InboxReader {
   private readonly generateMisaCheckLine: MisaCheckLineGenerator;
   private readonly generateMisaAmisBlockerNotes: MisaAmisBlockerNotesGenerator;
   private readonly generateMarketplaceFeeNotes: MarketplaceFeeNotesGenerator;
+  private readonly generateMarketplaceProposalNote: MarketplaceProposalNoteGenerator;
   private readonly generateMarketplaceColumns: MarketplaceColumnsGenerator;
   private readonly generateEInvoiceRate: EInvoiceRateGenerator;
   private readonly generateStockSurplus: StockSurplusGenerator;
@@ -323,10 +337,12 @@ export class InboxReader {
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
   private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
+  private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
+    this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
     this.generateSignAcceptanceDraft = generators.signAcceptanceDraft ?? createSignAcceptanceDraftGenerator(config);
@@ -395,6 +411,14 @@ export class InboxReader {
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
+    this.generateCashForecast =
+      generators.cashForecast ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.cash_forecast_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zCashForecastOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
     this.generateVatLate =
       generators.vatLate ??
       (async ({ system, prompt }) => {
@@ -456,6 +480,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.marketplace_fee_note', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceFeeNotesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMarketplaceProposalNote =
+      generators.marketplaceProposalNote ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.marketplace_proposal_note', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceProposalNoteOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -639,6 +671,12 @@ export class InboxReader {
     return draftSignAcceptanceSummary(request, { generate: this.generateSignAcceptanceDraft, onUsage });
   }
 
+  /** The finance coworker's possible reason per flagged expense line on the expense variance card (#4392), told no figure at all; a note that states a number, a date or a name it was not given, claims certainty
+   * or is not marked as a possibility is dropped (expense-variance.ts). onUsage gets the tokens the call used. */
+  expenseVarianceNotes(facts: ExpenseVarianceNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<ExpenseVarianceNotesResult> {
+    return this.expenseVariance.notes(facts, onUsage);
+  }
+
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,
    * and its text is refused when it states a number the figures do not hold, a link, or is empty or too long (overview.ts). onUsage gets the tokens the call used,
    * for the org's AI cost limit. */
@@ -647,6 +685,16 @@ export class InboxReader {
     const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkOverviewSentence(facts, output);
+  }
+
+  /** The accounting coworker's note on the 30/60/90-day cash forecast (#4391) from its computed figures and dates, or why there is none: when nothing is expected in the 90 days the model is not
+   * asked, and its text is refused when it holds any digit (the note states no figure and no date: the card beside it carries them, so none can sit on the wrong label), a month or day name, a number in words, a link,
+   * advice about money, or a promise (cash-forecast.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async cashForecastSentence(facts: CashForecastFacts, onUsage?: (usage: AiUsage) => void): Promise<CashForecastSentenceResult> {
+    if (cashForecastQuiet(facts)) return { kind: 'none', code: 'QUIET' };
+    const { output, usage } = await this.generateCashForecast({ system: cashForecastInstructions(facts.language), prompt: cashForecastPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkCashForecastSentence(facts, output);
   }
 
   /** The finance coworker's sentence naming each late sales invoice of a VAT working and its original period (#3540), from the working's own lists, or why there is none: with nothing to name
@@ -710,6 +758,15 @@ export class InboxReader {
     const { output, usage } = await this.generateMisaAmisBlockerNotes({ system: misaAmisBlockerNotesInstructions(facts.language, facts.product), prompt: misaAmisBlockerNotesPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMisaAmisBlockerNotes(facts, output);
+  }
+
+  /** The finance coworker's note on a pending marketplace settlement or payout proposal (#4389), from the figures code computed (whole dong) and the kinds of classified lines, or why there is none: the text is refused as
+   * a whole when it has a number that is not given, a number in words, a link, a platform name, the future tense, a promise, a claim that something was done or advice on an account (marketplace-proposal-note.ts).
+   * onUsage gets the tokens the call used. */
+  async marketplaceProposalNote(facts: MarketplaceProposalNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceProposalNoteResult> {
+    const { output, usage } = await this.generateMarketplaceProposalNote({ system: marketplaceProposalNoteInstructions(facts.language), prompt: marketplaceProposalNotePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMarketplaceProposalNote(facts, output);
   }
 
   /** The finance coworker's notes under the Sàn table (#3711 slice 7), from the fees waiting on each platform's 331 (amount, age, past the cycle) and nothing else, or why there is none: a note is dropped when it has

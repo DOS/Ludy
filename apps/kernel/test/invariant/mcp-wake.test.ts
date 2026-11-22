@@ -457,7 +457,7 @@ function statements(table: string): string[] {
 function columnsOf(tables: readonly string[], table: string): Array<readonly [string, string]> {
   const out: Array<readonly [string, string]> = [];
   for (const st of tables) {
-    const create = st.match(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)?\\s+crove_kernel\\.${table}\\s*\\(([\\s\\S]*)\\)\\s*$`, 'i'));
+    const create = st.match(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)?\\s+(?:crove|ludy)_kernel\\.${table}\\s*\\(([\\s\\S]*)\\)\\s*$`, 'i'));
     if (create) {
       let depth = 0;
       let current = '';
@@ -476,7 +476,7 @@ function columnsOf(tables: readonly string[], table: string): Array<readonly [st
         if (m && !/^(primary|unique|foreign|check|constraint)$/i.test(m[1] as string)) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
       }
     }
-    for (const m of st.matchAll(new RegExp(`ALTER TABLE\\s+(?:ONLY\\s+)?crove_kernel\\.${table}\\b[\\s\\S]*?ADD COLUMN(?: IF NOT EXISTS)?\\s+([a-z_][a-z0-9_]*)\\s+([a-z]+(?:\\[\\])?)`, 'gi'))) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
+    for (const m of st.matchAll(new RegExp(`ALTER TABLE\\s+(?:ONLY\\s+)?(?:crove|ludy)_kernel\\.${table}\\b[\\s\\S]*?ADD COLUMN(?: IF NOT EXISTS)?\\s+([a-z_][a-z0-9_]*)\\s+([a-z]+(?:\\[\\])?)`, 'gi'))) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
   }
   return out;
 }
@@ -484,8 +484,9 @@ function columnsOf(tables: readonly string[], table: string): Array<readonly [st
 // Row-level security as every tenant table has it: apply_tenant_rls, or, for a table no login role may touch (reached only by definers, like agent_grant), row-level
 // security enabled and the agent write guard installed.
 const rlsOk = (all: string, table: string): boolean =>
-  new RegExp(`apply_tenant_rls\\(\\s*'crove_kernel\\.${table}'`).test(all) ||
-  (new RegExp(`ALTER TABLE\\s+crove_kernel\\.${table}\\s+ENABLE ROW LEVEL SECURITY`, 'i').test(all) && new RegExp(`agent_write_guard_install\\(\\s*'crove_kernel\\.${table}'`).test(all));
+  new RegExp(`apply_tenant_rls\\(\\s*'(?:crove|ludy)_kernel\\.${table}'`).test(all) ||
+  (new RegExp(`ALTER TABLE\\s+(?:crove|ludy)_kernel\\.${table}\\s+ENABLE ROW LEVEL SECURITY`, 'i').test(all) &&
+    new RegExp(`agent_write_guard_install\\(\\s*'(?:crove|ludy)_kernel\\.${table}'`).test(all));
 
 describe('what the grant wake-up tables may hold (#3024)', () => {
   it('keeps a secret only sealed, in the two named columns, puts the wake-up table under row-level security and ties it to its grant', () => {
@@ -500,7 +501,7 @@ describe('what the grant wake-up tables may hold (#3024)', () => {
     }
     const all = tables.join('\n');
     expect(rlsOk(all, 'agent_grant_wake'), 'row-level security: apply_tenant_rls, or enabled with the agent write guard on a definer-only table').toBe(true);
-    expect(all, 'a foreign key to the grant, so revoking or expiring it reaches the wake-up').toMatch(/REFERENCES\s+crove_kernel\.agent_grant\s*\(/i);
+    expect(all, 'a foreign key to the grant, so revoking or expiring it reaches the wake-up').toMatch(/REFERENCES\s+(?:crove|ludy)_kernel\.agent_grant\s*\(/i);
   });
 
   it('keeps the delivery rows free of any secret column and under row-level security', () => {

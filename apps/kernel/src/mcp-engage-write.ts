@@ -12,7 +12,7 @@
 //     `tainted: true`, and the descriptions tell the client so;
 //   - a per-grant write budget (a few writes a minute): a client that loops is answered 429 with the seconds to wait before anything runs.
 // Nothing above R1 is here: a reply, a hide, sending or deciding a quote, a booking change, launching, boosting or pausing ads are R2 or R3 and become proposals a person approves in Ludy (E4).
-// `kernel.conversation.follow_up` has no tool: its task is an event and wakes the assignee's agent, which the sealed write context does not allow.
+// `kernel.conversation.follow_up` has no R1 tool: its task is an event and wakes the assignee's agent, which the sealed write context does not allow; `ludy_conversation_follow_up` asks for it as a proposal (E4, #4148).
 import { z } from 'zod';
 import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { mcpConversationAssign, mcpConversationLinkContact, mcpConversationNote, mcpConversationReopen, mcpConversationResolve, mcpPartyCreate } from '@ludy/kernel';
@@ -212,7 +212,7 @@ export function engageWriteTools(runtime: Runtime, actor: UserActor, orgId: stri
       module: 'ads',
       scope: ADS,
       title: 'Save an ads campaign draft',
-      description: `Saves ONE NEW campaign draft for an ad account (adAccountId from ludy_ads_spend) with the plan fields you set (name, objective, daily budget, days, targeting, link, creative). The plan may be incomplete: what is missing or over a cap comes back as issues. The draft is marked as made by an AI app. It spends nothing: a person reads it, changes it and submits it for approval in Ludy, and launching, boosting or pausing is theirs. It edits no draft. ${TAINT}${LIMIT}`,
+      description: `Saves ONE NEW campaign draft for an ad account (adAccountId from ludy_ads_spend) with the plan fields you set (name, objective, daily budget, days, targeting, link, creative, and the Facebook Page the ad runs as: pageConnectionId, an id from ludy_ads_pages; every ad needs one, and a draft with none cannot be submitted). The plan may be incomplete: what is missing or over a cap comes back as issues. The draft is marked as made by an AI app. It spends nothing: a person reads it, changes it and submits it for approval in Ludy, and launching, boosting or pausing is theirs. It edits no draft. ${TAINT}${LIMIT}`,
       command: mcpAdsCampaignDraftSave,
       outputSchema: {
         type: 'object',

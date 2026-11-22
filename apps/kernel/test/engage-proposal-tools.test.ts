@@ -22,6 +22,7 @@ const TOOLS: Record<string, string> = {
   ludy_conversation_reply: 'kernel.conversation.reply_approved',
   ludy_conversation_reply_privately: 'kernel.conversation.reply_privately_approved',
   ludy_conversation_hide: 'kernel.conversation.hide_approved',
+  ludy_conversation_follow_up: 'kernel.conversation.follow_up_approved',
   ludy_quote_send: 'crm.quote.send_approved',
   ludy_booking_move: 'crm.booking.move_approved',
   ludy_booking_cancel: 'crm.booking.cancel_approved',
@@ -40,9 +41,9 @@ const ADS_TOOLS = Object.entries(TOOLS).filter(([, c]) => c.startsWith('ads.')).
 const names = (actor: UserActor) => listed(actor).map((t) => t.name).filter((n) => n in TOOLS);
 
 describe('the Engage proposal tools (#3863)', () => {
-  it('has one tool for each of the 15 twins of ENGAGE_PROPOSALS, and none for another command (the four ads commands that start or raise spend are not offered, by decision)', () => {
+  it('has one tool for each of the 16 twins of ENGAGE_PROPOSALS, and none for another command (the four ads commands that start or raise spend are not offered, by decision)', () => {
     expect(Object.values(TOOLS).sort()).toEqual(ENGAGE_PROPOSALS.map((p) => p.command).sort());
-    expect(Object.values(TOOLS)).toHaveLength(15);
+    expect(Object.values(TOOLS)).toHaveLength(16);
     for (const raised of ['ads.campaign.launch', 'ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend']) expect(Object.values(TOOLS).join(' ')).not.toContain(raised);
   });
 
@@ -57,7 +58,7 @@ describe('the Engage proposal tools (#3863)', () => {
 
   it('makes each a write descriptor under its twin\'s scope, with a strict argument schema, a module where the app can be switched off, and a description that says it only asks', () => {
     const all = listed(grant(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'])).filter((t) => t.name in TOOLS);
-    expect(all.length).toBe(15);
+    expect(all.length).toBe(16);
     for (const tool of all) {
       const twin = ENGAGE_PROPOSALS.find((p) => p.command === TOOLS[tool.name]);
       expect(tool.writeScope, tool.name).toBe(twin?.scope);
@@ -85,5 +86,26 @@ describe('the Engage proposal tools (#3863)', () => {
     calls.length = 0;
     expect(await reply?.read(args)).toEqual({ proposalId: '00000000-0000-4000-8000-0000000000aa', status: 'pending' });
     expect(calls).toEqual([{ name: 'kernel.conversation.reply_approved', input: { payload: args } }]);
+  });
+});
+
+describe('the follow-up task tool and the seats it names (#4369)', () => {
+  it('tells the coworker where a seat id comes from, and that tool is offered to exactly the grants that are offered the follow-up', () => {
+    for (const scopes of [['ludy.read', 'ludy.engage.write'], ['ludy.read', 'ludy.engage.write', 'ludy.ads.draft']]) {
+      const tools = listed(grant(scopes));
+      const followUp = tools.find((t) => t.name === 'ludy_conversation_follow_up');
+      expect(followUp?.description).toMatch(/assigneePositionId/);
+      expect(followUp?.description).toMatch(/ludy_seats_list/);
+      expect(tools.some((t) => t.name === 'ludy_seats_list')).toBe(true);
+    }
+    // A member-bound grant is offered neither.
+    const memberTools = listed(grant(['ludy.read', 'ludy.engage.write'], 'member'));
+    expect(memberTools.some((t) => t.name === 'ludy_conversation_follow_up' || t.name === 'ludy_seats_list')).toBe(false);
+    // A grant that is not offered the follow-up is not offered the seats either.
+    for (const scopes of [['ludy.read'], ['ludy.read', 'ludy.ads.draft']]) {
+      const tools = listed(grant(scopes));
+      expect(tools.some((t) => t.name === 'ludy_conversation_follow_up')).toBe(false);
+      expect(tools.some((t) => t.name === 'ludy_seats_list')).toBe(false);
+    }
   });
 });

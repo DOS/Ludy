@@ -107,6 +107,21 @@ export function fromDatetimeLocalValue(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+export function canManageEnvelopeLinksAndVoid(input: {
+  role: string | null | undefined;
+  userId: string | null | undefined;
+  createdBy: string | null | undefined;
+  sourceKind?: string | null | undefined;
+}): boolean {
+  if (!input.role) return false;
+  if (input.role === 'owner' || input.role === 'admin') return true;
+  if (input.role === 'member') {
+    if (input.sourceKind === 'meeting_minutes') return true;
+    if (input.userId && input.createdBy === input.userId) return true;
+  }
+  return false;
+}
+
 export function filterPendingProposalsForSigners(
   proposals: readonly SignProposedField[],
   signers: readonly SignSignerRecord[],
@@ -218,8 +233,23 @@ export function SignEnvelopeDetailPage() {
   const signers = useMemo(() => detailQuery.data?.signers ?? [], [detailQuery.data?.signers]);
   const assignableSigners = useMemo(() => signers.filter((s) => s.signerRole !== 'cc'), [signers]);
   const isDraft = envelope?.status === 'draft';
-  const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role;
+  const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
+  const canManageLinksAndVoid = meQuery.data
+    ? canManageEnvelopeLinksAndVoid({
+        role: roleHere,
+        userId: currentUserId,
+        createdBy: envelope?.createdBy,
+        sourceKind: envelope?.sourceKind,
+      })
+    : orgQuery.data
+      ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin'
+      : false;
+  const canRemind = meQuery.data
+    ? Boolean(roleHere && roleHere !== 'viewer')
+    : orgQuery.data
+      ? canWriteSign
+      : false;
   const canCorrectRecipients = Boolean(
     envelope &&
       (envelope.status === 'sent' || envelope.status === 'in_progress') &&
@@ -989,7 +1019,7 @@ export function SignEnvelopeDetailPage() {
                 </Button>
               </>
             ) : null}
-            {envelope.status === 'sent' || envelope.status === 'in_progress' ? (
+            {canManageLinksAndVoid && (envelope.status === 'sent' || envelope.status === 'in_progress') ? (
               <Button type="button" variant="destructive" onClick={() => setVoidDialogOpen(true)}>
                 {t('actions.void')}
               </Button>
@@ -1078,11 +1108,11 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            onCopyZaloLink={canWriteSign ? handleCopyZaloLink : undefined}
-            onRemindSigner={canWriteSign ? handleRemindSigner : undefined}
+            {...(canManageLinksAndVoid ? { onCopyZaloLink: handleCopyZaloLink } : {})}
+            {...(canRemind ? { onRemindSigner: handleRemindSigner } : {})}
             {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
             onStartInPerson={
-              canWriteSign
+              canWriteSign && (!meQuery.data || Boolean(roleHere && roleHere !== 'viewer'))
                 ? (signerId) => {
                     selectInPersonDialogSigner(signerId);
                   }

@@ -254,6 +254,8 @@ export type ProjectBoard = z.infer<typeof zProjectBoard>;
 export const zProjectCandidateTask = z.object({
   id: zId,
   title: z.string(),
+  // The title is an AI coworker's text (a task made from an approved ask): the picker marks the invisible characters (#4421).
+  tainted: z.boolean(),
   status: zTaskStatus,
   assigneePositionId: zId.nullable(),
   due: z.string().nullable(),
@@ -305,6 +307,8 @@ export type ProjectWeeklyStatusInput = z.infer<typeof zProjectWeeklyStatusInput>
 export const zProjectWeeklyStatusTask = z.strictObject({
   id: zId,
   title: z.string(),
+  // The title is an AI coworker's text (a task made from an approved ask): the screen marks the invisible characters (#4421).
+  tainted: z.boolean(),
   status: zTaskStatus,
   due: z.string().nullable(),
   commentCount: z.number().int().nonnegative(),

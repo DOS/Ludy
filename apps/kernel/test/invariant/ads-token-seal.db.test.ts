@@ -23,13 +23,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { orgPurgeCommand, purgeOrg } from '../../src/org-purge.ts';
 import { enterUser } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -73,6 +74,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
   const dbName = `crove_test_adsseal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -81,7 +83,7 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
   let worker: Runtime;
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -198,17 +200,18 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 2 });
-    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    pool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
+    workerPool = createDbPool({ connectionString: workerUrl, max: 2 }, dbIds);
     const registry = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry).register({ commands: [orgPurgeCommand({ store: noBlobs })] });
@@ -914,7 +917,7 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     {
       const org = await makeOrg();
       const conn = await connection(org, { provider: 'metawrite_ads' });
-      const closing = new pg.Client({ connectionString: adminUrl });
+      const closing = createDbClient({ connectionString: adminUrl }, dbIds);
       await closing.connect();
       try {
         await closing.query('BEGIN');

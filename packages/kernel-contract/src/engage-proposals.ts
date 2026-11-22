@@ -38,6 +38,7 @@ export const ENGAGE_PROPOSALS: readonly EngageProposalSpec[] = Object.freeze([
   { command: 'kernel.conversation.reply_approved', wraps: 'kernel.conversation.reply', kind: 'kernel.conversation_reply', scope: 'ludy.engage.write' },
   { command: 'kernel.conversation.reply_privately_approved', wraps: 'kernel.conversation.reply_privately', kind: 'kernel.conversation_reply_privately', scope: 'ludy.engage.write' },
   { command: 'kernel.conversation.hide_approved', wraps: 'kernel.conversation.hide', kind: 'kernel.conversation_hide', scope: 'ludy.engage.write' },
+  { command: 'kernel.conversation.follow_up_approved', wraps: 'kernel.conversation.follow_up', kind: 'kernel.conversation_follow_up', scope: 'ludy.engage.write' },
   { command: 'crm.quote.send_approved', wraps: 'crm.quote.send', kind: 'crm.quote_send', scope: 'ludy.engage.write' },
   { command: 'crm.booking.move_approved', wraps: 'crm.booking.move', kind: 'crm.booking_move', scope: 'ludy.engage.write' },
   { command: 'crm.booking.cancel_approved', wraps: 'crm.booking.cancel', kind: 'crm.booking_cancel', scope: 'ludy.engage.write' },

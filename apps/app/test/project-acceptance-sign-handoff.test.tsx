@@ -157,6 +157,8 @@ vi.mock('../src/lib/api.ts', async () => {
 const {
   ProjectAcceptanceDialogBody,
   ProjectAcceptanceSignHandoff,
+  buildDeterministicDeliverables,
+  completedTasksOfBoard,
   createProjectAcceptanceHandoffAttempt,
   performProjectAcceptanceSignHandoff,
 } = await import('../src/components/project-acceptance-sign-handoff.tsx');
@@ -677,5 +679,27 @@ describe('performProjectAcceptanceSignHandoff idempotency and org-switch guard',
     const signerCall = state.calls.find((c) => c.step === 'addSigner')?.args as { input: Record<string, unknown> };
     expect(signerCall.input.email).toBeUndefined();
     expect(signerCall.input.deliveryMode).toBe('link');
+  });
+});
+
+describe('the handover copy of completed task titles (#4421)', () => {
+  it('shows the invisible characters of a task title an AI coworker wrote instead of carrying them into editable text, and keeps a person\'s title as typed', () => {
+    const rows = buildDeterministicDeliverables([
+      { id: '01900000-0000-7000-8000-000000000211', title: 'Giao hàng\u202e xong\u200b', tainted: true },
+      { id: '01900000-0000-7000-8000-000000000212', title: 'Lắp đặt\u202e', tainted: false },
+      { id: '01900000-0000-7000-8000-000000000213', title: 'Nghiệm thu' },
+    ]);
+    expect(rows.map((r) => r.text)).toEqual(['Giao hàng\u27e8U+202E\u27e9 xong\u27e8U+200B\u27e9', 'Lắp đặt\u202e', 'Nghiệm thu']);
+    expect(rows.every((r) => r.proposedByAi === false)).toBe(true);
+  });
+
+  it('keeps the taint when a filtered board is read again for the done tasks, so that path marks the title too', () => {
+    const done = completedTasksOfBoard([
+      { id: '01900000-0000-7000-8000-000000000221', title: 'Bàn giao\u202e', status: 'done', tainted: true },
+      { id: '01900000-0000-7000-8000-000000000222', title: 'Đang làm', status: 'in_progress', tainted: true },
+      { id: '01900000-0000-7000-8000-000000000223', title: 'Xong\u202e', status: 'done', tainted: false },
+    ]);
+    expect(done.map((t) => t.id)).toEqual(['01900000-0000-7000-8000-000000000221', '01900000-0000-7000-8000-000000000223']);
+    expect(buildDeterministicDeliverables(done).map((r) => r.text)).toEqual(['Bàn giao\u27e8U+202E\u27e9', 'Xong\u202e']);
   });
 });

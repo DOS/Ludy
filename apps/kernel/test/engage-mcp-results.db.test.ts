@@ -611,6 +611,101 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     });
   });
 
+  describe('ads.mcp.pages', () => {
+    interface PagesView {
+      pages: Array<{ id: string; name: string }>;
+      truncated: boolean;
+    }
+    const pages = async (who = 'owner', org = orgs.a, input: unknown = {}) => runtime.query<PagesView>('ads.mcp.pages', input, await as(who, 'company', org));
+
+    it('lists the org\'s active Facebook Pages as an id and a plain-line name, and nothing else: not another provider, not a revoked Page, not another org\'s, no token or platform id', async () => {
+      const owner = users.owner as string;
+      const first = await channel(orgs.a, owner, `Trang${'\u200b'} Cà phê\n${CANARY}`, 'facebook_page', 'fb-page-111');
+      const second = await channel(orgs.a, owner, 'Trang A', 'facebook_page', 'fb-page-222');
+      // A Page whose own name starts like an ad account's fallback name keeps all of it (only an ad account's made-up name loses its platform id).
+      const lookalike = await channel(orgs.a, owner, 'Meta ad account East', 'facebook_page', 'fb-page-555');
+      const revoked = await channel(orgs.a, owner, 'Trang đã thu hồi', 'facebook_page', 'fb-page-333');
+      await sqlAdmin(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [orgs.a, revoked]);
+      const notAPage = await channel(orgs.a, owner, 'Kênh khác', 'sandbox');
+      const foreign = await channel(orgs.b, users.foreign as string, 'Trang của tổ chức khác', 'facebook_page', 'fb-page-444');
+      const got = await pages();
+      expect(Object.keys(got).sort()).toEqual(['pages', 'truncated']);
+      expect(got.truncated).toBe(false);
+      expect(got.pages.map((p) => p.id).sort()).toEqual([first, second, lookalike].sort());
+      for (const page of got.pages) expect(Object.keys(page).sort()).toEqual(['id', 'name']);
+      // Every name is one plain line (the invisible and line-breaking characters are gone); the Page's own words stay data.
+      expect(got.pages.map((p) => p.name).sort()).toEqual(['Meta ad account East', 'Trang A', `Trang Cà phê ${CANARY}`]);
+      const json = JSON.stringify(got);
+      expect(json).not.toMatch(HIDDEN);
+      for (const id of [revoked, notAPage, foreign]) expect(json).not.toContain(id);
+      for (const word of ['fb-page-111', 'fb-page-222', 'fb-page-333', 'fb-page-444', 'token', 'credential', 'external']) expect(json, word).not.toContain(word);
+      // An admin reads the same; the other org's owner reads its own Page only.
+      expect(await pages('admin')).toEqual(got);
+      expect((await pages('foreign', orgs.b)).pages.map((p) => p.id)).toEqual([foreign]);
+    });
+
+    it('answers an empty list for an org with no Page, and takes an empty input only', async () => {
+      expect(await pages('owner', orgs.c)).toEqual({ pages: [], truncated: false });
+      for (const bad of [{ orgId: orgs.b }, { limit: 1 }, { provider: 'sandbox' }]) expect((await refusal(pages('owner', orgs.a, bad))).status, JSON.stringify(bad)).toBeLessThan(500);
+    });
+  });
+
+  describe('kernel.mcp.seats', () => {
+    interface SeatsView {
+      seats: Array<{ id: string; title: string }>;
+      truncated: boolean;
+    }
+    const seats = async (who = 'owner', org = orgs.a, input: unknown = {}) => runtime.query<SeatsView>('kernel.mcp.seats', input, await as(who, 'company', org));
+    const seat = async (orgId: string, title: string, status = 'active', role = 'finance.chief_accountant') => {
+      const id = randomUUID();
+      await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, status, job_description) VALUES ($1, $2, $3, 'finance', $4, $5, '{"secret":"never leaves"}'::jsonb)`, [orgId, id, title, role, status]);
+      return id;
+    };
+
+    it('lists the org chart\'s active seats as an id and a plain-line title, and nothing else: not a paused or archived seat, not another org\'s, no holder, role, job description or reporting line', async () => {
+      const first = await seat(orgs.a, `Kế toán${'\u200b'} trưởng\n${CANARY}`);
+      const second = await seat(orgs.a, 'Trưởng phòng bán hàng');
+      const paused = await seat(orgs.a, 'Vị trí tạm dừng', 'paused');
+      const archived = await seat(orgs.a, 'Vị trí đã lưu trữ', 'archived');
+      const foreign = await seat(orgs.b, 'Vị trí của tổ chức khác');
+      const got = await seats();
+      expect(Object.keys(got).sort()).toEqual(['seats', 'truncated']);
+      expect(got.truncated).toBe(false);
+      expect(got.seats.map((s) => s.id)).toEqual([first, second]);
+      for (const s of got.seats) expect(Object.keys(s).sort()).toEqual(['id', 'title']);
+      // The title is one plain line (the invisible and line-breaking characters are gone); the people's own words stay data.
+      expect(got.seats.map((s) => s.title)).toEqual([`Kế toán trưởng ${CANARY}`, 'Trưởng phòng bán hàng']);
+      const json = JSON.stringify(got);
+      expect(json).not.toMatch(HIDDEN);
+      for (const id of [paused, archived, foreign]) expect(json).not.toContain(id);
+      for (const word of ['never leaves', 'finance', 'chief_accountant', 'holder', 'reports', 'role']) expect(json, word).not.toContain(word);
+      // An admin reads the same; the other org's owner reads its own seat only.
+      expect(await seats('admin')).toEqual(got);
+      expect((await seats('foreign', orgs.b)).seats.map((s) => s.id)).toEqual([foreign]);
+    });
+
+    it('answers an empty list for an org with no seat, and takes an empty input only', async () => {
+      expect(await seats('owner', orgs.c)).toEqual({ seats: [], truncated: false });
+      for (const bad of [{ orgId: orgs.b }, { limit: 1 }, { status: 'paused' }]) expect((await refusal(seats('owner', orgs.a, bad))).status, JSON.stringify(bad)).toBeLessThan(500);
+    });
+
+    it('is for an owner or an admin only: a member or a viewer is refused even on a company grant (the member-bound grants are refused with the other reads below)', async () => {
+      for (const who of ['member', 'viewer']) {
+        const error = await refusal(seats(who));
+        // The grant of a member or a viewer is no company grant at all (its consenting user must be an owner or an admin), so the call is refused before the query: 401 or 403, never an answer.
+        expect([401, 403], `company grant of ${who}`).toContain(error.status);
+      }
+      for (const who of ['owner', 'admin']) await expect(seats(who), who).resolves.toMatchObject({ truncated: false });
+    });
+
+    it('stops at 50 seats and says there are more', async () => {
+      for (let i = 0; i < 51; i += 1) await seat(orgs.d, `Vị trí ${String(i).padStart(2, '0')}`);
+      const got = await seats('owner', orgs.d);
+      expect(got.seats).toHaveLength(50);
+      expect(got.truncated).toBe(true);
+    });
+  });
+
   describe('who may read', () => {
     const calls: Array<[string, unknown]> = [
       ['social.mcp.metrics_summary', {}],
@@ -620,15 +715,19 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       ['ads.mcp.today', {}],
       // Added by E4b (#4147): the started launches, whose projection and the proposals made with its ids are in engage-mcp-launches.db.test.ts.
       ['ads.mcp.launches', {}],
+      // Added by #4367: the org's active Facebook Pages, the ids a campaign draft names.
+      ['ads.mcp.pages', {}],
+      // Added by #4369: the org chart's active seats, the ids a proposed follow-up task names.
+      ['kernel.mcp.seats', {}],
     ];
 
-    it('lets a company grant of an owner or an admin read each of the six', async () => {
+    it('lets a company grant of an owner or an admin read each of them', async () => {
       for (const [name, input] of calls) {
         for (const who of ['owner', 'admin']) await expect(runtime.query(name, input, await as(who, 'company')), `${name} ${who}`).resolves.toBeDefined();
       }
     });
 
-    it('refuses a member-bound grant of a plain member or of a viewer with FORBIDDEN, on each of the six', async () => {
+    it('refuses a member-bound grant of a plain member or of a viewer with FORBIDDEN, on each of them', async () => {
       for (const [name, input] of calls) {
         for (const who of ['member', 'viewer']) {
           const error = await refusal(runtime.query(name, input, await as(who, 'member')));
@@ -648,11 +747,11 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       }
     });
 
-    it('refuses a browser session (no grant) with 403 on each of the six', async () => {
+    it('refuses a browser session (no grant) with 403 on each of them', async () => {
       for (const [name, input] of calls) expect((await refusal(runtime.query(name, input, browser('owner')))).status, name).toBe(403);
     });
 
-    it('refuses a grant without the scope on each of the six', async () => {
+    it('refuses a grant without the scope on each of them', async () => {
       for (const [name, input] of calls) {
         const company = await as('owner', 'company');
         const noScope = { actor: { ...company.actor, mcp: { ...(company.actor.mcp as NonNullable<UserActor['mcp']>), scopes: [] } } satisfies UserActor, orgId: orgs.a };

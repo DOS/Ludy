@@ -44,6 +44,7 @@ function useLine() {
       }
       // A planned takedown that did not happen (#861).
       case 'failed':
+        if (n.detail.late && n.detail.count) return t('text.failed_late', { count: Number(n.detail.count) });
         return t(n.detail.removal === 'scheduled' ? 'text.remove_failed' : 'text.failed', { provider });
       case 'needs_attention':
         return t(`text.${n.kind}`, { provider });
@@ -243,6 +244,7 @@ export function SocialNotificationsPage() {
     else if (target?.to === 'feeds') void navigate({ to: '/o/$slug/social/feeds', params: { slug } });
     else if (target?.to === 'compose') void navigate({ to: '/o/$slug/social/new', params: { slug }, search: { channel: target.channelId } });
     else if (target?.to === 'mine') void navigate({ to: '/o/$slug/social', params: { slug }, search: { assignee: 'me' } });
+    else if (target?.to === 'attention') void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'attention' } });
   };
   const items = list.data?.items ?? [];
   return (

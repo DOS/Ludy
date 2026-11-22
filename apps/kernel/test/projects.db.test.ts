@@ -294,6 +294,11 @@ suite('projects module on PostgreSQL (#2591)', () => {
     const candidates = await query<ProjectCandidateTask[]>(owner.userId, org.orgId, 'projects.unassigned_tasks', {});
     expect(candidates.map((c) => c.id)).toContain(freeTaskId);
     expect(candidates.map((c) => c.id)).not.toContain(existingTaskId);
+    // The picker says when a title is an AI coworker's, so it can mark the invisible characters (#4421).
+    expect(candidates.find((c) => c.id === freeTaskId)?.tainted).toBe(false);
+    await withAdmin((c) => c.query(`UPDATE crove_kernel.task SET tainted = true WHERE org_id = $1 AND id = $2`, [org.orgId, freeTaskId]));
+    const marked = await query<ProjectCandidateTask[]>(owner.userId, org.orgId, 'projects.unassigned_tasks', {});
+    expect(marked.find((c) => c.id === freeTaskId)?.tainted).toBe(true);
   });
 
   it('enforces cross-org isolation, role permissions, archive lock, and owner removal fallback (AC 2)', async () => {

@@ -9,8 +9,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { z } from 'zod';
 import { createOrg, eligibleApprovers, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { BUILTIN_ROLE_KEYS } from '@ludy/kernel-contract';
@@ -18,6 +18,7 @@ import { Runtime, defineCommand, defineQuery, type CommandDef, type QueryDef } f
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // Probes of the permission gate (#1507), each an owner's command that also admits finance.period.unlock: the default
 // (org-wide holders only, as before), one that admits entity holders but names no entity (it must fail closed), and one
@@ -56,6 +57,7 @@ type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: s
 suite('role assignments on PostgreSQL (#1279)', () => {
   const dbName = `crove_test_roles_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -72,14 +74,14 @@ suite('role assignments on PostgreSQL (#1279)', () => {
   });
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
   }
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -143,16 +145,17 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 4 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands, ...GATE_PROBES],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ELIGIBLE_PROBE],

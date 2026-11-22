@@ -15,7 +15,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -86,11 +86,14 @@ import {
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
 import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
-import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
+import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
+import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainExpenseVariance, expenseVarianceAi } from './finance-expense-variance-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
+import { explainMarketplaceProposal, marketplaceProposalNoteAi } from './finance-marketplace-proposal-note-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
@@ -493,13 +496,19 @@ export function createRpcHandler(
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's note on the 30/60/90-day cash forecast (#4391): the same reader and model, a budget of its own; told the computed figures and dates only.
+  const financeCashForecastAi = cashForecastAi(conversationReader?.cashForecastSentence ? { cashForecastSentence: conversationReader.cashForecastSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
   const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's possible reason per flagged expense line (#4392): the same reader and model, a budget of its own; told no figure at all.
+  const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's notes under the Sàn table (#3711 slice 7): the same reader and model, a budget of its own; told the fees, their age and whether it is past the cycle, per numbered row, and no platform name.
   const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's note on a pending marketplace settlement or payout proposal (#4389): the same reader and model, a budget of its own; told whole-dong figures, the kinds of classified lines and the entry's account codes, and no platform name.
+  const financeMarketplaceProposalNoteAi = marketplaceProposalNoteAi(conversationReader?.marketplaceProposalNote ? { marketplaceProposalNote: conversationReader.marketplaceProposalNote.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's first mapping for the columns of an unrecognised order report (#4036): told the masked sheet the worker recorded (header texts and the shapes of a few values) and nothing else; a budget of its own.
   const financeMarketplaceColumnsAi = marketplaceColumnsAi(conversationReader?.marketplaceColumns ? { marketplaceColumns: conversationReader.marketplaceColumns.bind(conversationReader) } : null, suggestionBudget());
   const financeBankCandidatesLineAi = bankCandidatesLineAi(conversationReader?.bankCandidatesLineSentence ? { bankCandidatesLineSentence: conversationReader.bankCandidatesLineSentence.bind(conversationReader) } : null, suggestionBudget());
@@ -3318,6 +3327,17 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => runtime.execute('finance.bank_party_rule.remove', input, { actor, orgId })),
       ),
     },
+    financeCashForecast: {
+      get: os.financeCashForecast.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<CashForecast>('finance.cash_forecast', input, { actor, orgId }))),
+      // The note is asked of the model outside any transaction, from the forecast read in the member's own one (their legal entities only).
+      explain: os.financeCashForecast.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const forecast = await runtime.query<CashForecast>('finance.cash_forecast', ask, { actor, orgId });
+          return explainCashForecast(financeCashForecastAi, orgId, actor.userId, forecast, lang ?? 'vi');
+        }),
+      ),
+    },
     financeOverview: {
       get: os.financeOverview.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceOverview>('finance.overview', input, { actor, orgId }))),
       // The sentence is asked of the model outside any transaction, from the figures the overview read in the member's own one (their legal entities only).
@@ -3326,6 +3346,17 @@ export function createRpcHandler(
           const { lang, ...ask } = input;
           const overview = await runtime.query<FinanceOverview>('finance.overview', ask, { actor, orgId });
           return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
+        }),
+      ),
+    },
+    financeExpenseVariance: {
+      get: os.financeExpenseVariance.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceExpenseVariance>('finance.expense_variance', input, { actor, orgId }))),
+      // The notes are asked of the model outside any transaction, from the flagged lines the variance read in the member's own one (their legal entities only).
+      explain: os.financeExpenseVariance.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const variance = await runtime.query<FinanceExpenseVariance>('finance.expense_variance', ask, { actor, orgId });
+          return explainExpenseVariance(financeExpenseVarianceAi, orgId, actor.userId, variance, lang ?? 'vi');
         }),
       ),
     },
@@ -3741,6 +3772,13 @@ export function createRpcHandler(
           const { lang, legalEntityId } = input;
           const balance = await runtime.query<MarketplaceBalance>('finance.marketplace.balance', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
           return explainMarketplaceFees(financeMarketplaceFeeNoteAi, orgId, actor.userId, balance, MARKETPLACE_FEE_CYCLE_DAYS, lang ?? 'vi');
+        }),
+      ),
+      // The stored proposal is read again here in the caller's own context (the Inbox's visibility: another org or an entity outside the caller's scope is not found), so what the model is told comes from the books, never from the caller; the note is a read and posts nothing.
+      proposalNote: os.marketplace.proposalNote.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const facts = await runtime.query<MarketplaceProposalFacts | null>('finance.marketplace.proposal_facts', { proposalId: input.proposalId }, { actor, orgId });
+          return facts === null ? null : explainMarketplaceProposal(financeMarketplaceProposalNoteAi, orgId, actor.userId, facts, input.lang ?? 'vi');
         }),
       ),
       // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read by the worker through the extract sandbox, which the API cannot reach: a check is a request row and a job.

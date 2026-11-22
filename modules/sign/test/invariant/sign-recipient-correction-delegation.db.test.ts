@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
@@ -38,6 +38,7 @@ import {
   verifyEventChain,
   type SignSealJobData,
 } from '../../src/index.ts';
+import { resolveDbIdentifiers, roleUrl, setActiveRolePasswords, wrapPool, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 type Pool = ReturnType<typeof createPool>;
 
@@ -93,6 +94,7 @@ suite('eSign Slice 4c recipient correction & audited signer delegation invariant
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
   let workerPool: Pool | undefined;
+  let ids: DbIdentifiers;
   let runtime: Runtime;
   let workerRuntime: Runtime;
 
@@ -336,18 +338,12 @@ suite('eSign Slice 4c recipient correction & audited signer delegation invariant
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 's4c-app-pw', crove_worker: 's4c-worker-pw' });
+    ids = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 's4c-app-pw', crove_worker: 's4c-worker-pw' }, ids);
 
-    const loginUrl = (user: string, pw: string) => {
-      const u = new URL(adminUrl);
-      u.username = user;
-      u.password = pw;
-      return u.toString();
-    };
-
-    adminPool = createPool({ connectionString: adminUrl, max: 3 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 's4c-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 's4c-worker-pw'), max: 3 });
+    adminPool = wrapPool(createPool({ connectionString: adminUrl, max: 3 }), ids);
+    appPool = wrapPool(createPool({ connectionString: roleUrl(adminUrl, 'crove_app', 's4c-app-pw', ids), max: 6 }), ids);
+    workerPool = wrapPool(createPool({ connectionString: roleUrl(adminUrl, 'crove_worker', 's4c-worker-pw', ids), max: 3 }), ids);
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);
@@ -1044,10 +1040,11 @@ suite('eSign Slice 4c recipient correction & audited signer delegation invariant
       { value: 'erase-delegator@example.com' },
       { actor: asMfa(ownerId), orgId },
     );
+    const signSchema = ids.schema('sign');
     expect(foundBefore.matches).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          column: 'crove_sign.signer.delegated_from_email',
+          column: `${signSchema}.signer.delegated_from_email`,
           handling: 'erase',
           rowId: unsealedEnv.signerIds[0]!,
         }),
@@ -1061,9 +1058,9 @@ suite('eSign Slice 4c recipient correction & audited signer delegation invariant
     );
     expect(erasedRes.erased).toEqual(
       expect.arrayContaining([
-        { column: 'crove_sign.signer.delegated_from_name', rows: 1 },
-        { column: 'crove_sign.signer.delegated_from_email', rows: 1 },
-        { column: 'crove_sign.signer.delegation_reason', rows: 1 },
+        { column: `${signSchema}.signer.delegated_from_name`, rows: 1 },
+        { column: `${signSchema}.signer.delegated_from_email`, rows: 1 },
+        { column: `${signSchema}.signer.delegation_reason`, rows: 1 },
       ]),
     );
 
@@ -1094,7 +1091,7 @@ suite('eSign Slice 4c recipient correction & audited signer delegation invariant
     );
     expect(completedErase.kept).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ column: 'crove_sign.signer.delegated_from_email', rows: 1 }),
+        expect.objectContaining({ column: `${signSchema}.signer.delegated_from_email`, rows: 1 }),
       ]),
     );
   });

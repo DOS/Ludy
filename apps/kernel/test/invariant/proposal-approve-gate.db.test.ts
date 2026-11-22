@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { sql } from 'kysely';
 import { approvalPolicies, createOrg, decideApproval, kernelCommands, kernelQueries, liveApprovalCommands, upsertIdentity } from '@ludy/kernel';
 import { Runtime, defineCommand, type AgentActor, type CommandDef } from '@ludy/kernel-runtime';
@@ -21,6 +21,7 @@ import { socialCommands } from '@ludy/mod-social';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -54,6 +55,7 @@ const proposal1793 = defineCommand({
 suite('the approval gate in the database (#1793)', () => {
   const dbName = `crove_test_approve_gate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -75,7 +77,7 @@ suite('the approval gate in the database (#1793)', () => {
   const user = (id: string) => ({ type: 'user' as const, id });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -86,7 +88,7 @@ suite('the approval gate in the database (#1793)', () => {
 
   // Runs SQL in a context on a login role, always rolled back.
   async function inContext<T>(url: string, enter: (c: pg.Client) => Promise<unknown>, fn: (c: pg.Client) => Promise<T>) {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -128,17 +130,18 @@ suite('the approval gate in the database (#1793)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands, prepare1793, proposal1793],
@@ -266,7 +269,7 @@ suite('the approval gate in the database (#1793)', () => {
       cases.push({ preset, command: LEDGER_COMMAND, status: 'pending', snapshot: [], authors: [] });
     }
     // One staff connection for the whole table.
-    const a = new pg.Client({ connectionString: adminUrl });
+    const a = createDbClient({ connectionString: adminUrl }, dbIds);
     await a.connect();
     try {
       let checked = 0;

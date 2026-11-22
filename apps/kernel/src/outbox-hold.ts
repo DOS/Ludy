@@ -17,12 +17,14 @@ const PAIRS_PER_PAGE = 200;
 const MAX_PAIR_PAGES = 25;
 
 // The events that keep a duty while their app is off, or that must reach their consumer whatever the switch says: never parked (the keeping events of ADR-0053, and
-// the takedown of a published post, which stops exposure: its consumer declares runsWhenOff in C3c).
+// the takedown of a published post, which stops exposure: its consumer declares runsWhenOff in C3c; and the notice that such a planned takedown failed, which the owners
+// must hear while the app is off, so the notify job falls back to social.notification.dispatch_removal, #3456).
 export const NEVER_HELD_EVENTS: ReadonlySet<string> = new Set([
   'ads.pause.queued',
   'kernel.member.removed',
   'kernel.member.role_changed',
   'social.variant.remove_requested',
+  'social.variant.remove_failed',
 ]);
 
 // The events that act in public at the time they are handled, which a person asked for then: a retry of a comment or a thread, an edit of a published post. Run days later

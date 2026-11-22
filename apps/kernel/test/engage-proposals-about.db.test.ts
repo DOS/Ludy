@@ -239,6 +239,31 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     ]);
   });
 
+  it('follow-up task (#4148): the thread\'s lines, then the title of the seat that gets the task; no seat named, no seat line', async () => {
+    const threadId = `thread-${randomUUID().slice(0, 8)}`;
+    await h.system('conversations', 'kernel.conversation.ingest', {
+      connectionId,
+      events: [{ kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${threadId}`, direction: 'in', contact: { id: 'u-follow', name: 'Lê Thị Khách' }, text: 'Cho mình xin báo giá', at: new Date().toISOString() }],
+    });
+    const conversation = (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [h.orgId, threadId])).rows[0]?.id as string;
+    const seat = (await h.runtime.execute<{ positionId: string }>('kernel.agent.template.install', { templateKey: 'crm.scheduler' }, { actor: h.person(h.owner, true), orgId: h.orgId })).positionId;
+    const title = (await h.q<{ title: string }>('SELECT title FROM crove_kernel.position WHERE org_id = $1 AND id = $2', [h.orgId, seat])).rows[0]?.title as string;
+    const named = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: seat })).about as About;
+    expect(named.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage', 'assignee']);
+    expect(named.find((a) => a.label === 'contact')?.value).toBe('Lê Thị Khách');
+    expect(named.find((a) => a.label === 'assignee')?.value).toBe(title);
+    const none = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: null })).about as About;
+    expect(none.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage']);
+    // An active seat has no state line; a paused or archived one says so (approving an archived seat fails closed, #4370).
+    for (const state of ['paused', 'archived'] as const) {
+      await h.q("UPDATE crove_kernel.position SET status = $3 WHERE org_id = $1 AND id = $2", [h.orgId, seat, state]);
+      const off = (await cardOf('kernel.conversation.follow_up_approved', { conversationId: conversation, title: 'Gửi báo giá', assigneePositionId: seat })).about as About;
+      expect(off.map((a) => a.label)).toEqual(['channel', 'contact', 'customerMessage', 'assignee', 'assigneeState']);
+      expect(off.find((a) => a.label === 'assigneeState')?.value).toBe(state);
+    }
+    await h.q("UPDATE crove_kernel.position SET status = 'active' WHERE org_id = $1 AND id = $2", [h.orgId, seat]);
+  });
+
   it('shows the lines to owners and admins only: a member and a viewer get no card', async () => {
     const { bookingId } = await booking(540);
     const { actor } = await h.grant();
@@ -270,6 +295,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
       ['ads.budget.lower_approved', { launchId: ghost, dailyBudget: '60000' }],
       ['ads.schedule.shorten_approved', { launchId: ghost, endOn: D(5) }],
       ['ads.manage.cancel_approved', { changeId: ghost }],
+      ['kernel.conversation.follow_up_approved', { conversationId: ghost, title: 'x', assigneePositionId: ghost }],
     ];
     for (const [command, payload] of cases) {
       const card = await cardOf(command, payload);

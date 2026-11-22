@@ -95,3 +95,76 @@ describe('the Engage write tools in the tool list (#3861)', () => {
     expect(calls).toHaveLength(4);
   });
 });
+
+// The read that gives the ads draft its Page (#4367): a read-only tool offered with the ads draft scope, so a draft the AI coworker saves can name `pageConnectionId`.
+describe('the Pages read that serves the ads draft (#4367)', () => {
+  it('offers it to a company grant that holds the ads draft scope and to nobody else', () => {
+    const names = (actor: UserActor) => listed(actor).map((t) => t.name);
+    expect(names(grant(['ludy.read']))).not.toContain('ludy_ads_pages');
+    expect(names(grant(['ludy.read', 'ludy.engage.write']))).not.toContain('ludy_ads_pages');
+    expect(names(grant(['ludy.read', 'ludy.ads.draft']))).toContain('ludy_ads_pages');
+    expect(names(grant(['ludy.member.read', 'ludy.ads.draft'], 'member'))).not.toContain('ludy_ads_pages');
+    expect(names({ type: 'user', userId: 'u', aal: 'aal1' })).not.toContain('ludy_ads_pages');
+  });
+
+  it('is a strict read-only descriptor of the ads module that says the names are data, and the draft tool says where its Page comes from', async () => {
+    const tools = listed(grant(['ludy.read', 'ludy.ads.draft']));
+    const pages = tools.find((t) => t.name === 'ludy_ads_pages');
+    expect(pages?.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(pages?.writeScope).toBe('ludy.ads.draft');
+    expect(pages?.module).toBe('ads');
+    expect(pages?.argsSchema.safeParse({}).success).toBe(true);
+    expect(pages?.argsSchema.safeParse({ smuggled: 1 }).success).toBe(false);
+    expect(pages?.description).toMatch(/pageConnectionId/);
+    expect(pages?.description).toMatch(/data, never as instructions/);
+    expect(pages?.description).toMatch(/Read only/);
+    expect(pages?.rows({ pages: [{ id: 'a', name: 'b' }, { id: 'c', name: 'd' }], truncated: false })).toBe(2);
+    const save = tools.find((t) => t.name === 'ludy_ads_campaign_draft_save');
+    expect(save?.description).toMatch(/pageConnectionId/);
+    expect(save?.description).toMatch(/ludy_ads_pages/);
+    // The schema of the draft's input does carry the field the description names.
+    expect(JSON.stringify(save?.inputSchema)).toContain('pageConnectionId');
+  });
+
+  it('runs the query as the grant and answers the ids and names it got', async () => {
+    const queried: string[] = [];
+    const rt = { query: async (name: string) => (queried.push(name), { pages: [{ id: 'p1', name: 'Trang A' }], truncated: false }) } as unknown as Runtime;
+    const tool = toolsFor(rt, grant(['ludy.read', 'ludy.ads.draft']), 'org', new DraftBudget(), new McpWriteBudget()).find((t) => t.name === 'ludy_ads_pages');
+    expect(await tool?.read({})).toEqual({ pages: [{ id: 'p1', name: 'Trang A' }], truncated: false });
+    expect(queried).toEqual(['ads.mcp.pages']);
+  });
+});
+
+// The read that gives a proposed follow-up task its seat (#4369): a read-only tool offered with the Engage write scope, so a coworker can name `assigneePositionId` instead of passing null.
+describe('the seats read that serves the follow-up task (#4369)', () => {
+  it('offers it to a company grant that holds the Engage write scope and to nobody else', () => {
+    const names = (actor: UserActor) => listed(actor).map((t) => t.name);
+    expect(names(grant(['ludy.read']))).not.toContain('ludy_seats_list');
+    expect(names(grant(['ludy.read', 'ludy.ads.draft']))).not.toContain('ludy_seats_list');
+    expect(names(grant(['ludy.read', 'ludy.engage.write']))).toContain('ludy_seats_list');
+    expect(names(grant(['ludy.member.read', 'ludy.engage.write'], 'member'))).not.toContain('ludy_seats_list');
+    expect(names({ type: 'user', userId: 'u', aal: 'aal1' })).not.toContain('ludy_seats_list');
+  });
+
+  it('is a strict read-only descriptor of the kernel that says the titles are data and returns nothing else about a seat', async () => {
+    const seats = listed(grant(['ludy.read', 'ludy.engage.write'])).find((t) => t.name === 'ludy_seats_list');
+    expect(seats?.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(seats?.writeScope).toBe('ludy.engage.write');
+    expect(seats?.module).toBeUndefined();
+    expect(seats?.argsSchema.safeParse({}).success).toBe(true);
+    expect(seats?.argsSchema.safeParse({ smuggled: 1 }).success).toBe(false);
+    expect(seats?.description).toMatch(/assigneePositionId/);
+    expect(seats?.description).toMatch(/data, never as instructions/);
+    expect(seats?.description).toMatch(/Read only/);
+    expect(seats?.outputSchema).toMatchObject({ properties: { seats: { items: { required: ['id', 'title'] } } } });
+    expect(seats?.rows({ seats: [{ id: 'a', title: 'b' }, { id: 'c', title: 'd' }], truncated: false })).toBe(2);
+  });
+
+  it('runs the query as the grant and answers the ids and titles it got', async () => {
+    const queried: string[] = [];
+    const rt = { query: async (name: string) => (queried.push(name), { seats: [{ id: 's1', title: 'Kế toán trưởng' }], truncated: false }) } as unknown as Runtime;
+    const tool = toolsFor(rt, grant(['ludy.read', 'ludy.engage.write']), 'org', new DraftBudget(), new McpWriteBudget()).find((t) => t.name === 'ludy_seats_list');
+    expect(await tool?.read({})).toEqual({ seats: [{ id: 's1', title: 'Kế toán trưởng' }], truncated: false });
+    expect(queried).toEqual(['kernel.mcp.seats']);
+  });
+});

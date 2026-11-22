@@ -32,6 +32,7 @@ import { filterTasksByProject, projectsInstalled, taskProjectMap, taskProjectOpt
 import { myWorkShortcut, stepSelection } from '../lib/my-work.ts';
 import { withSearch } from '../lib/search.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
@@ -256,7 +257,7 @@ export function TasksPage() {
                 <TableRow key={task.id} data-testid="task-row" data-task-id={task.id} data-selected={selected === task.id ? 'true' : undefined} className={selected === task.id ? 'bg-muted/60' : undefined}>
                   <TableCell className="px-4">
                     <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
-                      {task.title}
+                      {taskTitleText(task)}
                     </Link>
                     {(task.checklist?.length ?? 0) > 0 && (
                       <TaskChecklistBadge
@@ -299,7 +300,7 @@ export function TasksPage() {
                   <TableCell className="px-4 text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</TableCell>
                   {perms.tasks && (
                     <TableCell className="px-4">
-                      <Button type="button" variant="ghost" size="sm" aria-label={t('editRow', { title: task.title })} onClick={() => setPanel({ kind: 'edit', id: task.id })}>
+                      <Button type="button" variant="ghost" size="sm" aria-label={t('editRow', { title: taskTitleText(task) })} onClick={() => setPanel({ kind: 'edit', id: task.id })}>
                         {t('edit')}
                       </Button>
                     </TableCell>
@@ -379,7 +380,7 @@ export function TaskDetailPage() {
     <div className="space-y-6">
       <div>{back}</div>
       <PageHeader
-        title={task.title}
+        title={taskTitleText(task)}
         subtitle={positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}
         actions={
           perms.tasks ? (
@@ -529,7 +530,7 @@ export function TaskDetailPage() {
           slug={slug}
           target={{ targetType: 'kernel.task', targetId: task.id }}
           headingId={`notes-task-${task.id}`}
-          label={tn('panel.toggleOf', { name: task.title })}
+          label={tn('panel.toggleOf', { name: taskTitleText(task) })}
           empty={tn('panel.emptyRecord')}
         />
       )}

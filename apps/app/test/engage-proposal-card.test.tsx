@@ -155,6 +155,60 @@ describe('the card of an AI coworker\'s ask', () => {
   });
 });
 
+describe('the follow-up task card (#4148)', () => {
+  const task = {
+    command: 'kernel.conversation.follow_up_approved',
+    fields: [
+      { key: 'conversationId', value: '7d1f', long: false },
+      { key: 'title', value: 'Gửi báo giá 20 hộp cho chị Lan', long: false },
+      { key: 'assigneePositionId', value: '9c2e', long: false },
+      { key: 'due', value: '2030-01-15T16:59:00.000Z', long: false },
+    ],
+    about: [{ label: 'contact', value: 'Trần Thị Khách' }, { label: 'assignee', value: 'Lịch hẹn' }],
+  } satisfies EngageProposalView;
+  it('says in words that a task for the team is being asked, the seat that gets it and the due day in the reader\'s clock, in both languages', () => {
+    const vi = render('vi', 'pending', task, 'kernel.conversation_follow_up');
+    for (const word of ['Tạo công việc này cho nhóm', 'Tiêu đề công việc', 'Vị trí nhận công việc', 'Hạn', 'Gửi báo giá 20 hộp cho chị Lan', 'Lịch hẹn', '2030-01-15T16:59:00.000Z']) expect(vi, word).toContain(word);
+    const en = render('en', 'pending', task, 'kernel.conversation_follow_up');
+    for (const word of ['Create this task for the team', 'Task title', 'Seat that gets the task', 'Due', 'Gửi báo giá 20 hộp cho chị Lan']) expect(en, word).toContain(word);
+    // No seat named: the card says who gets it in words, never a bare null.
+    const root = { ...task, fields: task.fields.map((f) => (f.key === 'assigneePositionId' ? { ...f, value: 'null' } : f)) } satisfies EngageProposalView;
+    expect(render('en', 'pending', root, 'kernel.conversation_follow_up')).toContain('the owner at the root of the chart');
+    expect(render('vi', 'pending', root, 'kernel.conversation_follow_up')).toContain('chủ sở hữu ở gốc sơ đồ tổ chức');
+    for (const html of [vi, en]) {
+      expect(html).not.toContain('engageAbout');
+      expect(html).not.toContain('engageKinds');
+      expect(html).not.toContain('engageField');
+    }
+  });
+
+  it('tells the approver that every member reads the task title, on this kind of card only (#4370)', () => {
+    const en = render('en', 'pending', task, 'kernel.conversation_follow_up');
+    expect(en).toContain('data-testid="engage-followup-visible"');
+    expect(en).toContain('Every member of the company can read this task and its title');
+    const vi = render('vi', 'pending', task, 'kernel.conversation_follow_up');
+    expect(vi).toContain('Mọi thành viên trong công ty đều đọc được công việc này');
+    expect(vi).not.toMatch(/trợ lý/i);
+    // Another kind of ask has no such line, and the key shows as words, never as a key.
+    const other = render('en', 'pending', { command: 'kernel.conversation.hide_approved', fields: [{ key: 'hidden', value: 'true', long: false }], about: [] } satisfies EngageProposalView, 'kernel.conversation_hide');
+    expect(other).not.toContain('engage-followup-visible');
+    for (const html of [en, vi]) expect(html).not.toContain('engageFollowUpVisible');
+  });
+
+  it('says in words that the seat is archived or paused, so the approver sees it before approving (#4370)', () => {
+    const archived = { ...task, about: [...task.about, { label: 'assigneeState', value: 'archived' }] } satisfies EngageProposalView;
+    const en = render('en', 'pending', archived, 'kernel.conversation_follow_up');
+    expect(en).toContain('State of that seat');
+    expect(en).toContain('approving will fail');
+    const vi = render('vi', 'pending', archived, 'kernel.conversation_follow_up');
+    expect(vi).toContain('Trạng thái của vị trí đó');
+    expect(vi).toContain('Đã ngừng sử dụng');
+    const paused = { ...task, about: [...task.about, { label: 'assigneeState', value: 'paused' }] } satisfies EngageProposalView;
+    expect(render('en', 'pending', paused, 'kernel.conversation_follow_up')).toContain('Paused');
+    for (const html of [vi, en]) expect(html).not.toContain('engageAbout');
+  });
+});
+
 describe('the plain card a member or a viewer sees instead (L4 of #4160)', () => {
   const hidden = (locale: 'vi' | 'en', status = 'pending', client: { client: string; host: string } | null = { client: 'Dy', host: 'dy.example.org' }) =>
     renderToStaticMarkup(

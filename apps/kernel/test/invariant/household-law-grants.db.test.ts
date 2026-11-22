@@ -7,7 +7,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, setActiveRolePasswords } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -37,11 +38,12 @@ suite('household law and profile grants on PostgreSQL (#2517)', () => {
     base.pathname = `/${dbName}`;
     const adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds.roleName('crove_app');
     app.password = 'test-app-pw';
-    client = new pg.Client({ connectionString: app.toString() });
+    client = createDbClient({ connectionString: app.toString() }, dbIds);
     await client.connect();
   }, 120_000);
 

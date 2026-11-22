@@ -417,6 +417,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     expect(res.body.sentences).toHaveLength(3);
     expect(res.body.tasks.doneThisWeek[0]).toMatchObject({
       title: 'Chốt bảng lương chi nhánh',
+      tainted: false,
       commentCount: 2,
       latestComment: 'Đã bàn giao bảng lương sạch',
     });

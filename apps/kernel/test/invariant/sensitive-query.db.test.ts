@@ -9,12 +9,13 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { DomainError, Runtime, defineCommand, defineQuery, type AgentActor, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -27,6 +28,7 @@ const SYSTEM = { type: 'system' as const, component: 't2639-worker' };
 suite('sensitive queries on PostgreSQL (#2639)', () => {
   const dbName = `crove_test_sensitive_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;
@@ -41,7 +43,7 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
   const ranCount = (orgId: string, name: string) => ran.get(key(orgId, name)) ?? 0;
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -150,20 +152,21 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    pool = createPool({ connectionString: url.toString(), max: 4 });
+    pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     const queries = [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...Object.values(QUERIES)];
     const commands = [...kernelCommands, ...financeCommands];
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, readAuditKey: randomBytes(32) }).register({ commands: [...commands, NESTED_COMMAND], queries });
     keylessRt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...commands, NESTED_COMMAND], queries });
     // The system and agent contexts are entered by the worker's login role only.
-    url.username = 'crove_worker';
+    url.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     url.password = 'test-worker-pw';
-    workerPool = createPool({ connectionString: url.toString(), max: 2 });
+    workerPool = createDbPool({ connectionString: url.toString(), max: 2 }, dbIds);
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...commands, NESTED_COMMAND], queries });
   }, 120_000);
 
@@ -319,7 +322,7 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
   it('notes a refused read after the audit transaction is closed, so a refused caller never holds a connection while waiting for another', async () => {
     const o = await org();
     // One connection for the cell and the control plane together, as a single-cell deployment has: a refusal noted inside the audit transaction would wait for a second one for ever.
-    const single = createPool({ connectionString: appUrl, max: 1 });
+    const single = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     try {
       const alone = new Runtime(createDb(single), { manifests: TEST_MANIFESTS, readAuditKey: randomBytes(32) }).register({ commands: [...kernelCommands, NESTED_COMMAND], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...Object.values(QUERIES)] });
       const outcome = await Promise.race([

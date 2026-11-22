@@ -28,6 +28,7 @@ import { projectWeeklyStatusQueryKey } from '../lib/projects.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { installedModules } from '../lib/org-modules.ts';
+import { taskTitleText } from '../lib/task-title.ts';
 
 export interface WeeklyStatusDraftState {
   title: string;
@@ -147,7 +148,7 @@ function WeeklyBucketList({
             className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-2.5 py-2 text-xs"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-medium text-foreground">{task.title}</span>
+              <span className="font-medium text-foreground">{taskTitleText(task)}</span>
               <div className="flex flex-wrap items-center gap-2 text-subtle-foreground tabular-nums">
                 {task.due && <span>{dueLabel(formatDate(task.due))}</span>}
                 {task.commentCount > 0 && <span>{commentLabel(task.commentCount)}</span>}

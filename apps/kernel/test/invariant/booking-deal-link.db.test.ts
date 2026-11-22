@@ -8,12 +8,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -32,6 +33,7 @@ interface OrgRows {
 suite('a booking never names another org\'s deal on PostgreSQL (#3103)', () => {
   const dbName = `crove_test_booking_deal_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -40,7 +42,7 @@ suite('a booking never names another org\'s deal on PostgreSQL (#3103)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -51,7 +53,7 @@ suite('a booking never names another org\'s deal on PostgreSQL (#3103)', () => {
 
   // Runs fn as a login role, after entering a context when one is given; always rolled back.
   async function inContext<T>(url: string, enter: ((c: pg.Client) => Promise<unknown>) | null, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -82,16 +84,17 @@ suite('a booking never names another org\'s deal on PostgreSQL (#3103)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    const pool = createPool({ connectionString: appUrl, max: 4 });
+    const pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
