@@ -2,7 +2,7 @@
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { StatusLink } from '../components/status-link.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { PageHeader } from '../components/ui.tsx';

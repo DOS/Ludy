@@ -24,9 +24,9 @@ import {
   type PurchaseProposal,
   type SignatureStatus,
   isEngageProposalKind,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { engageAboutOf, engageViewOf } from './engage-view.ts';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
@@ -606,9 +606,9 @@ export const fileGet = defineQuery({
       .where('id', '=', input.id)
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
-    // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs and certificates, #3553) are gated by
+    // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs, certificates, and signer attachments, #3553/#3818) are gated by
     // crove_sign.can_read_sign_file so unauthorized workspace members receive the same 404 as a missing file.
-    if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate') {
+    if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate' || file.source === 'sign_attachment') {
       const { rows } = await sql<{ allowed: boolean }>`SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed`.execute(ctx.trx);
       if (!rows[0]?.allowed) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
     }

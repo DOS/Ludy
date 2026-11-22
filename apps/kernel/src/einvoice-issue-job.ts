@@ -5,8 +5,8 @@
 // (finance.einvoice.job_record); on `issued` the signed XML and the PDF are fetched, stored as evidence and linked to the draft (finance.einvoice.job_files), and the XML goes through
 // the ordinary intake (kernel.file.ingest naming the draft's entity, then the extraction queue), so the sale is posted only from that XML and waits for an ordinary approval.
 // Nothing here logs or stores a credential, the buyer's data or a provider's own text: codes and ids.
-import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type EInvoiceOutcome, type EInvoiceProvider, type EInvoiceRequest, type EInvoiceStatusAnswer } from '@crove/einvoice';
-import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type EInvoiceOutcome, type EInvoiceProvider, type EInvoiceRequest, type EInvoiceStatusAnswer } from '@ludy/einvoice';
+import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.einvoice' };

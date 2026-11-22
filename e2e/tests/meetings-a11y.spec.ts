@@ -117,7 +117,7 @@ async function scanAt(page: Page, screens: Screen[], width: number, height: numb
   await page.setViewportSize({ width, height });
   for (const theme of ['light', 'dark'] as const) {
     // The theme the app reads at load (lib/theme.ts), from this browser only.
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const screen of screens) {
       await page.goto(screen.path);
       await page.waitForLoadState('networkidle');
@@ -144,7 +144,7 @@ async function storedChunks(page: Page): Promise<number> {
   return page.evaluate(
     () =>
       new Promise<number>((resolve, reject) => {
-        const open = indexedDB.open('crove-meeting-recordings');
+        const open = indexedDB.open('ludy-meeting-recordings');
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
           const db = open.result;

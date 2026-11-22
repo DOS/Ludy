@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Token helpers, canonical certificate.json builder, and @crove/extract-contract pdf_seal payload encoder (#3323).
+// Token helpers, canonical certificate.json builder, and @ludy/extract-contract pdf_seal payload encoder (#3323).
 // Never imports a PDF parser directly; all PDF parsing and sealing happens in crove-extract.
 import { randomBytes } from 'node:crypto';
-import type { SignDeliveryMode, SignFieldType, SignSignatureKind } from '@crove/db';
+import type { SignDeliveryMode, SignFieldType, SignSignatureKind } from '@ludy/db';
 import {
   EXTRACT_LIMITS,
   encodePdfSealInput,
@@ -10,22 +10,27 @@ import {
   type PdfSealCertificateSigner,
   type PdfSealField,
   type PdfSealOtpStatus,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import { canonicalJson, sha256Hex } from './events.ts';
 
 export interface SignFieldForSeal {
   id: string;
+  signer_id?: string;
   field_type: SignFieldType;
   page_number: number;
   x_norm: string;
   y_norm: string;
   w_norm: string;
   h_norm: string;
+  label?: string | null;
   required: boolean;
   font_size_pt: number | null;
   value_text: string | null;
   value_checked: boolean | null;
   signature_png_base64: string | null;
+  attachment_file_id?: string | null;
+  attachment_filename?: string | null;
+  attachment_sha256?: string | null;
   filled_at: Date | string | null;
 }
 
@@ -53,6 +58,7 @@ export interface CanonicalCertificateEvent {
   seq: number;
   eventType: string;
   signerId: string | null;
+  hostUserId?: string | null;
   actorType: string;
   documentSha256: string;
   prevEventHash: string | null;
@@ -143,7 +149,7 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
         if (!f.signature_png_base64 && f.value_text === null) {
           throw new Error(`Initials field ${f.id} requires image or text before sealing`);
         }
-        // crove_sign stores 'initials'; @crove/extract-contract names the pdf_seal variant 'initial'.
+        // crove_sign stores 'initials'; @ludy/extract-contract names the pdf_seal variant 'initial'.
         out.push({
           type: 'initial',
           page: f.page_number,
@@ -201,6 +207,45 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
         });
         break;
       }
+      case 'dropdown': {
+        if (f.value_text === null) {
+          throw new Error(`Dropdown field ${f.id} requires value_text before sealing`);
+        }
+        out.push({
+          type: 'dropdown',
+          page: f.page_number,
+          xNorm,
+          yNorm,
+          wNorm,
+          hNorm,
+          text: f.value_text,
+          ...fontOpt,
+        });
+        break;
+      }
+      case 'radio': {
+        if (f.value_text === null) {
+          throw new Error(`Radio field ${f.id} requires value_text before sealing`);
+        }
+        out.push({
+          type: 'radio',
+          page: f.page_number,
+          xNorm,
+          yNorm,
+          wNorm,
+          hNorm,
+          text: f.value_text,
+          checked: true,
+          ...fontOpt,
+        });
+        break;
+      }
+      case 'attachment': {
+        if (f.required && (!f.attachment_file_id || !f.attachment_sha256)) {
+          throw new Error(`Required attachment field ${f.id} is missing uploaded attachment before sealing`);
+        }
+        break;
+      }
     }
   }
   if (out.length > EXTRACT_LIMITS.maxPdfSealFields) {
@@ -211,8 +256,17 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
 
 export function buildPdfSealSigners(
   signers: readonly SignSignerForSeal[],
-  options?: { correctedSignerIds?: ReadonlySet<string> },
+  fieldsOrOptions?:
+    | readonly SignFieldForSeal[]
+    | { correctedSignerIds?: ReadonlySet<string>; fields?: readonly SignFieldForSeal[] },
 ): PdfSealCertificateSigner[] {
+  const fields: readonly SignFieldForSeal[] = Array.isArray(fieldsOrOptions)
+    ? fieldsOrOptions
+    : (fieldsOrOptions as { fields?: readonly SignFieldForSeal[] } | undefined)?.fields ?? [];
+  const correctedSignerIds: ReadonlySet<string> | undefined =
+    fieldsOrOptions && !Array.isArray(fieldsOrOptions)
+      ? (fieldsOrOptions as { correctedSignerIds?: ReadonlySet<string> }).correctedSignerIds
+      : undefined;
   const signed = signers
     .filter((s) => s.signer_role !== 'cc' && s.status === 'signed' && s.signed_at !== null)
     .sort((a, b) => {
@@ -224,6 +278,28 @@ export function buildPdfSealSigners(
   if (signed.length === 0) {
     throw new Error('Cannot build sealing certificate without at least one signed signer');
   }
+
+  const attachmentsBySigner = new Map<string, Array<{ label: string; filename: string; sha256: string }>>();
+  for (const f of fields) {
+    if (
+      f.field_type === 'attachment' &&
+      f.signer_id &&
+      f.attachment_file_id &&
+      f.attachment_filename &&
+      f.attachment_sha256
+    ) {
+      const list = attachmentsBySigner.get(f.signer_id) ?? [];
+      if (list.length < 50) {
+        list.push({
+          label: (f.label?.trim() || 'Tệp đính kèm').slice(0, 120),
+          filename: f.attachment_filename.trim().slice(0, 255) || 'attachment',
+          sha256: f.attachment_sha256,
+        });
+        attachmentsBySigner.set(f.signer_id, list);
+      }
+    }
+  }
+
   return signed.map((s): PdfSealCertificateSigner => {
     const otpStatus: PdfSealOtpStatus = !s.require_email_otp
       ? 'not_required'
@@ -233,7 +309,8 @@ export function buildPdfSealSigners(
     const delegatedFromName = s.delegated_from_name ? s.delegated_from_name.trim().slice(0, 200) || null : null;
     const delegatedFromMaskedEmail = delegatedFromName ? maskEmail(s.delegated_from_email ?? null) : null;
     const delegationCount = s.delegation_count ?? 0;
-    const recipientCorrected = options?.correctedSignerIds?.has(s.id) === true;
+    const recipientCorrected = correctedSignerIds?.has(s.id) === true;
+    const attachments = attachmentsBySigner.get(s.id);
     return {
       name: s.name.trim().slice(0, 200) || 'Signer',
       roleLabel: s.role_label.trim().slice(0, 100) || 'Signer',
@@ -251,6 +328,7 @@ export function buildPdfSealSigners(
           }
         : {}),
       ...(recipientCorrected ? { recipientCorrected: true } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
   });
 }
@@ -263,6 +341,7 @@ export function buildPdfSealCertificate(input: {
   eventChainTipHash: string;
   signers: readonly SignSignerForSeal[];
   events?: ReadonlyArray<{ signer_id: string | null; event_type: string }>;
+  fields?: readonly SignFieldForSeal[];
 }): PdfSealCertificate {
   const correctedSignerIds = new Set<string>();
   for (const ev of input.events ?? []) {
@@ -276,7 +355,10 @@ export function buildPdfSealCertificate(input: {
     sourceSha256: input.sourceSha256,
     completedAtIso: input.completedAtIso,
     eventChainTipHash: input.eventChainTipHash,
-    signers: buildPdfSealSigners(input.signers, { correctedSignerIds }),
+    signers: buildPdfSealSigners(input.signers, {
+      correctedSignerIds,
+      ...(input.fields ? { fields: input.fields } : {}),
+    }),
   };
 }
 

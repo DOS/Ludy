@@ -6,8 +6,8 @@
 // posts nothing, and with AI off, busy, out of budget or refused the facts stand alone.
 import { useQuery } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
-import type { MarketplaceBalanceRow, MarketplaceFacts } from '@crove/kernel-contract';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import type { MarketplaceBalanceRow, MarketplaceFacts } from '@ludy/kernel-contract';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { MarketplaceActions } from '../components/marketplace-actions.tsx';

@@ -42,9 +42,9 @@ import {
   type NoteVersion,
   type NoteVisibility,
   type NoteWritten,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { loadNoteAttachments } from './attachments.ts';
 import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';

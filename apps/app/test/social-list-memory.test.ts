@@ -15,8 +15,12 @@ describe('the list kept for the way back (#3656)', () => {
   it('gives back the tab and filters it was given, through the same checks as a typed link', () => {
     rememberSocialList('hoa-mai', { tab: 'review', q: 'khai trương' });
     expect(lastSocialList('hoa-mai')).toEqual({ tab: 'review', q: 'khai trương' });
-    store.set('crove:social-list:hoa-mai', JSON.stringify({ tab: 'nope', channel: 'not-a-uuid' }));
+    store.set('ludy:social-list:hoa-mai', JSON.stringify({ tab: 'nope', channel: 'not-a-uuid' }));
     expect(lastSocialList('hoa-mai')).toEqual({});
+    store.clear();
+    store.set('crove:social-list:hoa-mai', JSON.stringify({ tab: 'drafts', q: 'tet' }));
+    expect(lastSocialList('hoa-mai')).toEqual({ tab: 'drafts', q: 'tet' });
+    expect(store.get('ludy:social-list:hoa-mai')).toBe(JSON.stringify({ tab: 'drafts', q: 'tet' }));
   });
 
   it('keeps one list per organization, so a filter of one never reaches another', () => {

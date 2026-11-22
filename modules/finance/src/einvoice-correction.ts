@@ -11,11 +11,11 @@
 // - finance.einvoice.correction_rate (owners, admins, members; read only): the proposal for a nature, with the fixed reason and the precedent note (#3709).
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@crove/l10n-vn';
-import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from '@crove/einvoice';
-import { zEInvoiceCorrectionRateInput, zEInvoiceReasonSourceInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature, type EInvoiceReasonSource } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@ludy/l10n-vn';
+import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from '@ludy/einvoice';
+import { zEInvoiceCorrectionRateInput, zEInvoiceReasonSourceInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature, type EInvoiceReasonSource } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { CORRECTION_RATE_PRECEDENT_NOTE, correctionRateReason, proposeCorrectionRate, proposeCorrectionRates, reducedEnd, type CorrectionRateProposal } from './domain/einvoice-correction-rate.ts';
 import { loadDraft } from './einvoice-drafts.ts';
 import { databaseToday } from './period-lock.ts';

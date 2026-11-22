@@ -22,9 +22,10 @@ let storage: MemoryStorage;
 let html: { lang: string };
 
 // Each test gets a fresh module, so the locale is resolved again from the stubs.
-async function load(options: { stored?: string; languages?: string[]; storage?: unknown } = {}): Promise<Runtime> {
+async function load(options: { stored?: string; legacyStored?: string; languages?: string[]; storage?: unknown } = {}): Promise<Runtime> {
   storage = new MemoryStorage();
-  if (options.stored) storage.values.set('crove-locale', options.stored);
+  if (options.stored) storage.values.set('ludy-locale', options.stored);
+  if (options.legacyStored) storage.values.set('crove-locale', options.legacyStored);
   html = { lang: '' };
   vi.stubGlobal('localStorage', options.storage ?? storage);
   vi.stubGlobal('navigator', { languages: options.languages ?? [] });
@@ -46,9 +47,11 @@ afterEach(() => {
 });
 
 describe('activeLocale', () => {
-  it('uses the saved choice first', async () => {
+  it('uses the saved choice first, including migrating legacy crove-locale', async () => {
     expect((await load({ stored: 'en', languages: ['vi-VN'] })).activeLocale()).toBe('en');
     expect((await load({ stored: 'vi', languages: ['en-US'] })).activeLocale()).toBe('vi');
+    expect((await load({ legacyStored: 'en', languages: ['vi-VN'] })).activeLocale()).toBe('en');
+    expect(storage.getItem('ludy-locale')).toBe('en');
   });
 
   it('then the first supported browser language, then Vietnamese', async () => {
@@ -79,7 +82,7 @@ describe('setActiveLocale', () => {
     const seen: string[] = [];
     const stop = runtime.subscribeLocale(() => seen.push(runtime.activeLocale()));
     runtime.setActiveLocale('en');
-    expect(storage.getItem('crove-locale')).toBe('en');
+    expect(storage.getItem('ludy-locale')).toBe('en');
     expect(html.lang).toBe('en');
     expect(seen).toEqual(['en']);
     // The same locale again changes nothing on screen.
@@ -116,13 +119,13 @@ describe('startLocaleSync', () => {
     const stop = runtime.startLocaleSync(tab as unknown as Window);
     expect(html.lang).toBe('vi');
 
-    tab.dispatchEvent(storageEvent('crove-auth', 'token'));
+    tab.dispatchEvent(storageEvent('ludy-auth', 'token'));
     expect(runtime.activeLocale()).toBe('vi');
     // The same key in sessionStorage is not the saved choice.
-    tab.dispatchEvent(Object.assign(storageEvent('crove-locale', 'en'), { storageArea: new MemoryStorage() }));
+    tab.dispatchEvent(Object.assign(storageEvent('ludy-locale', 'en'), { storageArea: new MemoryStorage() }));
     expect(runtime.activeLocale()).toBe('vi');
 
-    tab.dispatchEvent(storageEvent('crove-locale', 'en'));
+    tab.dispatchEvent(storageEvent('ludy-locale', 'en'));
     expect(runtime.activeLocale()).toBe('en');
     expect(html.lang).toBe('en');
     expect(seen).toEqual(['en']);
@@ -130,15 +133,15 @@ describe('startLocaleSync', () => {
     expect(storage.writes).toBe(0);
 
     // A removed or unknown value falls back to the browser languages, a cleared storage too.
-    tab.dispatchEvent(storageEvent('crove-locale', 'vi'));
-    tab.dispatchEvent(storageEvent('crove-locale', null));
+    tab.dispatchEvent(storageEvent('ludy-locale', 'vi'));
+    tab.dispatchEvent(storageEvent('ludy-locale', null));
     expect(runtime.activeLocale()).toBe('en');
-    tab.dispatchEvent(storageEvent('crove-locale', 'vi'));
+    tab.dispatchEvent(storageEvent('ludy-locale', 'vi'));
     tab.dispatchEvent(storageEvent(null, null));
     expect(runtime.activeLocale()).toBe('en');
 
     stop();
-    tab.dispatchEvent(storageEvent('crove-locale', 'vi'));
+    tab.dispatchEvent(storageEvent('ludy-locale', 'vi'));
     expect(runtime.activeLocale()).toBe('en');
   });
 });

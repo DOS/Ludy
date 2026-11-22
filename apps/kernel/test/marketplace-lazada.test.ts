@@ -4,7 +4,7 @@
 // failure of the port, never a stored value. No call to Lazada: the fetch is the fake.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceOrdersCsv, parseMarketplaceOrderPage } from '@crove/mod-finance';
+import { MARKETPLACE_PLATFORM_LIMITS, MarketplaceProviderError, marketplaceOrdersCsv, parseMarketplaceOrderPage } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { LAZADA_HOSTS, LAZADA_ITEM_STAGE, isAwaitingAuthorization, lazadaMarketplace, lazadaStamp, parseLazadaSecret, parseLazadaTime, signLazadaRequest } from '../src/marketplace-lazada.ts';
 import { fakeLazada, fakeOrder, type FakeOrder } from './fake-lazada.ts';

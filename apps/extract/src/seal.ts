@@ -10,7 +10,7 @@ import {
   type PdfSealField,
   type PdfSealOtpStatus,
   type PdfSealResult,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   EncryptedPDFError,
   LineCapStyle,
@@ -3445,6 +3445,42 @@ function drawVectorCheckbox(
   }
 }
 
+function drawVectorRadio(
+  page: PDFPage,
+  box: VisualBox,
+  rot: PageRotation,
+  userUnit: number,
+  vx: number,
+  vy: number,
+  vw: number,
+  vh: number,
+  checked: boolean,
+): void {
+  const minDim = Math.min(vw, vh);
+  const borderWidth = Math.min(Math.max(0.4 / userUnit, minDim * 0.08), minDim * 0.14);
+  const radius = Math.max(0.5 / userUnit, (minDim * 0.82 - borderWidth) / 2);
+  const center = visualPointToPdf(box, rot, vx + vw / 2, vy + vh / 2);
+
+  page.drawCircle({
+    x: center.x,
+    y: center.y,
+    size: radius,
+    borderWidth,
+    borderColor: checked ? COLOR_ACCENT : COLOR_INK,
+    color: COLOR_WHITE,
+  });
+
+  if (checked) {
+    page.drawCircle({
+      x: center.x,
+      y: center.y,
+      size: Math.max(0.25 / userUnit, radius * 0.52),
+      borderWidth: 0,
+      color: COLOR_ACCENT,
+    });
+  }
+}
+
 function clonePageSharedContainers(pdfDoc: PDFDocument, page: PDFPage): void {
   const contentsEntry = lookupDictEntryByDecodedName(pdfDoc, page.node, 'Contents');
   if (contentsEntry?.resolved instanceof PDFArray) {
@@ -3540,12 +3576,41 @@ async function stampFields(
         break;
       }
       case 'date':
-      case 'text': {
+      case 'text':
+      case 'dropdown': {
         await drawBoxedText(fonts, page, box, rot, userUnit, vx, vy, vw, vh, field.text, 'regular', field.fontSizePt);
         break;
       }
       case 'checkbox': {
         drawVectorCheckbox(page, box, rot, userUnit, vx, vy, vw, vh, field.checked);
+        break;
+      }
+      case 'radio': {
+        if (field.text !== undefined && field.text.trim().length > 0) {
+          if (vw >= vh * 1.8) {
+            const indicatorSlot = Math.min(vh, vw * 0.35);
+            const gap = Math.max(1 / userUnit, indicatorSlot * 0.16);
+            drawVectorRadio(page, box, rot, userUnit, vx, vy, indicatorSlot, vh, field.checked ?? true);
+            await drawBoxedText(
+              fonts,
+              page,
+              box,
+              rot,
+              userUnit,
+              vx + indicatorSlot + gap,
+              vy,
+              Math.max(1 / userUnit, vw - indicatorSlot - gap),
+              vh,
+              field.text,
+              'regular',
+              field.fontSizePt,
+            );
+          } else {
+            await drawBoxedText(fonts, page, box, rot, userUnit, vx, vy, vw, vh, field.text, 'regular', field.fontSizePt);
+          }
+        } else {
+          drawVectorRadio(page, box, rot, userUnit, vx, vy, vw, vh, Boolean(field.checked));
+        }
         break;
       }
     }
@@ -7920,6 +7985,18 @@ async function appendAuditCertificatePages(
         innerTextW,
       )),
     ];
+    for (const att of signer.attachments ?? []) {
+      const attLabel = collapseSingleLineText(att.label);
+      const attFilename = collapseSingleLineText(att.filename);
+      detailLines.push(
+        ...(await fonts.wrapLines(
+          `Tệp đính kèm / Attachment (${attLabel}): ${attFilename} | SHA-256: ${att.sha256}`,
+          'regular',
+          signerDetailSize,
+          innerTextW,
+        )),
+      );
+    }
 
     const cardH = Math.round(16 * vScale) + titleLines.length * signerTitleStep + detailLines.length * signerDetailStep + Math.round(6 * vScale);
     signerCards.push({ titleLines, detailLines, cardH });

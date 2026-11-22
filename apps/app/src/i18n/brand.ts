@@ -4,8 +4,8 @@
 // sends none). `{brandSlug}` is the same name as a file-name prefix ("ludy", "ten-moi"; #1045). `{gm}`, `{finance}`,
 // `{sales}`, `{marketing}` and `{system}` are the names of the AI coworkers by what they cover (#1683, #2410), whatever the brand: a
 // message names the coworker of its own area (Ludy Kế toán's and Ludy Nhân sự's, Engage's Inbox, customers and sales, Engage's marketing) and the
-// general manager where the work spans apps. The names are in one place, COWORKER_ROSTER (@crove/kernel-contract).
-import { COWORKER_KEYS, COWORKER_ROSTER, brandSlug, type CoworkerKey as RosterKey } from '@crove/kernel-contract';
+// general manager where the work spans apps. The names are in one place, COWORKER_ROSTER (@ludy/kernel-contract).
+import { COWORKER_KEYS, COWORKER_ROSTER, brandSlug, type CoworkerKey as RosterKey } from '@ludy/kernel-contract';
 
 export const DEFAULT_BRAND = 'Ludy';
 // The AI coworkers by role (DESIGN.md 1.1); the names are the roster's.
@@ -50,10 +50,14 @@ export function withBrand(text: string, brand = current): string {
   return fillCoworkers(text.replaceAll('{brandSlug}', brandSlug(brand)).replaceAll('{brand}', brand));
 }
 
-// A downloaded file's name with the product name as its prefix: `crove-ke-hoach-2026-10.csv` under BRAND_NAME "Tên Mới"
-// is saved as `ten-moi-ke-hoach-2026-10.csv`. Names the kernel or a module chose keep their `crove-` there (#1045).
+// A downloaded file's name with the product name as its prefix: `ludy-ke-hoach-2026-10.csv` under BRAND_NAME "Tên Mới"
+// is saved as `ten-moi-ke-hoach-2026-10.csv`. Compatibility fallback also rewrites legacy `crove-` names (#3966).
 export function brandFileName(name: string, brand = current): string {
-  return name.startsWith('crove-') ? `${brandSlug(brand)}-${name.slice('crove-'.length)}` : name;
+  const slug = brandSlug(brand);
+  for (const prefix of ['ludy-', 'crove-']) {
+    if (name.startsWith(prefix)) return `${slug}-${name.slice(prefix.length)}`;
+  }
+  return name;
 }
 
 // The name as literal text inside an ICU message: an apostrophe is doubled, the only character of the allowed set

@@ -4,7 +4,7 @@
 // op, value }] }`, at most 8 conditions, all ANDed. The scope registry below says, per scope, which fields exist, which
 // operators each takes and what value each operator carries, so the app and the server cannot disagree, and a stored
 // view cannot name a field the server does not know. The server turns an AST into a `where` (saved-view-filter.ts in
-// @crove/kernel), so a view only ever narrows what row-level security already lets the member read.
+// @ludy/kernel), so a view only ever narrows what row-level security already lets the member read.
 import { z } from 'zod';
 import { zId, zLocalDate, zTaskStatus } from './schemas.ts';
 

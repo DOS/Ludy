@@ -2,7 +2,7 @@
 // Reading a CSV of contacts in the browser (CRM plan 5, step K5, #2229): the delimiter a spreadsheet used, the cells with
 // their quotes, the columns a header names (with or without Vietnamese marks), and the file of rows that were not
 // imported. Nothing here talks to the server; the rows go to crm.import.stage once the person has mapped the columns.
-import { IMPORT_MAX_ROWS, type ImportRowInput } from '@crove/kernel-contract';
+import { IMPORT_MAX_ROWS, type ImportRowInput } from '@ludy/kernel-contract';
 import type { SheetRows } from './xlsx.ts';
 
 export const IMPORT_FIELDS = ['name', 'kind', 'taxCode', 'email', 'phone', 'address', 'company'] as const;

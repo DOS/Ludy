@@ -4,7 +4,7 @@
 // no longer covers the content) judged then and leaving the proposal pending when it refuses. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { PostView } from '@crove/mod-social';
+import type { PostView } from '@ludy/mod-social';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 
 const suite = ADMIN ? describe : describe.skip;

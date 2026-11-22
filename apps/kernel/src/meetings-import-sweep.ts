@@ -6,10 +6,10 @@
 //      14 days, through its adapter, and the answer replaces the connection's suggestions. A platform's notice or this list only SUGGESTS; the click alone starts a download.
 // A failure for one row or connection never stops the others; a connection that cannot be listed gets a short code and waits 10 minutes (the platform refusing its token expires it).
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { MeetingPlatformError, type MeetingPlatformAdapter } from '@crove/channel';
-import { MEETING_PLATFORM_LIST_DAYS, type MeetingPlatformProvider } from '@crove/kernel-contract';
-import { DomainError, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { MeetingPlatformError, type MeetingPlatformAdapter } from '@ludy/channel';
+import { MEETING_PLATFORM_LIST_DAYS, type MeetingPlatformProvider } from '@ludy/kernel-contract';
+import { DomainError, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { freshCredential } from './meeting-platform-credential.ts';
 import type { MeetingsImportJob } from './meetings-import.ts';
 

@@ -5,12 +5,12 @@
 import { useMutation } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { SOCIAL_TEXT_VARIATION_CHARS_MAX, SOCIAL_TEXT_VARIATIONS_MAX } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Label } from '@crove/ui/components/label';
-import { Textarea } from '@crove/ui/components/textarea';
+import { SOCIAL_TEXT_VARIATION_CHARS_MAX, SOCIAL_TEXT_VARIATIONS_MAX } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Label } from '@ludy/ui/components/label';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage } from '../lib/api.ts';
 

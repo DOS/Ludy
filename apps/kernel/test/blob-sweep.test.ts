@@ -2,8 +2,8 @@
 // references to inbound blobs come from the database (blob-sweep.db.test.ts); here the listing, the age cutoff, the
 // page budget and the ALERT lines.
 import { describe, expect, it } from 'vitest';
-import type { Db } from '@crove/db';
-import { exportKey, fileKey, inboundKey, newInboundBlobId, tmpKey, type BlobListing, type BlobStore, type ListPrefix } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { exportKey, fileKey, inboundKey, newInboundBlobId, tmpKey, type BlobListing, type BlobStore, type ListPrefix } from '@ludy/kernel-runtime';
 import { BLOB_SWEEP_PAGE, TMP_BLOB_MAX_AGE_HOURS, expireExports, sweepInboundBlobs, sweepTmpBlobs } from '../src/retention.ts';
 
 const DAY = 86_400_000;

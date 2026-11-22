@@ -1,7 +1,7 @@
 // What a refused session does in the SPA (issue #247): a session revoked in one org leaves that org and keeps the
 // device signed in; any other dead session signs out; the sign-out revoke goes without the org header.
 import { describe, expect, it, vi } from 'vitest';
-import { ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_HEADER } from '@ludy/kernel-contract';
 import { ApiError, isOrgAccessRevoked, isUnauthenticated } from '../src/lib/errors.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from '../src/lib/org-access.ts';
 
@@ -88,12 +88,15 @@ describe('the org-left notice', () => {
     expect(takeOrgLeft(storage)).toBeNull();
   });
 
-  it('drops a malformed value and survives unavailable storage', () => {
+  it('drops a malformed value, migrates a legacy key, and survives unavailable storage', () => {
     const storage = memoryStorage();
-    storage.setItem('crove-org-left', '{not json');
+    storage.setItem('ludy-org-left', '{not json');
     expect(takeOrgLeft(storage)).toBeNull();
-    storage.setItem('crove-org-left', JSON.stringify({ name: 42 }));
+    storage.setItem('ludy-org-left', JSON.stringify({ name: 42 }));
     expect(takeOrgLeft(storage)).toBeNull();
+    expect(storage.map.size).toBe(0);
+    storage.setItem('crove-org-left', JSON.stringify({ name: 'Công ty Legacy' }));
+    expect(takeOrgLeft(storage)).toEqual({ name: 'Công ty Legacy' });
     expect(storage.map.size).toBe(0);
     const broken = {
       getItem: () => {

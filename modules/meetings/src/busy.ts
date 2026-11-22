@@ -4,8 +4,8 @@
 // which holds the tenant row; the commands that open such work take it too (opensBusyWork), so a start and a switch-off never both succeed. The rows are read by a
 // definer (crove_meetings.org_busy_reasons): a meeting is visible only to its recorder and readers, so the switcher's own context would miss another member's.
 import { sql, type Transaction } from 'kysely';
-import type { Database } from '@crove/db';
-import { RECORDING_NOW_WINDOW_HOURS } from '@crove/kernel-contract';
+import type { Database } from '@ludy/db';
+import { RECORDING_NOW_WINDOW_HOURS } from '@ludy/kernel-contract';
 
 /** The reasons Meetings is busy for the org, as short codes (none: it can be switched off). */
 export async function meetingsBusy(trx: Transaction<Database>, orgId: string): Promise<string[]> {

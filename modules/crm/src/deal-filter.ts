@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Saved views of the deals (CRM plan 4.3, step K3, #2227): what each field of the `crm.deal` scope means over the deal
-// table, and how a view's sort and cursor read. The registry in @crove/kernel-contract says which fields, operators and
+// table, and how a view's sort and cursor read. The registry in @ludy/kernel-contract says which fields, operators and
 // values a view may hold; the kernel builds the SQL from helpers; this file maps each field to the deal's columns (alias
 // d), its stage (alias s) and its party (alias p), as crm.deal.list joins them. A view only narrows the query the caller
 // already runs under row-level security.
 import { sql, type Expression, type SqlBool } from 'kysely';
-import type { SavedViewSort } from '@crove/kernel-contract';
+import type { SavedViewSort } from '@ludy/kernel-contract';
 import {
   amountCompare,
   dateCompare,
@@ -16,8 +16,8 @@ import {
   valueIs,
   withinLastDays,
   type FieldCondition,
-} from '@crove/kernel';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/kernel';
+import { DomainError } from '@ludy/kernel-runtime';
 
 // The list a view of no sort opens on: the newest first, as the list has always been.
 export const DEAL_DEFAULT_SORT: SavedViewSort = { field: 'created', dir: 'desc' };

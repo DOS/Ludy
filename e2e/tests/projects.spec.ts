@@ -11,7 +11,7 @@ const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page
 test.use({ viewport: { width: 1680, height: 900 } });
 
 async function auditScreen(page: Page, path: string, theme: 'light' | 'dark'): Promise<string[]> {
-  await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+  await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
   await page.goto(path);
   await page.waitForLoadState('networkidle');
   await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);

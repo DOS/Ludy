@@ -6,7 +6,7 @@
 // for the reading (the accounting coworker reads it; the checks decide). This module holds the decisions (when to shrink, which encodes to try,
 // in which order) and the loop that tries them; the drawing runs in the browser (browserCodec) and is passed in, so the
 // rest is unit tested.
-import { DIRECT_UPLOAD_MAX_BYTES } from '@crove/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES } from '@ludy/kernel-contract';
 
 // The photo stays under this size: files up to it go through the kernel in one request even when the store takes
 // presigned uploads, which is the quick path on a phone.

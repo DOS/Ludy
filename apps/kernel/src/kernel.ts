@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
 import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
-import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@ludy/agent';
 import {
   BlueskyPublisher,
   TELEGRAM_HOOK_KEY_INFO,
@@ -57,11 +57,11 @@ import {
   type OAuthConnector,
   type Publisher,
   type Refresher,
-} from '@crove/channel';
-import { createExtractClient } from '@crove/extract-contract';
-import { MEETING_PLATFORM_VIDEO_MAX_BYTES, type ModuleManifest } from '@crove/kernel-contract';
-import { assertRlsEnforced, assertSystemContextAccess, createDb, createPool, singleCell, type CellResolver, type Db } from '@crove/db';
-import { buildKernelCommands, kernelManifest, kernelQueries, setMeetingPlatformVideoImport, setMessageIdDomain, type OverviewContribution } from '@crove/kernel';
+} from '@ludy/channel';
+import { createExtractClient } from '@ludy/extract-contract';
+import { MEETING_PLATFORM_VIDEO_MAX_BYTES, type ModuleManifest } from '@ludy/kernel-contract';
+import { assertRlsEnforced, assertSystemContextAccess, createDb, createPool, singleCell, type CellResolver, type Db } from '@ludy/db';
+import { buildKernelCommands, kernelManifest, kernelQueries, setMeetingPlatformVideoImport, setMessageIdDomain, type OverviewContribution } from '@ludy/kernel';
 import {
   LocalDiskStore,
   egressFetch,
@@ -76,15 +76,15 @@ import {
   type RuntimeOptions,
   type SessionStatusSource,
   mintContextToken,
-} from '@crove/kernel-runtime';
-import { financeAgentPrograms, financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
-import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewContributions, socialQueries } from '@crove/mod-social';
-import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
-import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
-import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
-import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
-import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled, setTranslationTargets } from '@crove/mod-meetings';
+} from '@ludy/kernel-runtime';
+import { financeAgentPrograms, financeCommands, financeManifest, financeQueries } from '@ludy/mod-finance';
+import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewContributions, socialQueries } from '@ludy/mod-social';
+import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@ludy/mod-crm';
+import { hrCommands, hrManifest, hrQueries } from '@ludy/mod-hr';
+import { notesCommands, notesManifest, notesQueries } from '@ludy/mod-notes';
+import { projectsCommands, projectsManifest, projectsQueries } from '@ludy/mod-projects';
+import { adsBusy, adsCommands, adsManifest, adsQueries } from '@ludy/mod-ads';
+import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled, setTranslationTargets } from '@ludy/mod-meetings';
 import {
   setSignCaBrokerAvailable,
   setSignLiveCaEnabled,
@@ -93,13 +93,13 @@ import {
   signCommands,
   signManifest,
   signQueries,
-} from '@crove/mod-sign';
-import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adManagers, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdManager, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
-import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
+} from '@ludy/mod-sign';
+import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adManagers, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdManager, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@ludy/ad-platform';
+import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@ludy/einvoice';
 import { misaTransport } from './einvoice-transport.ts';
-import { createAmisClient, type AmisCallbackKey, type AmisClient, type AmisTransport } from '@crove/misa-amis';
+import { createAmisClient, type AmisCallbackKey, type AmisClient, type AmisTransport } from '@ludy/misa-amis';
 import { amisTransport } from './misa-amis-transport.ts';
-import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
+import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@ludy/mod-finance';
 import { LAZADA_HOSTS, lazadaCaller, lazadaMarketplace } from './marketplace-lazada.ts';
 import { lazadaFinance } from './marketplace-lazada-finance.ts';
 import { withLazadaIncome } from './marketplace-income-leg.ts';
@@ -139,7 +139,7 @@ import { configureOpsAlerts, flushOpsAlerts } from './ops-alert.ts';
 const STOP_FLUSH_MS = 5_000;
 import { createPushSender, loadVapidKeys } from './web-push.ts';
 import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './back-pressure.ts';
-import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@crove/bank-feed';
+import { bankFeedHostedProviders, bankFeedProviders, type BankFeedProvider } from '@ludy/bank-feed';
 import { hostBoundFetch } from './marketplace-adapter-kit.ts';
 import { LAZADA_TOKEN_HOSTS, LazadaRefresher } from './marketplace-lazada-token.ts';
 import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from './marketplace-shopee-token.ts';
@@ -160,7 +160,7 @@ export interface IdentityPort {
   readonly revoker: SessionRevoker | null;
 }
 
-export type { CredentialBroker } from '@crove/kernel-runtime';
+export type { CredentialBroker } from '@ludy/kernel-runtime';
 export { noCredentialBroker } from './credentials.ts';
 
 // A connector to an outside system (e-invoice issuing, banks). The core ships none; Crove Cloud adds its own.
@@ -197,8 +197,11 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
-  signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
+  // Vy's eSign field placement, risky clause review, and post-signature obligation extraction (#3351, #3821); null runs manual signing without AI.
+  signAi?:
+    | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
+        Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations'>>)
+    | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief' | 'signAcceptanceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.

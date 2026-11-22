@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
-import { MARKETPLACE_POSTING_MAPS, requireConfirmedMarketplaceMap, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
-import { money } from '@crove/l10n-vn';
-import { settlementProposal, type SettlementProposalInput } from '../src/marketplace-settlement-posting.ts';
+import { DomainError } from '@ludy/kernel-runtime';
+import { MARKETPLACE_PATH_ROWS, MARKETPLACE_POSTING_MAPS, requireConfirmedMarketplaceMap, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
+import { money } from '@ludy/l10n-vn';
+import { entryIsEmpty, isEmptyEntry, outputVatOf, settlementProposal, vatDatesOf, type SettlementProposalInput, type SettlementVatRates } from '../src/marketplace-settlement-posting.ts';
 
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
   const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
+// The default entry is on the `none` method on its own date, so a test that is not about VAT posts the VAT-inclusive revenue as before; the VAT tests pass `vatRates`.
 const input = (lines: SettlementProposalInput['lines'], over: Partial<SettlementProposalInput> = {}): SettlementProposalInput => ({
-  regime: 'tt133', platform: 'shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', month: '2026-10', date: '2026-10-15', partyId: null, lines, ...over,
+  regime: 'tt133', platform: 'shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', month: '2026-10', date: '2026-10-15', partyId: null, lines, vatRates: { [over.date ?? '2026-10-15']: { method: 'none' } }, ...over,
 });
 const code = (fn: () => unknown) => {
   try { fn(); } catch (e) { return e instanceof DomainError ? { code: e.code, status: e.status } : e; }
@@ -19,14 +20,22 @@ const code = (fn: () => unknown) => {
 };
 
 describe('marketplace posting map and gate', () => {
-  it('ships as commentary and refuses until confirmed', () => {
+  it('ships with the sales path confirmed (#4303 S3b) and every other path commentary, refused until confirmed', () => {
     const map = MARKETPLACE_POSTING_MAPS.tt133!;
-    expect(map.status).toBe('commentary');
-    for (const r of [map.receivable, map.revenue, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitOwnerEquity]) expect(r.status).toBe('commentary');
+    expect(map.status).toBe('confirmed');
+    // The sales path (131, 5111, the refund on 5111, 33311) is applied; the rest waits for its own change.
+    for (const r of [map.receivable, map.revenue, map.salesReturn, map.outputVat]) expect(r.status).toBe('confirmed');
+    for (const r of [map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitOwnerEquity, map.feeExpense, map.accruedExpense]) expect(r.status).toBe('commentary');
     expect([map.vatPayable.code, map.pitPayable.code, map.pitOwnerEquity.code]).toEqual(['3331', '3335', '4212']);
     expect([map.receivable.code, map.revenue.code, map.cash.code, map.feePayable.code, map.feeAwaitingInvoice.code, map.taxWithheld.code]).toEqual(['131', '5111', '112', '331', '1388', '333']);
+    // No path named asks for the original twelve rows (the retired fee clearing), which are not all confirmed; the paths that are not the sales path are refused.
     expect(code(() => requireConfirmedMarketplaceMap('tt133'))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
-    expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt133', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    // The sales path opens from the shipped map: a settlement entry posts with no test map at all.
+    expect(requireConfirmedMarketplaceMap('tt133', undefined, ['sales']).regime).toBe('tt133');
+    expect(settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])).lines.map((l) => l.account)).toEqual(['131', '5111']);
+    // A settlement that carries the household's withheld tax needs the household tax path, still closed.
+    expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0', taxWithheld: '1' }], { tax: { vatPercent: '1', pitPercent: '0.5' } })))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
   });
   it('refuses a regime with no map, including inherited names', () => {
     expect(code(() => requireConfirmedMarketplaceMap('tt200'))).toEqual({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
@@ -34,7 +43,9 @@ describe('marketplace posting map and gate', () => {
   });
   it('passes a map the test confirmed for itself, leaving the shipped one alone', () => {
     expect(requireConfirmedMarketplaceMap('tt133', confirmed()).status).toBe('confirmed');
-    expect(MARKETPLACE_POSTING_MAPS.tt133!.status).toBe('commentary');
+    // The shipped map confirms the sales path only: a test's own map does not change it, and the other rows stay as shipped.
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.cash.status).toBe('commentary');
+    expect(confirmed().tt133!.cash.status).toBe('confirmed');
   });
 });
 
@@ -68,8 +79,9 @@ describe('settlement proposal', () => {
     expect(p.refund).toBe('95000');
     expect(p.total).toBe('320000');
   });
-  it('marks the refund rule commentary beside the map', () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '5111', status: 'commentary' });
+  it('applies the refund rule with its uncertain points kept in the row (#4303 S3b)', () => {
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '5111', status: 'confirmed' });
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn.comment).toContain('Uncertain (#2520');
   });
   it('posts the other way when refunds and discounts exceed the sales', () => {
     const p = settlementProposal(input([{ sales: '1000', sellerDiscount: '500', refund: '8500' }], { partyId: 'party-1' }), maps);
@@ -152,13 +164,15 @@ describe('the TT99 map (#3711 slice 4)', () => {
   // The TT99 map confirmed for the test, leaving the shipped one alone.
   const confirmedTt99 = (): Record<string, MarketplacePostingMap> => {
     const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-    return { tt99: { ...tt99, status: 'confirmed', receivable: c(tt99.receivable), revenue: c(tt99.revenue), salesReturn: c(tt99.salesReturn), cash: c(tt99.cash), feePayable: c(tt99.feePayable), feeAwaitingInvoice: c(tt99.feeAwaitingInvoice), taxWithheld: c(tt99.taxWithheld), vatPayable: c(tt99.vatPayable), pitPayable: c(tt99.pitPayable), pitOwnerEquity: c(tt99.pitOwnerEquity), feeExpense: c(tt99.feeExpense), accruedExpense: c(tt99.accruedExpense) } };
+    return { tt99: { ...tt99, status: 'confirmed', receivable: c(tt99.receivable), revenue: c(tt99.revenue), salesReturn: c(tt99.salesReturn), cash: c(tt99.cash), feePayable: c(tt99.feePayable), feeAwaitingInvoice: c(tt99.feeAwaitingInvoice), taxWithheld: c(tt99.taxWithheld), vatPayable: c(tt99.vatPayable), pitPayable: c(tt99.pitPayable), pitOwnerEquity: c(tt99.pitOwnerEquity), feeExpense: c(tt99.feeExpense), accruedExpense: c(tt99.accruedExpense), outputVat: c(tt99.outputVat) } };
   };
-  it('ships as commentary, so no path opens from it until the accountant confirms', () => {
+  it('ships with the sales path confirmed (#4303 S3b), and the payout, fee accrual and household tax paths closed until their own change', () => {
     expect(tt99.regime).toBe('tt99');
-    expect(tt99.status).toBe('commentary');
-    for (const r of [tt99.receivable, tt99.revenue, tt99.salesReturn, tt99.cash, tt99.feePayable, tt99.feeAwaitingInvoice, tt99.taxWithheld, tt99.vatPayable, tt99.pitPayable, tt99.pitOwnerEquity, tt99.feeExpense, tt99.accruedExpense]) expect(r.status).toBe('commentary');
-    for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt99', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(tt99.status).toBe('confirmed');
+    for (const r of [tt99.receivable, tt99.revenue, tt99.salesReturn, tt99.outputVat]) expect(r.status).toBe('confirmed');
+    for (const r of [tt99.cash, tt99.feePayable, tt99.feeAwaitingInvoice, tt99.taxWithheld, tt99.vatPayable, tt99.pitPayable, tt99.pitOwnerEquity, tt99.feeExpense, tt99.accruedExpense]) expect(r.status).toBe('commentary');
+    for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt99', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(requireConfirmedMarketplaceMap('tt99', undefined, ['sales']).regime).toBe('tt99');
   });
   it('books the fees on 641 (sub-account 6417, not the staff cost 6421), the accrual on 335 and a refund on 521', () => {
     expect([tt99.feePayable.code, tt99.feeExpense.code, tt99.accruedExpense.code, tt99.salesReturn.code]).toEqual(['331', '6417', '335', '521']);
@@ -289,26 +303,207 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
 describe('the rows of the researched rules (#4303 S2)', () => {
   const NEW = ['outputVat', 'feeInputVat', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
   const CODES = ['33311', '1331', '1388', '1381', '632', '711', '811'];
-  it('names the same accounts in both regimes, every one still `commentary`', () => {
+  // #4303 S3b confirmed the output VAT row with the sales path and S4 the three rows its payout adjustments post to (otherReceivable, costOfGoods, otherIncome); every other new row stays `commentary` until the change that posts to it.
+  const CONFIRMED = ['outputVat', 'otherReceivable', 'costOfGoods', 'otherIncome'];
+  it('names the same accounts in both regimes; only the output VAT row (S3b) and the three rows of the payout adjustments (S4) are `confirmed`', () => {
     for (const regime of ['tt133', 'tt99']) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
       expect(NEW.map((key) => map[key].code), regime).toEqual(CODES);
-      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe('commentary');
+      for (const key of NEW) expect(map[key].status, `${regime} ${key}`).toBe(CONFIRMED.includes(key) ? 'confirmed' : 'commentary');
     }
   });
-  it('does not open any path by itself: the rows are gated by the paths that post them (S3, S4), and the retired no-path gate still asks for the original twelve only', () => {
+  it('opens only the sales path: the rows are gated by the paths that post them (S3b flipped sales, S4 is next), and the retired no-path gate still asks for the original twelve only', () => {
     for (const regime of ['tt133', 'tt99']) {
-      for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, [path])), `${regime} ${path}`).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+      for (const path of ['payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, [path])), `${regime} ${path}`).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+      // The adjustments path has its three rows confirmed and opens on its own, but it is asked only beside `payout`, which stays closed: together they are refused.
+      expect(() => requireConfirmedMarketplaceMap(regime, undefined, ['payout_adjustments']), regime).not.toThrow();
+      expect(code(() => requireConfirmedMarketplaceMap(regime, undefined, ['payout', 'payout_adjustments'])), regime).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     }
     const original = confirmed();
     expect(requireConfirmedMarketplaceMap('tt133', original).regime).toBe('tt133');
   });
   it('keeps every point the research leaves open findable in the row that applies it (an "Uncertain (#2520)" comment), and cites the research file or the first regime', () => {
-    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'assetAwaitingHandling', 'otherIncome', 'otherExpense'] as const;
+    const MARKED = ['revenue', 'salesReturn', 'feePayable', 'vatPayable', 'pitPayable', 'feeExpense', 'pitOwnerEquity', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
     for (const regime of ['tt133', 'tt99']) {
       const map = MARKETPLACE_POSTING_MAPS[regime]!;
       for (const key of MARKED) expect(map[key].comment, `${regime} ${key}`).toContain('Uncertain (#2520');
     }
     for (const key of NEW) expect(MARKETPLACE_POSTING_MAPS.tt133![key].comment, key).toMatch(/Rule \d|Rules \d/);
+  });
+});
+
+// Output VAT (#4303 S3b, research rule 1): a VAT-inclusive price is split into revenue and output VAT on 33311 at the rate in force on the delivery day.
+describe('output VAT of a marketplace settlement entry', () => {
+  it('gates the sales path on the output VAT row too: a map with 33311 unconfirmed does not open it (#4303 S3b)', () => {
+    expect([...MARKETPLACE_PATH_ROWS.sales]).toEqual(['receivable', 'revenue', 'salesReturn', 'outputVat']);
+    expect(MARKETPLACE_POSTING_MAPS.tt133!.outputVat.code).toBe('33311');
+    expect(MARKETPLACE_POSTING_MAPS.tt99!.outputVat.code).toBe('33311');
+    const base = MARKETPLACE_POSTING_MAPS.tt133!;
+    const conf = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
+    const noVat = { tt133: { ...base, status: 'confirmed' as const, receivable: conf(base.receivable), revenue: conf(base.revenue), salesReturn: conf(base.salesReturn), outputVat: { ...base.outputVat, status: 'commentary' as const } } };
+    expect(code(() => requireConfirmedMarketplaceMap('tt133', noVat, ['sales']))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(() => requireConfirmedMarketplaceMap('tt133', { tt133: { ...noVat.tt133, outputVat: conf(base.outputVat) } }, ['sales'])).not.toThrow();
+  });
+  const tt99 = MARKETPLACE_POSTING_MAPS.tt99!;
+  const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
+  const confirmedTt99 = (): Record<string, MarketplacePostingMap> => ({ tt99: { ...tt99, status: 'confirmed', receivable: c(tt99.receivable), revenue: c(tt99.revenue), salesReturn: c(tt99.salesReturn), outputVat: c(tt99.outputVat) } });
+  const confirm133 = (): Record<string, MarketplacePostingMap> => {
+    const base = MARKETPLACE_POSTING_MAPS.tt133!;
+    return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), outputVat: c(base.outputVat) } };
+  };
+  const D = '2026-10-15';
+  const at = (percent: string): SettlementVatRates => ({ [D]: { method: 'deduction', vatPercent: percent } });
+  const rows = (p: ReturnType<typeof settlementProposal>) => p.lines.map((l) => [l.account, l.debit, l.credit]);
+  const balanced = (p: ReturnType<typeof settlementProposal>) => p.lines.reduce((a, l) => a.plus(l.debit), money('0')).equals(p.lines.reduce((a, l) => a.plus(l.credit), money('0')));
+
+  it('splits a VAT-inclusive sale into revenue and 33311 at the rate of the row in force', () => {
+    const p = settlementProposal(input([{ sales: '1080000', sellerDiscount: '0', refund: '0' }], { vatRates: at('8.00') }), confirm133());
+    expect(rows(p)).toEqual([['131', '1080000', '0'], ['5111', '0', '1000000'], ['33311', '0', '80000']]);
+    expect(p.outputVat).toBe('80000');
+    expect(balanced(p)).toBe(true);
+    // The seller's discount is out of the base: the VAT is inside the price after it.
+    const d = settlementProposal(input([{ sales: '1200000', sellerDiscount: '120000', refund: '0' }], { vatRates: at('8') }), confirm133());
+    expect(rows(d)).toEqual([['131', '1080000', '0'], ['5111', '0', '1000000'], ['33311', '0', '80000']]);
+  });
+
+  it('takes the rate from data: 10% gives another split, never a constant', () => {
+    const p = settlementProposal(input([{ sales: '1100000', sellerDiscount: '0', refund: '0' }], { vatRates: at('10') }), confirm133());
+    expect(rows(p)).toEqual([['131', '1100000', '0'], ['5111', '0', '1000000'], ['33311', '0', '100000']]);
+    // A rate this code has never heard of (8.5%) is used as given.
+    const q = settlementProposal(input([{ sales: '1085000', sellerDiscount: '0', refund: '0' }], { vatRates: at('8.5') }), confirm133());
+    expect(rows(q)).toEqual([['131', '1085000', '0'], ['5111', '0', '1000000'], ['33311', '0', '85000']]);
+  });
+
+  it('rounds the VAT half up to whole dong once, and the revenue is the remainder so the entry balances', () => {
+    const p = settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }], { vatRates: at('8') }), confirm133());
+    // 100000 x 8 / 108 = 7407.407...: 7407 of VAT, 92593 of revenue.
+    expect(rows(p)).toEqual([['131', '100000', '0'], ['5111', '0', '92593'], ['33311', '0', '7407']]);
+    expect(balanced(p)).toBe(true);
+    // Exactly half rounds up (16.5 x 10 / 110 = 1.5 gives 2).
+    expect(outputVatOf(input([{ sales: '16.5', sellerDiscount: '0', refund: '0' }], { vatRates: at('10') })).sales.toFixed()).toBe('2');
+    // Rounded once for the entry, not per piece: two pieces of 50000 at 8% are 3703.7 each, 7407 together (per piece would give 7408).
+    const two = settlementProposal(input([{ sales: '50000', sellerDiscount: '0', refund: '0' }, { sales: '50000', sellerDiscount: '0', refund: '0' }], { vatRates: at('8') }), confirm133());
+    expect(rows(two)).toEqual([['131', '100000', '0'], ['5111', '0', '92593'], ['33311', '0', '7407']]);
+  });
+
+  it('adds no VAT line for method none, and none for a rate of 0', () => {
+    const none = settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }]), confirm133());
+    expect(rows(none)).toEqual([['131', '100000', '0'], ['5111', '0', '100000']]);
+    expect(none.outputVat).toBe('0');
+    const zero = settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }], { vatRates: at('0') }), confirm133());
+    expect(rows(zero)).toEqual([['131', '100000', '0'], ['5111', '0', '100000']]);
+  });
+
+  it('refuses a day with no row, or a rate map that does not name it, so the settlement waits and nothing is guessed', () => {
+    const waiting = { code: 'MARKETPLACE_SETTLEMENT_WAITING_VAT_RATE', status: 422 };
+    expect(code(() => settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }], { vatRates: { [D]: null } }), confirm133()))).toEqual(waiting);
+    expect(code(() => settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }], { vatRates: {} }), confirm133()))).toEqual(waiting);
+    // One day with a row and another without: the whole entry waits.
+    const lines = [{ sales: '100000', sellerDiscount: '0', refund: '0', rateDate: '2026-10-01' }, { sales: '100000', sellerDiscount: '0', refund: '0', rateDate: '2026-10-09' }];
+    expect(code(() => settlementProposal(input(lines, { vatRates: { '2026-10-01': { method: 'deduction', vatPercent: '8' }, '2026-10-09': null } }), confirm133()))).toEqual(waiting);
+    // A line with nothing on it needs no day.
+    expect(vatDatesOf(input([{ sales: '0', sellerDiscount: '0', refund: '0', rateDate: '2026-09-01' }, { sales: '5', sellerDiscount: '0', refund: '0' }]))).toEqual([D]);
+  });
+
+  it('reads the rate on each piece\'s own delivery day, and rounds each rate apart', () => {
+    const lines = [
+      { sales: '1080000', sellerDiscount: '0', refund: '0', rateDate: '2026-12-31' },
+      { sales: '1100000', sellerDiscount: '0', refund: '0', rateDate: '2027-01-01' },
+    ];
+    const rates: SettlementVatRates = { '2026-12-31': { method: 'deduction', vatPercent: '8' }, '2027-01-01': { method: 'deduction', vatPercent: '10' } };
+    const p = settlementProposal(input(lines, { vatRates: rates }), confirm133());
+    expect(rows(p)).toEqual([['131', '2180000', '0'], ['5111', '0', '2000000'], ['33311', '0', '180000']]);
+    expect(vatDatesOf(input(lines))).toEqual(['2026-12-31', '2027-01-01']);
+    // A piece on the none method beside one on deduction adds VAT for the one only.
+    const mixed = settlementProposal(input(lines, { vatRates: { '2026-12-31': { method: 'none' }, '2027-01-01': { method: 'deduction', vatPercent: '10' } } }), confirm133());
+    expect(rows(mixed)).toEqual([['131', '2180000', '0'], ['5111', '0', '2080000'], ['33311', '0', '100000']]);
+  });
+
+  it('reduces revenue and output VAT by a refund: TT133 nets both, TT99 debits 521 for the VAT-free part (Dr 521, Dr 33311 / Cr 131)', () => {
+    const line = [{ sales: '1080000', sellerDiscount: '0', refund: '108000' }];
+    const p133 = settlementProposal(input(line, { vatRates: at('8') }), confirm133());
+    expect(rows(p133)).toEqual([['131', '972000', '0'], ['5111', '0', '900000'], ['33311', '0', '72000']]);
+    expect(balanced(p133)).toBe(true);
+    const p99 = settlementProposal(input(line, { regime: 'tt99', vatRates: at('8') }), confirmedTt99());
+    expect(rows(p99)).toEqual([['131', '972000', '0'], ['521', '100000', '0'], ['511', '0', '1000000'], ['33311', '0', '72000']]);
+    expect(balanced(p99)).toBe(true);
+    expect(p99.refund).toBe('108000');
+    expect(p99.outputVat).toBe('72000');
+  });
+
+  it('runs the entry the other way for a month of refunds only: Dr 5111, Dr 33311 / Cr 131', () => {
+    const refundOnly = [{ sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-10-10' }];
+    const rates: SettlementVatRates = { '2026-10-10': { method: 'deduction', vatPercent: '8' } };
+    const p = settlementProposal(input(refundOnly, { vatRates: rates }), confirm133());
+    expect(rows(p)).toEqual([['5111', '100000', '0'], ['33311', '8000', '0'], ['131', '0', '108000']]);
+    expect(p.outputVat).toBe('-8000');
+    expect(balanced(p)).toBe(true);
+  });
+  it('keeps a month whose net is zero but whose VAT is not: pieces at different rates still post Dr revenue / Cr 33311 (TT133 and TT99)', () => {
+    // The month of 2027-01: a refund of a sale delivered at 8% (108000) and a sale at 10% (108000). Net 0; VAT of the sale 9818, of the refund 8000, so 1818 more output VAT, and the revenue 1818 less.
+    const lines = [
+      { sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-12-28' },
+      { sales: '108000', sellerDiscount: '0', refund: '0', rateDate: '2027-01-05' },
+    ];
+    const rates: SettlementVatRates = { '2026-12-28': { method: 'deduction', vatPercent: '8' }, '2027-01-05': { method: 'deduction', vatPercent: '10' } };
+    const p133 = settlementProposal(input(lines, { date: '2027-01-15', periodTo: '2027-01-15', month: '2027-01', vatRates: rates }), confirm133());
+    expect(rows(p133)).toEqual([['5111', '1818', '0'], ['33311', '0', '1818']]);
+    expect(p133.outputVat).toBe('1818');
+    expect(balanced(p133)).toBe(true);
+    // TT99: the refund is its own 521 line (VAT-free 100000) against 511 for the sale's VAT-free 98182; 131 has no line (net 0), 33311 is credited the net 1818.
+    const p99 = settlementProposal(input(lines, { regime: 'tt99', date: '2027-01-15', periodTo: '2027-01-15', month: '2027-01', vatRates: rates }), confirmedTt99());
+    expect(rows(p99)).toEqual([['521', '100000', '0'], ['511', '0', '98182'], ['33311', '0', '1818']]);
+    expect(balanced(p99)).toBe(true);
+  });
+
+  it('tells an entry with nothing to post from one with a VAT difference, and the typed refusal of the empty one is the one a caller skips', () => {
+    const rates: SettlementVatRates = { '2026-12-28': { method: 'deduction', vatPercent: '8' }, '2027-01-05': { method: 'deduction', vatPercent: '10' }, [D]: { method: 'none' } };
+    const same = [{ sales: '108000', sellerDiscount: '0', refund: '108000', rateDate: '2026-12-28' }];
+    // Same sale and refund at one rate: nothing to post under TT133, the refund's own line under TT99.
+    expect(entryIsEmpty({ lines: same, date: D, vatRates: rates }, false, false)).toBe(true);
+    expect(entryIsEmpty({ lines: same, date: D, vatRates: rates }, true, false)).toBe(false);
+    // Withheld tax keeps it; pieces at two rates keep it.
+    expect(entryIsEmpty({ lines: same, date: D, vatRates: rates }, false, true)).toBe(false);
+    const split = [{ sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-12-28' }, { sales: '108000', sellerDiscount: '0', refund: '0', rateDate: '2027-01-05' }];
+    expect(entryIsEmpty({ lines: split, date: D, vatRates: rates }, false, false)).toBe(false);
+    const refusal = (() => { try { settlementProposal(input(same, { vatRates: rates }), confirm133()); } catch (e) { return e; } return null; })();
+    expect(isEmptyEntry(refusal)).toBe(true);
+    // Any other refusal is not the empty one.
+    expect(isEmptyEntry((() => { try { settlementProposal(input([{ sales: '100000', sellerDiscount: '0', refund: '0' }], { vatRates: {} }), confirm133()); } catch (e) { return e; } return null; })())).toBe(false);
+  });
+
+  it('asks for the same days it uses: a line whose sale after the discount is zero needs no day (vatDatesOf and outputVatOf share the test)', () => {
+    const lines = [{ sales: '5000', sellerDiscount: '5000', refund: '0', rateDate: '2026-09-01' }, { sales: '100000', sellerDiscount: '0', refund: '0' }];
+    expect(vatDatesOf(input(lines))).toEqual([D]);
+    // No row for the unused day: the entry still posts, with the row of the used one.
+    expect(rows(settlementProposal(input(lines, { vatRates: at('8') }), confirm133()))).toEqual([['131', '100000', '0'], ['5111', '0', '92593'], ['33311', '0', '7407']]);
+  });
+
+  it('posts a TT99 month of refunds only, and a line refunded as much as it sold, with their VAT', () => {
+    const refundOnly = [{ sales: '0', sellerDiscount: '0', refund: '108000', rateDate: '2026-10-10' }];
+    const rates: SettlementVatRates = { '2026-10-10': { method: 'deduction', vatPercent: '8' } };
+    const p = settlementProposal(input(refundOnly, { regime: 'tt99', vatRates: rates }), confirmedTt99());
+    // Dr 521 (VAT-free 100000), Dr 33311 8000 / Cr 131 108000.
+    expect(rows(p)).toEqual([['521', '100000', '0'], ['33311', '8000', '0'], ['131', '0', '108000']]);
+    expect(balanced(p)).toBe(true);
+    // A line refunded exactly as much as it sold, at 8%, under TT99: 131 nets to zero, Dr 521 100000 / Cr 511 100000 and the VAT cancels.
+    const whole = [{ sales: '108000', sellerDiscount: '0', refund: '108000', rateDate: '2026-10-10' }];
+    const q = settlementProposal(input(whole, { regime: 'tt99', vatRates: rates }), confirmedTt99());
+    expect(rows(q)).toEqual([['521', '100000', '0'], ['511', '0', '100000']]);
+    // And under TT133 the whole line nets to nothing: an empty entry, which the caller skips.
+    expect(isEmptyEntry((() => { try { settlementProposal(input(whole, { vatRates: rates }), confirm133()); } catch (e) { return e; } return null; })())).toBe(true);
+    // A refund above the sale, at the sale's rate (TT133): Dr 5111, Dr 33311 / Cr 131.
+    const over = [{ sales: '108000', sellerDiscount: '0', refund: '216000', rateDate: '2026-10-10' }];
+    expect(rows(settlementProposal(input(over, { vatRates: rates }), confirm133()))).toEqual([['5111', '100000', '0'], ['33311', '8000', '0'], ['131', '0', '108000']]);
+  });
+
+  it('keeps the output VAT account apart from the withheld-tax accounts: its code is not a prefix of theirs, so the payout\'s skip of 33311 cannot hide a withheld amount', () => {
+    for (const regime of ['tt133', 'tt99']) {
+      const map = MARKETPLACE_POSTING_MAPS[regime]!;
+      expect(map.vatPayable.code.startsWith(map.outputVat.code), regime).toBe(false);
+      expect(map.pitPayable.code.startsWith(map.outputVat.code), regime).toBe(false);
+      // It is a sub-account of the withheld-VAT account by prefix, which is exactly why the payout skips it.
+      expect(map.outputVat.code.startsWith(map.vatPayable.code), regime).toBe(true);
+    }
   });
 });

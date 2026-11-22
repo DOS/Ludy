@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import {
   CONVERSATION_INTENTS,
   type ConversationContactMatched,
@@ -19,9 +19,9 @@ import {
   type ConversationIntent,
   type ConversationIntentSuggested,
   type ConversationListed,
-} from '@crove/kernel-contract';
-import { Runtime, type BlobStore } from '@crove/kernel-runtime';
-import { InboxReader, type IntentGenerator, type RankGenerator } from '@crove/agent';
+} from '@ludy/kernel-contract';
+import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
+import { InboxReader, type IntentGenerator, type RankGenerator } from '@ludy/agent';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';

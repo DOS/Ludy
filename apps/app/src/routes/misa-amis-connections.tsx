@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { MISA_AMIS_PRODUCTS, type LegalEntity, type MisaAmisConnection, type MisaAmisProduct } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { MISA_AMIS_PRODUCTS, type LegalEntity, type MisaAmisConnection, type MisaAmisProduct } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { MisaAmisPreviewPanel } from '../components/misa-amis-preview-panel.tsx';
 import { MisaAmisPushList } from '../components/misa-amis-push-panel.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';

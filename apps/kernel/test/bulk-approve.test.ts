@@ -1,9 +1,9 @@
 // Which errors of a nested approval refuse only that item of a bulk approval (issue #315): an explicit list of
 // per-proposal codes, never a status. The database flows are in bulk-approve-api.db.test.ts and the invariant suite.
 import { describe, expect, it } from 'vitest';
-import { BULK_ITEM_REFUSALS, VOUCHER_BULK_COMMANDS, bulkApproveOrder, isBulkItemRefusal } from '@crove/kernel';
-import { PAYROLL_PAYMENT_COMMAND, VOUCHER_COMMAND } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+import { BULK_ITEM_REFUSALS, VOUCHER_BULK_COMMANDS, bulkApproveOrder, isBulkItemRefusal } from '@ludy/kernel';
+import { PAYROLL_PAYMENT_COMMAND, VOUCHER_COMMAND } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 
 describe('bulk approval item refusals', () => {
   it('refuses one item for its proposal, policy or content codes', () => {

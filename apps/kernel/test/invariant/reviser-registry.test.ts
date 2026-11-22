@@ -6,10 +6,10 @@
 // package code under test, never helpers from outside test/invariant/.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { CellResolver } from '@crove/db';
-import { kernelCommands } from '@crove/kernel';
-import { Runtime, defineCommand, type CommandDef } from '@crove/kernel-runtime';
-import { financeCommands } from '@crove/mod-finance';
+import type { CellResolver } from '@ludy/db';
+import { kernelCommands } from '@ludy/kernel';
+import { Runtime, defineCommand, type CommandDef } from '@ludy/kernel-runtime';
+import { financeCommands } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const noDatabase = (): never => {

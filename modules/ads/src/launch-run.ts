@@ -18,8 +18,8 @@
 // not know, a refusal of the platform) ends as `needs_attention` with its code.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { zId, type AdsCampaignPlan } from '@crove/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
+import { zId, type AdsCampaignPlan } from '@ludy/kernel-contract';
 import { planHash } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
 import { contextBase, draftPlanOf } from './campaign-draft.ts';

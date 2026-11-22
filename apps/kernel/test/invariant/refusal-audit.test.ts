@@ -3,7 +3,7 @@
 // error, and never replace the fields the runtime writes (code, rule, session). No database needed. Keep this file
 // self-contained: import package code under test, never helpers from outside test/invariant/.
 import { describe, expect, it } from 'vitest';
-import { DomainError, refusalAuditDetail, type Actor, type UserActor } from '@crove/kernel-runtime';
+import { DomainError, refusalAuditDetail, type Actor, type UserActor } from '@ludy/kernel-runtime';
 import { toORPCError } from '../../src/rpc.ts';
 
 const SECRET = 'audit-only-7f3c';

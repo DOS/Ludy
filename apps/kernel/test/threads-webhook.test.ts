@@ -5,7 +5,7 @@
 import { createHmac } from 'node:crypto';
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 import { FacebookReplayCache, acceptFacebookWebhook } from '../src/facebook-webhook.ts';
 import { NOTICE_PARSERS } from '../src/conversations-worker.ts';
 

@@ -5,10 +5,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, PayrollPromptLeakError } from '@crove/agent';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { acquireAdvisoryXactLock, advisoryLockKey, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { AiBudgetExhaustedError, PayrollPromptLeakError } from '@ludy/agent';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { acquireAdvisoryXactLock, advisoryLockKey, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import {
   HR_ERASED_NAME,
   type HrCandidateEraseResult,
@@ -24,9 +24,9 @@ import {
   type HrOpeningView,
   type HrOpeningWritten,
   type HrRecruitingBriefResult,
-} from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+} from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, type BlobStore } from '@ludy/kernel-runtime';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { loadConfig } from '../src/config.ts';

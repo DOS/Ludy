@@ -3,11 +3,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { DateTimeInput } from './date-time-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';

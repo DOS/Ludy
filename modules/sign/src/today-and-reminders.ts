@@ -9,11 +9,12 @@
 //   and storing zero plaintext tokens in queues).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { TODAY_ITEMS_MAX, isMailAddress, tableWrite, zTodayItems, type TodayItem, type TodayTitle } from '@crove/kernel-contract';
-import { defineCommand, defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { TODAY_ITEMS_MAX, isMailAddress, tableWrite, zTodayItems, type TodayItem, type TodayTitle } from '@ludy/kernel-contract';
+import { defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { applyEnvelopeVisibilityFilter, canAccessEnvelopeRow } from './hr-visibility.ts';
+import { applyMeetingMinutesVisibilityFilter } from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 import {
   SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE,
@@ -210,6 +211,7 @@ export const signToday = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where(sql<boolean>`((${isDeclinedRecentExpr}) OR (${isExpiringSoonExpr}))`);
     base = applyEnvelopeVisibilityFilter(base, ctx);
+    base = applyMeetingMinutesVisibilityFilter(base, ctx);
 
     const rows = await base
       .select([

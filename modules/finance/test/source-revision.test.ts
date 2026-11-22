@@ -2,7 +2,7 @@
 // REVISION_OUT_OF_ORDER, SOURCE_STILL_POSTED and REVERSAL_REVISION, each a 409 naming the source and revisions, never an amount. The
 // definer itself is tested on PostgreSQL in apps/kernel/test/finance-source-revision.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import { sourceRevisionError } from '../src/ledger.ts';
 
 const SOURCE = { sourceType: 'finance.purchase_document', sourceId: '0190f0a0-0000-7000-8000-000000000001' };

@@ -2,13 +2,13 @@
 // §4.7 "Derived risk", #1563). Runtime.register() refuses a declared risk below the derived one; this test fails when a
 // command of any module declares none.
 import { describe, expect, it } from 'vitest';
-import { kernelCommands } from '@crove/kernel';
-import type { Db } from '@crove/db';
-import { Runtime, deriveRisk, type CommandDef } from '@crove/kernel-runtime';
-import { adsCommands } from '@crove/mod-ads';
-import { crmCommands } from '@crove/mod-crm';
-import { financeCommands } from '@crove/mod-finance';
-import { socialCommands } from '@crove/mod-social';
+import { kernelCommands } from '@ludy/kernel';
+import type { Db } from '@ludy/db';
+import { Runtime, deriveRisk, type CommandDef } from '@ludy/kernel-runtime';
+import { adsCommands } from '@ludy/mod-ads';
+import { crmCommands } from '@ludy/mod-crm';
+import { financeCommands } from '@ludy/mod-finance';
+import { socialCommands } from '@ludy/mod-social';
 import { orgPurgeCommand } from '../src/org-purge.ts';
 import { numberReseedCommand } from '../src/restore-report.ts';
 import { TEST_MANIFESTS } from './manifests.ts';

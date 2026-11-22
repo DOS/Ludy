@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A bank chosen from the list kept as data in @crove/l10n-vn (#2897): a search box that narrows the list (code, short name or full name, any case, no diacritics needed) and the select the person picks
+// A bank chosen from the list kept as data in @ludy/l10n-vn (#2897): a search box that narrows the list (code, short name or full name, any case, no diacritics needed) and the select the person picks
 // from. The value is the bank's code or '' for none. The bank already chosen stays in the select while the search hides it, so a search never changes the value by itself.
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { VN_BANKS, bankByCode, searchBanks, type VnBank } from '@crove/l10n-vn';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { VN_BANKS, bankByCode, searchBanks, type VnBank } from '@ludy/l10n-vn';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 
 /** The text a bank shows in the select and in a record: its short name, then its full name. */
 export const bankLabel = (bank: VnBank): string => (bank.shortName === bank.name ? bank.name : `${bank.shortName} - ${bank.name}`);

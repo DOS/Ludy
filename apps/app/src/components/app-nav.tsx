@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,9 +10,9 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@crove/ui/components/dropdown-menu';
-import { NavIcon } from '@crove/ui/components/nav-icon';
-import { ProjectIcon } from '@crove/ui/components/project-icon';
+} from '@ludy/ui/components/dropdown-menu';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
 import { APP_ICON, menuIcon } from '../lib/menu-icons.ts';
 import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, currentMenuItem, isHeadedGroup, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';

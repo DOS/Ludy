@@ -5,7 +5,8 @@
 // this function returns, the sweep stores what it checks, and the database holds the same shapes (crove_kernel.mcp_wake_body_ok). The invariant suite
 // (test/invariant/mcp-wake.test.ts) feeds this function hostile input.
 import { z } from 'zod';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@crove/kernel';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@ludy/kernel';
+import { MINUTES_WAKE_TYPE } from '@ludy/kernel-contract';
 
 // The rules the kernel runs: a new rule is a change here, in the database function and in the invariant test.
 export const WAKE_RULES = [DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ] as const;
@@ -40,6 +41,8 @@ const zEvent = z.discriminatedUnion('type', [
   z.strictObject({ ...head, type: z.literal('signal.fired'), data: z.strictObject({ items: z.array(zItem).min(1).max(WAKE_ITEMS_MAX) }) }),
   z.strictObject({ ...head, type: z.literal('schedule.due'), data: z.strictObject({ date: zDate }) }),
   z.strictObject({ ...head, type: z.literal('ping'), data: z.strictObject({}) }),
+  // The minutes of an org-visible meeting were published (#3803): the meeting's id and the instant, nothing a person typed. The agent reads the minutes with ludy_meeting_minutes.
+  z.strictObject({ ...head, type: z.literal(MINUTES_WAKE_TYPE), data: z.strictObject({ meeting_id: zId, published_at: zInstant }) }),
 ]);
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -78,7 +81,7 @@ export const LINE_WAKE_EVENTS: LineWakeRegistry = Object.freeze({
 
 const LINE_TYPE = /^[a-z]+(\.[a-z_]+){1,3}$/;
 const FIELD_NAME = /^[a-z][a-z_]{0,30}$/;
-const FIXED_TYPES: readonly string[] = ['signal.fired', 'schedule.due', 'ping'];
+const FIXED_TYPES: readonly string[] = ['signal.fired', 'schedule.due', 'ping', MINUTES_WAKE_TYPE];
 
 // Whether a registry entry is well formed: the type in the namespace of the scope's line and not a fixed type, one to twelve fields, each of a known kind.
 export function lineTypeProblem(type: string, entry: LineWakeEventType): string | null {
@@ -117,7 +120,7 @@ export interface LineWakeEventBody {
 export type WakeEvent = z.infer<typeof zEvent> | LineWakeEventBody;
 export type WakeItem = z.infer<typeof zItem>;
 
-// The event as a plain object, in the order the receiver reads it, or a throw naming the first thing that does not fit. A type that is none of the three fixed ones must be in the registry (`registry` is
+// The event as a plain object, in the order the receiver reads it, or a throw naming the first thing that does not fit. A type that is none of the fixed ones must be in the registry (`registry` is
 // the line registry; a test passes its own), else it is refused.
 export function wakeEvent(input: unknown, registry: LineWakeRegistry = LINE_WAKE_EVENTS): WakeEvent {
   const type = typeof input === 'object' && input !== null ? (input as { type?: unknown }).type : undefined;

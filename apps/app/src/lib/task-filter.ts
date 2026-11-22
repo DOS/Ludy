@@ -2,7 +2,7 @@
 // The filter bar of Tasks and Project boards as a Filter AST of the `kernel.task` scope (#2610), and back.
 // No browser or API imports, so it is unit tested directly.
 import type { useTranslations } from 'use-intl';
-import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@crove/kernel-contract';
+import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@ludy/kernel-contract';
 import { TASK_STATUSES, type TaskStatus } from './agents.ts';
 
 // '' any, 'me' caller's positions (or unassigned for owners), 'none' unassigned, or a position UUID.

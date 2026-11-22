@@ -3,11 +3,11 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect } from '@ludy/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { AgendaAttach } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
@@ -378,6 +378,19 @@ export function MeetingDetailPage() {
         template={meeting.summaryTemplate}
         minutesTemplate={meeting.minutesTemplate}
         title={meeting.title}
+        {...(orgQuery.data
+          ? {
+              signInfo: {
+                startedAt: meeting.startedAt,
+                createdAt: meeting.createdAt,
+                endedAt: meeting.endedAt,
+                recorderUserId: meeting.recorderUserId,
+                companyName: orgQuery.data.name,
+                orgMembers,
+                canEdit: orgQuery.data.role !== 'viewer',
+              },
+            }
+          : {})}
         minutesLink={
           <Link to="/o/$slug/print/meeting-minutes/$id" params={{ slug, id }} className="text-sm text-link underline">
             {t('minutes.open')}

@@ -1,7 +1,7 @@
 // Each module's screens in the app and its menu items (plan §5.2 `routes` and `nav`, DESIGN.md §9, ADR-0031, #1652).
 // Every module's manifest names its entry here (`...MODULE_SCREENS.crm`), and the app's shell builds its apps, menus,
 // command palette and module guard from this list, so the shell names no module's screen itself. They live in
-// @crove/kernel-contract because the app's bundle already reads it and it carries no server code.
+// @ludy/kernel-contract because the app's bundle already reads it and it carries no server code.
 // apps/app/test/module-screens.test.ts fails when a route of the app's router, under /o/$slug or outside it (#1660),
 // has no entry or two, or a label has no message in Vietnamese or English; apps/kernel/test/manifest-screens.test.ts fails when a manifest drifts
 // from its entry or a route names an undeclared permission. Modules are in the order of the app switcher.
@@ -228,7 +228,7 @@ export const PROJECTS_SCREENS = {
   nav: [{ app: 'teamwork', group: 'work', path: 'projects', label: 'projects' }],
 } as const satisfies ModuleScreens;
 
-// eSign (docs/plan/esign.md, #3325, #3526, #3551, #3554): Ky ket / eSign app in the switcher plus public signing links /-/sign and /-/sign/d.
+// eSign (docs/plan/esign.md, #3325, #3526, #3551, #3554, #3820): Ky ket / eSign app in the switcher plus public signing links /-/sign, /-/sign/d, and /-/sign/p/$orgSlug.
 export const SIGN_SCREENS = {
   routes: [
     { path: 'sign/envelopes' },
@@ -237,7 +237,11 @@ export const SIGN_SCREENS = {
     { path: 'sign/verify' },
     { path: 'sign/settings' },
   ],
-  outside: [{ path: '/-/sign', public: true }, { path: '/-/sign/d', public: true }],
+  outside: [
+    { path: '/-/sign', public: true },
+    { path: '/-/sign/d', public: true },
+    { path: '/-/sign/p/$orgSlug', public: true },
+  ],
   nav: [
     { app: 'sign', group: 'sign', path: 'sign/envelopes', label: 'signEnvelopes' },
     { app: 'sign', group: 'sign', path: 'sign/templates', label: 'signTemplates' },

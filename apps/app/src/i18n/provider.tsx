@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { IntlProvider, useTranslations } from 'use-intl';
 import { formatDate, formatDateTime, formatTime, formatDecimal, formatMoney, formatMonthYear, formatNumber, formatWeekdayShort } from '../lib/format.ts';
 import { LOCALES, LOCALE_NAMES, type Locale } from './locale.ts';

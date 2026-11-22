@@ -6,20 +6,21 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { MAX_UPLOAD_BYTES } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { Textarea } from '@crove/ui/components/textarea';
+import { MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
+import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
@@ -44,6 +45,8 @@ import {
   SIGN_SIGNER_ROLES,
   clampFieldBox,
   createPlacedFieldBox,
+  isChoiceFieldType,
+  normalizeChoiceOptions,
   nudgeFieldBox,
   planDetectedTagsForTemplateRoles,
   resizeFieldBox,
@@ -54,7 +57,7 @@ import {
   type SignRoutingMode,
   type SignSignerRole,
 } from '../lib/sign-fields.ts';
-import { buildDirectSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { buildDirectSigningUrl, buildPublicHubUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -111,6 +114,7 @@ function toDraftFields(fields: readonly SignTemplateFieldRecord[]): DraftFieldPl
     required: f.required,
     proposedByAi: false,
     fontSizePt: f.fontSizePt,
+    options: f.options ? [...f.options] : null,
   }));
 }
 
@@ -154,6 +158,9 @@ export function canAutoSendTemplate(detail: SignTemplateDetail): boolean {
   if (template.inspectStatus !== 'passed' || template.pageCount === null) return false;
   const nonCc = roles.filter((r) => r.signerRole !== 'cc');
   if (nonCc.length === 0) return false;
+  if (fields.some((f) => isChoiceFieldType(f.fieldType) && normalizeChoiceOptions(f.options).length === 0)) {
+    return false;
+  }
   const sigRoles = new Set(fields.filter((f) => f.fieldType === 'signature').map((f) => f.templateRoleId));
   return nonCc.every((r) => r.signerRole !== 'signer' || sigRoles.has(r.id));
 }
@@ -532,19 +539,23 @@ export function TemplateRolesCard({
 export function DirectLinkCard({
   detail,
   freshDirectUrl,
+  orgSlug,
   pending,
   rotating,
   onToggleEnabled,
   onToggleOtp,
+  onTogglePublicHub,
   onRotate,
   onCopyUrl,
 }: {
   detail: SignTemplateDetail;
   freshDirectUrl: string | null;
+  orgSlug?: string | undefined;
   pending: boolean;
   rotating?: boolean;
   onToggleEnabled: (enabled: boolean) => void;
   onToggleOtp: (otp: boolean) => void;
+  onTogglePublicHub?: ((listedOnPublicHub: boolean) => void) | undefined;
   onRotate: () => void;
   onCopyUrl: (url: string) => void;
 }) {
@@ -553,6 +564,8 @@ export function DirectLinkCard({
   const eligible = detail.template.status === 'active' && detail.template.inspectStatus === 'passed' && nonCcCount === 1;
   const enabled = Boolean(detail.directLink?.enabled);
   const requireEmailOtp = Boolean(detail.directLink?.requireEmailOtp);
+  const listedOnPublicHub = Boolean(detail.directLink?.listedOnPublicHub);
+  const publicHubUrl = orgSlug ? buildPublicHubUrl(orgSlug) : null;
   const isRotating = rotating ?? pending;
 
   return (
@@ -602,6 +615,43 @@ export function DirectLinkCard({
                   />
                   <Label htmlFor="sign-tpl-direct-otp">{t('directLinkOtpLabel')}</Label>
                 </div>
+
+                {onTogglePublicHub ? (
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="sign-tpl-direct-public-hub"
+                      checked={listedOnPublicHub}
+                      disabled={pending}
+                      onCheckedChange={(checked) => onTogglePublicHub(checked === true)}
+                      data-testid="sign-tpl-direct-public-hub-checkbox"
+                    />
+                    <Label htmlFor="sign-tpl-direct-public-hub">{t('directLinkPublicHubLabel')}</Label>
+                  </div>
+                ) : null}
+
+                {listedOnPublicHub && publicHubUrl ? (
+                  <div className="space-y-1.5" data-testid="sign-tpl-public-hub-url-box">
+                    <Label htmlFor="sign-tpl-public-hub-url">{t('publicHubUrlLabel')}</Label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        id="sign-tpl-public-hub-url"
+                        readOnly
+                        value={publicHubUrl}
+                        className="font-mono text-xs"
+                        data-testid="sign-tpl-public-hub-url-input"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="max-sm:min-h-11"
+                        onClick={() => onCopyUrl(publicHubUrl)}
+                      >
+                        {t('copyButton')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
 
                 {freshDirectUrl ? (
                   <div className="space-y-1.5">
@@ -1197,6 +1247,7 @@ export function SignTemplatesPage() {
         label: string | null;
         required: boolean;
         fontSizePt: number | null;
+        options?: string[] | null;
       }>;
     }) => signApi.setTemplateFields(vars.templateId, vars.fields),
     onSuccess: async (res, vars) => {
@@ -1227,7 +1278,7 @@ export function SignTemplatesPage() {
   });
 
   const directLinkSetMutation = useMutation({
-    mutationFn: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean }) =>
+    mutationFn: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean; listedOnPublicHub?: boolean }) =>
       signApi.setTemplateDirectLink(input),
     onSuccess: async (res, vars) => {
       if (draftTracker.getLoadedTemplateId() === vars.templateId) {
@@ -1241,7 +1292,7 @@ export function SignTemplatesPage() {
   });
 
   const directLinkRotateMutation = useMutation({
-    mutationFn: (input: { templateId: string; requireEmailOtp?: boolean }) =>
+    mutationFn: (input: { templateId: string; requireEmailOtp?: boolean; listedOnPublicHub?: boolean }) =>
       signApi.rotateTemplateDirectLink(input),
     onSuccess: async (res, vars) => {
       if (draftTracker.getLoadedTemplateId() === vars.templateId && res.token) {
@@ -1380,6 +1431,11 @@ export function SignTemplatesPage() {
     });
   }, [detail, detectedTags, nonCcSavedRoles, fieldsDraft, effectivePageCount, draftTracker]);
 
+  const defaultTplChoiceOptions = () => [
+    tSign('fields.defaultOptionN', { index: '1' }),
+    tSign('fields.defaultOptionN', { index: '2' }),
+  ];
+
   const handleApplyDetectedTags = () => {
     if (!fieldsEditable || tplTagPlan.applicable.length === 0) return;
     const placed: DraftFieldPlacement[] = tplTagPlan.applicable.map((item) => ({
@@ -1395,6 +1451,9 @@ export function SignTemplatesPage() {
       required: item.required,
       proposedByAi: false,
       fontSizePt: null,
+      options: isChoiceFieldType(item.fieldType)
+        ? (item.options && item.options.length > 0 ? item.options : defaultTplChoiceOptions())
+        : null,
     }));
     updateFieldsDraft((prev) => [...prev, ...placed]);
     setSelectedFieldId(placed[0]!.localId);
@@ -1412,10 +1471,11 @@ export function SignTemplatesPage() {
       fieldType,
       pageNumber,
       ...box,
-      label: null,
+      label: fieldType === 'attachment' ? tSign('fields.attachmentPresets.idCard') : null,
       required: true,
       proposedByAi: false,
       fontSizePt: null,
+      options: isChoiceFieldType(fieldType) ? defaultTplChoiceOptions() : null,
     };
     updateFieldsDraft((prev) => [...prev, next]);
     setSelectedFieldId(next.localId);
@@ -1540,9 +1600,12 @@ export function SignTemplatesPage() {
                     {t('roleSummary', { roles: String(item.roleCount), fields: String(item.fieldCount) })}
                   </p>
                   {item.directLink?.enabled ? (
-                    <Badge variant="outline" className="mt-2">
-                      {t('directLinkBadge')}
-                    </Badge>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant="outline">{t('directLinkBadge')}</Badge>
+                      {item.directLink.listedOnPublicHub ? (
+                        <Badge variant="secondary">{t('publicHubBadge')}</Badge>
+                      ) : null}
+                    </div>
                   ) : null}
                 </button>
               );
@@ -1758,17 +1821,24 @@ export function SignTemplatesPage() {
                 <DirectLinkCard
                   detail={detail}
                   freshDirectUrl={freshDirectUrl}
+                  orgSlug={slug}
                   pending={directLinkSetMutation.isPending || directLinkRotateMutation.isPending}
                   rotating={directLinkRotateMutation.isPending}
                   onToggleEnabled={(enabled) => directLinkSetMutation.mutate({ templateId: detail.template.id, enabled })}
                   onToggleOtp={(requireEmailOtp) =>
                     directLinkSetMutation.mutate({ templateId: detail.template.id, enabled: true, requireEmailOtp })
                   }
+                  onTogglePublicHub={(listedOnPublicHub) =>
+                    directLinkSetMutation.mutate({ templateId: detail.template.id, enabled: true, listedOnPublicHub })
+                  }
                   onRotate={() =>
                     directLinkRotateMutation.mutate({
                       templateId: detail.template.id,
                       ...(detail.directLink?.requireEmailOtp !== undefined
                         ? { requireEmailOtp: detail.directLink.requireEmailOtp }
+                        : {}),
+                      ...(detail.directLink?.listedOnPublicHub !== undefined
+                        ? { listedOnPublicHub: detail.directLink.listedOnPublicHub }
                         : {}),
                     })
                   }
@@ -1819,6 +1889,7 @@ export function SignTemplatesPage() {
                               label: f.label,
                               required: f.required,
                               fontSizePt: f.fontSizePt ?? null,
+                              options: isChoiceFieldType(f.fieldType) ? normalizeChoiceOptions(f.options) : null,
                             })),
                           })
                         }
@@ -1909,70 +1980,87 @@ export function SignTemplatesPage() {
                     )}
 
                     {selectedField && editable ? (
-                      <div className="grid grid-cols-1 gap-2 rounded-md border border-border bg-card p-3 sm:grid-cols-3">
-                        <div className="space-y-1">
-                          <Label htmlFor="sign-tpl-field-role">{tSign('fields.assignedSignerSelect')}</Label>
-                          <NativeSelect
-                            id="sign-tpl-field-role"
-                            disabled={!fieldsEditable}
-                            value={selectedField.signerId}
-                            onChange={(e) =>
-                              updateFieldsDraft((prev) =>
-                                prev.map((f) => (f.localId === selectedField.localId ? { ...f, signerId: e.target.value } : f)),
-                              )
-                            }
-                          >
-                            {nonCcSavedRoles.map((r) => (
-                              <NativeSelectOption key={r.id} value={r.id}>
-                                {r.roleLabel} ({r.roleKey})
-                              </NativeSelectOption>
-                            ))}
-                          </NativeSelect>
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="sign-tpl-field-label">{tSign('fields.fieldLabelInput')}</Label>
-                          <Input
-                            id="sign-tpl-field-label"
-                            disabled={!fieldsEditable}
-                            value={selectedField.label ?? ''}
-                            onChange={(e) =>
-                              updateFieldsDraft((prev) =>
-                                prev.map((f) =>
-                                  f.localId === selectedField.localId ? { ...f, label: e.target.value || null } : f,
-                                ),
-                              )
-                            }
-                          />
-                        </div>
-                        <div className="flex items-end justify-between gap-2">
-                          <div className="flex items-center gap-2 pb-2">
-                            <Checkbox
-                              id="sign-tpl-field-required"
+                      <div className="space-y-3 rounded-md border border-border bg-card p-3">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <div className="space-y-1">
+                            <Label htmlFor="sign-tpl-field-role">{tSign('fields.assignedSignerSelect')}</Label>
+                            <NativeSelect
+                              id="sign-tpl-field-role"
                               disabled={!fieldsEditable}
-                              checked={selectedField.required}
-                              onCheckedChange={(checked) =>
+                              value={selectedField.signerId}
+                              onChange={(e) =>
+                                updateFieldsDraft((prev) =>
+                                  prev.map((f) => (f.localId === selectedField.localId ? { ...f, signerId: e.target.value } : f)),
+                                )
+                              }
+                            >
+                              {nonCcSavedRoles.map((r) => (
+                                <NativeSelectOption key={r.id} value={r.id}>
+                                  {r.roleLabel} ({r.roleKey})
+                                </NativeSelectOption>
+                              ))}
+                            </NativeSelect>
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="sign-tpl-field-label">{tSign('fields.fieldLabelInput')}</Label>
+                            <Input
+                              id="sign-tpl-field-label"
+                              disabled={!fieldsEditable}
+                              value={selectedField.label ?? ''}
+                              onChange={(e) =>
                                 updateFieldsDraft((prev) =>
                                   prev.map((f) =>
-                                    f.localId === selectedField.localId ? { ...f, required: checked === true } : f,
+                                    f.localId === selectedField.localId ? { ...f, label: e.target.value || null } : f,
                                   ),
                                 )
                               }
                             />
-                            <Label htmlFor="sign-tpl-field-required">{tSign('fields.requiredToggle')}</Label>
                           </div>
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            disabled={!fieldsEditable}
-                            onClick={() => {
-                              updateFieldsDraft((prev) => prev.filter((f) => f.localId !== selectedField.localId));
-                              setSelectedFieldId(null);
-                            }}
-                          >
-                            {tSign('fields.deleteField')}
-                          </Button>
+                          <div className="flex items-end justify-between gap-2">
+                            <div className="flex items-center gap-2 pb-2">
+                              <Checkbox
+                                id="sign-tpl-field-required"
+                                disabled={!fieldsEditable}
+                                checked={selectedField.required}
+                                onCheckedChange={(checked) =>
+                                  updateFieldsDraft((prev) =>
+                                    prev.map((f) =>
+                                      f.localId === selectedField.localId ? { ...f, required: checked === true } : f,
+                                    ),
+                                  )
+                                }
+                              />
+                              <Label htmlFor="sign-tpl-field-required">{tSign('fields.requiredToggle')}</Label>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              disabled={!fieldsEditable}
+                              onClick={() => {
+                                updateFieldsDraft((prev) => prev.filter((f) => f.localId !== selectedField.localId));
+                                setSelectedFieldId(null);
+                              }}
+                            >
+                              {tSign('fields.deleteField')}
+                            </Button>
+                          </div>
                         </div>
+
+                        <FieldOptionsAndAttachmentEditor
+                          field={selectedField}
+                          disabled={!fieldsEditable}
+                          onChangeOptions={(nextOptions) =>
+                            updateFieldsDraft((prev) =>
+                              prev.map((f) => (f.localId === selectedField.localId ? { ...f, options: nextOptions } : f)),
+                            )
+                          }
+                          onChangeLabel={(nextLabel) =>
+                            updateFieldsDraft((prev) =>
+                              prev.map((f) => (f.localId === selectedField.localId ? { ...f, label: nextLabel } : f)),
+                            )
+                          }
+                        />
                       </div>
                     ) : null}
 

@@ -2,11 +2,11 @@
 // Member-scoped Vy inbox organizer for Notes (Notes v2 E5b, #3563, ADR-0049): proposes notebooks and #tags for unfiled
 // notes without modifying notes on generation. Every move or tag change waits for explicit 1-click user confirmation.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { NotebookSummary, NoteOrganizeResult } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NavIcon } from '@crove/ui/components/nav-icon';
+import type { NotebookSummary, NoteOrganizeResult } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { useFormat } from '../i18n/provider.tsx';

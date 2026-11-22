@@ -18,9 +18,9 @@
 // CSV import and the AI draft's photos; a file a post or channel already holds stays attached.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { normalizeMediaTag } from './domain/media-tags.ts';
 import { isFileId } from './domain/plan-csv.ts';
 import { channelScope, postInScope, type ChannelScope } from './channel-access.ts';

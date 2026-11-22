@@ -1,5 +1,5 @@
 {
-  "name": "@crove/mod-ads",
+  "name": "@ludy/mod-ads",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,9 +12,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/db": "workspace:*",
-    "@crove/kernel-contract": "workspace:*",
-    "@crove/kernel-runtime": "workspace:*",
+    "@ludy/db": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/kernel-runtime": "workspace:*",
     "decimal.js": "catalog:",
     "kysely": "catalog:",
     "zod": "catalog:"

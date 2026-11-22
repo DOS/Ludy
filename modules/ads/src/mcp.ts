@@ -13,14 +13,15 @@
 // the targeting, the landing pages, who in the org runs the campaign, the boosts' and campaign requests' drafts, the caps' history, anything an ad account's connection holds, or a customer's data.
 // `ads.mcp.launches` adds: for each launch that has started (launching, live or needing attention; at most MCP_ADS_LAUNCHES, the latest start first) its id, the account's id and name, its state, the account's
 // currency, the first day, the daily budget and last day the platform confirmed and the ones it holds against the caps (decimal strings, days as YYYY-MM-DD), whether the controls can act now, and each recorded
-// object's slot, level, name and status. Never: the plan and its hash, the creatives and targeting, the platform's account and object ids, the connections and any token, the changes' history, the proposal or who approved it, who created or updated a launch, and the largest amount (only the budget, as a decimal string). The reads are made under the grant's sealed context: each of `ad_launch`, `ad_object`, `ad_account` and `ad_manage_change` has the org policy and, narrowing it, the RESTRICTIVE `le_scope` policy (`ctx_le_scope`) that a person's read meets too. A company grant's scope is the whole org, so the read shows what an owner or an admin sees on the Campaigns screen; the query is for owners and admins only, as every Ads MCP read.
+// object's slot, level, name and status, and, for each launch, the changes a person asked for that would start or raise spend and still wait (`queuedRaises`: the change's id, kind, object slot and what it would set; #4181), so a cancel can name one. Never: the plan and its hash, the creatives and targeting, the platform's account and object ids, the connections and any token, the rest of the changes' history, the proposal or who approved it, who created or updated a launch, and the largest amount (only the budget, as a decimal string). The reads are made under the grant's sealed context: each of `ad_launch`, `ad_object`, `ad_account` and `ad_manage_change` has the org policy and, narrowing it, the RESTRICTIVE `le_scope` policy (`ctx_le_scope`) that a person's read meets too. A company grant's scope is the whole org, so the read shows what an owner or an admin sees on the Campaigns screen; the query is for owners and admins only, as every Ads MCP read.
 // The reads write nothing, call no model and move no money; Row-level security and the `org_id` filters keep other orgs out.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { plainLine, zId, zLocalDate, type AdsFlag, type AdsSummary, type TodayItem } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { plainLine, zId, zLocalDate, type AdsFlag, type AdsSummary, type TodayItem } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { STARTED_STATES } from './launch-ledger.ts';
 import { launchSelect } from './launch-run.ts';
+import { OPENING_KINDS } from './manage-rules.ts';
 import { manageStatesOf } from './manage-state.ts';
 import { loadSpendSummary } from './summary.ts';
 import { loadFlags } from './spend-flags.ts';
@@ -145,6 +146,8 @@ export interface McpAdsLaunch {
   heldEndOn: string;
   canChange: boolean;
   objects: Array<{ slot: string; level: string; name: string; status: string; pending: string | null }>;
+  // The changes a person asked for that would start or raise spend and still wait (a resume, a raised budget, a longer schedule): the ids `ludy_ads_change_cancel` takes (#4181). Nothing of the proposal or who approved it.
+  queuedRaises: Array<{ changeId: string; kind: string; slot: string; toBudget: string | null; toEndOn: string | null }>;
 }
 
 // `ludy_ads_launches`: the ad launches that have started, as the Campaigns screen shows them (the same loaders: the held values and the objects' status are the screen's), so an AI coworker can name the launch
@@ -187,6 +190,7 @@ export const mcpAdsLaunches = defineQuery({
         heldEndOn: view?.heldEndOn ?? l.end_text,
         canChange: view?.canChange ?? false,
         objects: (view?.objects ?? []).map((o) => ({ slot: o.slot, level: o.level, name: nameLine(o.name), status: o.status, pending: o.pending })),
+        queuedRaises: (view?.changes ?? []).filter((c) => c.state === 'queued' && OPENING_KINDS.includes(c.kind)).map((c) => ({ changeId: c.id, kind: c.kind, slot: c.slot, toBudget: c.toBudget, toEndOn: c.toEndOn })),
       };
     });
     return { launches: out, truncated: rows.length > launches.length };

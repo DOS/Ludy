@@ -5,8 +5,8 @@
 //      retries last, is failed ('expire'). So a delivery is stored once and sent at least once.
 // A failure for one delivery never stops the others, and a failure of the queue leaves the delivery stored, to be handed over again.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import type { MeetingHookJob } from './meeting-hook.ts';
 
 export const MEETING_HOOK_SWEEP_CRON = '* * * * *';

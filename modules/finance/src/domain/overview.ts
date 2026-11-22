@@ -3,8 +3,8 @@
 // 131 receivables and 311 payables at the period's end; B02-DNN's 50 profit before tax for the period), so each card equals its statement line for the same
 // entity and dates. The comparison is like with like (see overviewPeriods), and the balance cards the same balance at that period's last day.
 // Money is decimal strings and decimal.js throughout.
-import { money, type DecimalValue } from '@crove/l10n-vn';
-import { OVERVIEW_EXPENSE_GROUPS, OVERVIEW_MONTHS, type FinanceOverview, type OverviewComparison, type OverviewExpense, type OverviewFigure, type OverviewMonth, type OverviewRange } from '@crove/kernel-contract';
+import { money, type DecimalValue } from '@ludy/l10n-vn';
+import { OVERVIEW_EXPENSE_GROUPS, OVERVIEW_MONTHS, type FinanceOverview, type OverviewComparison, type OverviewExpense, type OverviewFigure, type OverviewMonth, type OverviewRange } from '@ludy/kernel-contract';
 import { canonical } from './money.ts';
 import { B01_LINES, B02_LINES, buildB01, buildB02, type Report, type ReportEntry } from './tt133-reports.ts';
 

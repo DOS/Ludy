@@ -5,8 +5,8 @@
 // kernel.vy_data.results.expire and kernel.vy_data.member_data.purge; the lists come from definers that answer ids, never text. Logs carry org
 // prefixes and codes only.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 // After the nightly retention purge (02:30) and the notes trash (02:45), on the same clock.
 export const MEMBER_VY_SWEEP_CRON = '15 3 * * *';

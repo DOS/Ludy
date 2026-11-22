@@ -18,8 +18,8 @@
 // Nothing here logs a title, a transcript or a key: ids and counts.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import type { BlobStore, Runtime, SystemActor } from '@ludy/kernel-runtime';
 import { opsAlert } from './ops-alert.ts';
 import { ArchiveObjectExistsError, type ArchiveStore } from './worm.ts';
 

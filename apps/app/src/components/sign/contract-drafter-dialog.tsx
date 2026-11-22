@@ -12,14 +12,14 @@ import {
   type SignContractCurrency,
   type SignContractDraftVariables,
   type SignStarterTemplateKind,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { AiMeter } from '../ai-meter.tsx';
 import { ErrorText } from '../ui.tsx';
 import { errorMessage } from '../../lib/api.ts';

@@ -3,19 +3,19 @@ import { hostname } from 'node:os';
 import { CompiledQuery, sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
-import type { Database, Db } from '@crove/db';
-import { SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
-import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
-import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
-import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@crove/channel';
+import type { Database, Db } from '@ludy/db';
+import { MINUTES_PUBLISHED_EVENT, SUMMARY_READY_EVENT, vietnamToday } from '@ludy/kernel-contract';
+import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { KERNEL_NOTIFYING_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@ludy/kernel';
+import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@ludy/agent';
+import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@ludy/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import { resealSubjectKeys, unopenableSubjectKeysLog } from './subject-key-reseal.ts';
-import type { ExtractClient } from '@crove/extract-contract';
-import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, MARKETPLACE_POLL_DUE_PAGE, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, marketplacePollDue, type MarketplaceProvider, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
-import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, MARKETPLACE_POLL_DUE_PAGE, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, marketplacePollDue, type MarketplaceProvider, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@ludy/mod-finance';
+import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@ludy/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
 import { BACK_PRESSURE_CHECK_MS, DEFAULT_OUTBOX_LAG_PAUSE_SECONDS, PausableWork, checkBackPressure, outboxLagSeconds } from './back-pressure.ts';
@@ -39,13 +39,14 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging, sweepTmpBlobs } from './retention.ts';
-import { pruneMarketplaceColumnChecks, runMarketplaceRetention } from './marketplace-retention.ts';
+import { pruneMarketplaceColumnChecks, runMarketplacePurge, runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
 import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, runWakeDelivery, type WakeJob } from './mcp-wake.ts';
+import { wakeMinutesPublished } from './mcp-wake-minutes.ts';
 import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
 import { engageWakeFeed } from './mcp-wake-engage.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
@@ -110,12 +111,13 @@ import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { BANK_FEED_HOOK_CLAIM, claimBankFeedHookNotices, rejectBankFeedHook, sweepBankFeedHookNotices, verifyBankFeedHookNotices } from './bank-feed-hook.ts';
+import { MARKETPLACE_HOOK_CLAIM, MARKETPLACE_PUSH_SLOT_SECONDS, claimMarketplaceHookNotices, rejectMarketplaceHook, sweepMarketplaceHookNotices, verifyMarketplaceHookNotices } from './marketplace-push-relay.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
-import type { BankFeedProvider } from '@crove/bank-feed';
-import type { EInvoiceProvider } from '@crove/einvoice';
-import type { AmisClient } from '@crove/misa-amis';
-import type { AdActivator, AdManager, AdPauser, AdPlatform, AdRevoker, AdStateReader, LaunchWriter } from '@crove/ad-platform';
+import type { BankFeedProvider } from '@ludy/bank-feed';
+import type { EInvoiceProvider } from '@ludy/einvoice';
+import type { AmisClient } from '@ludy/misa-amis';
+import type { AdActivator, AdManager, AdPauser, AdPlatform, AdRevoker, AdStateReader, LaunchWriter } from '@ludy/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -1174,6 +1176,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         await runMarketplaceRetention({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store }).catch((error: unknown) => {
           opsAlert('[marketplace-retention] ALERT the nightly deletion failed; the error is in the worker log', error);
         });
+        // What a disconnected connection's poll brought in and no member imported (#4284): destroyed a week after the disconnect, inside the platform's 14 days; a report a member imported is never touched.
+        await runMarketplacePurge({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store }).catch((error: unknown) => {
+          opsAlert('[marketplace-purge] ALERT the nightly purge of a disconnected connection\'s files failed; the error is in the worker log', error);
+        });
         // The column checks of unrecognised order reports older than a week, with their previews (#4036): personal data kept seven days at most.
         await pruneMarketplaceColumnChecks({ workerDb: deps.workerDb }).catch((error: unknown) => {
           opsAlert('[marketplace-retention] ALERT the nightly deletion of column checks failed; the error is in the worker log', error);
@@ -1535,6 +1541,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // The wake-up webhook of an MCP grant (ADR-0051 decision 4, #3024): a sweep every minute stores and hands over what is due (mcp-wake-sweep.ts), and one job per delivery posts
   // it to the receiver the org set (mcp-wake.ts). Without a credential key no secret can be opened, so neither runs and nothing is sent; the queue's retries are bounded.
   const wakeBroker = deps.channels?.broker;
+  // One delivery handed to the kernel-mcp-wake queue (a singleton job per delivery), by the sweep and by the wake-up for published minutes (#3803).
+  const sendWake = (job: WakeJob) =>
+    boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS });
   if (wakeBroker && wakeBroker.id !== 'none') {
     await boss.work<WakeJob>(QUEUES.mcpWake, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
@@ -1545,8 +1554,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         runtime: deps.runtime,
         workerDb: deps.workerDb,
         feeds: [engageWakeFeed(deps.runtime)],
-        send: (job: WakeJob) =>
-          boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS }),
+        send: sendWake,
       });
       if (done.handedOver + done.expired + done.schedules + done.signals + done.lines + done.failures > 0) {
         console.log(`[mcp-wake-sweep] handed over ${done.handedOver}, expired ${done.expired}, schedules ${done.schedules}, signals ${done.signals}, lines ${done.lines}, failures ${done.failures}`);
@@ -1730,6 +1738,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Only the exact scheduled `{ sweep: true }` is the sweep; any other payload (a null, `{ sweep: false }`) is checked below as a poll or a test, and refused when it is neither.
       const isSweep = typeof job.data === 'object' && job.data !== null && Object.keys(job.data).length === 1 && (job.data as { sweep?: unknown }).sweep === true;
       if (isSweep) {
+        // Pushes of a hook that waited more than ten minutes (a worker that was away) go first, whatever they hold (#4327).
+        // A failure here must not skip the poll sweep below, so it is logged by its class only (never a message: a push is never in a log).
+        try {
+          const sweptPushes = await sweepMarketplaceHookNotices(deps.workerDb);
+          if (sweptPushes > 0) console.log(`[marketplace-push] swept ${sweptPushes} old push(es)`);
+        } catch (error) {
+          console.log(`[marketplace-push] sweep failed (${error instanceof Error ? error.name : 'unknown'})`);
+        }
         let after: { orgId: string; id: string } | null = null;
         for (;;) {
           const page = await marketplacePollDue(deps.workerDb, after);
@@ -2071,6 +2087,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // In-app notifications of the kernel and finance (#671): the module's dispatch reads the event from the outbox.
   await boss.work<AgentDispatchJob & { type: string }>(QUEUES.notify, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
+    // The wake-up of an AI app for the minutes of an org-visible meeting (#3803): stored and handed to the wake queue here, by the worker (a module cannot build the signed body).
+    if (job.data.type === MINUTES_PUBLISHED_EVENT) {
+      if (!deps.runtime.installed('meetings')) return;
+      const done = await wakeMinutesPublished({ runtime: deps.runtime, send: sendWake }, { orgId: job.data.orgId, eventId: job.data.eventId });
+      if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours)' : ''}`);
+      return;
+    }
     const notify = NOTIFY_COMMANDS.get(job.data.type);
     if (!notify || !deps.runtime.installed(notify.module)) return;
     await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId });
@@ -3352,6 +3375,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
+              // The minutes of an org-visible meeting were published (#3803): one notify job per event, which stores the wake-ups for the company grants that stand.
+              if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings')) {
+                await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
+                  singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
+                  retryLimit: NOTIFY_RETRY_LIMIT,
+                  retryDelay: 20,
+                  retryBackoff: true,
+                });
+              }
               if (social && NOTIFYING.has(row.type)) {
                 return boss.send(QUEUES.socialNotify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
                   singletonKey: jobKey(row.org_id, QUEUES.socialNotify, row.event_id),
@@ -3501,6 +3533,48 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
           if (claimed < BANK_FEED_HOOK_CLAIM) break;
         }
+      }
+      // A signed push of a marketplace (TikTok Shop, Shopee, Lazada; #4327, S3a of #4315): the route stored the raw push under the hook key of one connection; here the connection's sealed secret is opened, the HMAC is checked
+      // (constant-time) and the push must name the connection's own shop or seller, and each connection with a good push gets ONE coalesced poll (ids only: the body is never in a job). A refused one is counted on its hook after the batch
+      // commits (ten in an hour stop it). The claim deletes the pushes as it takes them, and the claim and the sends share one transaction, so a failure leaves them waiting (the sweep deletes any older than ten minutes).
+      // Nothing of a push is logged: the line below carries counts.
+      const pushProviders = deps.channels?.marketplaceProviders;
+      // A failure of the relay (the database, a broker) must not skip the other relays and sweeps that follow: it is logged by its class only, and the pushes stay waiting (or are swept) for the next round.
+      try {
+        if (finance && deps.channels?.broker && pushProviders && Object.keys(pushProviders).length > 0) {
+          const broker = deps.channels.broker;
+          const adapters = new Set(Object.keys(pushProviders));
+          for (;;) {
+            const tally = { ok: 0, refused: 0, dropped: 0 };
+            const refusedHooks: string[] = [];
+            const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+              const rows = await claimMarketplaceHookNotices(trx);
+              const verdicts = await verifyMarketplaceHookNotices({ runtime: deps.runtime, broker, adapters, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
+              const seen = new Set<string>();
+              return rows.map((row, i) => {
+                const verdict = verdicts[i] ?? 'dropped';
+                tally[verdict]++;
+                if (verdict !== 'ok' || seen.has(row.marketplaceConnectionId)) return async () => null;
+                seen.add(row.marketplaceConnectionId);
+                const target = { orgId: row.orgId, connectionId: row.marketplaceConnectionId } satisfies MarketplacePollJob;
+                return (boss: JobSender) =>
+                  boss.send(QUEUES.marketplacePoll, target, {
+                    singletonKey: jobKey(target.orgId, QUEUES.marketplacePoll, target.connectionId),
+                    singletonSeconds: MARKETPLACE_PUSH_SLOT_SECONDS,
+                    retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+                    retryDelay: 30,
+                    retryBackoff: true,
+                  });
+              });
+            });
+            // Counted after the commit, as the bank feed relay does (no lock cycle with the claim). A crash here, or a failed count, loses refusals: accepted, a refusal count only slows an attacker down and a push is a hint.
+            for (const hookId of refusedHooks) await rejectMarketplaceHook(deps.workerDb, hookId);
+            if (claimed > 0) console.log(`[marketplace-push] ${claimed} push(es): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
+            if (claimed < MARKETPLACE_HOOK_CLAIM) break;
+          }
+        }
+      } catch (error) {
+        console.log(`[marketplace-push] relay failed (${error instanceof Error ? error.name : 'unknown'})`);
       }
       // The results MISA AMIS posted to its callback (#3903, S4 of #3854): the route stored the signed ones; the organisation of each is found from our own stored push row and the answer is recorded here, because the
       // system context is the worker's alone. Nothing is waiting where the route does not exist (no ClientID).

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Reports screen of the Engage app (#2435): one item of the menu, with a tab for each area whose module runs. The tabs and the
 // modules they need live here; the screen (routes/reports.tsx) and its panels (components/report-panels.tsx) show them.
-import { MODULE_SCREENS, type BoardColumn } from '@crove/kernel-contract';
-import { Decimal } from '@crove/l10n-vn';
+import { MODULE_SCREENS, type BoardColumn } from '@ludy/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
 
 // The areas in the order the tabs show, each with the module whose reads its panel makes: the conversations and the posts are the
 // social module's, the sales the crm module's, the ads the ads module's. The route declares the same modules in MODULE_SCREENS

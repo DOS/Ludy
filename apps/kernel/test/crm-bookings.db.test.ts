@@ -6,12 +6,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { calendarBinding, isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType, type PersonalDataErasure, type PersonalDataResult } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { calendarBinding, isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType, type PersonalDataErasure, type PersonalDataResult } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { bookingManageAsk, bookingManageView, bookingRequest, bookingStatus, bookingView } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

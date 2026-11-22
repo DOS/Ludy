@@ -1,6 +1,6 @@
 // In-app notifications (#637): the kinds, in the order the settings list them, what an item opens, and the count on
 // the menu.
-import { SOCIAL_NOTIFICATION_KINDS } from '@crove/kernel-contract';
+import { SOCIAL_NOTIFICATION_KINDS } from '@ludy/kernel-contract';
 
 export type NotificationKind = (typeof SOCIAL_NOTIFICATION_KINDS)[number];
 // The weekly digest (#1104) is a mail, not an in-app notification: its switch sits next to the mail switch.

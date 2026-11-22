@@ -9,9 +9,9 @@
 // (social.remove.watch, #937) tells the owners and admins when that ask's job never recorded an answer.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf, removeWindowMs } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';

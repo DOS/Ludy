@@ -19,14 +19,18 @@ export const HR_CONTRACT_ALERT_CODES = [
   'probation_ending_soon',
   'final_fixed_term_renewal',
   'must_convert_to_indefinite',
+  'work_permit_expired',
+  'work_permit_expiring_soon',
 ] as const;
 export type HrContractAlertCode = (typeof HR_CONTRACT_ALERT_CODES)[number];
 // The wage regions of Decree 74/2024 (the minimum wage by workplace).
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export type HrRegion = (typeof HR_REGIONS)[number];
-// What a person's work is for: it picks the expense account of the pay in the posting (the accounts per regime are data in @crove/l10n-vn, whose PAY_FUNCTIONS this list equals).
+// What a person's work is for: it picks the expense account of the pay in the posting (the accounts per regime are data in @ludy/l10n-vn, whose PAY_FUNCTIONS this list equals).
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
 export type HrPayFunction = (typeof HR_PAY_FUNCTIONS)[number];
+export const HR_PAY_BASES = ['monthly', 'hourly', 'piece_rate'] as const;
+export type HrPayBasis = (typeof HR_PAY_BASES)[number];
 export const HR_RELATIONS = ['child', 'spouse', 'parent', 'other'] as const;
 export type HrRelation = (typeof HR_RELATIONS)[number];
 export const HR_STATUSES = ['active', 'ended'] as const;
@@ -67,6 +71,7 @@ export const zHrAccountNumber = z.string().trim().min(6).max(34).regex(/^[A-Za-z
 // stored sealed where nobody can look at it again.
 export const zHrTaxCode = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'tax code: 10 or 12 digits');
 export const zHrInsuranceNumber = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'insurance number: 10 or 12 digits');
+export const zHrWorkPermitNumber = z.string().trim().min(4).max(30).regex(/^[A-Za-z0-9][A-Za-z0-9 ./-]*$/, 'work permit number');
 // A birth date from 1900-01-01 to today (Vietnam).
 export const zHrBirthDate = zLocalDate.refine((v) => v >= '1900-01-01' && v <= vietnamToday(), 'birth date between 1900-01-01 and today');
 const noNul = (value: string): boolean => !value.includes('\u0000');
@@ -121,13 +126,35 @@ export const zHrDepartmentView = z.strictObject({
 });
 export type HrDepartmentView = z.infer<typeof zHrDepartmentView>;
 
-export const zHrEmploymentTerms = z.strictObject({
+const isPositiveDecimalString = (value: string | null | undefined): boolean =>
+  value !== null && value !== undefined && /[1-9]/.test(value);
+
+function validateEmploymentRates(
+  v: { payBasis: HrPayBasis; baseWage?: string | undefined; hourlyRate?: string | null | undefined; pieceRate?: string | null | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  if (v.payBasis === 'monthly' && v.baseWage === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'baseWage is required when payBasis is monthly', path: ['baseWage'] });
+  }
+  if (v.payBasis === 'hourly' && !isPositiveDecimalString(v.hourlyRate)) {
+    ctx.addIssue({ code: 'custom', message: 'hourlyRate must be above zero when payBasis is hourly', path: ['hourlyRate'] });
+  }
+  if (v.payBasis === 'piece_rate' && !isPositiveDecimalString(v.pieceRate)) {
+    ctx.addIssue({ code: 'custom', message: 'pieceRate must be above zero when payBasis is piece_rate', path: ['pieceRate'] });
+  }
+}
+
+const zHrEmploymentTermsShape = {
   effectiveFrom: zLocalDate,
   contractType: z.enum(HR_CONTRACT_TYPES),
   region: z.enum(HR_REGIONS),
-  baseWage: zHrWage,
+  baseWage: zHrWage.optional(),
   // Administration unless said otherwise: the default every small business has.
   payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
+  payBasis: z.enum(HR_PAY_BASES).default('monthly'),
+  hourlyRate: zHrWage.nullable().optional(),
+  pieceRate: zHrWage.nullable().optional(),
+  taxResident: z.boolean().default(true),
   contractForm: z.enum(HR_CONTRACT_FORMS).nullable().optional(),
   termMonths: z.number().int().min(1).max(36).nullable().optional(),
   contractEndOn: zLocalDate.nullable().optional(),
@@ -135,17 +162,23 @@ export const zHrEmploymentTerms = z.strictObject({
   probationRoleTier: z.enum(HR_PROBATION_ROLE_TIERS).nullable().optional(),
   probationEndOn: zLocalDate.nullable().optional(),
   probationWage: zHrWage.nullable().optional(),
-});
+};
+
+export const zHrEmploymentTerms = z
+  .strictObject(zHrEmploymentTermsShape)
+  .superRefine(validateEmploymentRates)
+  .transform((v) => ({ ...v, baseWage: v.baseWage ?? '0' }));
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
 
 // Initial employment on employee.add keeps payFunction optional so assigning a department can default it when omitted.
-export const zHrEmployeeInitialEmployment = zHrEmploymentTerms.extend({
-  payFunction: z.enum(HR_PAY_FUNCTIONS).optional(),
-});
+export const zHrEmployeeInitialEmployment = z
+  .strictObject({ ...zHrEmploymentTermsShape, payFunction: z.enum(HR_PAY_FUNCTIONS).optional() })
+  .superRefine(validateEmploymentRates)
+  .transform((v) => ({ ...v, baseWage: v.baseWage ?? '0' }));
 export type HrEmployeeInitialEmployment = z.infer<typeof zHrEmployeeInitialEmployment>;
 
 // A new employee with the first terms. The legal entity is the org's default one when none is named.
-// The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @crove/l10n-vn (VN_BANKS). The shape is checked here and in the database;
+// The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @ludy/l10n-vn (VN_BANKS). The shape is checked here and in the database;
 // that the code is in the list is checked by the command, so this package needs no copy of the list.
 export const zHrBankCode = z.string().regex(/^[A-Z0-9]{2,12}$/, 'bank code: 2 to 12 capital letters or digits');
 
@@ -158,6 +191,10 @@ export const zHrEmployeeAdd = z.strictObject({
   birthDate: zHrBirthDate.optional(),
   taxCode: zHrTaxCode.optional(),
   insuranceNumber: zHrInsuranceNumber.optional(),
+  isForeign: z.boolean().default(false),
+  workPermitExempt: z.boolean().default(false),
+  workPermitNumber: zHrWorkPermitNumber.optional(),
+  workPermitExpiresOn: zLocalDate.optional(),
   legalEntityId: zId.optional(),
   departmentId: zId.optional(),
   jobTitle: zHrJobTitle.optional(),
@@ -177,6 +214,10 @@ export const zHrEmployeeEdit = z
     birthDate: zHrBirthDate.nullable().optional(),
     taxCode: zHrTaxCode.nullable().optional(),
     insuranceNumber: zHrInsuranceNumber.nullable().optional(),
+    isForeign: z.boolean().optional(),
+    workPermitExempt: z.boolean().optional(),
+    workPermitNumber: zHrWorkPermitNumber.nullable().optional(),
+    workPermitExpiresOn: zLocalDate.nullable().optional(),
     departmentId: zId.nullable().optional(),
     jobTitle: zHrJobTitle.nullable().optional(),
   })
@@ -190,6 +231,10 @@ export const zHrEmployeeEdit = z
       v.birthDate !== undefined ||
       v.taxCode !== undefined ||
       v.insuranceNumber !== undefined ||
+      v.isForeign !== undefined ||
+      v.workPermitExempt !== undefined ||
+      v.workPermitNumber !== undefined ||
+      v.workPermitExpiresOn !== undefined ||
       v.departmentId !== undefined ||
       v.jobTitle !== undefined,
     'at least one field',
@@ -197,7 +242,10 @@ export const zHrEmployeeEdit = z
 export type HrEmployeeEdit = z.infer<typeof zHrEmployeeEdit>;
 
 // A raise, a new contract or a change of region: a new row, never an edit of an old one.
-export const zHrEmploymentAdd = zHrEmploymentTerms.extend({ employeeId: zId });
+export const zHrEmploymentAdd = z
+  .strictObject({ ...zHrEmploymentTermsShape, employeeId: zId })
+  .superRefine(validateEmploymentRates)
+  .transform((v) => ({ ...v, baseWage: v.baseWage ?? '0' }));
 export type HrEmploymentAdd = z.infer<typeof zHrEmploymentAdd>;
 
 // The person authorized (or no longer authorizes) the payer to finalize their income tax for a tax year (08/UQ-QTT-TNCN); the list of years is kept sorted, one entry per year.
@@ -244,6 +292,10 @@ const zTerms = z.object({
   region: z.enum(HR_REGIONS),
   baseWage: z.string(),
   payFunction: z.enum(HR_PAY_FUNCTIONS),
+  payBasis: z.enum(HR_PAY_BASES),
+  hourlyRate: z.string().nullable(),
+  pieceRate: z.string().nullable(),
+  taxResident: z.boolean(),
   contractForm: z.enum(HR_CONTRACT_FORMS).nullable(),
   termMonths: z.number().int().nullable(),
   contractEndOn: z.string().nullable(),
@@ -263,6 +315,10 @@ export const zHrEmployeeSummary = z.object({
   jobTitle: z.string().nullable(),
   status: z.enum(HR_STATUSES),
   endedOn: z.string().nullable(),
+  isForeign: z.boolean(),
+  workPermitExempt: z.boolean(),
+  workPermitExpiresOn: z.string().nullable(),
+  hasWorkPermitNumber: z.boolean(),
   // The terms in force today: the newest row that starts on or before today, or null when the first starts later.
   current: zTerms.nullable(),
   hasIdentityNumber: z.boolean(),
@@ -279,6 +335,7 @@ export const zHrEmployee = zHrEmployeeSummary.extend({
   address: z.string().nullable(),
   identityNumber: z.string().nullable(),
   accountNumber: z.string().nullable(),
+  workPermitNumber: z.string().nullable(),
   // The code of the bank the person is paid at (#2897); the sensitive read only, null once erased.
   bankCode: z.string().nullable(),
   birthDate: z.string().nullable(),
@@ -300,7 +357,7 @@ export const zHrEmployeeErased = z.object({
 });
 export type HrEmployeeErased = z.infer<typeof zHrEmployeeErased>;
 
-// Statutory severance and 13th-month rule citation metadata (matches LaborRuleRef in @crove/l10n-vn).
+// Statutory severance and 13th-month rule citation metadata (matches LaborRuleRef in @ludy/l10n-vn).
 export const zHrLaborRuleRef = z.object({
   id: z.string(),
   planRow: z.number().int(),
@@ -310,7 +367,7 @@ export const zHrLaborRuleRef = z.object({
 });
 export type HrLaborRuleRef = z.infer<typeof zHrLaborRuleRef>;
 
-// Statutory severance termination & ineligibility codes (equal to SEVERANCE_TERMINATION_REASONS / SeveranceIneligibleReason in @crove/l10n-vn).
+// Statutory severance termination & ineligibility codes (equal to SEVERANCE_TERMINATION_REASONS / SeveranceIneligibleReason in @ludy/l10n-vn).
 export const HR_SEVERANCE_TERMINATION_REASONS = [
   'contract_expired',
   'task_completed',
@@ -375,7 +432,7 @@ export const zHrEmployeeSeveranceResult = z.object({
 });
 export type HrEmployeeSeveranceResult = z.infer<typeof zHrEmployeeSeveranceResult>;
 
-// Statutory job-loss allowance termination & ineligibility codes (equal to JOB_LOSS_TERMINATION_REASONS / JobLossIneligibleReason in @crove/l10n-vn).
+// Statutory job-loss allowance termination & ineligibility codes (equal to JOB_LOSS_TERMINATION_REASONS / JobLossIneligibleReason in @ludy/l10n-vn).
 export const HR_JOB_LOSS_TERMINATION_REASONS = [
   'organizational_restructuring',
   'economic_reasons',

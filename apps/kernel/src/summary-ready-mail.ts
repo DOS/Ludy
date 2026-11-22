@@ -2,7 +2,7 @@
 // The "minutes draft ready" mail to the recorder (#3730, template meetings.summary_ready): a fixed line and the link that opens the meeting, nothing else. No title, sentence, decision or
 // item of the draft is in the merge data (meetings.summary.ready_notice stores none), so none can be in the mail, and none is left to erase; the merge data is parsed strictly, so a
 // stored extra key is refused rather than rendered.
-import { zSummaryReadyMail } from '@crove/kernel-contract';
+import { zSummaryReadyMail } from '@ludy/kernel-contract';
 import type { MailTemplate } from './mail-queue.ts';
 
 const COPY = {

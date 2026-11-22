@@ -7,8 +7,8 @@
 //   being read again; the approval checks the invoice again when it posts it.
 // An agent's proposal is not asked for again here: its causal chain belongs to the agent's run.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { PROPOSAL_CO_AUTHOR_COMMANDS, actorRef, addAuthor, eligibleApprovers, parseAuthors } from './approval.ts';
 import { legalEntityMoveRefused, refuseWhileReextracting } from './extraction.ts';
 

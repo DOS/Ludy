@@ -2,7 +2,7 @@
 // Unit tests for deterministic Vy Today items, hr_contract confidentiality, sequential/parallel
 // 24h pre-expiry eligibility, N1(a) direct-link suppression, and reminder email rendering (#3813).
 import { describe, expect, it } from 'vitest';
-import { TODAY_ITEMS_MAX, zTodayItems } from '@crove/kernel-contract';
+import { TODAY_ITEMS_MAX, zTodayItems } from '@ludy/kernel-contract';
 import {
   generateRawSigningToken,
   renderSignInviteMail,

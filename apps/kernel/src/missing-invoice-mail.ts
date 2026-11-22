@@ -3,9 +3,9 @@
 // Reply-To is the org's inbound address when the deployment receives mail, so the company's reply, or the seller's
 // invoice mail it forwards, reaches the Inbox like any other mail with an invoice.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { Runtime } from '@crove/kernel-runtime';
-import { MISSING_INVOICE_TEMPLATE, renderMissingInvoiceMail, type RemindResult } from '@crove/mod-finance';
+import type { Db } from '@ludy/db';
+import type { Runtime } from '@ludy/kernel-runtime';
+import { MISSING_INVOICE_TEMPLATE, renderMissingInvoiceMail, type RemindResult } from '@ludy/mod-finance';
 import { mailErrorCode, type MailTemplate } from './mail-queue.ts';
 
 export { MISSING_INVOICE_TEMPLATE };

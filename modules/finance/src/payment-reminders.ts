@@ -26,11 +26,11 @@ import {
   type PaymentReminderDraft,
   type PaymentReminderList,
   type PaymentReminderSent,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { createMailMessage } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, sha256Hex, type QueryContext } from '@crove/kernel-runtime';
-import { RECEIVABLE_ACCOUNT } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { createMailMessage } from '@ludy/kernel';
+import { DomainError, defineCommand, defineQuery, sha256Hex, type QueryContext } from '@ludy/kernel-runtime';
+import { RECEIVABLE_ACCOUNT } from '@ludy/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import {
   REMINDER_REPEAT_DAYS,

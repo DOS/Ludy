@@ -1,5 +1,5 @@
 // Customers on screen (issue #670). No browser or API imports, so it is unit tested.
-import { normalizeTaxCode, type CustomerCursor, type CustomerPage } from '@crove/kernel-contract';
+import { normalizeTaxCode, type CustomerCursor, type CustomerPage } from '@ludy/kernel-contract';
 
 // Where the next page of finance.customers.list starts: after the last customer of this page, when others follow.
 export function nextCustomerCursor(page: CustomerPage): CustomerCursor | undefined {

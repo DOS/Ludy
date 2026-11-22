@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { CategorizationRule } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { CategorizationRule } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { FormDialog } from '../components/form-dialog.tsx';
 import { DuplicateHint } from '../components/form-panel.tsx';

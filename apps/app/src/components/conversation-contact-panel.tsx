@@ -6,9 +6,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText } from './ui.tsx';
 import { PaneError, PanelSkeleton } from './conversation-states.tsx';
 import { useFormat } from '../i18n/provider.tsx';

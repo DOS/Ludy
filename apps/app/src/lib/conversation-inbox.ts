@@ -2,7 +2,7 @@
 // The Inbox screen's search params (CV3, #2306): which tab, which kind of thread, which channel and assignee, the search text and the thread open in the
 // middle pane. A param that fails its check is left out, so the screen falls back to its default (plan §9, #1513). No React imports, so it is unit tested.
 import { z } from 'zod';
-import { CONVERSATION_INTENTS, CONVERSATION_KINDS, type ConversationKind, type ConversationListed, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_INTENTS, CONVERSATION_KINDS, type ConversationKind, type ConversationListed, type ConversationSummary } from '@ludy/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 
 const zInboxSearch = z.object({

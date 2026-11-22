@@ -2,7 +2,7 @@
 // A member's own notes and to-dos as Markdown (#1678): each note under its title with its facts and its body as
 // written, each to-do as a checkbox line with its steps.
 import { describe, expect, it } from 'vitest';
-import type { NotesExport } from '@crove/kernel-contract';
+import type { NotesExport } from '@ludy/kernel-contract';
 import { notesMarkdown, type NotesExportWords } from '../src/lib/notes-export.ts';
 
 const WORDS: NotesExportWords = {

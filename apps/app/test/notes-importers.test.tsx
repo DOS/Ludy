@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TIME_ZONE } from '@crove/kernel-contract';
+import { DEFAULT_TIME_ZONE } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const testState = vi.hoisted(() => ({

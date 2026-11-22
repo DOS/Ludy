@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
-import type { MarketplaceFeeClearingProposal } from '@crove/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
+import type { MarketplaceFeeClearingProposal } from '@ludy/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
 import { feeClearingProposal, type FeeClearingInput } from '../src/marketplace-fee-clearing-posting.ts';
 import { createMarketplaceFeeClearingCommands, feeClearingProposalMismatch } from '../src/marketplace-fee-clearing-record.ts';
@@ -9,7 +9,7 @@ import { createMarketplaceFeeClearingCommands, feeClearingProposalMismatch } fro
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
   const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
 const PARTY = '0192a000-0000-7000-8000-000000000003';
 const DOC = '0192a000-0000-7000-8000-000000000001';

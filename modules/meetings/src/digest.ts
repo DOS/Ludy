@@ -21,8 +21,8 @@ import {
   type DigestFacts,
   type DigestMeeting,
   type DigestStatus,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { vyReason } from './ask.ts';
 import { vnDay } from './retention.ts';
 import { openItemsOf } from './series.ts';

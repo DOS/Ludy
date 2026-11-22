@@ -8,7 +8,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HrCandidateView, HrEmployee, HrEmploymentView, SignEnvelopeBySourceItem } from '@crove/kernel-contract';
+import type { HrCandidateView, HrEmployee, HrEmploymentView, SignEnvelopeBySourceItem } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 import { buildHrContractPdfBytes, formatVndAmountForPdf, toPdfAsciiText } from '../src/lib/hr-contract-pdf.ts';
@@ -200,6 +200,10 @@ const SAMPLE_EMPLOYMENT: HrEmploymentView = {
   region: 'I',
   baseWage: '22500000',
   payFunction: 'admin',
+  payBasis: 'monthly',
+  hourlyRate: null,
+  pieceRate: null,
+  taxResident: true,
   contractForm: 'electronic',
   termMonths: 12,
   contractEndOn: '2027-10-31',
@@ -219,12 +223,17 @@ const SAMPLE_EMPLOYEE: HrEmployee = {
   address: 'Quận 1, TP. Hồ Chí Minh',
   status: 'active',
   endedOn: null,
+  isForeign: false,
+  workPermitExempt: false,
+  workPermitExpiresOn: null,
+  hasWorkPermitNumber: false,
   current: SAMPLE_EMPLOYMENT,
   erased: false,
   hasIdentityNumber: true,
   hasAccountNumber: true,
   identityNumber: '079095001234',
   accountNumber: '190345678901',
+  workPermitNumber: null,
   bankCode: 'TCB',
   birthDate: '1997-04-15',
   taxCode: '8123456789',
@@ -301,6 +310,36 @@ describe('Ludy Nhan su -> Ludy eSign labor contract handoff (#3553)', () => {
     expect(text).toContain('Nguyen Thi Minh Anh');
     expect(text).toContain('22.500.000 VND');
     expect(text).toContain('{{signature, r1}}');
+
+    const hourlyText = new TextDecoder('latin1').decode(
+      buildHrContractPdfBytes({
+        employerName: 'Công ty TNHH Công nghệ Ludy',
+        employeeName: SAMPLE_EMPLOYEE.displayName,
+        effectiveFrom: '2026-08-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '0',
+        payBasis: 'hourly',
+        hourlyRate: '50000',
+        probationWage: '42500',
+      }),
+    );
+    expect(hourlyText).toContain('50.000 VND/gio');
+    expect(hourlyText).toContain('42.500 VND/gio');
+
+    const pieceText = new TextDecoder('latin1').decode(
+      buildHrContractPdfBytes({
+        employerName: 'Công ty TNHH Công nghệ Ludy',
+        employeeName: SAMPLE_EMPLOYEE.displayName,
+        effectiveFrom: '2026-08-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '0',
+        payBasis: 'piece_rate',
+        pieceRate: '25000',
+      }),
+    );
+    expect(pieceText).toContain('25.000 VND/san pham');
 
     const startxrefMatch = /startxref\n(\d+)\n%%EOF/.exec(text);
     expect(startxrefMatch).not.toBeNull();

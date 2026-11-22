@@ -3,8 +3,8 @@
 // signature; text is never read as a formula; the note about the unchecked layout shows while the book's row is `commentary`.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { HouseholdCnkd, HouseholdS1a, HouseholdYearToDate } from '@crove/kernel-contract';
-import { HOUSEHOLD_PROVISIONAL_LABEL } from '@crove/kernel-contract';
+import type { HouseholdCnkd, HouseholdS1a, HouseholdYearToDate } from '@ludy/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL } from '@ludy/kernel-contract';
 import { buildCnkdWorkbook, buildS1aWorkbook } from '../src/household-export.ts';
 
 const book = (over: Partial<HouseholdS1a> = {}): HouseholdS1a => ({

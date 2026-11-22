@@ -4,9 +4,9 @@
 // (signals-conversation.db.test.ts). This file checks the join, the window and its near misses, the fail-closed paths, the grouping, and that no text crosses.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CONVERSATION_REPLY_WINDOW_HOURS, CONVERSATION_UNANSWERED_SIGNALS_READ, CRM_OPEN_DEALS_SIGNALS_READ, SIGNAL_PARTIAL_VIEW_CODE, sortTodayItems, zConversationUnansweredSignal, zTodayItems } from '@crove/kernel-contract';
-import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { CONVERSATION_UNANSWERED_READ, SIGNAL_ITEMS_MAX, checkConversationUnanswered, conversationUnansweredQuery } from '@crove/kernel';
+import { CONVERSATION_REPLY_WINDOW_HOURS, CONVERSATION_UNANSWERED_SIGNALS_READ, CRM_OPEN_DEALS_SIGNALS_READ, SIGNAL_PARTIAL_VIEW_CODE, sortTodayItems, zConversationUnansweredSignal, zTodayItems } from '@ludy/kernel-contract';
+import { DomainError, type Lookup, type QueryContext } from '@ludy/kernel-runtime';
+import { CONVERSATION_UNANSWERED_READ, SIGNAL_ITEMS_MAX, checkConversationUnanswered, conversationUnansweredQuery } from '@ludy/kernel';
 
 const NOW = new Date('2026-11-20T10:00:00Z');
 const HOUR = 3_600_000;

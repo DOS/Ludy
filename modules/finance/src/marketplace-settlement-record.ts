@@ -9,21 +9,22 @@
 //   differs from it (a proposal row written some other way cannot post lines the settlement does not hold). Then, in the same transaction, it finds the platform's party (crove_finance.marketplace_party;
 //   created with its link on the platform's first posting, one per entity and platform) and records the voucher with the settlement on it (one voucher per settlement and month: a unique index holds it,
 //   20270103020000), and ALL the months of the settlement in this one transaction: a settlement is either posted in full or not at all, and the payout's check is that its vouchers stand and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
-// The commands are made by createMarketplaceSettlementCommands so a test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses.
+// The commands are made by createMarketplaceSettlementCommands so a test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, whose sales path is confirmed (#4303 S3b) and whose household tax path is not, so it posts a settlement and refuses one that carries a household's withheld tax.
 // No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, MARKETPLACE_SETTLEMENT_COMMAND, zMarketplaceSettlementProposal, zMarketplaceSettlementRequest, type JournalVoucherProposal, type MarketplaceSettlementProposal } from '@crove/kernel-contract';
-import { money, sum, toMoney } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { JOURNAL_VOUCHER_KIND, MARKETPLACE_SETTLEMENT_COMMAND, zMarketplaceSettlementProposal, zMarketplaceSettlementRequest, type JournalVoucherProposal, type MarketplaceSettlementProposal } from '@ludy/kernel-contract';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { householdTaxRate } from './marketplace-household-tax.ts';
 import { postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
-import { settlementProposal, type SettlementProposal } from './marketplace-settlement-posting.ts';
+import { isEmptyEntry, settlementProposal, type SettlementProposal, type SettlementVatRate } from './marketplace-settlement-posting.ts';
+import { vatRatesOfMonth } from './marketplace-settlement-vat.ts';
 import { booksOn } from './payroll-posting.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 
@@ -90,12 +91,6 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
     throw new DomainError('MARKETPLACE_SETTLEMENT_WAITING_DELIVERY', 422, 'Kỳ đối soát còn dòng chưa có ngày giao hàng: chờ ngày giao', { lines: waiting });
   }
   if (months.length === 0) throw notPostable('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: '0' });
-  // Every entry date must be in an open period: the earliest locked one refuses the whole settlement.
-  const lockedThrough = await periodLockedThrough(ctx, settlement.legal_entity_id);
-  const locked = lockedThrough ? months.find((m) => m.date <= lockedThrough) : undefined;
-  if (lockedThrough && locked) {
-    throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(locked.date)}`, { lockedThrough, entryDate: locked.date });
-  }
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
@@ -107,22 +102,30 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   // A household seller's withheld tax is split by its one line of business's rate pair (read only when something was withheld); any other seller has no tax lines.
   const withheld = months.some((m) => m.lines.some((l) => money(l.taxWithheld ?? '0').greaterThan(0)));
   const tax = withheld ? await householdTaxRate(ctx, settlement.legal_entity_id, periodTo) : null;
-  const proposals = months.map((m) =>
-    settlementProposal(
-      {
-        regime: map.regime,
-        platform: platformPartyName(settlement.platform),
-        periodFrom,
-        periodTo,
-        month: m.month,
-        date: m.date,
-        partyId: link?.id ?? null,
-        lines: m.lines,
-        tax,
-      },
-      maps,
-    ),
-  );
+  // The VAT rate in force on the delivery day of each piece (marketplaceVatRateAt, the one function of the rate table); a day with no row holds the settlement back (the proposal refuses it). A month that has
+  // nothing to post once the VAT is known (zero net, zero VAT, nothing withheld) is skipped, not refused: pieces at different rates can net to zero while 33311 does not, and that month is kept and posted.
+  const vatMemo = new Map<string, SettlementVatRate | null>();
+  const proposals: SettlementProposal[] = [];
+  for (const m of months) {
+    const vatRates = await vatRatesOfMonth(ctx, settlement.legal_entity_id, m, vatMemo);
+    try {
+      proposals.push(
+        settlementProposal(
+          { regime: map.regime, platform: platformPartyName(settlement.platform), periodFrom, periodTo, month: m.month, date: m.date, partyId: link?.id ?? null, lines: m.lines, tax, vatRates },
+          maps,
+        ),
+      );
+    } catch (e) {
+      if (!isEmptyEntry(e)) throw e;
+    }
+  }
+  if (proposals.length === 0) throw notPostable('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: '0' });
+  // Every entry date must be in an open period: the earliest locked one refuses the whole settlement.
+  const lockedThrough = await periodLockedThrough(ctx, settlement.legal_entity_id);
+  const locked = lockedThrough ? proposals.find((m) => m.date <= lockedThrough) : undefined;
+  if (lockedThrough && locked) {
+    throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(locked.date)}`, { lockedThrough, entryDate: locked.date });
+  }
   // Each voucher holds whole dong, so each month's sums must be whole.
   for (const proposal of proposals) {
     for (const [what, value] of [['sales', proposal.sales], ['sellerDiscount', proposal.sellerDiscount], ['refund', proposal.refund], ['taxWithheld', proposal.taxWithheld], ['total', proposal.total]] as const) wholeDong(what, value);

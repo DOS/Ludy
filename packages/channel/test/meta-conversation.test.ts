@@ -40,7 +40,7 @@ describe('metaSignatureOk & platformUserHash (#2307)', () => {
     expect(metaSignatureOk({ appSecret: SECRET, body: new Uint8Array(FACEBOOK_MAX_NOTICE_BYTES + 1), header: sig })).toBe(false);
   });
 
-  it('computes the same keyed hash as @crove/ad-platform for Meta data deletion', () => {
+  it('computes the same keyed hash as @ludy/ad-platform for Meta data deletion', () => {
     expect(platformUserHash(SECRET, '123456789012345')).toBe(
       createHmac('sha256', SECRET).update('ludy.ads.meta_ads.user:123456789012345').digest('hex'),
     );

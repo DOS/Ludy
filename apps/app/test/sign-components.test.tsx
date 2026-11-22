@@ -59,6 +59,7 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
+const { FieldOptionsAndAttachmentEditor } = await import('../src/components/sign/field-options-editor.tsx');
 const { FieldOverlayLayer } = await import('../src/components/sign/field-placer.tsx');
 const { isCurrentPdfTargetRendered } = await import('../src/components/sign/pdf-canvas-viewer.tsx');
 const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
@@ -607,8 +608,12 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
   it('rejects a malformed URL fragment even when sessionStorage holds an older token', () => {
     const store = new Map<string, string>([
       [
-        'crove.sign.ceremony.token',
+        'ludy.sign.ceremony.token',
         JSON.stringify({ token: 'A'.repeat(43), savedAt: Date.now() }),
+      ],
+      [
+        'crove.sign.ceremony.token',
+        JSON.stringify({ token: 'B'.repeat(43), savedAt: Date.now() }),
       ],
     ]);
     const replaceState = vi.fn();
@@ -627,6 +632,7 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
     const html = renderVi(<SignCeremonyPage />);
     expect(html).toContain('data-testid="sign-ceremony-invalid"');
     expect(replaceState).toHaveBeenCalledWith(null, '', '/-/sign');
+    expect(store.has('ludy.sign.ceremony.token')).toBe(false);
     expect(store.has('crove.sign.ceremony.token')).toBe(false);
   });
 
@@ -1719,5 +1725,241 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
       delegateName: 'Nguyễn Minh Quân',
       maskedDelegateEmail: 'q***n@example.com',
     });
+  });
+});
+
+describe('Slice 4b choice fields (dropdown/radio) and verified signer supporting attachments (#3818)', () => {
+  it('validates dropdown, radio, and attachment completion and builds clean submit payloads', () => {
+    const dropdownField = {
+      id: 'fld-dd',
+      fieldType: 'dropdown' as const,
+      pageNumber: 1,
+      xNorm: 0.1,
+      yNorm: 0.2,
+      wNorm: 0.24,
+      hNorm: 0.05,
+      label: 'Phương thức thanh toán',
+      required: true,
+      options: ['Chuyển khoản', 'Tiền mặt'],
+    };
+    const radioField = {
+      id: 'fld-radio',
+      fieldType: 'radio' as const,
+      pageNumber: 1,
+      xNorm: 0.1,
+      yNorm: 0.3,
+      wNorm: 0.2,
+      hNorm: 0.04,
+      label: 'Loại hợp đồng',
+      required: true,
+      options: ['Trọn gói', 'Theo tháng'],
+    };
+    const attachmentField = {
+      id: 'fld-att',
+      fieldType: 'attachment' as const,
+      pageNumber: 1,
+      xNorm: 0.1,
+      yNorm: 0.4,
+      wNorm: 0.26,
+      hNorm: 0.06,
+      label: 'Giấy ĐKKD',
+      required: true,
+      attachment: null,
+    };
+
+    expect(isFieldFilled(dropdownField, undefined)).toBe(false);
+    expect(isFieldFilled(dropdownField, { valueText: 'Unlisted' })).toBe(false);
+    expect(isFieldFilled(dropdownField, { valueText: 'Chuyển khoản' })).toBe(true);
+
+    expect(isFieldFilled(radioField, { valueText: 'Trọn gói' })).toBe(true);
+    expect(isFieldComplete(attachmentField, undefined)).toBe(false);
+    expect(
+      isFieldComplete(attachmentField, {
+        attachment: {
+          fileId: 'file-1',
+          filename: 'giay-dkkd.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 4096,
+          sha256: 'e'.repeat(64),
+          uploadedAt: '2026-11-21T10:00:00Z',
+        },
+      }),
+    ).toBe(true);
+
+    const payload = buildSignSubmitPayload({
+      token: 'T'.repeat(43),
+      fields: [dropdownField, radioField, attachmentField],
+      answers: {
+        'fld-dd': { valueText: 'Chuyển khoản' },
+        'fld-radio': { valueText: 'Trọn gói' },
+        'fld-att': {
+          valueText: 'ignored',
+          attachment: {
+            fileId: 'file-1',
+            filename: 'giay-dkkd.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: 4096,
+            sha256: 'e'.repeat(64),
+            uploadedAt: '2026-11-21T10:00:00Z',
+          },
+        },
+      },
+    });
+    expect(payload.fields).toEqual([
+      { fieldId: 'fld-dd', valueText: 'Chuyển khoản' },
+      { fieldId: 'fld-radio', valueText: 'Trọn gói' },
+      { fieldId: 'fld-att' },
+    ]);
+  });
+
+  it('renders mobile-accessible ceremony controls, inspector editors, and uploaded attachment evidence', () => {
+    const ceremonyHtml = renderVi(
+      <SignCeremonyReadyView
+        viewState={{
+          state: 'ready',
+          orgName: 'Công ty TNHH Mẫu',
+          title: 'Hợp đồng đại lý 2026',
+          message: null,
+          signerName: 'Trần Thị B',
+          roleLabel: 'Bên B',
+          signerRole: 'signer',
+          expiresAt: '2026-12-01T00:00:00Z',
+          pageCount: 1,
+          fields: [
+            {
+              id: 'f-dd',
+              fieldType: 'dropdown',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.2,
+              wNorm: 0.24,
+              hNorm: 0.05,
+              label: 'Kỳ thanh toán',
+              required: true,
+              options: ['30 ngày', '60 ngày'],
+            },
+            {
+              id: 'f-rad',
+              fieldType: 'radio',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.3,
+              wNorm: 0.2,
+              hNorm: 0.04,
+              label: 'Phương thức nhận hóa đơn',
+              required: true,
+              options: ['Qua email', 'Qua cổng điện tử'],
+            },
+            {
+              id: 'f-att',
+              fieldType: 'attachment',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.4,
+              wNorm: 0.26,
+              hNorm: 0.06,
+              label: 'Giấy ĐKKD',
+              required: true,
+              attachment: null,
+            },
+          ],
+        }}
+        answers={{
+          'f-dd': { valueText: '30 ngày' },
+          'f-rad': { valueText: 'Qua email' },
+          'f-att': {
+            attachment: {
+              fileId: 'file-att-1',
+              filename: 'giay-dkkd-2026.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: 8192,
+              sha256: 'ab'.repeat(32),
+              uploadedAt: '2026-11-21T10:00:00Z',
+            },
+          },
+        }}
+        pdfBytes={null}
+        loadingPdf={false}
+        pdfError={null}
+        viewerRenderError={null}
+        pageNumber={1}
+        scale={1}
+        consentChecked={true}
+        canSubmit={false}
+        submitting={false}
+        submitError={null}
+        declineOpen={false}
+        declineReason=""
+        declining={false}
+        declineError={null}
+        padFieldId={null}
+        onPageChange={vi.fn()}
+        onScaleChange={vi.fn()}
+        onRenderStatusChange={vi.fn()}
+        onJumpToNext={vi.fn()}
+        onOpenPad={vi.fn()}
+        onUpdateAnswer={vi.fn()}
+        onConsentChange={vi.fn()}
+        onSubmit={vi.fn()}
+        onDeclineOpenChange={vi.fn()}
+        onDeclineReasonChange={vi.fn()}
+        onDeclineSubmit={vi.fn()}
+      />,
+    );
+    expect(ceremonyHtml).toContain('data-testid="ceremony-dropdown-f-dd"');
+    expect(ceremonyHtml).toContain('data-testid="ceremony-radiogroup-f-rad"');
+    expect(ceremonyHtml).toContain('role="radiogroup"');
+    expect(ceremonyHtml).toContain('id="ceremony-file-picker-f-att"');
+    expect(ceremonyHtml).toContain('id="ceremony-field-input-f-att"');
+    expect(ceremonyHtml).toContain('data-testid="ceremony-attachment-summary-f-att"');
+    expect(ceremonyHtml).toContain('giay-dkkd-2026.pdf');
+    expect(ceremonyHtml).toContain('SHA-256: abababababababab...');
+
+    const optionsEditorHtml = renderVi(
+      <FieldOptionsAndAttachmentEditor
+        field={{
+          localId: 'local-dd',
+          signerId: 'signer-1',
+          fieldType: 'dropdown',
+          pageNumber: 1,
+          xNorm: 0.1,
+          yNorm: 0.2,
+          wNorm: 0.24,
+          hNorm: 0.05,
+          label: 'Kỳ hạn',
+          required: true,
+          proposedByAi: false,
+          options: ['12 tháng', '24 tháng'],
+        }}
+        onChangeOptions={vi.fn()}
+        onChangeLabel={vi.fn()}
+      />,
+    );
+    expect(optionsEditorHtml).toContain('data-testid="field-options-editor"');
+    expect(optionsEditorHtml).toContain('12 tháng');
+    expect(optionsEditorHtml).toContain('24 tháng');
+
+    const attachmentPresetsHtml = renderVi(
+      <FieldOptionsAndAttachmentEditor
+        field={{
+          localId: 'local-att',
+          signerId: 'signer-1',
+          fieldType: 'attachment',
+          pageNumber: 1,
+          xNorm: 0.1,
+          yNorm: 0.2,
+          wNorm: 0.26,
+          hNorm: 0.06,
+          label: null,
+          required: true,
+          proposedByAi: false,
+        }}
+        onChangeOptions={vi.fn()}
+        onChangeLabel={vi.fn()}
+      />,
+    );
+    expect(attachmentPresetsHtml).toContain('data-testid="field-attachment-preset-idCard"');
+    expect(attachmentPresetsHtml).toContain('CCCD / CMND');
+    expect(attachmentPresetsHtml).toContain('Giấy ĐKKD');
   });
 });

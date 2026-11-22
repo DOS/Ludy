@@ -1,6 +1,6 @@
 /* Theme tokens, base styles and the component classes come from the design system; Tailwind finds the app's own
    class names from the app root. */
-@import '@crove/ui/globals.css';
+@import '@ludy/ui/globals.css';
 
 html,
 body,

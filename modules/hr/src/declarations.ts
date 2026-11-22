@@ -8,7 +8,7 @@
 //
 // The layout is described, not drawn: a document is sheets of typed columns and rows (text, money, count), so the xlsx file and the print view are two renderings of the same data and
 // cannot disagree. Text is always text: a renderer must write every `text` cell as a string cell, never a formula (see the kernel's export route).
-import { money, parseTaxCode, type DecimalValue as Decimal } from '@crove/l10n-vn';
+import { money, parseTaxCode, type DecimalValue as Decimal } from '@ludy/l10n-vn';
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Names, layout versions and the draft banner
@@ -83,7 +83,7 @@ export interface DeclarationDocument {
 
 export const INSURANCE_FUND_KEYS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
 export type InsuranceFundKey = (typeof INSURANCE_FUND_KEYS)[number];
-export type WithholdingMode = 'progressive' | 'flat' | 'commitment' | 'below_threshold';
+export type WithholdingMode = 'progressive' | 'flat' | 'commitment' | 'below_threshold' | 'non_resident_flat';
 export type DeclarationContractType = 'indefinite' | 'fixed_term' | 'under_one_month' | 'none';
 export interface DeclarationContractTerm {
   effectiveFrom: string;
@@ -125,7 +125,7 @@ export interface DeclarationPerson {
 
 /** The part of a line's stored breakdown the declarations read. */
 export interface DeclarationBreakdown {
-  insurance: { suspended: 'not_insured' | 'unpaid_leave' | null; funds: { fund: InsuranceFundKey; wage: string; employee: string; employer: string }[] };
+  insurance: { suspended: 'not_insured' | 'unpaid_leave' | 'sickness_leave' | 'maternity_leave' | null; funds: { fund: InsuranceFundKey; wage: string; employee: string; employer: string }[] };
   tax: {
     mode: WithholdingMode;
     exemptMealCash: string;
@@ -322,7 +322,9 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
   if (input.previousLines) assertKnown(input.persons, input.previousLines);
   const rows: (Record<string, string> & { _order: string; _name: string; _id: string })[] = [];
   let skipped = 0;
-  let suspended = 0;
+  let suspendedUnpaid = 0;
+  let suspendedSickness = 0;
+  let suspendedMaternity = 0;
   let unexplained = 0;
   for (const person of input.persons) {
     const line = currentByEmployee.get(person.employeeId);
@@ -344,8 +346,11 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
     }
     if (movements.length === 0) {
       if (wage === null && insuredWage(previous) !== null) {
-        // Only a month the calculator marked as unpaid leave is called unpaid leave; any other loss of an insured wage is flagged without a cause.
-        if (line?.breakdown?.insurance.suspended === 'unpaid_leave') suspended += 1;
+        // Only a month the calculator marked as unpaid, sickness BHXH, or maternity BHXH leave is treated as a known suspension; any other loss of an insured wage is flagged without a cause.
+        const reason = line?.breakdown?.insurance.suspended;
+        if (reason === 'unpaid_leave') suspendedUnpaid += 1;
+        else if (reason === 'sickness_leave') suspendedSickness += 1;
+        else if (reason === 'maternity_leave') suspendedMaternity += 1;
         else unexplained += 1;
       } else if (wage === null) skipped += 1;
       continue;
@@ -405,7 +410,14 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
   }
   if (input.previousLines === null) notes.push('Chưa có bảng lương đã duyệt của tháng trước nên không liệt kê được những người đổi mức đóng.');
   if (skipped > 0) notes.push(`${skipped} người không đóng bảo hiểm trong tháng nên không có trong danh sách.`);
-  if (suspended > 0) notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (nghỉ không lương từ 14 ngày): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
+  const suspended = suspendedUnpaid + suspendedSickness + suspendedMaternity;
+  if (suspended > 0) {
+    const reasons: string[] = [];
+    if (suspendedUnpaid > 0) reasons.push('nghỉ không lương từ 14 ngày làm việc');
+    if (suspendedSickness > 0) reasons.push('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ ốm đau hưởng BHXH)');
+    if (suspendedMaternity > 0) reasons.push('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ thai sản hưởng BHXH)');
+    notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (${reasons.join(', ')}): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
+  }
   if (unexplained > 0) notes.push(`${unexplained} người có mức đóng tháng trước nhưng tháng này không có mức đóng (không rõ lý do): kiểm tra xem có phải báo giảm hay điều chỉnh không.`);
   return { document: documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes), listed };
 }
@@ -511,6 +523,8 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
   const people = new Map(input.persons.map((p) => [p.employeeId, p]));
   const progressive = new Map<string, PersonTotals>();
   const flat = new Map<string, PersonTotals>();
+  const nonResident = new Map<string, PersonTotals>();
+  const nonResidentIds = new Set<string>();
   const headcount = new Set<string>();
   let adjustmentTax = zero();
   const grand = { gross: zero(), exempt: zero(), insurance: zero(), taxable: zero(), pit: zero(), withheldBase: zero() };
@@ -525,7 +539,15 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
     if (!money(line.pit).isZero()) grand.withheldBase = grand.withheldBase.plus(line.taxableIncome);
     if (line.kind === 'adjustment') adjustmentTax = adjustmentTax.plus(line.pit);
     const mode = modeOf(line);
-    const target = mode === 'flat' ? flat : mode === 'progressive' ? progressive : null;
+    if (mode === 'non_resident_flat') nonResidentIds.add(line.employeeId);
+    const target =
+      mode === 'non_resident_flat'
+        ? nonResident
+        : mode === 'flat'
+          ? flat
+          : mode === 'progressive'
+            ? progressive
+            : null;
     if (target) {
       const t = target.get(line.employeeId) ?? newTotals(person);
       add(t, line);
@@ -533,9 +555,16 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
     }
   }
   const noteOf = (t: PersonTotals): string =>
-    [t.person.endedOn && months.has(monthOf(t.person.endedOn)) ? `Nghỉ việc ngày ${t.person.endedOn}` : '', t.person.taxCode ? '' : 'Thiếu mã số thuế'].filter(Boolean).join('; ');
+    [
+      t.person.endedOn && months.has(monthOf(t.person.endedOn)) ? `Nghỉ việc ngày ${t.person.endedOn}` : '',
+      nonResidentIds.has(t.person.employeeId) ? 'Không cư trú (20%)' : '',
+      t.person.taxCode ? '' : 'Thiếu mã số thuế',
+    ]
+      .filter(Boolean)
+      .join('; ');
   const progressiveList = sortTotals([...progressive.values()]);
   const flatList = sortTotals([...flat.values()]);
+  const nonResidentList = sortTotals([...nonResident.values()]);
   const summary: DeclarationSheet = {
     name: '05-KK-TNCN',
     title: `Chỉ tiêu 05/KK-TNCN quý ${input.quarter}`,
@@ -547,6 +576,7 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
       { item: 'Tổng số người lao động được chi trả thu nhập', value: String(headcount.size) },
       { item: 'Trong đó: khấu trừ theo biểu lũy tiến', value: String(progressiveList.length) },
       { item: 'Trong đó: khấu trừ 10%', value: String(flatList.length) },
+      { item: 'Trong đó: khấu trừ 20% (không cư trú)', value: String(nonResidentList.length) },
       { item: 'Tổng thu nhập chi trả', value: fixed(grand.gross) },
       { item: 'Tổng thu nhập được miễn', value: fixed(grand.exempt) },
       { item: 'Bảo hiểm bắt buộc đã trừ', value: fixed(grand.insurance) },
@@ -572,18 +602,23 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của quý chưa đủ.`);
   const qNote = assessableNote(quarterLines);
   if (qNote) notes.push(qNote);
+  if (nonResidentList.length > 0) notes.push(`Có ${nonResidentList.length} cá nhân không cư trú khấu trừ 20% được tách riêng tại bảng kê khấu trừ 20%.`);
+  const sheets: DeclarationSheet[] = [
+    summary,
+    schedule('Lũy tiến', 'Bảng kê cá nhân khấu trừ theo biểu lũy tiến', progressiveList),
+    schedule('Khấu trừ 10%', 'Bảng kê cá nhân khấu trừ 10%', flatList),
+  ];
+  if (nonResidentList.length > 0) {
+    sheets.push(schedule('Khấu trừ 20% (không cư trú)', 'Bảng kê cá nhân không cư trú khấu trừ 20%', nonResidentList));
+  }
   const document = documentOf(
     'kk',
     `${DECLARATION_NOTICE} 05/KK-TNCN quý ${input.quarter}`,
     header(input.employer, [{ label: 'Quý', value: input.quarter }, { label: 'Tháng chưa có bảng lương đã duyệt', value: missing.join(', ') || 'không có' }]),
-    [
-      summary,
-      schedule('Lũy tiến', 'Bảng kê cá nhân khấu trừ theo biểu lũy tiến', progressiveList),
-      schedule('Khấu trừ 10%', 'Bảng kê cá nhân khấu trừ 10%', flatList),
-    ],
+    sheets,
     notes,
   );
-  return { document, printed: new Set([...progressive.keys(), ...flat.keys()]) };
+  return { document, printed: new Set([...progressive.keys(), ...flat.keys(), ...nonResident.keys()]) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -767,10 +802,13 @@ export function buildCertificatesListing(input: CertificateInput): { document: D
     if (mine.length === 0) continue;
     const progressiveLines: DeclarationLine[] = [];
     const flatByMonth = new Map<string, DeclarationLine[]>();
+    const nonResidentMonths = new Set<string>();
     let totalPit = zero();
     for (const line of mine) {
       totalPit = totalPit.plus(line.pit);
-      if (modeOf(line) === 'flat') {
+      const mode = modeOf(line);
+      if (mode === 'flat' || mode === 'non_resident_flat') {
+        if (mode === 'non_resident_flat') nonResidentMonths.add(line.month);
         let group = flatByMonth.get(line.month);
         if (!group) {
           group = [];
@@ -804,7 +842,8 @@ export function buildCertificatesListing(input: CertificateInput): { document: D
     for (const { month, group, net } of flatGroups) {
       if (net.gt(0)) {
         certified.add(person.employeeId);
-        rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+        const note = nonResidentMonths.has(month) ? 'Khấu trừ 20% (cá nhân không cư trú)' : 'Khấu trừ 10% theo từng lần chi trả';
+        rows.push(mk(person, month, group, note));
       }
     }
   }

@@ -1,9 +1,10 @@
 // Shared pieces of the Social screens: status tones, provider names, the effective text of a variant as the composer
 // shows it, and grouping by day for the agenda.
-import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countText, isDiscordForum, isProvider, mediaKindOf, needsPublicUrls, sentText, validateVariant, type Issue, type Provider } from '@crove/mod-social/contract';
-import { videoTitleRule } from '@crove/mod-social/contract';
-import { SOCIAL_VIEW_TABS } from '@crove/kernel-contract';
+import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countText, isDiscordForum, isProvider, mediaKindOf, needsPublicUrls, sentText, validateVariant, type Issue, type Provider } from '@ludy/mod-social/contract';
+import { videoTitleRule } from '@ludy/mod-social/contract';
+import { SOCIAL_VIEW_TABS } from '@ludy/kernel-contract';
 import { getConfig } from './auth.ts';
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 import { translator } from '../i18n/runtime.ts';
 
 export type VariantStatus =
@@ -340,19 +341,30 @@ export function mediaRuleProviders(providers: readonly string[]): MediaRuleProvi
 
 // The list the person last looked at in an organization (#3656): its tab and filters, kept for this browser tab, so "Quay lại" on a post or a
 // settings screen returns to it, not to the default tab. Storage may be unavailable (a private window): then none.
-const LIST_KEY = 'crove:social-list';
+const LIST_KEY = 'ludy:social-list';
+const LEGACY_LIST_KEY = 'crove:social-list';
 export function rememberSocialList(slug: string, search: SocialSearch): void {
   try {
-    sessionStorage.setItem(`${LIST_KEY}:${slug}`, JSON.stringify(search));
+    writeMigratedItem(sessionStorage, `${LIST_KEY}:${slug}`, `${LEGACY_LIST_KEY}:${slug}`, JSON.stringify(search));
   } catch {
     // Not kept: the way back opens the default list.
   }
 }
 export function lastSocialList(slug: string): SocialSearch {
+  const key = `${LIST_KEY}:${slug}`;
+  const legacyKey = `${LEGACY_LIST_KEY}:${slug}`;
   try {
-    const raw = sessionStorage.getItem(`${LIST_KEY}:${slug}`);
-    return raw ? parseSocialSearch(JSON.parse(raw) as Record<string, unknown>) : {};
+    const entry = readLegacyAwareItem(sessionStorage, key, legacyKey);
+    if (!entry) return {};
+    const parsed = parseSocialSearch(JSON.parse(entry.value) as Record<string, unknown>);
+    if (entry.fromLegacy) promoteMigratedItem(sessionStorage, key, legacyKey, entry.value);
+    return parsed;
   } catch {
+    try {
+      removeMigratedItem(sessionStorage, key, legacyKey);
+    } catch {
+      // Ignore unavailable storage.
+    }
     return {};
   }
 }

@@ -12,16 +12,16 @@ import {
   type MeetingSettings,
   type MeetingSummary,
   type MeetingVisibility,
-} from '@crove/kernel-contract';
-import { RECORDING_NOTICE } from '@crove/meeting-recorder';
-import { Badge } from '@crove/ui/components/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+} from '@ludy/kernel-contract';
+import { RECORDING_NOTICE } from '@ludy/meeting-recorder';
+import { Badge } from '@ludy/ui/components/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { MeetingAsk } from '../components/meeting-ask.tsx';

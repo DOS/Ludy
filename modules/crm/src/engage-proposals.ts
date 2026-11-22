@@ -3,9 +3,9 @@
 // `ludy.engage.write` calls `crm.quote.send_approved` and the like; the call never runs, it leaves a pending proposal (tainted) that a person approves in Ludy, and the approval runs the
 // original command as the approver, so every check the original has runs then, on what stands then (a quote that was edited since is refused as stale, a booking that already started is not
 // changeable). The payload is the original's own strict input.
-import { zApprovedCall } from '@crove/kernel-contract';
-import { defineCommand } from '@crove/kernel-runtime';
-import { requireApprover } from '@crove/kernel';
+import { zApprovedCall } from '@ludy/kernel-contract';
+import { defineCommand } from '@ludy/kernel-runtime';
+import { requireApprover } from '@ludy/kernel';
 import { bookingCancel, bookingMove } from './bookings.ts';
 import { quoteSend } from './quotes.ts';
 

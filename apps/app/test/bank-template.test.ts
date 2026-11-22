@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The form of a saved bank template (#2893): a new one starts valid, columns move one place and stop at the ends, and the problems found are the fields the server would refuse.
 import { describe, expect, it } from 'vitest';
-import { zHrBankLayout } from '@crove/kernel-contract';
+import { zHrBankLayout } from '@ludy/kernel-contract';
 import { blankTemplateForm, formOfTemplate, moveColumn, templateInput, templateProblems } from '../src/lib/bank-template.ts';
 
 const named = () => ({ ...blankTemplateForm(), name: 'Vietcombank' });

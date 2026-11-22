@@ -2,9 +2,9 @@
 // The HR module's manifest (plan §5.2, #2530; payroll plan docs/plan/payroll.md §6.1 and §6.6): the tables it owns and the class of every column. A migration that adds or
 // drops a table or column of crove_hr changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the
 // second argument of columns() classifies it. The identity number and the bank account number are stored sealed under the person's own key (ADR-0017), so their columns are
-// classified as what they hold (national_id, payment) and are registered in SEALED_COLUMNS (@crove/kernel), not in the personal-data registry. The wage is sensitive: chosen to
+// classified as what they hold (national_id, payment) and are registered in SEALED_COLUMNS (@ludy/kernel), not in the personal-data registry. The wage is sensitive: chosen to
 // restrict and audit, not as a legal conclusion (payroll plan 6.6).
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const hrManifest = defineModule({
   id: 'hr',
@@ -23,7 +23,7 @@ export const hrManifest = defineModule({
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
       payroll_bank_template: columns(['org_id', 'id', 'legal_entity_id', 'name', 'layout', 'created_by', 'created_at', 'updated_at']),
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
-      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
+      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'is_foreign', 'work_permit_exempt', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
         // The code of the bank the person is paid at (#2897): a plain column (a bank's code alone identifies no one), read only by the audited sensitive paths, cleared by the erasure.
         bank_code: 'payment',
@@ -34,10 +34,12 @@ export const hrManifest = defineModule({
         address: 'contact',
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
+        work_permit_expires_on: 'pii',
+        work_permit_number_sealed: 'national_id',
       }),
       payroll_employment: columns(
-        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'created_by', 'created_at'],
-        { base_wage: 'sensitive', probation_wage: 'sensitive' },
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'pay_basis', 'tax_resident', 'created_by', 'created_at'],
+        { base_wage: 'sensitive', probation_wage: 'sensitive', hourly_rate: 'sensitive', piece_rate: 'sensitive' },
       ),
       // Monthly employee leave ledger (#3394, #3411, #2540 slice 1c-2): opening balance, annual leave, personal paid leave and unpaid leave.
       // Kept `internal` (unlike `payroll_line.inputs`, which holds VND pay amounts): `days` holds plain day counts (0..366) with no money, PII or free text,
@@ -85,6 +87,6 @@ export const hrManifest = defineModule({
     { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.hr,
 });

@@ -5,14 +5,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type MarketplaceUnassignedLine, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { Textarea } from '@crove/ui/components/textarea';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type MarketplaceUnassignedLine, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { DataTable, ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 

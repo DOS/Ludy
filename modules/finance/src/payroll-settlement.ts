@@ -9,8 +9,8 @@ import {
   zPayrollSettlementRef,
   type PayrollPaymentKind,
   type PayrollSettlement,
-} from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { reversedSource } from './source-entry.ts';

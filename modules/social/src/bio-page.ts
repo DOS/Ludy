@@ -5,16 +5,16 @@
 // is drawn by the kernel from the definers, with nothing of the org beyond what the page shows.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 export const MAX_BIO_BUTTONS = 12;
 export const BIO_SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 // Paths of the app and the API a slug may not look like (they share the origin, under /b/ but read by people).
-const RESERVED = new Set(['admin', 'api', 'app', 'crove', 'help', 'login', 'new', 'settings', 'support']);
+const RESERVED = new Set(['admin', 'api', 'app', 'crove', 'help', 'login', 'ludy', 'new', 'settings', 'support']);
 
 const zText = (max: number) =>
   z

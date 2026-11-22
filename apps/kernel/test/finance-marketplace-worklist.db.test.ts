@@ -4,7 +4,7 @@
 // - the gate: `postingConfirmed` is false while the account map is `commentary` (the shipped read) and true where it is confirmed;
 // - the settlements to post: stored settlements that stand and are not posted, with the net their entry would post; a posted one leaves the list;
 // - the payouts to match: a posted settlement with no payout voucher, with the bank lines it may be (the entity's, money in, equal to the net, not before the period, free), and gone once its payout
-//   is posted; a settlement with an unexplained adjustment is not offered;
+//   is posted; a settlement with a deduction nobody can classify is not offered, one with money to classify is offered with those lines (#4303 S4);
 // - the invoices to clear: a platform's posted fee invoice while fees wait on 1388, with what a clearing would take; gone once cleared, and another supplier's or a reversed invoice is not offered;
 // - the facts count the posted settlements without a payout, and no more once the payout is posted.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
@@ -12,11 +12,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { MARKETPLACE_POSTING_MAPS, createMarketplaceFeeClearingCommands, createMarketplacePayoutCommands, createMarketplaceSettlementCommands, createMarketplaceWorklist, financeCommands, financeQueries, type MarketplacePostingMap } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { MARKETPLACE_POSTING_MAPS, createMarketplaceFeeClearingCommands, createMarketplacePayoutCommands, createMarketplaceSettlementCommands, createMarketplaceWorklist, financeCommands, financeQueries, type MarketplacePostingMap } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -27,7 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (feeCode = '331'): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.') && !name.startsWith('finance.marketplace_fee_clearing.');
 
@@ -81,6 +81,8 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
+    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
     if (household) {
       await withAdmin(async (c) => {
@@ -185,8 +187,9 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const worklist = (o: Org, runtime = rt, legalEntityId?: string) =>
     runtime.query<{
       postingConfirmed: boolean;
+      salesPostingConfirmed: boolean;
       settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; months: string[]; net: string; waitingLines: number; proposalId: string | null }[];
-      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[] }[];
+      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[]; adjustable: { lineId: string; source: string; amount: string }[] }[];
       invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
     }>('finance.marketplace.worklist', legalEntityId === undefined ? {} : { legalEntityId }, { actor: asUser(o.owner), orgId: o.orgId });
   const facts = (o: Org) => rt.query<{ settlementsToPost: number; payoutsToMatch: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId });
@@ -228,11 +231,17 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     const o = await org();
     expect((await worklist(o, rtShipped)).postingConfirmed).toBe(false);
     expect((await worklist(o)).postingConfirmed).toBe(true);
+    // The sales path alone (#4303 S3b): open on the shipped map, where the payout and fee accrual rows are still commentary, so the settlement rows are not held by them.
+    expect((await worklist(o, rtShipped)).salesPostingConfirmed).toBe(true);
+    expect((await worklist(o)).salesPostingConfirmed).toBe(true);
     // A chart whose map is not in the injected set (TT99; the shipped TT99 map is commentary, #3711 slice 4) is closed too, and an entity the caller does not name is not looked at.
     const tt99 = await org('tt99');
     expect((await worklist(tt99)).postingConfirmed).toBe(false);
+    expect((await worklist(tt99)).salesPostingConfirmed).toBe(false);
     expect((await worklist(o, rt, o.entity)).postingConfirmed).toBe(true);
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    expect((await worklist(o, rt, o.entity)).salesPostingConfirmed).toBe(true);
+    // Closed on the shipped map though its sales path is applied (#4303 S3b): the payout and fee accrual rows are still commentary, and the gate reads all three.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });
 
   it('lists the settlements to post with the net their entry would post, and drops one once it is posted', async () => {
@@ -320,12 +329,52 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     expect((await worklist(o)).invoices.map((i) => [i.documentId, i.proposalId])).toEqual([[doc, pendingClearing.proposalId]]);
   });
 
-  it('does not offer a payout the command would refuse: an unexplained adjustment, nothing to collect', async () => {
+  it('does not offer a payout the command would refuse: a deduction nobody can classify, nothing to collect', async () => {
     const o = await org();
-    const odd = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }]);
+    // Money the report does not explain, below zero in one line and not adding up to zero: a person cannot classify a deduction, so the settlement is not offered (the accountant handles it).
+    const odd = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }, { sales: '50000', other: '-200' }]);
     await post(o, odd);
-    await bankLine(o, '2026-10-20', '100500');
+    await bankLine(o, '2026-10-20', '150300');
     expect((await worklist(o)).payouts).toEqual([]);
+  });
+
+  it('lists the lines a person must classify (#4303 S4): money paid beyond the sales, and tax withheld from a seller that is no household; nothing for an offsetting pair or a household\'s tax', async () => {
+    const lineIds = async (o: Org, settlement: string) => (await rows<{ id: string; line_key: string }>('SELECT id, line_key FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2 ORDER BY line_key', [o.orgId, settlement]));
+    const company = await org('tt133', false);
+    const s1 = await seed(company, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }, { sales: '50000', tax: '1500' }, { sales: '20000' }]);
+    await post(company, s1);
+    await bankLine(company, '2026-10-20', '169000');
+    const ids = await lineIds(company, s1);
+    const [item] = (await worklist(company)).payouts;
+    expect(item?.settlementId).toBe(s1);
+    expect(item?.adjustable).toEqual([
+      { lineId: ids[0]?.id, source: 'other', amount: '500' },
+      { lineId: ids[1]?.id, source: 'withheld', amount: '1500' },
+    ].sort((a, b) => String(a.lineId).localeCompare(String(b.lineId))));
+    // A household's withheld tax goes through 3331 and 3335: only the other money is offered.
+    const house = await org();
+    const s2 = await seed(house, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500', tax: '1000' }]);
+    await post(house, s2);
+    await bankLine(house, '2026-10-20', '99500');
+    expect((await worklist(house)).payouts[0]?.adjustable).toEqual([{ lineId: (await lineIds(house, s2))[0]?.id, source: 'other', amount: '500' }]);
+    // An offsetting pair is no adjustment: offered as before, with nothing to classify.
+    const pair = await org();
+    const s3 = await seed(pair, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '500' }, { sales: '50000', other: '-500' }]);
+    await post(pair, s3);
+    await bankLine(pair, '2026-10-20', '150000');
+    expect((await worklist(pair)).payouts.map((p) => [p.settlementId, p.adjustable])).toEqual([[s3, []]]);
+    // A line with a fraction of a dong cannot be classified (an adjustment is whole dong): the settlement is not offered, never a request that fails validation.
+    const frac = await org('tt133', false);
+    const s5 = await seed(frac, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', other: '6000.5' }]);
+    await post(frac, s5);
+    await bankLine(frac, '2026-10-20', '106000.5');
+    expect((await worklist(frac)).payouts).toEqual([]);
+    // More lines than a request can carry: not offered (an accountant's), never cut short.
+    const many = await org('tt133', false);
+    const s4 = await seed(many, 'shopee', '2026-10-01', '2026-10-15', Array.from({ length: 101 }, () => ({ sales: '1000', other: '10' })));
+    await post(many, s4);
+    await bankLine(many, '2026-10-20', '102010');
+    expect((await worklist(many)).payouts).toEqual([]);
   });
 
   it("lists the platform's fee invoices that can clear while fees wait, with the amount a clearing would take, and drops them once cleared", async () => {

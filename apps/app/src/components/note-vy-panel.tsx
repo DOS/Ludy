@@ -3,12 +3,12 @@
 // lets readers/authors ask Vy to summarize the current note and suggest personal to-dos,
 // then explicitly apply a summary (author only) or save editable personal to-dos.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NavIcon } from '@crove/ui/components/nav-icon';
-import { Textarea } from '@crove/ui/components/textarea';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import {
@@ -21,7 +21,7 @@ import {
   type NoteVyResults,
   type NoteVyStatus,
   type NoteWritten,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { useFormat } from '../i18n/provider.tsx';
 import { clientForOrg, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';

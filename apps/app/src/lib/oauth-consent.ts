@@ -4,8 +4,11 @@
 // they do), chooses the org and answers; the page asks the server for the client's details and sends the answer, and the server says where the browser goes
 // next (the client's redirect address with its one-time code, or the refusal).
 // The provider's interaction ids: 43 URL-safe characters; kept loose enough to follow a library change, tight enough to be a path segment.
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+
 const UID = /^[A-Za-z0-9_-]{16,128}$/;
-const KEY = 'crove-pending-oauth-interaction';
+const KEY = 'ludy-pending-oauth-interaction';
+const LEGACY_KEY = 'crove-pending-oauth-interaction';
 // An interaction lives ten minutes at the server; the page forgets it then too.
 export const PENDING_OAUTH_TTL_MS = 10 * 60 * 1000;
 
@@ -19,7 +22,7 @@ interface Stored {
 export function rememberInteraction(uid: string, now: number = Date.now()): void {
   if (!wellFormedUid(uid)) return;
   try {
-    sessionStorage.setItem(KEY, JSON.stringify({ uid, savedAt: now } satisfies Stored));
+    writeMigratedItem(sessionStorage, KEY, LEGACY_KEY, JSON.stringify({ uid, savedAt: now } satisfies Stored));
   } catch {
     // Storage may be unavailable (private mode): the person starts the connection again from the client after signing in.
   }
@@ -27,21 +30,29 @@ export function rememberInteraction(uid: string, now: number = Date.now()): void
 
 export function pendingInteraction(now: number = Date.now()): string | null {
   try {
-    const raw = sessionStorage.getItem(KEY);
-    if (raw === null) return null;
-    const stored = JSON.parse(raw) as Partial<Stored> | null;
+    const entry = readLegacyAwareItem(sessionStorage, KEY, LEGACY_KEY);
+    if (!entry) return null;
+    const stored = JSON.parse(entry.value) as Partial<Stored> | null;
     const fresh = typeof stored?.savedAt === 'number' && stored.savedAt <= now && now - stored.savedAt < PENDING_OAUTH_TTL_MS;
-    if (fresh && typeof stored?.uid === 'string' && wellFormedUid(stored.uid)) return stored.uid;
-    sessionStorage.removeItem(KEY);
+    if (fresh && typeof stored?.uid === 'string' && wellFormedUid(stored.uid)) {
+      if (entry.fromLegacy) promoteMigratedItem(sessionStorage, KEY, LEGACY_KEY, entry.value);
+      return stored.uid;
+    }
+    removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
     return null;
   } catch {
+    try {
+      removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
+    } catch {
+      // Ignore unavailable storage.
+    }
     return null;
   }
 }
 
 export function forgetInteraction(): void {
   try {
-    sessionStorage.removeItem(KEY);
+    removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
   } catch {
     // Nothing to forget.
   }

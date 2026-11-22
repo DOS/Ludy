@@ -355,7 +355,7 @@ describe('Slice 4f public counterparty summary & sender editor UI (#3822)', () =
 });
 
 describe('Offline starter contract PDF fallback helper (#3822)', () => {
-  it('validates decimal money via @crove/l10n-vn money() and generates offline %PDF-1.4 A4 PDFs with r1/r2 tags and neutralized inputs', () => {
+  it('validates decimal money via @ludy/l10n-vn money() and generates offline %PDF-1.4 A4 PDFs with r1/r2 tags and neutralized inputs', () => {
     expect(normalizeStarterDecimalValue('  45000000 ')).toBe('45000000');
     expect(normalizeStarterDecimalValue('1250.50')).toBe('1250.5');
     expect(normalizeStarterDecimalValue('not-a-number')).toBeNull();

@@ -5,10 +5,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useTranslations } from 'use-intl';
-import type { LiveAssembleState, LiveStatus } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
+import type { LiveAssembleState, LiveStatus } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
 import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { assembleLivePieces, errorMessage, orpc, queryClient } from '../lib/api.ts';

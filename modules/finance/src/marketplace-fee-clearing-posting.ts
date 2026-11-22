@@ -4,8 +4,8 @@
 // platform as the supplier). The clearing is ONE entry that moves what the invoice covers from one to the other: Dr 331 / Cr 1388, the platform's party on both lines.
 // The amount is the smaller of what the invoice still has to clear (its credit to 331 less its standing clearings: an invoice may be cleared more than once, never beyond its credit) and the platform's
 // 1388 balance (so 1388 never goes below zero and a second invoice for the same fees clears only what waits). Nothing posts until the accountant has confirmed the account map.
-import { DomainError } from '@crove/kernel-runtime';
-import { money, toMoney } from '@crove/l10n-vn';
+import { DomainError } from '@ludy/kernel-runtime';
+import { money, toMoney } from '@ludy/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import type { ProposedJournalLine } from './marketplace-settlement-posting.ts';

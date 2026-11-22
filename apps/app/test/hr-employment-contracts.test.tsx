@@ -8,7 +8,7 @@ import {
   HR_PROBATION_ROLE_TIERS,
   type HrEmployee,
   type HrEmployeeSummary,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { describeError } from '../src/lib/errors.ts';
@@ -83,6 +83,8 @@ describe('HR labor contract & probation UI (#3384)', () => {
       'probation_ending_soon',
       'final_fixed_term_renewal',
       'must_convert_to_indefinite',
+      'work_permit_expired',
+      'work_permit_expiring_soon',
     ]);
     expect(viMessages.hrPayroll.flag.probation_ends_this_month).toBeTruthy();
     expect(en.hrPayroll.flag.probation_ends_this_month).toBeTruthy();
@@ -101,6 +103,8 @@ describe('HR labor contract & probation UI (#3384)', () => {
       region: 'I',
       baseWage: '15000000',
       payFunction: 'admin',
+      payBasis: 'monthly',
+      taxResident: true,
     });
     expect(previewContractCheck(basic)).toEqual([]);
 
@@ -198,6 +202,10 @@ describe('HR labor contract & probation UI (#3384)', () => {
       region: 'I' as const,
       baseWage: '15000000.00',
       payFunction: 'admin' as const,
+      payBasis: 'monthly' as const,
+      hourlyRate: null,
+      pieceRate: null,
+      taxResident: true,
       contractForm: 'written' as const,
       termMonths: 12,
       contractEndOn: '2026-12-31',
@@ -233,6 +241,10 @@ describe('HR labor contract & probation UI (#3384)', () => {
       jobTitle: null,
       status: 'active',
       endedOn: null,
+      isForeign: false,
+      workPermitExempt: false,
+      workPermitExpiresOn: null,
+      hasWorkPermitNumber: false,
       current: termsRow,
       hasIdentityNumber: false,
       hasAccountNumber: false,
@@ -243,6 +255,7 @@ describe('HR labor contract & probation UI (#3384)', () => {
       address: null,
       identityNumber: null,
       accountNumber: null,
+      workPermitNumber: null,
       bankCode: null,
       birthDate: null,
       taxCode: null,

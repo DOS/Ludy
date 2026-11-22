@@ -3,7 +3,7 @@
 // manifests cannot drift; and every permission a screen names is declared (#1630). The router side, that every route
 // under /o/$slug has one entry and every label a message, is apps/app/test/module-screens.test.ts.
 import { describe, expect, it } from 'vitest';
-import { MODULE_SCREENS, columns, defineModule, type ModuleScreens } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule, type ModuleScreens } from '@ludy/kernel-contract';
 import { MODULE_MANIFESTS, permissionProblems, routePermissionUses, type Manifests } from './manifest-permissions.ts';
 
 describe('module manifests declare their screens (#1652)', () => {

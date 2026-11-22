@@ -3,11 +3,11 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { SIGNATURE_MAX, signatureOf, signatureText } from '@crove/mod-social/contract';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Label } from '@crove/ui/components/label';
-import { Textarea } from '@crove/ui/components/textarea';
+import { SIGNATURE_MAX, signatureOf, signatureText } from '@ludy/mod-social/contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Label } from '@ludy/ui/components/label';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText, Spinner } from './ui.tsx';
 

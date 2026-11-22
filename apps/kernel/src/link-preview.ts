@@ -1,8 +1,8 @@
 // The worker's side of link preview cards (#641): fetch the page of a requested link through the egress guard, read
 // its head in crove-extract (the kernel parses no HTML), and record what it said or why it could not be read. A
 // failure of the extract service itself is thrown, so the job is retried; anything the page causes is recorded.
-import { EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
-import { EgressError, guardedFetch, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMITS, type ExtractClient } from '@ludy/extract-contract';
+import { EgressError, guardedFetch, type Runtime } from '@ludy/kernel-runtime';
 
 export const LINK_PREVIEW_TIMEOUT_MS = 8000;
 const HTML_TYPES = new Set(['text/html', 'application/xhtml+xml']);

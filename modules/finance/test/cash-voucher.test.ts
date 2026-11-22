@@ -11,8 +11,8 @@ import {
   zVoucherAmount,
   type VoucherLine,
   type VoucherType,
-} from '@crove/kernel-contract';
-import { journalIsBalanced, money, sum } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import { journalIsBalanced, money, sum } from '@ludy/l10n-vn';
 import { buildVoucherJournal, voucherEntryDescription, voucherProblems, voucherTitle, voucherTotal } from '../src/domain/cash-voucher.ts';
 
 const PARTY = '0192f0c0-0000-7000-8000-000000000001';

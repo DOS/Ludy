@@ -3,8 +3,8 @@
 // credential broker bound to the org, the purpose and the member, and handed to the command as an envelope; the clear value goes back to the person who asked, once, and to nothing else (no command
 // input of ours keeps it, no audit row, no log). The address is looked up before the command runs (assertWakeHostPublic of the wake-up, the same rule); the egress guard checks it again on every send.
 import { randomBytes } from 'node:crypto';
-import { DomainError, type CredentialBroker } from '@crove/kernel-runtime';
-import type { MeetingHookCredential } from '@crove/kernel-contract';
+import { DomainError, type CredentialBroker } from '@ludy/kernel-runtime';
+import type { MeetingHookCredential } from '@ludy/kernel-contract';
 
 // The provider name a minutes-webhook secret is sealed under (with the org and the member), so it opens for nothing else.
 export const MEETING_HOOK_PROVIDER = 'meeting-hook';

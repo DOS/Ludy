@@ -6,7 +6,7 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
+import { migrate } from '@ludy/db/migrate';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -31,6 +31,9 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_finance.bank_feed_hook_lookup(text,text)', 'finance'],
   ['crove_finance.bank_feed_hook_put_notice(uuid,text,text,text,text,text)', 'finance'],
   ['crove_finance.bank_feed_hook_claim(integer)', 'finance'],
+  ['crove_finance.marketplace_hook_lookup(text,text)', 'finance'],
+  ['crove_finance.marketplace_hook_put_notice(uuid,text,text,text,bytea,text)', 'finance'],
+  ['crove_finance.marketplace_hook_claim(integer)', 'finance'],
   ['crove_kernel.meeting_platform_ring(text,text)', 'meetings'],
   ['crove_sign.public_token_resolve(text,boolean)', 'sign'],
   ['crove_sign.public_pdf_source(text)', 'sign'],
@@ -46,6 +49,14 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_sign.public_direct_request_otp(text,text,text)', 'sign'],
   ['crove_sign.public_direct_verify_otp(text,text,text,text)', 'sign'],
   ['crove_sign.public_direct_start(text,text,text,text,text,text,text)', 'sign'],
+  ['crove_sign.public_hub_list(text)', 'sign'],
+  ['crove_sign.public_hub_resolve(text,uuid,text)', 'sign'],
+  ['crove_sign.public_hub_pdf_source(text,uuid,text)', 'sign'],
+  ['crove_sign.public_hub_request_otp(text,uuid,text,text)', 'sign'],
+  ['crove_sign.public_hub_verify_otp(text,uuid,text,text,text)', 'sign'],
+  ['crove_sign.public_hub_start(text,uuid,text,text,text,text,text,text)', 'sign'],
+  ['crove_sign.public_attachment_preflight(text,uuid)', 'sign'],
+  ['crove_sign.public_record_attachment(text,uuid,text,text,integer,text,text,text,text,text)', 'sign'],
 ];
 
 suite('the public definers carry the app check (ADR-0053, C2)', () => {

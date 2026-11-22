@@ -4,9 +4,9 @@
 // quantities exact through the decimal cells, text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
 import { z } from 'zod';
-import { zId, zStockMonth, type StockCard, type StockReportRow } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineCommand } from '@crove/kernel-runtime';
+import { zId, zStockMonth, type StockCard, type StockReportRow } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineCommand } from '@ludy/kernel-runtime';
 import { decimalCell, setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 
 const monthLabel = (month: string) => `${month.slice(5, 7)}/${month.slice(0, 4)}`;

@@ -18,10 +18,10 @@ import {
   sortSessions,
   type SessionRow,
 } from '../lib/sessions.ts';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Signs this tab out; auth-js tells the other tabs, and main.tsx sends every tab to /login.
@@ -35,7 +35,7 @@ function signOutHere(): void {
 }
 
 function useCurrentSessionId() {
-  return useQuery({ queryKey: ['crove', 'current-session'], queryFn: async () => sessionIdFromToken(await accessToken()), staleTime: 60_000 });
+  return useQuery({ queryKey: ['ludy', 'current-session'], queryFn: async () => sessionIdFromToken(await accessToken()), staleTime: 60_000 });
 }
 
 function ConfirmBox({ title, children, actions }: { title: string; children?: ReactNode; actions: ReactNode }) {

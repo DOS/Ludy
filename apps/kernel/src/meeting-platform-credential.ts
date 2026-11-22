@@ -18,9 +18,9 @@
 // credential that carries no expiry are left alone.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MeetingPlatformError, type MeetingPlatformAdapter, type MeetingPlatformCredential } from '@crove/channel';
-import { meetingPlatformBinding, type MeetingPlatformProvider } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { MeetingPlatformError, type MeetingPlatformAdapter, type MeetingPlatformCredential } from '@ludy/channel';
+import { meetingPlatformBinding, type MeetingPlatformProvider } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 
 const ACTOR: SystemActor = { type: 'system', component: 'meetings.credential' };
 // A token that expires within this long is renewed before it is used (the sweep comes every few minutes, a Zoom token lives an hour).

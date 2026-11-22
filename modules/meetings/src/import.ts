@@ -11,8 +11,8 @@
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
-import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@crove/kernel-contract';
-import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@crove/kernel-runtime';
+import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
 import { lockMeetingMedia } from './media-record.ts';

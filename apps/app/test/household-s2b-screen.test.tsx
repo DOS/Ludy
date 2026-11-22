@@ -5,7 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HouseholdProfileView, HouseholdS1a, HouseholdS2b } from '@crove/kernel-contract';
+import type { HouseholdProfileView, HouseholdS1a, HouseholdS2b } from '@ludy/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 

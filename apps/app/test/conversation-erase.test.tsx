@@ -6,7 +6,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider, useTranslations } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { CONVERSATION_OTHERS_MAX, type ConversationDetail, type ConversationMessage } from '@crove/kernel-contract';
+import { CONVERSATION_OTHERS_MAX, type ConversationDetail, type ConversationMessage } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('../src/lib/api.ts', () => ({

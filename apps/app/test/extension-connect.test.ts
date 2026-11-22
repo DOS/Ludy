@@ -113,9 +113,15 @@ describe('the request kept while the member signs in', () => {
   });
 
   it('checks what storage holds as it checked the address', () => {
-    store.set('crove-pending-extension-connect', JSON.stringify({ request: { extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: 'https://evil.example/', state: 's', scopes: ['meetings'], deviceName: '' }, savedAt: Date.now() }));
+    store.set('ludy-pending-extension-connect', JSON.stringify({ request: { extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: 'https://evil.example/', state: 's', scopes: ['meetings'], deviceName: '' }, savedAt: Date.now() }));
     expect(pendingConnect(ALLOWED)).toBeNull();
-    store.set('crove-pending-extension-connect', 'not json');
+    store.set('ludy-pending-extension-connect', 'not json');
     expect(pendingConnect(ALLOWED)).toBeNull();
+    const request = parseConnectRequest(query(), ALLOWED)!;
+    const now = 1_700_000_000_000;
+    store.set('crove-pending-extension-connect', JSON.stringify({ request, savedAt: now }));
+    expect(pendingConnect(ALLOWED, now + 1000)).toEqual(request);
+    expect(store.has('ludy-pending-extension-connect')).toBe(true);
+    expect(store.has('crove-pending-extension-connect')).toBe(false);
   });
 });

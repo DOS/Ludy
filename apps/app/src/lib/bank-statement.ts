@@ -2,11 +2,11 @@
 // headers, so any bank's file can be imported without a preset. Cells go to the kernel as text (number cells as
 // stored, amounts typed as text made plain by normalizeStatementAmount); the finance module decides every rule. The
 // header detection and the CSV reading are shared with the sandbox that reads a statement sent by email (#2142).
-import { BANK_IMPORT_MAX_ROWS, statementAmountText, type BankStatementRow } from '@crove/kernel-contract';
-import { parseCsv, statementLines, type StatementMapping } from '@crove/l10n-vn';
+import { BANK_IMPORT_MAX_ROWS, statementAmountText, type BankStatementRow } from '@ludy/kernel-contract';
+import { parseCsv, statementLines, type StatementMapping } from '@ludy/l10n-vn';
 import { readFirstSheet, type SheetRows } from './xlsx.ts';
 
-export { STATEMENT_COLUMNS, findColumns, headerKey, headerLabels, parseCsv, type StatementColumn, type StatementMapping } from '@crove/l10n-vn';
+export { STATEMENT_COLUMNS, findColumns, headerKey, headerLabels, parseCsv, type StatementColumn, type StatementMapping } from '@ludy/l10n-vn';
 
 // The lines under the header: every row whose date cell holds a digit (a title, a blank or a "Tổng cộng" row below
 // the lines has none). At most BANK_IMPORT_MAX_ROWS; null when the file has more.

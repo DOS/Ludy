@@ -4,10 +4,10 @@
 // screens) or with the extension (`meetings.meeting.recording_now`, derived from the meeting row). It disappears when the recording stops. It is not an AI surface and shows no meeting content, not even a title.
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
-import { formatClock } from '@crove/meeting-recorder';
+import { formatClock } from '@ludy/meeting-recorder';
 import { orpc } from '../lib/api.ts';
 import { getRecorderSnapshot, subscribeRecorder } from '../lib/recording-controller.ts';
 import { getLocalRecording, subscribeLocalRecording } from '../lib/recording-indicator.ts';

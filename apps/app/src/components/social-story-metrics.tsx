@@ -1,7 +1,7 @@
 // A Story's own counts on the Metrics tab (#1082): one line under its row in the published posts table, and the
 // window's Story totals under the cards. Both show nothing when no Story reported them.
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { storyCounts } from '../lib/social-insights.ts';
 

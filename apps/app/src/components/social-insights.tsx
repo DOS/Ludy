@@ -6,8 +6,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
-import { cn } from '@crove/ui/lib/utils';
+import { Card } from '@ludy/ui/components/card';
+import { cn } from '@ludy/ui/lib/utils';
 import { useLabels } from './social-labels.tsx';
 import { MedianWatchTime } from './social-reel-metrics.tsx';
 import { useRatePhrase } from './social-engagement-rate.tsx';

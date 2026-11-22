@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which lines of an order go on an invoice draft (#2818): a line with a discount is left out and named, the rest are asked for by number, and an order whose goods all have a discount asks for nothing.
 import { describe, expect, it } from 'vitest';
-import type { SalesOrderHandoff } from '@crove/kernel-contract';
+import type { SalesOrderHandoff } from '@ludy/kernel-contract';
 import { allDiscounted, hasDiscount, invoiceInput, invoicePlan, lineStateOf, nothingLeft } from '../src/lib/order-handoff.ts';
 
 const line = (lineNo: number, kind: 'item' | 'text', discountPercent: string): SalesOrderHandoff['lines'][number] => ({

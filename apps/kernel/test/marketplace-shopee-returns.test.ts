@@ -3,7 +3,7 @@
 // accepted status, validated by the seller, whose reverse logistics status is LOGISTICS_DELIVERY_DONE and which names the whole line; LOGISTICS_LOST never brings stock back; a refund only, a warehouse validation, a
 // partial quantity and every open or contested status move nothing; and a page that holds a word the tables do not know is refused with nothing stored. No buyer field is read or kept.
 import { describe, expect, it } from 'vitest';
-import { MarketplaceProviderError, parseMarketplaceOrderPage } from '@crove/mod-finance';
+import { MarketplaceProviderError, parseMarketplaceOrderPage } from '@ludy/mod-finance';
 import { hostBoundFetch } from '../src/marketplace-adapter-kit.ts';
 import { SHOPEE_HOSTS, shopeeCaller } from '../src/marketplace-shopee.ts';
 import { shopeeMarketplace } from '../src/marketplace-shopee-orders.ts';

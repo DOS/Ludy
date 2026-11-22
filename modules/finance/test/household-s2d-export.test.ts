@@ -3,7 +3,7 @@
 // An open month says the cost is provisional; while the layout row is `commentary` the file says so on top and puts the provisional label in a note column; once confirmed there is none. Text is never a formula.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, type HouseholdS2d } from '@crove/kernel-contract';
+import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, type HouseholdS2d } from '@ludy/kernel-contract';
 import { buildS2dWorkbook } from '../src/household-export.ts';
 
 const E = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;

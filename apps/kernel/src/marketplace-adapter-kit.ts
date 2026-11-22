@@ -2,8 +2,8 @@
 // The pieces every real marketplace adapter shares (#2524, #4237; ADR-0045 point 7): the host-bound fetch, the money parser, the field allow-list that drops a buyer's data at the edge, the capped
 // reader of an answer and the page a provider returns being refused as `not_recognized` rather than stored or thrown raw. An adapter (Lazada first, then TikTok Shop) builds on these and adds
 // only what is its platform's: the signature, the paths, the status table. Nothing here names a platform.
-import { allowlistedFetch, type Fetch } from '@crove/bank-feed';
-import { MarketplaceProviderError } from '@crove/mod-finance';
+import { allowlistedFetch, type Fetch } from '@ludy/bank-feed';
+import { MarketplaceProviderError } from '@ludy/mod-finance';
 
 export type { Fetch };
 

@@ -4,10 +4,10 @@
 // shows a one-click "Turn off" (a plain visit changes nothing, so a mail scanner cannot unsubscribe anyone).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';

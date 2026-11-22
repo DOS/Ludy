@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The recording notice kit in the consent step (Meetings A1, #3159): the fixed text, a button that copies it so the recorder
 // can paste it in the call's chat, and the other language one click away. The meeting's language is the default. Ludy
-// posts nothing into the call. The text lives in @crove/meeting-recorder (notice.ts) and is a draft pending the lawyer (#2585).
+// posts nothing into the call. The text lives in @ludy/meeting-recorder (notice.ts) and is a draft pending the lawyer (#2585).
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { noticeLanguageFor, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
-import { Button } from '@crove/ui/components/button';
+import { noticeLanguageFor, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
+import { Button } from '@ludy/ui/components/button';
 
 export function RecordingNotice({ meetingLanguage }: { meetingLanguage: string }) {
   const t = useTranslations('meetings');

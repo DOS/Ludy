@@ -11,12 +11,12 @@
 import { useMutation } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { cn } from '@crove/ui/lib/utils';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateTimeInput } from './date-time-input.tsx';
 import { ErrorText } from './ui.tsx';

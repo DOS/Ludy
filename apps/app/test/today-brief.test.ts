@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Vy's daily brief on Home (#2383), the parts without a screen: the fingerprint of the list and the per-tab store.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { zTodayItem, type TodayItem } from '@crove/kernel-contract';
+import { zTodayItem, type TodayItem } from '@ludy/kernel-contract';
 import { briefDay, briefStorageKey, listFingerprint, readStoredBrief, storeBrief } from '../src/lib/today-brief.ts';
 
 const item = (over: Record<string, unknown>): TodayItem => zTodayItem.parse({ kind: 'proposal', app: 'finance', id: 'a', title: { key: 'k' }, href: '/inbox', ...over });

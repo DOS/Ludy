@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { describe, expect, it, vi } from 'vitest';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';

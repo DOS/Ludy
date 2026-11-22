@@ -19,7 +19,7 @@ import {
   type SalesVoucher,
 } from '../src/misa.ts';
 import { MISA_INVOICE_NUMBER_LIMIT, checkMisaRows } from '../src/misa-check.ts';
-import { MISA_CHECK_EXAMPLES, accountParents } from '@crove/kernel-contract';
+import { MISA_CHECK_EXAMPLES, accountParents } from '@ludy/kernel-contract';
 
 const ENTRY_ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5c';
 const SOURCE_ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d';

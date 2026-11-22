@@ -2,7 +2,7 @@
 // "Báo giá" in Settings (#3645): the letterhead, the bank note, the default VAT and validity and the logo of every quote of the org, which sat inside each deal's quote
 // panel. Owners and admins write them; a deal's quote panel links here when the letterhead is empty.
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { QuoteSettingsForm } from './quote-send.tsx';
 
 // The card's address (`#quote-settings`), as the booking cards have theirs.

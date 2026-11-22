@@ -15,13 +15,13 @@ import {
   type NotebookSummary,
   type TodoListSummary,
   type TodoistImportResult,
-} from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Skeleton } from '@crove/ui/components/skeleton';
+} from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Skeleton } from '@ludy/ui/components/skeleton';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, importEvernoteEnex, importTodoistCsv } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';

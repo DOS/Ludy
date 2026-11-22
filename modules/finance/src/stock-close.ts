@@ -21,9 +21,9 @@ import {
   zStockCloseRequest,
   type StockCloseEmptyResult,
   type StockCloseProposal,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { closeDescription, closeMonth, monthEnd, stockMoveLockKey, type CloseItem, type CloseResult } from './domain/stock-close.ts';
 import { assertUsableAccounts } from './accounts.ts';
 import { nextMonth, previousMonth } from './domain/stock-cost.ts';

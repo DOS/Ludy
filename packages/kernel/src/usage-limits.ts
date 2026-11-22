@@ -7,8 +7,8 @@
 // the auth email budget.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { USAGE_DEFERRAL_METRICS, USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@crove/db';
-import { defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { USAGE_DEFERRAL_METRICS, USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@ludy/db';
+import { defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { createMailMessage } from './mail.ts';
 
 export const USAGE_DEFERRED_TEMPLATE = 'kernel.usage.deferred';

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { INVITE_TOKEN_HEADER, PENDING_INVITE_TTL_MS, forgetInvite, pendingInvite, rememberInvite, withInviteToken } from '../src/lib/invite.ts';
 
 const TOKEN = 'A'.repeat(43);
-const KEY = 'crove-pending-invite';
+const KEY = 'ludy-pending-invite';
 
 class MemoryStorage {
   readonly items = new Map<string, string>();

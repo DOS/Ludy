@@ -30,7 +30,7 @@ import {
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
-import { ORDER_FIELDS } from '@crove/l10n-vn';
+import { ORDER_FIELDS } from '@ludy/l10n-vn';
 import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
 import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceFeeNotesPrompt, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from './marketplace-fee-note.ts';
 import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';

@@ -13,15 +13,15 @@ import {
   type EnexImportNoteInput,
   type EnexImportResult,
   type TodoistImportResult,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   DomainError,
   noteAttachmentKey,
   sha256Hex,
   type BlobStore,
   type Runtime,
-} from '@crove/kernel-runtime';
-import { throwImportFailure } from '@crove/mod-notes';
+} from '@ludy/kernel-runtime';
+import { throwImportFailure } from '@ludy/mod-notes';
 import { actorOf, type AuthUser } from './auth.ts';
 import {
   classifyNoteAttachment,

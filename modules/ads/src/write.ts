@@ -17,7 +17,7 @@
 // and approving commands of W1 give the permissions something to name.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   ADS_ACCOUNT_ENABLE_COMMAND,
   ADS_ACCOUNT_ENABLE_KIND,
@@ -45,8 +45,8 @@ import {
   type AdsCapView,
   type AdsChange,
   type AdsWriteState,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { cancelQueuedLaunches, stopStartedLaunches } from './launch-ledger.ts';
 import { tokenRevokeViews } from './token-revoke-commands.ts';
 import { closeSpendCapableReadConnections, closeWriteConnections } from './write-connection.ts';

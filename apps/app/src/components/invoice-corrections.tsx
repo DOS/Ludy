@@ -1,5 +1,5 @@
 import { useTranslations } from 'use-intl';
-import type { DocumentCorrection } from '@crove/kernel-contract';
+import type { DocumentCorrection } from '@ludy/kernel-contract';
 
 // The correction links of a document, both ways (#916): the invoice a replacement or an adjustment corrects, and the
 // replacement and adjustment invoices recorded for this one. Shown on the documents list and in the journal.

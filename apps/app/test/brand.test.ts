@@ -90,15 +90,16 @@ describe('brand name (#1040)', () => {
     expect(guides).not.toMatch(/\bCrove\b|\{brand\}/);
   });
 
-  // #1045: downloaded files are named after the product too, so no message spells a file name with "crove-".
+  // #1045: downloaded files are named after the product too, so no message spells a file name with "ludy-" or "crove-".
   it('names downloaded files after the brand', () => {
     for (const locale of LOCALES) {
-      const offenders = messages(SOURCE_CATALOGS[locale]).filter(([, text]) => /\bcrove-/.test(text));
+      const offenders = messages(SOURCE_CATALOGS[locale]).filter(([, text]) => /\b(?:ludy|crove)-/.test(text));
       expect(offenders, locale).toEqual([]);
     }
     expect(catalog('vi').journal.exportFile).toBe('ludy-but-toan-{org}.xlsx');
     setBrandName('Tên Mới');
     expect(catalog('vi').journal.exportFile).toBe('ten-moi-but-toan-{org}.xlsx');
+    expect(brandFileName('ludy-ke-hoach-2026-10.csv')).toBe('ten-moi-ke-hoach-2026-10.csv');
     expect(brandFileName('crove-ke-hoach-2026-10.csv')).toBe('ten-moi-ke-hoach-2026-10.csv');
     expect(brandFileName('chung-tu.pdf')).toBe('chung-tu.pdf');
     expect(withBrand('Tệp {brandSlug}-but-toan.xlsx của {brand}')).toBe('Tệp ten-moi-but-toan.xlsx của Tên Mới');

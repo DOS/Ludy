@@ -1,10 +1,22 @@
 // Applies the stored theme before the first paint, so the page never flashes the wrong one. A classic script from the
 // app's own origin (the Content-Security-Policy allows no inline script). Same rule as src/lib/theme.ts: "light",
-// "dark" or "system" from localStorage key "crove-theme", light when nothing valid is stored.
+// "dark" or "system" from localStorage key "ludy-theme" (migrating legacy "crove-theme"), light when nothing valid is stored.
 (function () {
   var setting = null;
   try {
-    setting = localStorage.getItem('crove-theme');
+    setting = localStorage.getItem('ludy-theme');
+    if (setting === null) {
+      var legacy = localStorage.getItem('crove-theme');
+      if (legacy === 'light' || legacy === 'dark' || legacy === 'system') {
+        setting = legacy;
+        try {
+          localStorage.setItem('ludy-theme', legacy);
+          localStorage.removeItem('crove-theme');
+        } catch {
+          // Ignore quota or write failures during best-effort migration.
+        }
+      }
+    }
   } catch {
     // Storage blocked: the default applies.
   }

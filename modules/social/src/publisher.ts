@@ -8,8 +8,8 @@
 //   tell whether the call went out and reconciles or asks a person; it never calls blindly;
 // - after the call, before record: the same, and that is the case the ledger exists for;
 // - record failing: the job throws, pg-boss retries it, and the retry's begin finds the variant in flight.
-import { withCallSignal, type Publisher, type PublishResult, type ReconcileResult } from '@crove/channel';
-import { BlobIntegrityError, BlobNotFoundError, BlobStoreAccessError, BlobTooLargeError, DomainError, readVerified, type BlobStore, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { withCallSignal, type Publisher, type PublishResult, type ReconcileResult } from '@ludy/channel';
+import { BlobIntegrityError, BlobNotFoundError, BlobStoreAccessError, BlobTooLargeError, DomainError, readVerified, type BlobStore, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { COVER_RULES, DOCUMENT_PROVIDERS, THREAD_PARTS_MAX, VIDEO_READY, YOUTUBE_PLAYLISTS_MAX, coverKind, coverOf, isProvider, linkCardThumbOf, mediaKindOf, scopeNeeded, type Provider } from './domain/channels.ts';
 import { PUBLISH_STALE_SECONDS, type BeginResult, type PublishRecord, type PublishWork } from './publishing.ts';
 import type { CommentWork } from './comments.ts';

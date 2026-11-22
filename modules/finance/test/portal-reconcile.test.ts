@@ -2,8 +2,8 @@
 // variants, the fallback without a tax code, amounts as a check, cancelled and replaced invoices, duplicates, period
 // scoping; the portal status words; and the worker's second check of the sandbox's answer.
 import { describe, expect, it } from 'vitest';
-import { PORTAL_LIST_SKIP_REASONS as EXTRACT_SKIP_REASONS, type ExtractedPortalList } from '@crove/extract-contract';
-import { PORTAL_LIST_SKIP_REASONS } from '@crove/kernel-contract';
+import { PORTAL_LIST_SKIP_REASONS as EXTRACT_SKIP_REASONS, type ExtractedPortalList } from '@ludy/extract-contract';
+import { PORTAL_LIST_SKIP_REASONS } from '@ludy/kernel-contract';
 import { checkPortalList, firstPerOutcome, invoiceSymbol, portalStatus, reconcilePortalList, type CroveInvoice, type PortalRow } from '../src/index.ts';
 
 const LIST = '00000000-0000-7000-8000-000000000001';

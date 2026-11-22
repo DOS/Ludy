@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { sweepMcpProposalNotices, upsertIdentity, type NotificationItem } from '@crove/kernel';
+import { sweepMcpProposalNotices, upsertIdentity, type NotificationItem } from '@ludy/kernel';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 
 const suite = ADMIN ? describe : describe.skip;

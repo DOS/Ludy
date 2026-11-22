@@ -3,9 +3,9 @@
 // and merges, orders and checks what they answer. That each line's read scopes to the member is that line's own test;
 // here the reads are stubs.
 import { describe, expect, it } from 'vitest';
-import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { zTodayList } from '@crove/kernel-contract';
-import { TODAY_READS, todayQuery } from '@crove/kernel';
+import { DomainError, type Lookup, type QueryContext } from '@ludy/kernel-runtime';
+import { zTodayList } from '@ludy/kernel-contract';
+import { TODAY_READS, todayQuery } from '@ludy/kernel';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -39,8 +39,8 @@ const run = (reads: Reads, options: { reads?: readonly string[]; absent?: readon
   todayQuery({ coworkers: async () => NAMES, ...(options.reads ? { reads: options.reads } : {}) }).handler(contextOf(reads, options.absent, options.asked), {});
 
 describe('kernel.today', () => {
-  it('names the seven reads the lines agreed to expose and the cross-app rules of the kernel', () => {
-    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
+  it('names the reads the lines agreed to expose and the cross-app rules of the kernel', () => {
+    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'sign.obligations.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
   });
 
   it('shows nothing when no read is registered yet, and when the modules are off', async () => {

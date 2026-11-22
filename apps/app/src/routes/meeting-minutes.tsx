@@ -6,10 +6,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MeetingSummaryTemplate } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import type { MeetingSummaryTemplate } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { MeetingMinutesSignHandoff } from '../components/meeting-minutes-sign-handoff.tsx';
 import { memberLabel } from '../components/meeting-results.tsx';
 import { ErrorText, ListSkeleton } from '../components/ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -188,6 +189,29 @@ export function MeetingMinutesPage() {
             <p className="text-xs text-muted-foreground">{t('minutes.placeHint')}</p>
           </div>
           <Button onClick={() => window.print()}>{t('minutes.print')}</Button>
+          {model.published && (
+            <MeetingMinutesSignHandoff
+              source={{
+                meeting: {
+                  id: meeting.data.id,
+                  title: meeting.data.title,
+                  startedAt: meeting.data.startedAt,
+                  createdAt: meeting.data.createdAt,
+                  endedAt: meeting.data.endedAt,
+                  recorderUserId: meeting.data.recorderUserId,
+                  readers: meeting.data.readers,
+                  summaryTemplate: meeting.data.summaryTemplate,
+                  minutesTemplate: meeting.data.minutesTemplate,
+                  isRecorder: meeting.data.isRecorder,
+                },
+                results: results.data,
+                companyName: org.data.name,
+                place,
+                orgMembers: members,
+              }}
+              canEdit={org.data.role !== 'viewer'}
+            />
+          )}
         </div>
         <p className="text-xs text-muted-foreground">{t('minutes.printHint')}</p>
       </div>

@@ -4,9 +4,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { DEAL_STALE_DAYS_MAX, DEAL_STALE_DAYS_MIN } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { DEAL_STALE_DAYS_MAX, DEAL_STALE_DAYS_MIN } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText, Field } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 

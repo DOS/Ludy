@@ -7,9 +7,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 // Who may have a feed: anyone who can host a booking.
 const HOSTS: readonly MemberRole[] = ['owner', 'admin', 'member'];

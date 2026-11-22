@@ -4,7 +4,7 @@
 // names no other endpoint; and the one file that sends ACTIVE is that adapter.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { MetaAdActivator } from '../src/meta-activate.ts';
 import { AdPlatformError, SandboxAdActivator, SandboxAdWriter, activatorOf, adActivators, sandboxWriteLogin } from '../src/index.ts';
 

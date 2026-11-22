@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The monthly pay run (issue #2531; payroll plan docs/plan/payroll.md §6.2 and §6.3, ADR-0046). A run is one month of one legal entity; a line is one person's month. Opening a month copies
-// the employments in force and last month's recurring inputs, the calculator of @crove/l10n-vn computes every line from stored terms, inputs and dated rules, and the figures and the
+// the employments in force and last month's recurring inputs, the calculator of @ludy/l10n-vn computes every line from stored terms, inputs and dated rules, and the figures and the
 // breakdown are stored as facts: the payslip is a view of them, never a recomputation. A draft changes; approving is R3 (a fresh second factor, a person, never an agent), is refused
 // while a rule a line used is still `commentary`, and freezes the run and its lines (the database's guard, not only this code). A correction of an approved month is an adjustment line
 // in a later run. Owners and admins only, in the commands and in the database's policies. Every read is a sensitive query, and the pay run reads the people tables in the user's context,
@@ -12,8 +12,8 @@
 // could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
+import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
 import {
   HR_DEFAULT_WORKING_DAYS,
   HR_RECURRING_INPUTS,
@@ -45,9 +45,10 @@ import {
   type HrRunWritten,
   type HrThirteenthMonthPreviewResult,
   type HrThirteenthMonthPreviewRow,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { computeAnnualLeaveBalance } from './leave.ts';
+import { vietnamDay, workPermitAlertsFor } from './employees.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, monthStart, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
@@ -79,12 +80,19 @@ interface Terms {
   contractType: 'indefinite' | 'fixed_term' | 'none';
   region: 'I' | 'II' | 'III' | 'IV';
   baseWage: string;
+  payBasis: 'monthly' | 'hourly' | 'piece_rate';
+  hourlyRate: string | null;
+  pieceRate: string | null;
+  taxResident: boolean;
   termMonths: number | null;
 }
 
 interface Person {
   employeeId: string;
   endedOn: string | null;
+  isForeign: boolean;
+  workPermitExempt: boolean;
+  workPermitExpiresOn: string | null;
   terms: Terms;
   /** The person's first terms start inside the month: a new hire, whose days before the start the person types. */
   dependents: number;
@@ -108,14 +116,24 @@ interface LineFigures {
 
 // The month's inputs as the calculator takes them, with the person's terms: a pure mapping, so the same stored facts give the same figures.
 function calculationOf(person: Person, inputs: HrPayrollInputs, month: string, workingDays: string): PayrollCalculation {
+  if (person.terms.payBasis === 'hourly' && inputs.workedHours === null) {
+    throw new PayrollRefusedError('invalid_input', 'workedHours is required for hourly payBasis');
+  }
+  if (person.terms.payBasis === 'piece_rate' && inputs.pieceCount === null) {
+    throw new PayrollRefusedError('invalid_input', 'pieceCount is required for piece_rate payBasis');
+  }
   const employment: PayrollEmployment = {
     region: person.terms.region,
     contract: person.terms.contractType,
     contractTermMonths: inputs.contractTermMonths,
-    resident: true,
+    resident: person.terms.taxResident,
+    isForeign: person.isForeign,
     // Insurance follows the contract unless the person says otherwise: no contract in writing (a short job) is not insured.
     insured: inputs.insured ?? person.terms.contractType !== 'none',
+    payBasis: person.terms.payBasis,
     baseWage: person.terms.baseWage,
+    ...(person.terms.hourlyRate !== null ? { hourlyRate: person.terms.hourlyRate } : {}),
+    ...(person.terms.pieceRate !== null ? { pieceRate: person.terms.pieceRate } : {}),
     allowances: inputs.allowances.map((a) => ({ label: a.label, amount: a.amount, type: a.type, namedInContract: a.namedInContract })),
     otherRegularPay: inputs.otherRegularPay,
     commitment: inputs.commitment,
@@ -126,6 +144,10 @@ function calculationOf(person: Person, inputs: HrPayrollInputs, month: string, w
     month,
     standardWorkingDays: workingDays,
     unpaidLeaveDays: inputs.unpaidLeaveDays,
+    sicknessBhxhDays: inputs.sicknessBhxhDays,
+    maternityBhxhDays: inputs.maternityBhxhDays,
+    ...(inputs.workedHours !== null ? { workedHours: inputs.workedHours } : {}),
+    ...(inputs.pieceCount !== null ? { pieceCount: inputs.pieceCount } : {}),
     daysNotEmployed: inputs.daysNotEmployed,
     overtime: inputs.overtime,
     nightHours: inputs.nightHours,
@@ -200,7 +222,7 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
   const end = monthEnd(month);
   const employees = await ctx.trx
     .selectFrom('crove_hr.payroll_employee')
-    .select(['id', 'ended_on', 'erased_at'])
+    .select(['id', 'ended_on', 'erased_at', 'is_foreign', 'work_permit_exempt', 'work_permit_expires_on'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
     .orderBy('id')
@@ -210,7 +232,7 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
   const ids = paid.map((e) => e.id);
   const terms = await ctx.trx
     .selectFrom('crove_hr.payroll_employment')
-    .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'term_months'])
+    .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_basis', 'hourly_rate', 'piece_rate', 'tax_resident', 'term_months'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', 'in', ids)
     .orderBy('effective_from', 'asc')
@@ -230,13 +252,20 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
     const count = dependents.filter((d) => d.employee_id === e.id && iso(d.registered_on) <= end && (d.ended_on === null || iso(d.ended_on) >= start)).length;
     people.push({
       employeeId: e.id,
-      endedOn: e.ended_on === null ? null : iso(e.ended_on),
+      endedOn: e.ended_on == null ? null : iso(e.ended_on),
+      isForeign: Boolean(e.is_foreign),
+      workPermitExempt: Boolean(e.work_permit_exempt),
+      workPermitExpiresOn: e.work_permit_expires_on == null ? null : iso(e.work_permit_expires_on),
       terms: {
         id: inForce.id,
         effectiveFrom: iso(inForce.effective_from),
         contractType: inForce.contract_type,
         region: inForce.region,
         baseWage: inForce.base_wage,
+        payBasis: inForce.pay_basis ?? 'monthly',
+        hourlyRate: inForce.hourly_rate ?? null,
+        pieceRate: inForce.piece_rate ?? null,
+        taxResident: inForce.tax_resident ?? true,
         termMonths: inForce.term_months ?? null,
       },
       dependents: count,
@@ -246,6 +275,50 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
 }
 
 const parseInputs = (value: unknown): HrPayrollInputs => zHrPayrollInputs.parse(value ?? {});
+
+function formatSyncBhxhDays(raw: string): string {
+  const exact = money(raw);
+  const normalized = exact.toDecimalPlaces(2).toFixed();
+  if (exact.isNegative() || exact.greaterThan('99.99') || !/^\d{1,2}(\.\d{1,2})?$/.test(normalized)) {
+    throw new DomainError(
+      'HR_LEAVE_DAYS_OUT_OF_RANGE',
+      422,
+      'Số ngày nghỉ hưởng BHXH đồng bộ sang bảng lương chỉ hỗ trợ tối đa 2 chữ số thập phân (0 - 99,99 ngày)',
+    );
+  }
+  return normalized;
+}
+
+interface BhxhLeaveSummary {
+  sicknessBhxhDays?: string;
+  maternityBhxhDays?: string;
+}
+
+async function loadBhxhLeaveByEmployee(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  employeeIds: readonly string[],
+  month: string,
+): Promise<Map<string, BhxhLeaveSummary>> {
+  const result = new Map<string, BhxhLeaveSummary>();
+  if (employeeIds.length === 0) return result;
+  const rows = await ctx.trx
+    .selectFrom('crove_hr.payroll_leave_entry')
+    .select(['employee_id', 'kind', 'days'])
+    .where('org_id', '=', ctx.orgId)
+    .where('employee_id', 'in', [...employeeIds])
+    .where('month', '=', month)
+    .where('kind', 'in', ['sickness_bhxh', 'maternity_bhxh'])
+    .where('approved', '=', true)
+    .execute();
+  for (const row of rows) {
+    const formatted = formatSyncBhxhDays(row.days);
+    const current = result.get(row.employee_id) ?? {};
+    if (row.kind === 'sickness_bhxh') current.sicknessBhxhDays = formatted;
+    else if (row.kind === 'maternity_bhxh') current.maternityBhxhDays = formatted;
+    result.set(row.employee_id, current);
+  }
+  return result;
+}
 
 // What recurs from last month's line, and nothing else (the plan's 6.3): the allowances, other regular pay, the voluntary pension, the commitment form, whether insured, the term of a
 // fixed-term contract and the withholding request. The rest of a month's inputs starts empty.
@@ -259,9 +332,17 @@ function recurringOf(previous: unknown): HrPayrollInputs {
 function initialInputsFor(
   person: Person,
   previous?: { employment_id: string | null; inputs: unknown },
+  bhxh?: BhxhLeaveSummary,
 ): HrPayrollInputs {
   const base = previous === undefined ? parseInputs({}) : recurringOf(previous.inputs);
-  const inputs: HrPayrollInputs = { ...base, unpaidLeaveFromLedger: false };
+  const inputs: HrPayrollInputs = {
+    ...base,
+    unpaidLeaveFromLedger: false,
+    sicknessBhxhDays: bhxh?.sicknessBhxhDays ?? '0',
+    sicknessBhxhFromLedger: bhxh?.sicknessBhxhDays !== undefined ? true : null,
+    maternityBhxhDays: bhxh?.maternityBhxhDays ?? '0',
+    maternityBhxhFromLedger: bhxh?.maternityBhxhDays !== undefined ? true : null,
+  };
   if (
     person.terms.termMonths !== null &&
     (previous === undefined || previous.employment_id !== person.terms.id || inputs.contractTermMonths === null)
@@ -333,8 +414,13 @@ export const runOpen = defineCommand({
       .where('l.kind', '=', 'pay')
       .execute();
     const lastInputs = new Map(before.map((b) => [b.employee_id, { employment_id: b.employment_id, inputs: b.inputs }]));
+    const bhxhByEmployee = await loadBhxhLeaveByEmployee(
+      ctx,
+      people.map((p) => p.employeeId),
+      input.month,
+    );
     for (const person of people) {
-      const inputs = initialInputsFor(person, lastInputs.get(person.employeeId));
+      const inputs = initialInputsFor(person, lastInputs.get(person.employeeId), bhxhByEmployee.get(person.employeeId));
       const f = figuresOf(person, inputs, input.month, workingDays);
       await ctx.trx
         .insertInto('crove_hr.payroll_line')
@@ -390,6 +476,8 @@ export const runRecalculate = defineCommand({
       .where('kind', '=', 'pay')
       .execute();
     const byEmployee = new Map(lines.map((l) => [l.employee_id, l]));
+    const newlyPaidIds = people.filter((p) => !byEmployee.has(p.employeeId)).map((p) => p.employeeId);
+    const bhxhByEmployee = await loadBhxhLeaveByEmployee(ctx, newlyPaidIds, run.month);
     let added = 0;
     for (const person of people) {
       const existing = byEmployee.get(person.employeeId);
@@ -413,7 +501,7 @@ export const runRecalculate = defineCommand({
           .execute();
       } else {
         // A person hired (or whose first terms were added) since the month was opened.
-        const freshInputs = initialInputsFor(person);
+        const freshInputs = initialInputsFor(person, undefined, bhxhByEmployee.get(person.employeeId));
         const f = figuresOf(person, freshInputs, run.month, workingDays);
         await ctx.trx
           .insertInto('crove_hr.payroll_line')
@@ -504,11 +592,36 @@ export const lineInputsSet = defineCommand({
       input.inputs.unpaidLeaveDays === existing.unpaidLeaveDays
         ? (input.inputs.unpaidLeaveFromLedger ?? existingFromLedger)
         : false;
+    const workedHours = input.inputs.workedHours === undefined ? existing.workedHours : input.inputs.workedHours;
+    const pieceCount = input.inputs.pieceCount === undefined ? existing.pieceCount : input.inputs.pieceCount;
+    const contractTermMonths =
+      input.inputs.contractTermMonths === undefined ? existing.contractTermMonths : input.inputs.contractTermMonths;
+    const sicknessBhxhDays = input.inputs.sicknessBhxhDays ?? existing.sicknessBhxhDays;
+    const maternityBhxhDays = input.inputs.maternityBhxhDays ?? existing.maternityBhxhDays;
+    const sicknessBhxhFromLedger =
+      input.inputs.sicknessBhxhDays === undefined || input.inputs.sicknessBhxhDays === existing.sicknessBhxhDays
+        ? (input.inputs.sicknessBhxhFromLedger === undefined
+            ? existing.sicknessBhxhFromLedger
+            : input.inputs.sicknessBhxhFromLedger)
+        : false;
+    const maternityBhxhFromLedger =
+      input.inputs.maternityBhxhDays === undefined || input.inputs.maternityBhxhDays === existing.maternityBhxhDays
+        ? (input.inputs.maternityBhxhFromLedger === undefined
+            ? existing.maternityBhxhFromLedger
+            : input.inputs.maternityBhxhFromLedger)
+        : false;
     const nextInputs = zHrPayrollInputs.parse({
       ...input.inputs,
+      contractTermMonths,
       leaveCategory,
       standardAnnualDays,
       unpaidLeaveFromLedger,
+      workedHours,
+      pieceCount,
+      sicknessBhxhDays,
+      sicknessBhxhFromLedger,
+      maternityBhxhDays,
+      maternityBhxhFromLedger,
     });
     const f = figuresOf(person, nextInputs, run.month, run.working_days);
     await updatePayLine(ctx, line.id, person.terms.id, nextInputs, f);
@@ -722,13 +835,24 @@ export const runSyncLeave = defineCommand({
         ? []
         : await ctx.trx
             .selectFrom('crove_hr.payroll_leave_entry')
-            .select(['employee_id', 'days'])
+            .select(['employee_id', 'kind', 'days', 'approved'])
             .where('org_id', '=', ctx.orgId)
             .where('employee_id', 'in', paidEmployeeIds)
             .where('month', '=', payRun.month)
-            .where('kind', '=', 'unpaid_leave')
+            .where('kind', 'in', ['unpaid_leave', 'sickness_bhxh', 'maternity_bhxh'])
             .execute();
-    const unpaidByEmployee = new Map(entries.map((e) => [e.employee_id, formatSyncUnpaidDays(e.days)]));
+    const unpaidByEmployee = new Map<string, string>();
+    const sicknessByEmployee = new Map<string, string>();
+    const maternityByEmployee = new Map<string, string>();
+    for (const e of entries) {
+      if (e.kind === 'unpaid_leave') {
+        unpaidByEmployee.set(e.employee_id, formatSyncUnpaidDays(e.days));
+      } else if (e.approved && e.kind === 'sickness_bhxh') {
+        sicknessByEmployee.set(e.employee_id, formatSyncBhxhDays(e.days));
+      } else if (e.approved && e.kind === 'maternity_bhxh') {
+        maternityByEmployee.set(e.employee_id, formatSyncBhxhDays(e.days));
+      }
+    }
     // Backward compatibility for pre-upgrade draft pay lines (`unpaidLeaveFromLedger === null`):
     // resolve per-employee whether a prior `sync_leave` copied an `unpaid_leave` entry that has since been cleared/deleted.
     const legacyCandidates = locked
@@ -745,14 +869,31 @@ export const runSyncLeave = defineCommand({
       payRun.created_at,
       legacyCandidates,
     );
+    const resolveBhxhTarget = (
+      ledgerDays: string | undefined,
+      currentDays: string,
+      currentFromLedger: boolean | null,
+    ): { days: string; fromLedger: boolean | null } => {
+      if (currentFromLedger === false) {
+        return { days: currentDays, fromLedger: false };
+      }
+      if (ledgerDays !== undefined) {
+        return { days: ledgerDays, fromLedger: true };
+      }
+      if (currentFromLedger === true) {
+        return { days: '0', fromLedger: null };
+      }
+      return { days: currentDays, fromLedger: currentFromLedger };
+    };
     const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
     for (const row of locked) {
       if (!people.has(row.employee_id)) continue;
       const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
       const ledgerUnpaidDays = unpaidByEmployee.get(line.employee_id);
       const cameFromLedger = existing.unpaidLeaveFromLedger === true || legacySyncedLineIds.has(line.id);
-      let nextUnpaidDays: string;
-      let nextFromLedger: boolean;
+      let nextUnpaidDays: string = existing.unpaidLeaveDays;
+      let nextFromLedger: boolean | null = existing.unpaidLeaveFromLedger;
+      let needsUnpaidStamp = false;
       if (ledgerUnpaidDays !== undefined) {
         nextUnpaidDays = ledgerUnpaidDays;
         nextFromLedger = true;
@@ -760,11 +901,28 @@ export const runSyncLeave = defineCommand({
         // A previously synced unpaid_leave entry was cleared or deleted in the leave ledger: reset back to '0'.
         nextUnpaidDays = '0';
         nextFromLedger = false;
-      } else {
-        // No leave ledger entry exists for this employee in this month, and existing unpaidLeaveDays came from
-        // imported timekeeping or manual entry rather than a prior leave sync: preserve it untouched, and stamp
-        // `unpaidLeaveFromLedger: false` on pre-upgrade (`null`) rows so later syncs skip legacy resolution.
-        if (existing.unpaidLeaveFromLedger === null && existing.unpaidLeaveDays !== '0') {
+      } else if (existing.unpaidLeaveFromLedger === null && existing.unpaidLeaveDays !== '0') {
+        nextFromLedger = false;
+        needsUnpaidStamp = true;
+      }
+      const nextSickness = resolveBhxhTarget(
+        sicknessByEmployee.get(line.employee_id),
+        existing.sicknessBhxhDays,
+        existing.sicknessBhxhFromLedger,
+      );
+      const nextMaternity = resolveBhxhTarget(
+        maternityByEmployee.get(line.employee_id),
+        existing.maternityBhxhDays,
+        existing.maternityBhxhFromLedger,
+      );
+      const unpaidChanged = existing.unpaidLeaveDays !== nextUnpaidDays || (ledgerUnpaidDays !== undefined && existing.unpaidLeaveFromLedger !== nextFromLedger) || (cameFromLedger && existing.unpaidLeaveFromLedger !== nextFromLedger);
+      const bhxhChanged =
+        existing.sicknessBhxhDays !== nextSickness.days ||
+        existing.sicknessBhxhFromLedger !== nextSickness.fromLedger ||
+        existing.maternityBhxhDays !== nextMaternity.days ||
+        existing.maternityBhxhFromLedger !== nextMaternity.fromLedger;
+      if (!unpaidChanged && !bhxhChanged) {
+        if (needsUnpaidStamp) {
           const stamped = zHrPayrollInputs.parse({ ...existing, unpaidLeaveFromLedger: false });
           await ctx.trx
             .updateTable('crove_hr.payroll_line')
@@ -775,11 +933,14 @@ export const runSyncLeave = defineCommand({
         }
         continue;
       }
-      if (existing.unpaidLeaveDays === nextUnpaidDays && existing.unpaidLeaveFromLedger === nextFromLedger) continue;
       const merged = zHrPayrollInputs.parse({
         ...existing,
         unpaidLeaveDays: nextUnpaidDays,
         unpaidLeaveFromLedger: nextFromLedger,
+        sicknessBhxhDays: nextSickness.days,
+        sicknessBhxhFromLedger: nextSickness.fromLedger,
+        maternityBhxhDays: nextMaternity.days,
+        maternityBhxhFromLedger: nextMaternity.fromLedger,
       });
       updates.push({
         lineId: line.id,
@@ -1152,7 +1313,12 @@ export const runSheet = defineQuery({
     const employeeIds = [...new Set(lines.map((l) => l.employee_id))];
     const employees = employeeIds.length === 0
       ? []
-      : await ctx.trx.selectFrom('crove_hr.payroll_employee').select(['id', 'display_name', 'ended_on']).where('org_id', '=', ctx.orgId).where('id', 'in', employeeIds).execute();
+      : await ctx.trx
+          .selectFrom('crove_hr.payroll_employee')
+          .select(['id', 'display_name', 'ended_on', 'erased_at', 'is_foreign', 'work_permit_exempt', 'work_permit_expires_on'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', employeeIds)
+          .execute();
     const firstTerms = employeeIds.length === 0
       ? []
       : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'employee_id', 'effective_from', 'contract_type', 'contract_end_on', 'probation_end_on']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', employeeIds).execute();
@@ -1176,6 +1342,7 @@ export const runSheet = defineQuery({
       list.push({ kind: row.kind, month: row.month, days: row.days, approved: row.approved });
       leaveByEmployee.set(row.employee_id, list);
     }
+    const today = vietnamDay(new Date());
     const start = monthStart(run.month);
     const end = monthEnd(run.month);
     const inMonth = (day: Date | string | null | undefined): boolean => {
@@ -1204,6 +1371,30 @@ export const runSheet = defineQuery({
         if (inMonth(used?.probation_end_on)) flags.push('probation_ends_this_month');
         if (inMonth(employee?.ended_on) && first && employee?.ended_on && countCompletedCalendarMonths(iso(first.effective_from), iso(employee.ended_on)) >= 12) {
           flags.push('severance_check');
+        }
+        const breakdown = l.breakdown as { insurance?: { suspended?: string | null }; tax?: { mode?: string } } | null;
+        if (breakdown?.insurance?.suspended === 'sickness_leave' || breakdown?.insurance?.suspended === 'maternity_leave') {
+          flags.push('bhxh_suspended_regime');
+        }
+        if (breakdown?.tax?.mode === 'non_resident_flat') {
+          flags.push('non_resident_flat_pit');
+        }
+        if (employee && employee.erased_at == null && employee.work_permit_expires_on != null) {
+          const isEndedBeforePeriod = employee.ended_on != null && iso(employee.ended_on) < start;
+          const isStillActiveToday = employee.ended_on == null || iso(employee.ended_on) >= today;
+          const permitArgs = {
+            status: isEndedBeforePeriod ? 'ended' : 'active',
+            erased: false,
+            isForeign: Boolean(employee.is_foreign),
+            workPermitExempt: Boolean(employee.work_permit_exempt),
+            workPermitExpiresOn: iso(employee.work_permit_expires_on),
+          };
+          if (
+            (run.status === 'draft' && isStillActiveToday && workPermitAlertsFor(permitArgs, today, 30).length > 0) ||
+            workPermitAlertsFor(permitArgs, end, 30).length > 0
+          ) {
+            flags.push('work_permit_expiring');
+          }
         }
         const parsedLineInputs = parseInputs(l.inputs);
         if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parsedLineInputs.contractTermMonths === null) {

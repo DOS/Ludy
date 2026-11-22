@@ -6,9 +6,9 @@
 // Never returned: the customer's email, phone or address, `payTo` (the org's bank account numbers and holders, which `finance.payment_reminder.draft` carries), a reminder's mail log, the
 // payment terms or any other setting. The same refusals as the screen's draft: nothing overdue, a paused customer. The figures are the whole org's or nothing (wholeOrgEntity).
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId } from '@ludy/kernel-contract';
+import { defineQuery } from '@ludy/kernel-runtime';
 import { noticeLevel, reminderLang, templateWords, totalOf, type NoticeLevel, type ReminderLang, type ReminderWords } from './domain/payment-reminder.ts';
 import { wholeOrgEntity } from './mcp-whole-org.ts';
 import { oneLine } from './missing-invoices.ts';
