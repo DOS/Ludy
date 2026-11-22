@@ -213,6 +213,37 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
         };
       }
       if (name === 'sign.ai_analysis.source') return aiSource;
+      if (name === 'sign.drafter.ai_source') return { aiStopped: false };
+      if (name === 'sign.vault.search') {
+        return {
+          items: [
+            {
+              envelopeId: ENVELOPE_ID,
+              title: 'Service Contract',
+              status: 'completed',
+              sourceKind: 'standalone',
+              pageCount: 1,
+              completedAt: '2026-11-16T01:05:00.000Z',
+              updatedAt: '2026-11-16T01:05:00.000Z',
+              counterpartyName: 'Acme Partner',
+              effectiveDate: '2026-12-01',
+              expiryDate: '2027-11-30',
+              renewalNoticeDays: 30,
+              autoRenew: true,
+              contractValue: '24000000',
+              currency: 'VND',
+              score: 20,
+              snippets: [
+                {
+                  kind: 'clause',
+                  pageNumber: 1,
+                  excerpt: 'Confidentiality applies for 24 months.',
+                },
+              ],
+            },
+          ],
+        };
+      }
       if (name === 'sign.ai_analysis.get') {
         if (!options.existingAnalysis) return null;
         return {
@@ -770,5 +801,65 @@ describe('os.sign RPC handlers (#3325)', () => {
     const oversizedPdf = new Uint8Array(SIGN_ATTACHMENT_MAX_BYTES + 1);
     oversizedPdf.set(validPdf, 0);
     expect(verifySignAttachmentBytes(oversizedPdf)).toBeNull();
+  });
+
+  it('wires os.sign.vault.search and os.sign.vault.ask with AI-off parity and metered AI-on citations (#4439)', async () => {
+    const { app: appOff, queried: queriedOff } = createSignTestApp({ signInstalled: true, signAi: null });
+    const searchRes = await callRpc(appOff, '/sign/vault/search', { question: 'Confidentiality' });
+    expect(searchRes.status).toBe(200);
+    const searchJson = (await searchRes.json()) as { json: { items: Array<{ envelopeId: string }> } };
+    expect(searchJson.json.items.map((x) => x.envelopeId)).toEqual([ENVELOPE_ID]);
+    expect(queriedOff.some((q) => q.name === 'sign.vault.search')).toBe(true);
+
+    const askOffRes = await callRpc(appOff, '/sign/vault/ask', { question: 'Confidentiality' });
+    expect(askOffRes.status).toBe(200);
+    const askOffJson = (await askOffRes.json()) as { json: { ai: string; items: unknown[]; summary: unknown } };
+    expect(askOffJson.json.ai).toBe('off');
+    expect(askOffJson.json.summary).toBeNull();
+    expect(askOffJson.json.items).toHaveLength(1);
+
+    const vaultReader = new SignAiReader(
+      { baseURL: 'http://model.invalid/v1', apiKey: null, model: 'test' },
+      {
+        vaultQa: async () => ({
+          output: {
+            answer: 'Service Contract includes a 24 months confidentiality clause.',
+            citations: [
+              {
+                envelopeId: ENVELOPE_ID,
+                pageNumber: 1,
+                quoteExcerpt: 'Confidentiality applies for 24 months.',
+              },
+            ],
+          },
+        }),
+      },
+    );
+    const { app: appOn } = createSignTestApp({ signInstalled: true, signAi: vaultReader });
+    const askOnRes = await callRpc(appOn, '/sign/vault/ask', { question: 'Confidentiality' });
+    expect(askOnRes.status).toBe(200);
+    const askOnJson = (await askOnRes.json()) as {
+      json: {
+        ai: string;
+        summary: {
+          answer: string;
+          proposedByAi: boolean;
+          citations: Array<{ envelopeId: string; pageNumber: number; quoteExcerpt: string }>;
+        } | null;
+      };
+    };
+    expect(askOnJson.json.ai).toBe('used');
+    expect(askOnJson.json.summary).toEqual({
+      answer: 'Service Contract includes a 24 months confidentiality clause.',
+      proposedByAi: true,
+      citations: [
+        {
+          envelopeId: ENVELOPE_ID,
+          envelopeTitle: 'Service Contract',
+          pageNumber: 1,
+          quoteExcerpt: 'Confidentiality applies for 24 months.',
+        },
+      ],
+    });
   });
 });

@@ -77,6 +77,7 @@ import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-wee
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
+  askSignVault,
   compareSignPdfVersions,
   proposeEnvelopeAnalysis,
   proposeEnvelopeObligations,
@@ -604,6 +605,7 @@ export function createRpcHandler(
   );
   const signDiffCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
   const signDrafterCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
+  const signVaultCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 40 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -4967,6 +4969,22 @@ export function createRpcHandler(
         list: os.sign.stamp.list.handler(signQuery('sign.stamp.list')),
         create: os.sign.stamp.create.handler(signCommand('sign.stamp.create')),
         archive: os.sign.stamp.archive.handler(signCommand('sign.stamp.archive')),
+      },
+      vault: {
+        search: os.sign.vault.search.handler(signQuery('sign.vault.search')),
+        ask: os.sign.vault.ask.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            askSignVault({
+              ai: signVaultCoworker,
+              runtime,
+              orgId,
+              actor,
+              input,
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
       },
     },
   });

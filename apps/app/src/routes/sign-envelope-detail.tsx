@@ -4,7 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@ludy/ui/components/card';
@@ -1044,6 +1044,13 @@ export function SignEnvelopeDetailPage() {
           </div>
         }
       />
+
+      {envelope.sourceKind === 'hr_contract' ? (
+        <Alert data-testid="sign-hr-contract-nd337-banner">
+          <AlertTitle>{t('hrContractNd337.title')}</AlertTitle>
+          <AlertDescription>{t('hrContractNd337.body')}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {envelope.inspectStatus === 'pending' ? (
         <Alert>

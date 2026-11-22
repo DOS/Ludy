@@ -48,7 +48,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type LaborContractFinding } from '@ludy/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
-import { HrContractSignHandoff } from '../components/hr-contract-sign-handoff.tsx';
+import { HrContractNd337Notice, HrContractSignHandoff } from '../components/hr-contract-sign-handoff.tsx';
 import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { signEnvelopePollMs, useSignAppEnabled } from '../components/quote-sign-handoff.tsx';
@@ -2019,6 +2019,9 @@ export function Detail({
       )}
 
       <h3 className="mt-5 text-sm font-medium text-foreground">{t('termsTitle')}</h3>
+      {!e.erased && signEnabled && e.employments.some((row) => row.contractType !== 'none') ? (
+        <HrContractNd337Notice signEnabled={signEnabled} />
+      ) : null}
       <DataTable
         head={
           e.erased

@@ -2050,3 +2050,102 @@ export const zSignOrgStampArchiveResult = z.strictObject({
   archivedAt: z.string(),
 });
 export type SignOrgStampArchiveResult = z.infer<typeof zSignOrgStampArchiveResult>;
+
+// ---------------------------------------------------------------------------
+// Slice 5a (#4439): Permission-scoped Contract Vault search & metered Vy Q&A
+// ---------------------------------------------------------------------------
+
+export const SIGN_VAULT_CANDIDATES_MAX = 20;
+export const SIGN_VAULT_CITATIONS_MAX = 8;
+export const SIGN_VAULT_SNIPPET_MAX_CHARS = 1000;
+
+export const SIGN_VAULT_SNIPPET_KINDS = [
+  'title',
+  'counterparty',
+  'obligation',
+  'clause',
+  'summary',
+  'shared_summary',
+] as const;
+export type SignVaultSnippetKind = (typeof SIGN_VAULT_SNIPPET_KINDS)[number];
+export const zSignVaultSnippetKind = z.enum(SIGN_VAULT_SNIPPET_KINDS);
+
+export const SIGN_VAULT_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'no_matches',
+  'empty',
+  'failed',
+] as const;
+export type SignVaultAiOutcome = (typeof SIGN_VAULT_AI_OUTCOMES)[number];
+export const zSignVaultAiOutcome = z.enum(SIGN_VAULT_AI_OUTCOMES);
+
+export const zSignVaultMatchSnippet = z.strictObject({
+  kind: zSignVaultSnippetKind,
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  excerpt: z.string().min(1).max(SIGN_VAULT_SNIPPET_MAX_CHARS),
+});
+export type SignVaultMatchSnippet = z.infer<typeof zSignVaultMatchSnippet>;
+
+export const zSignVaultMatchItem = z.strictObject({
+  envelopeId: zId,
+  title: z.string(),
+  status: zSignEnvelopeStatus,
+  sourceKind: zSignSourceKind,
+  pageCount: z.number().int().nullable(),
+  completedAt: z.string().nullable(),
+  updatedAt: z.string(),
+  counterpartyName: z.string().nullable(),
+  effectiveDate: zSignObligationDate.nullable(),
+  expiryDate: zSignObligationDate.nullable(),
+  renewalNoticeDays: z.number().int().nullable(),
+  autoRenew: z.boolean(),
+  contractValue: z.string().nullable(),
+  currency: z.string().nullable(),
+  score: z.number().int().min(0),
+  snippets: z.array(zSignVaultMatchSnippet).max(6),
+});
+export type SignVaultMatchItem = z.infer<typeof zSignVaultMatchItem>;
+
+export const zSignVaultSearchInput = z.strictObject({
+  question: z.string().trim().min(1).max(500),
+  status: zSignEnvelopeStatus.optional(),
+  limit: z.number().int().min(1).max(SIGN_VAULT_CANDIDATES_MAX).default(SIGN_VAULT_CANDIDATES_MAX),
+});
+export type SignVaultSearchInput = z.infer<typeof zSignVaultSearchInput>;
+
+export const zSignVaultSearchResult = z.strictObject({
+  items: z.array(zSignVaultMatchItem).max(SIGN_VAULT_CANDIDATES_MAX),
+});
+export type SignVaultSearchResult = z.infer<typeof zSignVaultSearchResult>;
+
+export const zSignVaultCitation = z.strictObject({
+  envelopeId: zId,
+  envelopeTitle: z.string().min(1).max(300),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  quoteExcerpt: z.string().min(1).max(SIGN_VAULT_SNIPPET_MAX_CHARS),
+});
+export type SignVaultCitation = z.infer<typeof zSignVaultCitation>;
+
+export const zSignVaultAiSummary = z.strictObject({
+  answer: z.string().min(1).max(2000),
+  proposedByAi: z.literal(true),
+  citations: z.array(zSignVaultCitation).min(1).max(SIGN_VAULT_CITATIONS_MAX),
+});
+export type SignVaultAiSummary = z.infer<typeof zSignVaultAiSummary>;
+
+export const zSignVaultAskInput = z.strictObject({
+  question: z.string().trim().min(1).max(500),
+  status: zSignEnvelopeStatus.optional(),
+  limit: z.number().int().min(1).max(SIGN_VAULT_CANDIDATES_MAX).default(12),
+});
+export type SignVaultAskInput = z.infer<typeof zSignVaultAskInput>;
+
+export const zSignVaultAskResult = z.strictObject({
+  ai: zSignVaultAiOutcome,
+  items: z.array(zSignVaultMatchItem).max(SIGN_VAULT_CANDIDATES_MAX),
+  summary: zSignVaultAiSummary.nullable(),
+});
+export type SignVaultAskResult = z.infer<typeof zSignVaultAskResult>;

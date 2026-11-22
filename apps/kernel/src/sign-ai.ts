@@ -26,6 +26,9 @@ import type {
   SignDrafterProposeResult,
   SignEnvelopeObligationRecordContract,
   SignObligationAiOutcome,
+  SignVaultAskInput,
+  SignVaultAskResult,
+  SignVaultSearchResult,
 } from '@ludy/kernel-contract';
 import {
   DomainError,
@@ -49,7 +52,12 @@ import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
 
 export type SignAiReaderPort = Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
-  Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations'>>;
+  Partial<
+    Pick<
+      SignAiReader,
+      'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations' | 'answerVaultQuestion'
+    >
+  >;
 
 export interface SignAi {
   reader: SignAiReaderPort | null;
@@ -779,6 +787,116 @@ export async function proposeEnvelopeObligations(
     }
     console.error('[sign-ai] obligation extraction failed', error instanceof Error ? error.name : typeof error);
     return obligationOutcome('failed', await safeExisting());
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface AskSignVaultParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'execute' | 'query'>;
+  orgId: string;
+  actor: UserActor;
+  input: SignVaultAskInput;
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions;
+}
+
+export async function askSignVault(params: AskSignVaultParams): Promise<SignVaultAskResult> {
+  const { ai, runtime, orgId, actor, input } = params;
+  const aiSource = await runtime.query<{ aiStopped: boolean }>('sign.drafter.ai_source', {}, { actor, orgId });
+
+  const searchRes = await runtime.query<SignVaultSearchResult>(
+    'sign.vault.search',
+    {
+      question: input.question,
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      limit: input.limit ?? 12,
+    },
+    { actor, orgId },
+  );
+
+  const items = searchRes.items;
+  if (items.length === 0) {
+    return { ai: 'no_matches', items: [], summary: null };
+  }
+
+  if (!ai.reader?.answerVaultQuestion || aiSource.aiStopped) {
+    return { ai: 'off', items, summary: null };
+  }
+
+  const ticket = ai.budget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return { ai: 'busy', items, summary: null };
+  }
+
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<{ aiStopped: boolean }>('sign.drafter.ai_source', {}, { actor, orgId });
+    return latest.aiStopped;
+  };
+
+  const baseMeter =
+    params.meter === 'runtime'
+      ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+      : params.meter;
+  const guardedMeter: AiMeter = {
+    admit: async (call) => {
+      if (await isAiStopped()) throw new SignAiStoppedError();
+      return baseMeter.admit(call);
+    },
+    record: (call, usage) => baseMeter.record(call, usage),
+  };
+
+  try {
+    const answerVault = ai.reader.answerVaultQuestion.bind(ai.reader);
+    const aiRes = await withAiScope({ orgId, meter: guardedMeter }, () =>
+      answerVault({
+        question: input.question,
+        candidates: items.map((item) => ({
+          envelopeId: item.envelopeId,
+          title: item.title,
+          status: item.status,
+          pageCount: item.pageCount,
+          snippets: item.snippets.map((s) => ({
+            pageNumber: s.pageNumber,
+            text: s.excerpt,
+          })),
+        })),
+      }),
+    );
+
+    if (await isAiStopped()) {
+      return { ai: 'off', items, summary: null };
+    }
+
+    if (aiRes.kind === 'none' || !aiRes.summary) {
+      return {
+        ai: aiRes.code === 'REFUSED' ? 'failed' : 'empty',
+        items,
+        summary: null,
+      };
+    }
+
+    return {
+      ai: 'used',
+      items,
+      summary: aiRes.summary,
+    };
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError) {
+      return { ai: 'off', items, summary: null };
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return { ai: 'budget', items, summary: null };
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+    console.error('[sign-ai] contract vault Q&A failed', error instanceof Error ? error.name : typeof error);
+    return { ai: 'failed', items, summary: null };
   } finally {
     ticket.release();
   }

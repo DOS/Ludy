@@ -201,7 +201,12 @@ export interface KernelAdapters {
   // Vy's eSign field placement, risky clause review, and post-signature obligation extraction (#3351, #3821); null runs manual signing without AI.
   signAi?:
     | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
-        Partial<Pick<SignAiReader, 'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations'>>)
+        Partial<
+          Pick<
+            SignAiReader,
+            'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations' | 'answerVaultQuestion'
+          >
+        >)
     | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief' | 'signAcceptanceDraft'>>) | null;
   storage: BlobStore;

@@ -1766,6 +1766,11 @@ export const vi = {
       envelopeTitle: 'Hợp đồng lao động - {name} ({date})',
       signerRoleLabel: 'Người lao động',
       openLabel: 'Mở hồ sơ ký: {title} ({status})',
+      nd337Title: 'Lưu ý pháp lý hợp đồng lao động điện tử (Nghị định 337/2025/NĐ-CP)',
+      nd337Body:
+        'Theo Nghị định 337/2025/NĐ-CP, hợp đồng lao động điện tử đầy đủ giá trị pháp lý theo luật định cần chữ ký số CA công cộng kèm dấu thời gian, xác thực của nhà cung cấp eContract được cấp phép và gắn mã định danh trên Nền tảng hợp đồng lao động điện tử quốc gia (Bộ Nội vụ). Chữ ký điện tử tích hợp sẵn trên Ludy (xác thực email OTP và niêm phong SHA-256) phù hợp cho xác nhận nội bộ hoặc giai đoạn chờ kết nối đối tác.',
+      nd337InlineHint:
+        'Nghị định 337/2025/NĐ-CP: HĐLĐ điện tử luật định cần CA + dấu thời gian + eContract + mã Bộ Nội vụ; chữ ký điện tử Ludy dùng cho xác nhận nội bộ.',
       status: {
         draft: 'Nháp',
         sent: 'Đang chờ ký',
@@ -10355,6 +10360,7 @@ export const vi = {
       sign_version_diff: 'Tóm tắt thay đổi rủi ro thương mại giữa hai bản hợp đồng PDF',
       sign_contract_draft: 'Đề xuất điều khoản bổ sung cho hợp đồng mẫu doanh nghiệp Việt Nam',
       sign_obligation_extract: 'Trích xuất thời hạn gia hạn, giá trị hợp đồng và nghĩa vụ sau ký từ hợp đồng PDF hoàn tất',
+      sign_vault_qa: 'Trả lời câu hỏi kèm trích dẫn từ các hợp đồng được phép xem trong Kho hợp đồng',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },
@@ -17941,6 +17947,9 @@ export const vi = {
         update: 'Cập nhật thông tin và trạng thái mẫu tài liệu',
       },
       today: 'Xem hồ sơ ký kết cần bạn hôm nay',
+      vault: {
+        search: 'Tìm kiếm hợp đồng, nghĩa vụ và điều khoản trong phạm vi được phân quyền',
+      },
     },
     social: {
       account: {
@@ -19134,6 +19143,45 @@ export const vi = {
       archiveStampButton: 'Lưu trữ con dấu',
       archiveStampTitle: 'Lưu trữ con dấu này?',
       archiveStampConfirm: 'Con dấu "{name}" sẽ ngừng xuất hiện khi đóng dấu mới nhưng các hồ sơ đã ký trước đó vẫn giữ nguyên.',
+    },
+    hrContractNd337: {
+      title: 'Lưu ý pháp lý hợp đồng lao động điện tử (Nghị định 337/2025/NĐ-CP)',
+      body:
+        'Theo Nghị định 337/2025/NĐ-CP, hợp đồng lao động điện tử đầy đủ giá trị pháp lý theo luật định cần chữ ký số CA công cộng kèm dấu thời gian, xác thực của nhà cung cấp eContract được cấp phép và gắn mã định danh trên Nền tảng hợp đồng lao động điện tử quốc gia (Bộ Nội vụ). Chữ ký điện tử tích hợp sẵn trên Ludy (xác thực email OTP và niêm phong SHA-256) phù hợp cho xác nhận nội bộ hoặc giai đoạn chờ kết nối đối tác.',
+    },
+    vault: {
+      heading: 'Tra cứu & Hỏi Vy về kho hợp đồng',
+      hint: 'Tìm nhanh hợp đồng trong phạm vi quyền của bạn, hoặc hỏi Vy để nhận câu trả lời kèm trích dẫn.',
+      inputLabel: 'Tìm kiếm hoặc đặt câu hỏi về hợp đồng',
+      inputPlaceholder: 'Ví dụ: Hợp đồng nào sắp hết hạn, hoặc điều khoản phạt chậm thanh toán là gì?',
+      searchButton: 'Tìm hợp đồng',
+      askVyButton: 'Hỏi Vy về kho hợp đồng',
+      askingVy: 'Vy đang tra cứu hợp đồng...',
+      clearButton: 'Xóa',
+      proposedByVyTitle: 'Đề xuất từ Vy (kiểm tra lại trên hợp đồng gốc)',
+      proposedByVyBadge: 'Đề xuất',
+      citationsHeading: 'Trích dẫn hợp đồng đã đối chiếu ({count})',
+      matchesHeading: 'Hợp đồng phù hợp ({count})',
+      openEnvelopeLink: 'Mở hợp đồng',
+      pageBadge: 'Trang {page}',
+      counterpartyChip: 'Đối tác: {name}',
+      expiryChip: 'Hết hạn {date}',
+      autoRenewChip: 'Tự động gia hạn',
+      aiOffNotice: 'AI đang tắt hoặc chưa cấu hình. Đang hiển thị kết quả tìm kiếm hợp đồng bên dưới.',
+      aiBudgetNotice: 'Đã hết ngân sách AI tháng này. Đang hiển thị kết quả tìm kiếm hợp đồng bên dưới.',
+      aiBusyNotice: 'Đang có yêu cầu AI khác xử lý. Đang hiển thị kết quả tìm kiếm hợp đồng bên dưới.',
+      aiEmptyNotice: 'Vy chưa tổng hợp được câu trả lời có trích dẫn từ các đoạn khớp. Hãy xem các hợp đồng phù hợp bên dưới.',
+      aiFailedNotice: 'Câu trả lời của Vy chưa đạt kiểm tra trích dẫn nguyên văn. Hãy xem các hợp đồng phù hợp bên dưới.',
+      noMatchesTitle: 'Không tìm thấy hợp đồng phù hợp',
+      noMatchesHint: 'Thử tìm theo tên đối tác, tiêu đề hợp đồng, nghĩa vụ thực hiện hoặc từ khóa điều khoản.',
+      snippetKind: {
+        title: 'Tiêu đề',
+        counterparty: 'Đối tác',
+        obligation: 'Nghĩa vụ / Điều khoản',
+        clause: 'Trích dẫn điều khoản',
+        summary: 'Tóm tắt',
+        shared_summary: 'Điều khoản chính',
+      },
     },
   },
 } as const;

@@ -1768,6 +1768,11 @@ export const en = {
       envelopeTitle: 'Labor contract - {name} ({date})',
       signerRoleLabel: 'Employee',
       openLabel: 'Open signing envelope: {title} ({status})',
+      nd337Title: 'Electronic labor contract legal notice (Decree 337/2025/ND-CP)',
+      nd337Body:
+        'Under Vietnam Decree 337/2025/ND-CP, a statutory electronic labor contract requires a licensed public CA digital signature with timestamp, authentication by a licensed eContract provider, and a national platform ID issued by the Ministry of Home Affairs. Ludy\'s built-in electronic signature (email OTP and SHA-256 sealing) supports internal acknowledgment or interim partner setup.',
+      nd337InlineHint:
+        'Decree 337/2025/ND-CP: statutory e-labor contracts require CA + timestamp + eContract authentication + national MoHA ID; built-in eSign covers internal acknowledgment.',
       status: {
         draft: 'Draft',
         sent: 'Awaiting signature',
@@ -10355,6 +10360,7 @@ export const en = {
       sign_version_diff: 'Summarizing commercial risk changes between two PDF contract revisions',
       sign_contract_draft: 'Proposing custom clauses for a Vietnamese SME starter contract',
       sign_obligation_extract: 'Extracting renewal dates, contract values, and post-signature obligations from a completed PDF contract',
+      sign_vault_qa: 'Answering questions with verified citations across permitted contracts in the Contract Vault',
       kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
@@ -17941,6 +17947,9 @@ export const en = {
         update: 'Update signing template settings or activation status',
       },
       today: 'Read signing envelopes that need you today',
+      vault: {
+        search: 'Search permitted signing contracts, obligations, and clause summaries',
+      },
     },
     social: {
       account: {
@@ -19134,6 +19143,45 @@ export const en = {
       archiveStampButton: 'Archive stamp',
       archiveStampTitle: 'Archive this stamp?',
       archiveStampConfirm: '"{name}" will no longer appear for new documents, while already signed envelopes keep their sealed stamp.',
+    },
+    hrContractNd337: {
+      title: 'Electronic labor contract legal notice (Decree 337/2025/ND-CP)',
+      body:
+        'Under Vietnam Decree 337/2025/ND-CP, a statutory electronic labor contract requires a licensed public CA digital signature with timestamp, authentication by a licensed eContract provider, and a national platform ID issued by the Ministry of Home Affairs. Ludy\'s built-in electronic signature (email OTP and SHA-256 cryptographic sealing) supports internal acknowledgment or interim partner setup.',
+    },
+    vault: {
+      heading: 'Contract Vault search & Q&A',
+      hint: 'Search across contracts you have permission to view, or ask Vy for a cited summary.',
+      inputLabel: 'Search or ask about your contracts',
+      inputPlaceholder: 'Example: Which contracts expire soon, or what are the late payment penalty terms?',
+      searchButton: 'Search vault',
+      askVyButton: 'Ask Vy about vault',
+      askingVy: 'Vy is checking contracts...',
+      clearButton: 'Clear',
+      proposedByVyTitle: 'Proposed by Vy (verify against cited contracts)',
+      proposedByVyBadge: 'Proposal',
+      citationsHeading: 'Verified contract citations ({count})',
+      matchesHeading: 'Matching contracts ({count})',
+      openEnvelopeLink: 'Open contract',
+      pageBadge: 'Page {page}',
+      counterpartyChip: 'Counterparty: {name}',
+      expiryChip: 'Expires {date}',
+      autoRenewChip: 'Auto-renew',
+      aiOffNotice: 'AI is turned off or unconfigured. Showing deterministic contract matches below.',
+      aiBudgetNotice: 'This month\'s AI budget is exhausted. Showing deterministic contract matches below.',
+      aiBusyNotice: 'Another AI request is running right now. Showing deterministic contract matches below.',
+      aiEmptyNotice: 'Vy could not synthesize a cited answer from these snippets. Review the matching contracts below.',
+      aiFailedNotice: 'Vy\'s answer did not pass citation verification. Review the matching contracts below.',
+      noMatchesTitle: 'No matching contracts found',
+      noMatchesHint: 'Try searching by counterparty name, contract title, obligation keyword, or clause term.',
+      snippetKind: {
+        title: 'Title',
+        counterparty: 'Counterparty',
+        obligation: 'Obligation / Term',
+        clause: 'Clause quote',
+        summary: 'Summary',
+        shared_summary: 'Key term',
+      },
     },
   },
 } as const satisfies CatalogShape<Messages>;
