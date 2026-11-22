@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The nightly deletion of the original file of a decided marketplace report, the worker's side (#2516 step C-2b3, ADR-0045 point 8, modules/finance/src/marketplace-retention.ts).
 //
-// crove_finance.marketplace_retention_due (worker only) lists the order and income reports a member decided more than MARKETPLACE_ORIGINAL_RETENTION_DAYS ago whose original is
+// ludy_finance.marketplace_retention_due (worker only) lists the order and income reports a member decided more than MARKETPLACE_ORIGINAL_RETENTION_DAYS ago whose original is
 // still there. For each, in its own org: the blob key is read (finance.marketplace_retention.key), the object is deleted unless another file row names the same key, and only then
 // does finance.marketplace_retention.apply mark the original deleted and delete the staged extraction versions that hold the per-order amounts, and the object is deleted once more
 // (closing the window of a same-bytes upload in between). What the store's delete does is the store's: on a versioned bucket (production, with Object Lock) it adds a delete marker and
@@ -9,7 +9,7 @@
 // between the two steps repeats the delete (a delete of a missing object is a no-op) and never leaves a file row marked deleted whose object still exists. Safe to run twice.
 // A failing file is left for the next run and never holds the others behind it. Nothing here logs a filename, an order or an amount: ids and counts.
 //
-// The same pass, with another list, is the PURGE of what a disconnected connection's poll brought in and no member ever imported (#4284, runMarketplacePurge): crove_finance.marketplace_purge_due lists
+// The same pass, with another list, is the PURGE of what a disconnected connection's poll brought in and no member ever imported (#4284, runMarketplacePurge): ludy_finance.marketplace_purge_due lists
 // the files whose connection was removed or revoked more than MARKETPLACE_PURGE_GRACE_DAYS ago (or expired more than MARKETPLACE_PURGE_EXPIRED_DAYS before that), and the two commands are asked with
 // `disconnected: true` (the database re-checks that nothing a member imported is touched). The purge deletes the file row itself, so there the "marker" of the retention is the row's absence, and the
 // second object delete closes the same window.
@@ -47,7 +47,7 @@ const RETENTION: SweepKind = {
   component: ACTOR.component,
   input: {},
   list: async (workerDb, limit) =>
-    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM crove_finance.marketplace_retention_due(${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
+    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM ludy_finance.marketplace_retention_due(${MARKETPLACE_ORIGINAL_RETENTION_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
 };
 
 const PURGE: SweepKind = {
@@ -55,7 +55,7 @@ const PURGE: SweepKind = {
   component: 'finance.marketplace_purge',
   input: { disconnected: true },
   list: async (workerDb, limit) =>
-    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM crove_finance.marketplace_purge_due(${MARKETPLACE_PURGE_GRACE_DAYS}::int, ${MARKETPLACE_PURGE_EXPIRED_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
+    (await sql<{ org_id: string; file_id: string }>`SELECT org_id, file_id FROM ludy_finance.marketplace_purge_due(${MARKETPLACE_PURGE_GRACE_DAYS}::int, ${MARKETPLACE_PURGE_EXPIRED_DAYS}::int, ${limit}::int)`.execute(workerDb)).rows,
 };
 
 type SweepDeps = { runtime: Runtime; workerDb: Db; store: BlobStore; log?: Log; batch?: number };
@@ -125,7 +125,7 @@ async function sweep(deps: SweepDeps, kind: SweepKind): Promise<MarketplaceReten
 /** The checks of a column mapping on an unrecognised report that finished more than a week ago, deleted with their masked sheet and their preview of parsed lines (#4036; personal data kept seven days at most).
  * One call to the database's own worker-only function; it logs the count and nothing else. */
 export async function pruneMarketplaceColumnChecks(deps: { workerDb: Db; log?: Log }): Promise<number> {
-  const { rows } = await sql<{ n: number }>`SELECT crove_finance.marketplace_column_check_prune(${MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS}::int) AS n`.execute(deps.workerDb);
+  const { rows } = await sql<{ n: number }>`SELECT ludy_finance.marketplace_column_check_prune(${MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS}::int) AS n`.execute(deps.workerDb);
   const n = Number(rows[0]?.n ?? 0);
   (deps.log ?? console).log(`${TAG} column checks=${n}`);
   return n;

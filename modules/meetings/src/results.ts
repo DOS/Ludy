@@ -102,7 +102,7 @@ export async function recorderMeeting(ctx: CommandContext, meetingId: string, wh
 // An attendee the item may name: the recorder or a reader of the meeting.
 async function checkAttendee(trx: Trx, orgId: string, meetingId: string, recorder: string, userId: string | null): Promise<void> {
   if (userId === null || userId === recorder) return;
-  const row = await trx.selectFrom('crove_meetings.meeting_reader').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('user_id', '=', userId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_meetings.meeting_reader').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('user_id', '=', userId).executeTakeFirst();
   if (!row) throw new DomainError('INVALID_READER', 422, 'An action item can name only the recorder or an attendee of the meeting');
 }
 
@@ -117,7 +117,7 @@ export const meetingSummarySave = defineCommand({
     await recorderMeeting(ctx, input.meetingId, 'write its summary');
     // On a template the recorder types its sections and code makes the one summary text from them (the headings are code's); on the general template the recorder types
     // the summary itself. The two are never mixed, so a result is one text however it was typed.
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['summary_template', 'minutes_template_sections']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('ludy_meetings.meeting').select(['summary_template', 'minutes_template_sections']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
     // On a custom template (#3578) the sections are the meeting's own copy, so the recorder types under the headings the meeting was given, whatever the org's template says now.
     const copy = row.minutes_template_sections === null ? null : parseStoredSections(row.minutes_template_sections);
     const defs = templateSections(row.summary_template, copy);
@@ -131,9 +131,9 @@ export const meetingSummarySave = defineCommand({
       if (summary === '') throw new DomainError('SUMMARY_REQUIRED', 422, 'Write at least one section');
     }
     // A new save replaces the earlier draft; what the recorder typed is the recorder's own text, so it is not tainted.
-    await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     await ctx.trx
-      .insertInto('crove_meetings.meeting_result')
+      .insertInto('ludy_meetings.meeting_result')
       .values({ org_id: ctx.orgId, meeting_id: input.meetingId, summary, decisions: sql`${JSON.stringify(input.decisions)}::jsonb`, feature: 'manual', stage: 'draft', tainted: false })
       .execute();
     ctx.audit({ meetingId: input.meetingId, decisionCount: input.decisions.length });
@@ -162,7 +162,7 @@ export const meetingTemplateSet = defineCommand({
     };
     if (input.summaryTemplate === 'custom') {
       const template = await ctx.trx
-        .selectFrom('crove_meetings.minutes_template')
+        .selectFrom('ludy_meetings.minutes_template')
         .select(['name', 'sections', 'archived_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.templateId as string)
@@ -173,7 +173,7 @@ export const meetingTemplateSet = defineCommand({
       copy = { minutes_template_name: template.name, minutes_template_sections: json, minutes_template_hash: sql<string>`pg_catalog.md5((${json}::jsonb)::text)` };
     }
     await ctx.trx
-      .updateTable('crove_meetings.meeting')
+      .updateTable('ludy_meetings.meeting')
       .set({ summary_template: input.summaryTemplate, ...copy, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -193,10 +193,10 @@ export const actionItemCreate = defineCommand({
   handler: async (ctx, input) => {
     const { userId } = await recorderMeeting(ctx, input.meetingId, 'add action items');
     await checkAttendee(ctx.trx, ctx.orgId, input.meetingId, userId, input.whoUserId);
-    const count = await ctx.trx.selectFrom('crove_meetings.action_item').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const count = await ctx.trx.selectFrom('ludy_meetings.action_item').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).executeTakeFirstOrThrow();
     if (Number(count.n) >= ITEMS_PER_MEETING_MAX) throw new DomainError('TOO_MANY_ITEMS', 422, 'A meeting holds at most 100 action items');
     const row = await ctx.trx
-      .insertInto('crove_meetings.action_item')
+      .insertInto('ludy_meetings.action_item')
       .values({
         org_id: ctx.orgId,
         meeting_id: input.meetingId,
@@ -227,7 +227,7 @@ export const actionItemEdit = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     // RLS shows a draft to its recorder only, so any other caller meets the same answer as for an unknown id.
-    const item = await ctx.trx.selectFrom('crove_meetings.action_item').select(['meeting_id', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select(['meeting_id', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
     if (!item) throw itemNotFound();
     const meeting = await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     if (meeting.recorder_user_id !== userId) throw itemNotFound();
@@ -235,7 +235,7 @@ export const actionItemEdit = defineCommand({
     const title = input.title ?? item.title;
     // Code looks at the title again on every edit.
     await ctx.trx
-      .updateTable('crove_meetings.action_item')
+      .updateTable('ludy_meetings.action_item')
       .set({
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.who === undefined ? {} : { who_drafted: input.who }),
@@ -252,7 +252,7 @@ export const actionItemEdit = defineCommand({
     // Only a changed title is the recorder's own text; fixing a date or an attendee leaves the model's title tainted. The mark is cleared by the recorder's
     // review (a definer: the tenant context cannot change it), here for this one item.
     if (input.title !== undefined && input.title !== item.title) {
-      await sql`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ARRAY[${input.itemId}]::uuid[])`.execute(ctx.trx);
+      await sql`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ARRAY[${input.itemId}]::uuid[])`.execute(ctx.trx);
     }
     ctx.audit({ itemId: input.itemId, meetingId: item.meeting_id });
     return { itemId: input.itemId };
@@ -267,11 +267,11 @@ export const actionItemDelete = defineCommand({
   access: ROLES,
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
-    const item = await ctx.trx.selectFrom('crove_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
     if (!item) throw itemNotFound();
     const meeting = await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     if (meeting.recorder_user_id !== userId) throw itemNotFound();
-    await ctx.trx.deleteFrom('crove_meetings.action_item').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).execute();
+    await ctx.trx.deleteFrom('ludy_meetings.action_item').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).execute();
     ctx.audit({ itemId: input.itemId, meetingId: item.meeting_id });
     return { itemId: input.itemId, deleted: true as const };
   },
@@ -279,7 +279,7 @@ export const actionItemDelete = defineCommand({
 
 // Whether the recorder shared the meeting with the whole company (visibility 'org'): the only meetings whose published minutes wake an agent (#3803). The caller is the recorder, who reads the row.
 async function meetingIsOrgVisible(trx: Trx, orgId: string, meetingId: string): Promise<boolean> {
-  const row = await trx.selectFrom('crove_meetings.meeting').select('visibility').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_meetings.meeting').select('visibility').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
   return row?.visibility === 'org';
 }
 
@@ -294,31 +294,31 @@ export const resultPublish = defineCommand({
     await recorderMeeting(ctx, input.meetingId, 'share its summary');
     // The meeting row is held first, before any row of it is locked, in the order the personal-data erasure and a meeting's delete take (the meeting, then its rows), so a publish cannot deadlock with
     // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
-      .selectFrom('crove_meetings.meeting_result')
+      .selectFrom('ludy_meetings.meeting_result')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'draft')
       .where('tainted', '=', true)
-      .unionAll(ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
+      .unionAll(ctx.trx.selectFrom('ludy_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
       .executeTakeFirst();
     // The same for the draft chapters (#3844); the database refuses a tainted draft chapter too.
-    const unreadChapter = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).executeTakeFirst();
+    const unreadChapter = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).executeTakeFirst();
     if (unread || unreadChapter) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
     // The draft is locked first: the nightly expiry (meetings.retention.shred, kind 'draft') then waits for this publish, or has already deleted the draft, in which
     // case none is found here and the summary published before it is not replaced by nothing.
-    const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
+    const draft = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;
     let published: { summary: string; decisions: unknown; updated_at: Date } | null = null;
     if (draft) {
-      await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      await ctx.trx.deleteFrom('ludy_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
       published =
         (await ctx.trx
-          .updateTable('crove_meetings.meeting_result')
+          .updateTable('ludy_meetings.meeting_result')
           .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', draft.id)
@@ -327,7 +327,7 @@ export const resultPublish = defineCommand({
       results = 1;
     }
     const items = await ctx.trx
-      .updateTable('crove_meetings.action_item')
+      .updateTable('ludy_meetings.action_item')
       .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -336,7 +336,7 @@ export const resultPublish = defineCommand({
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
     // The draft chapters (#3844) replace the chapters published before them, as the summary does.
-    const draftChapters = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
+    const draftChapters = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
     let chapters = 0;
     if (draftChapters.length > 0) {
       // Each chapter must still start at a line of the transcript: a re-transcription since the save may have replaced the lines (#3881). Refused as a whole, and nothing of this publish is kept (the same
@@ -344,9 +344,9 @@ export const resultPublish = defineCommand({
       if ((await missingAnchors(ctx, input.meetingId, draftChapters.map((c) => c.start_seconds))).length > 0) {
         throw new DomainError('CHAPTER_ANCHOR_LOST', 409, 'A chapter no longer starts at a line of the transcript (the transcript changed): save the chapters again, then share');
       }
-      await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      await ctx.trx.deleteFrom('ludy_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
       const flipped = await ctx.trx
-        .updateTable('crove_meetings.meeting_chapter')
+        .updateTable('ludy_meetings.meeting_chapter')
         .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
         .where('org_id', '=', ctx.orgId)
         .where('meeting_id', '=', input.meetingId)
@@ -376,7 +376,7 @@ export const resultPublish = defineCommand({
 
 // Makes the task of one item, and marks the item (once). The caller has read the item under RLS; the database function checks again that they may accept it.
 async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: string; due: string | null; positionId: string }): Promise<string> {
-  const item = await ctx.trx.selectFrom('crove_meetings.action_item').select(['id', 'meeting_id', 'title', 'status', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
+  const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select(['id', 'meeting_id', 'title', 'status', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   if (!item) throw itemNotFound();
   await openMeeting(ctx.trx, ctx.orgId, item.meeting_id); // the text-retention gate, as for every other read and write of a meeting's text
   if (item.status !== 'suggested') throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
@@ -389,7 +389,7 @@ async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: 
     tainted: item.tainted && choice.title === item.title,
   });
   try {
-    await sql`SELECT crove_meetings.action_item_accept(${ctx.orgId}::uuid, ${itemId}::uuid, ${created.taskId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_meetings.action_item_accept(${ctx.orgId}::uuid, ${itemId}::uuid, ${created.taskId}::uuid)`.execute(ctx.trx);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '';
     if (message.includes('MEETINGS_ITEM_ACCEPTED')) throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
@@ -446,7 +446,7 @@ export const actionItemAcceptClean = defineCommand({
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The items the caller reads and may still accept (RLS: the recorder reads drafts and published, a reader published only).
     const rows = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(['id', 'title', 'flags', 'who_parsed', sql<string | null>`when_parsed::text`.as('when_parsed')])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -486,9 +486,9 @@ export const meetingResultGet = defineQuery({
   handler: async (ctx, input): Promise<MeetingResults> => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    const results = await ctx.trx.selectFrom('crove_meetings.meeting_result').select(['id', 'feature', 'stage', 'summary', 'decisions', 'tainted']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    const results = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select(['id', 'feature', 'stage', 'summary', 'decisions', 'tainted']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const items = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(['id', 'stage', 'status', 'title', 'who_drafted', 'who_parsed', 'when_drafted', sql<string | null>`when_parsed::text`.as('when_parsed'), 'transcript_seconds', 'flags', 'tainted', 'task_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -552,7 +552,7 @@ export const actionItemSource = defineQuery({
   input: zActionItemRef,
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx, input): Promise<{ meetingId: string }> => {
-    const item = await ctx.trx.selectFrom('crove_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).executeTakeFirst();
     if (!item) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     return zActionItemSource.parse({ meetingId: item.meeting_id });

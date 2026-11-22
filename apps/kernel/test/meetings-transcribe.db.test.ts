@@ -99,11 +99,11 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const subkey = (broker.deriveKey as (k: string, p: string) => Buffer)(keyId, 'crove.meetings.v1|wrap');
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '20 minutes', 1200, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
         [orgId, meetingId, users[who]],
       );
-      await c.query(`INSERT INTO crove_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key) VALUES ($1, $2, $3, $4, 'audio', $5)`, [orgId, randomUUID(), meetingId, keyId, wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, subkey)]);
+      await c.query(`INSERT INTO ludy_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key) VALUES ($1, $2, $3, $4, 'audio', $5)`, [orgId, randomUUID(), meetingId, keyId, wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, subkey)]);
       for (let order = 0; order < 2; order += 1) {
         const ciphertext = encryptBlobBuffer(randomBytes(2000), dataKey, binding);
         const sha = sha256Hex(ciphertext);
@@ -114,7 +114,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
           `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.opus', 'audio/ogg', $5, 'meeting_audio')`,
           [orgId, fileId, sha, storageKey, ciphertext.length],
         );
-        await c.query(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 600)`, [orgId, randomUUID(), meetingId, fileId, order, order * 600]);
+        await c.query(`INSERT INTO ludy_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 600)`, [orgId, randomUUID(), meetingId, fileId, order, order * 600]);
       }
     });
     return meetingId;
@@ -177,7 +177,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const meetingId = await seedMeeting('recorder');
     expect((await status('recorder', meetingId)).state).toBe('none');
     const before = providerCalls;
-    const usedAt = () => admin((c) => c.query<{ used: boolean }>('SELECT audio_used_at IS NOT NULL AS used FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
+    const usedAt = () => admin((c) => c.query<{ used: boolean }>('SELECT audio_used_at IS NOT NULL AS used FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
     expect((await usedAt()).rows[0]?.used).toBe(false);
     const { runId } = await start('recorder', meetingId);
     // The start leaves its trace on the meeting (#3187): a joined recording is no longer replaced by a late complete upload.
@@ -198,7 +198,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     // The run is closed by the worker, and the job wrote no meeting table: nothing is in the draft until the recorder copies.
     const run = await admin((c) => c.query<{ status: string }>(`SELECT status FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
     expect(run.rows[0]?.status).toBe('succeeded');
-    const drafts = () => admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    const drafts = () => admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
     expect((await drafts()).rows[0]?.n).toBe('0');
 
     // Only the recorder copies, and the copy is the draft shape of M4a.
@@ -208,7 +208,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const copied = await app.execute<{ stored: number }>('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('recorder'), orgId });
     expect(copied.stored).toBe(4);
     // The copied rows are the model's text: born tainted, and each names the run it came from (#2941); nothing but the recorder's review clears either.
-    const born = await admin((c) => c.query<{ tainted: boolean; source_run_id: string | null }>(`SELECT tainted, source_run_id FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    const born = await admin((c) => c.query<{ tainted: boolean; source_run_id: string | null }>(`SELECT tainted, source_run_id FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
     expect(born.rows).toHaveLength(4);
     expect(born.rows.every((r) => r.tainted && r.source_run_id === runId)).toBe(true);
     const transcript = await app.query<{ stage: string; segments: Array<{ text: string; startSeconds: number }> }>('meetings.transcript.get', { meetingId }, { actor: asUser('recorder'), orgId });
@@ -222,7 +222,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
   it('charges the length crove-media measures in the audio, not the length the row stores (#2985)', async () => {
     const meetingId = await seedMeeting('recorder');
     // A row written before uploads were measured: it says 5 seconds for audio that really is 600 (what the fake sandbox measures).
-    await admin((c) => c.query(`UPDATE crove_meetings.audio_segment SET length_seconds = 5 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    await admin((c) => c.query(`UPDATE ludy_meetings.audio_segment SET length_seconds = 5 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
     const { runId } = await start('recorder', meetingId);
     const heard: number[] = [];
     const measuring: MediaMeasurer = { ...fakeMediaMeasurer(600), measureBytes: async () => (heard.push(600), 600) };
@@ -262,7 +262,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const theirs = await seedMeeting('other');
     // An attendees-only meeting of another recorder is not even visible to a member who is no reader; a reader who is not the recorder is refused.
     expect(await refuses(start('recorder', theirs))).toBe('MEETING_NOT_FOUND');
-    await admin((c) => c.query(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), theirs, users.recorder]));
+    await admin((c) => c.query(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), theirs, users.recorder]));
     expect(await refuses(start('recorder', theirs))).toBe('FORBIDDEN');
     const { runId } = await start('recorder', mine);
     await runJob('recorder', mine, runId);
@@ -364,7 +364,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const { runId } = await start('recorder', meetingId);
     const before = providerCalls;
     // The owner's compliance delete (here by SQL: the database trigger is what every path of deleting a meeting goes through) while chunk 1 is at the provider.
-    afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])));
+    afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])));
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
@@ -384,7 +384,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
 
   it('deleting a meeting with no live run writes no cancellation audit row (#2863)', async () => {
     const meetingId = await seedMeeting('recorder');
-    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    await admin((c) => c.query(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
     const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail ->> 'meetingId' = $2`, [orgId, meetingId]));
     expect(audit.rows[0]?.n).toBe('0');
   });
@@ -393,7 +393,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const meetingId = await seedMeeting('recorder');
     const { runId } = await start('recorder', meetingId);
     await admin((c) => c.query(`UPDATE ludy_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runId]));
-    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    await admin((c) => c.query(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
     const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
     expect(audit.rows[0]?.n).toBe('0');
   });
@@ -415,7 +415,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const { runId } = await start('recorder', meetingId);
     expect(await runJob('recorder', meetingId, runId)).toBe('succeeded');
     expect((await resultRows(runId)).rows[0]?.n).toBe('1');
-    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    await admin((c) => c.query(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
   });
 
@@ -435,7 +435,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
   it('the text purge of the retention job (system context) mid-run stops the run and leaves no result row', async () => {
     const meetingId = await seedMeeting('recorder');
     const { runId } = await start('recorder', meetingId);
-    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    await admin((c) => c.query(`UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
     const before = providerCalls;
     // The text period has ended: the audio door refuses at once (before the first chunk is sent), and the purge removes the meeting and the result with it.
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
@@ -448,7 +448,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const meetingId = await seedMeeting('recorder');
     const { runId } = await start('recorder', meetingId);
     const before = providerCalls;
-    afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM crove_meetings.media_key WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])));
+    afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM ludy_meetings.media_key WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])));
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
     const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
@@ -458,11 +458,11 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
   // #2863 item 1: the audio's retention date ends its period from that day, before the nightly shred has run: no run starts, and a run under way ends as the shred does.
   it('refuses to start once the audio retention date is reached, and a run under way ends with MEDIA_KEY_SHREDDED', async () => {
     const late = await seedMeeting('recorder');
-    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, late]));
+    await admin((c) => c.query(`UPDATE ludy_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, late]));
     expect(await refuses(start('recorder', late))).toBe('MEDIA_KEY_SHREDDED');
     const meetingId = await seedMeeting('recorder');
     const { runId } = await start('recorder', meetingId);
-    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    await admin((c) => c.query(`UPDATE ludy_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
     const before = providerCalls;
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls).toBe(before);

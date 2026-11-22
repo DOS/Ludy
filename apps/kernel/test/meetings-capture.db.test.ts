@@ -57,8 +57,8 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
   }
   const rows = <R extends pg.QueryResultRow = Record<string, unknown>>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<R>(text, params)).rows);
   const sessionsOf = (meetingId: string) =>
-    rows<Session>('SELECT meeting_id, recorder_user_id, kind, agenda_id, meeting_key, ended_at::text, ended_reason FROM crove_meetings.capture_session WHERE meeting_id = $1', [meetingId]);
-  const meetingCount = async (userId: string) => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.meeting WHERE recorder_user_id = $1', [userId]))[0]!.n);
+    rows<Session>('SELECT meeting_id, recorder_user_id, kind, agenda_id, meeting_key, ended_at::text, ended_reason FROM ludy_meetings.capture_session WHERE meeting_id = $1', [meetingId]);
+  const meetingCount = async (userId: string) => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.meeting WHERE recorder_user_id = $1', [userId]))[0]!.n);
 
   const create = async (actor: UserActor, org: string, capture?: { agendaId?: string; joinUrl?: string }) =>
     (await runtime.execute<{ meetingId: string }>('meetings.meeting.create', { ...CREATE, ...(capture ? { capture } : {}) }, { actor, orgId: org })).meetingId;
@@ -73,7 +73,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     }
     throw new Error('expected a refusal');
   }
-  const silence = (meetingId: string, seconds = 120) => rows("UPDATE crove_meetings.capture_session SET last_seen_at = now() - ($2 || ' seconds')::interval WHERE meeting_id = $1", [meetingId, String(seconds)]);
+  const silence = (meetingId: string, seconds = 120) => rows("UPDATE ludy_meetings.capture_session SET last_seen_at = now() - ($2 || ' seconds')::interval WHERE meeting_id = $1", [meetingId, String(seconds)]);
 
   async function insertToken(orgId: string, userId: string, id: string) {
     await rows(
@@ -96,7 +96,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
       );
     }
     await rows(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, join_url)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, join_url)
        VALUES ($1, $2, $3, $4, $5, 'Họp khách', now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', $6)`,
       [orgId, event, connection, userId, `ext-${event}`, joinUrl],
     );
@@ -157,7 +157,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     const [row] = await sessionsOf(meetingId);
     expect(row).toMatchObject({ kind: 'app', meeting_key: keyOf(orgA, code), agenda_id: null, ended_at: null });
     // Nothing of the address is kept: not in the row, not in the audit of the start.
-    const stored = (await rows<{ j: string }>('SELECT to_jsonb(s)::text AS j FROM crove_meetings.capture_session s WHERE meeting_id = $1', [meetingId]))[0]!.j;
+    const stored = (await rows<{ j: string }>('SELECT to_jsonb(s)::text AS j FROM ludy_meetings.capture_session s WHERE meeting_id = $1', [meetingId]))[0]!.j;
     expect(stored).not.toContain('meet.google.com');
     expect(stored).not.toContain(code);
     const audit = JSON.stringify((await rows('SELECT detail FROM ludy_kernel.audit_event WHERE command = $1 AND detail->>$2 = $3', ['meetings.meeting.create', 'meetingId', meetingId]))[0]);
@@ -169,7 +169,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     const code = meet();
     const first = await create(app(users.m1), orgA, { joinUrl: meetUrl(code) });
     const [row] = await sessionsOf(first);
-    const since = (await rows<{ s: string }>('SELECT started_at AS s FROM crove_meetings.capture_session WHERE meeting_id = $1', [first]))[0]!.s;
+    const since = (await rows<{ s: string }>('SELECT started_at AS s FROM ludy_meetings.capture_session WHERE meeting_id = $1', [first]))[0]!.s;
     const before = await meetingCount(users.m2);
     // One after the other: a started promise that is refused must have its refusal awaited at once.
     for (const attempt of [() => create(app(users.m2), orgA, { joinUrl: meetUrl(code.toUpperCase(), '/?hs=179&authuser=2') }), () => create(ext(users.m2, tokens.m2), orgA, { joinUrl: meetUrl(code, '/') })]) {
@@ -212,7 +212,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     expect((await sessionsOf(second))[0]).toMatchObject({ ended_reason: null, kind: 'app' });
     // The first recorder is still recording: its heartbeat says the capture no longer holds the call, and its meeting is untouched.
     expect(await beat(m1, orgA, first)).toEqual({ open: false });
-    expect((await rows<{ ended_at: string | null }>('SELECT ended_at::text FROM crove_meetings.meeting WHERE id = $1', [first]))[0]).toEqual({ ended_at: null });
+    expect((await rows<{ ended_at: string | null }>('SELECT ended_at::text FROM ludy_meetings.meeting WHERE id = $1', [first]))[0]).toEqual({ ended_at: null });
     // Once the second capture ends, the first takes the call back with its next heartbeat.
     expect(await beat(m2, orgA, second, true)).toEqual({ open: false });
     expect(await beat(m1, orgA, first)).toEqual({ open: true });

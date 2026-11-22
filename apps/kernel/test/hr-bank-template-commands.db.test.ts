@@ -110,7 +110,7 @@ suite('saved bank templates through the commands (#2893)', () => {
     await o.exec(o.admin, 'hr.payroll.bank_template.edit', { templateId: a.templateId, name: '  VCB  ', layout: layout({ columns: [...COLUMNS].reverse() }) });
     const edited = (await o.list(o.owner)).find((t) => t.id === a.templateId);
     expect(edited?.name).toBe('VCB');
-    const stamped = await withAdmin(async (c) => (await c.query<{ moved: boolean }>('SELECT updated_at > created_at AS moved FROM crove_hr.payroll_bank_template WHERE org_id = $1 AND id = $2', [o.orgId, a.templateId])).rows[0]?.moved);
+    const stamped = await withAdmin(async (c) => (await c.query<{ moved: boolean }>('SELECT updated_at > created_at AS moved FROM ludy_hr.payroll_bank_template WHERE org_id = $1 AND id = $2', [o.orgId, a.templateId])).rows[0]?.moved);
     expect(stamped).toBe(true);
     expect(edited?.layout.columns.map((c) => c.key)).toEqual(['content', 'amount', 'bank', 'account', 'name', 'sequence']);
     await o.exec(o.owner, 'hr.payroll.bank_template.delete', { templateId: b.templateId });

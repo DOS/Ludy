@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
-// <= 25 MiB files and clipboard screenshots attached directly to a note under crove_notes.attachment
+// <= 25 MiB files and clipboard screenshots attached directly to a note under ludy_notes.attachment
 // and private BlobStore keys notes/<org_id>/<attachment_id>, never touching ludy_kernel.file.
 import {
   auditValue,
@@ -21,7 +21,7 @@ import { notesManifest } from './manifest.ts';
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const ATTACHMENT = notesManifest.tables.crove_notes.attachment;
+const ATTACHMENT = notesManifest.tables.ludy_notes.attachment;
 
 export const NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT = 'notes.attachment.extract_queued';
 
@@ -85,7 +85,7 @@ function toNoteAttachment(row: AttachmentRow): NoteAttachment {
 
 export async function loadNoteAttachments(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string): Promise<NoteAttachment[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_notes.attachment')
+    .selectFrom('ludy_notes.attachment')
     .select(ATTACHMENT_COLUMNS)
     .where('org_id', '=', ctx.orgId)
     .where('note_id', '=', noteId)
@@ -101,7 +101,7 @@ async function loadParentNoteForWrite(
   check: (note: { id: string; author_user_id: string; visibility: NoteVisibility; deleted_at: Date | string | null }) => void,
 ) {
   const readable = await ctx.trx
-    .selectFrom('crove_notes.note')
+    .selectFrom('ludy_notes.note')
     .select(['id', 'author_user_id', 'visibility', 'deleted_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', noteId)
@@ -109,7 +109,7 @@ async function loadParentNoteForWrite(
   if (!readable) throw noteNotFound();
   check(readable);
   const locked = await ctx.trx
-    .selectFrom('crove_notes.note')
+    .selectFrom('ludy_notes.note')
     .select(['id', 'author_user_id', 'visibility', 'deleted_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', noteId)
@@ -143,7 +143,7 @@ export const noteAttachmentCreate = defineCommand({
     });
 
     const existing = await ctx.trx
-      .selectFrom('crove_notes.attachment')
+      .selectFrom('ludy_notes.attachment')
       .select(({ fn }) => fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('note_id', '=', input.noteId)
@@ -153,7 +153,7 @@ export const noteAttachmentCreate = defineCommand({
     }
 
     const row = await ctx.trx
-      .insertInto('crove_notes.attachment')
+      .insertInto('ludy_notes.attachment')
       .values({
         org_id: ctx.orgId,
         id: input.attachmentId,
@@ -172,7 +172,7 @@ export const noteAttachmentCreate = defineCommand({
       .executeTakeFirstOrThrow();
 
     await ctx.trx
-      .updateTable('crove_notes.note')
+      .updateTable('ludy_notes.note')
       .set({ updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -211,7 +211,7 @@ export const noteAttachmentDelete = defineCommand({
   handler: async (ctx, input): Promise<NoteAttachmentDeleted> => {
     const userId = requireHumanUser(ctx.actor);
     const att = await ctx.trx
-      .selectFrom('crove_notes.attachment')
+      .selectFrom('ludy_notes.attachment')
       .select(['id', 'note_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
@@ -229,7 +229,7 @@ export const noteAttachmentDelete = defineCommand({
     });
 
     const deleted = await ctx.trx
-      .deleteFrom('crove_notes.attachment')
+      .deleteFrom('ludy_notes.attachment')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
       .returning('id')
@@ -237,7 +237,7 @@ export const noteAttachmentDelete = defineCommand({
     if (!deleted) throw attachmentNotFound();
 
     await ctx.trx
-      .updateTable('crove_notes.note')
+      .updateTable('ludy_notes.note')
       .set({ updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', att.note_id)
@@ -260,7 +260,7 @@ export const noteAttachmentList = defineQuery({
   handler: async (ctx, input): Promise<NoteAttachment[]> => {
     requireHumanUser(ctx.actor);
     const note = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -277,8 +277,8 @@ export const noteAttachmentDownloadMeta = defineQuery({
   handler: async (ctx, input): Promise<NoteAttachmentDownloadMeta> => {
     requireHumanUser(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_notes.attachment as a')
-      .innerJoin('crove_notes.note as n', (j) => j.onRef('n.org_id', '=', 'a.org_id').onRef('n.id', '=', 'a.note_id'))
+      .selectFrom('ludy_notes.attachment as a')
+      .innerJoin('ludy_notes.note as n', (j) => j.onRef('n.org_id', '=', 'a.org_id').onRef('n.id', '=', 'a.note_id'))
       .select(['a.id', 'a.note_id', 'a.filename', 'a.content_type', 'a.size_bytes', 'a.sha256', 'a.storage_key'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.attachmentId)

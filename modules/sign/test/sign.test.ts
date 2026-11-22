@@ -158,7 +158,7 @@ describe('sign events and canonicalization', () => {
 });
 
 describe('sign sealing payloads and certificate artifacts', () => {
-  it('maps crove_sign initials to pdf_seal initial and encodes valid payloads', () => {
+  it('maps ludy_sign initials to pdf_seal initial and encodes valid payloads', () => {
     const fields: SignFieldForSeal[] = [
       {
         id: 'f1',
@@ -359,7 +359,7 @@ describe('sign sealing payloads and certificate artifacts', () => {
       const content = readFileSync(join(srcDir, file), 'utf8');
       expect(content).not.toMatch(/\b(pdf-lib|pdfjs-dist|pdf-parse|pdfkit|mupdf)\b/);
     }
-    expect(Object.keys(signManifest.tables.crove_sign)).toEqual([
+    expect(Object.keys(signManifest.tables.ludy_sign)).toEqual([
       'ai_analysis',
       'ca_connection',
       'ca_signing_request',

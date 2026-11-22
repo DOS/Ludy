@@ -128,14 +128,14 @@ const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate',
 // history). The bank accounts are those its earlier proposals carried, from an XML or a PDF read but not a photo (#2426).
 async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
   const documents = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .select(['d.id', 'd.total', 'd.proposal_id'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.party_id', '=', partyId)
     .where('d.direction', '=', 'purchase')
     .where((eb) => eb.not(eb.and([eb('d.invoice_series', '=', current.series), eb('d.invoice_number', '=', current.number)])))
     .where(({ not, exists, selectFrom }) =>
-      not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+      not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
     )
     .orderBy('d.invoice_date', 'desc')
     .orderBy('d.id', 'desc')
@@ -144,7 +144,7 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
   if (documents.length === 0) return { totals: [], prices: [], bankAccounts: [] };
   const order = new Map(documents.map((d, i) => [d.id, i]));
   const lines = await ctx.trx
-    .selectFrom('crove_finance.purchase_line as l')
+    .selectFrom('ludy_finance.purchase_line as l')
     .select(['l.document_id', 'l.line_no', 'l.description', 'l.unit_price'])
     .where('l.org_id', '=', ctx.orgId)
     .where('l.document_id', 'in', documents.map((d) => d.id))
@@ -215,7 +215,7 @@ export const purchaseLookup = defineQuery({
         : undefined;
     const rule = party
       ? await ctx.trx
-          .selectFrom('crove_finance.vendor_account_rule')
+          .selectFrom('ludy_finance.vendor_account_rule')
           .select('debit_account')
           .where('org_id', '=', ctx.orgId)
           .where('party_id', '=', party.id)
@@ -225,7 +225,7 @@ export const purchaseLookup = defineQuery({
     // supplier not yet in the books has no document.
     const inForce = (series: string, number: string) => {
       let documents = ctx.trx
-        .selectFrom('crove_finance.purchase_document as d')
+        .selectFrom('ludy_finance.purchase_document as d')
         .select(['d.id', 'd.proposal_id', 'd.currency', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.foreign_subtotal', 'd.foreign_vat_amount', 'd.foreign_total'])
         .where('d.org_id', '=', ctx.orgId)
         .where('d.direction', '=', sale ? 'sale' : 'purchase')
@@ -234,7 +234,7 @@ export const purchaseLookup = defineQuery({
         // A sale is unique per issuing entity (#2502): two entities of the org may use the same series and number.
         .$if(sale, (q) => q.where('d.legal_entity_id', '=', entityId))
         .where(({ not, exists, selectFrom }) =>
-          not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+          not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
         );
       if (party) documents = documents.where('d.party_id', '=', party.id);
       return sale || party ? documents.executeTakeFirst() : Promise.resolve(undefined);
@@ -266,8 +266,8 @@ export const purchaseLookup = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_finance.purchase_document as d')
-              .innerJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+            selectFrom('ludy_finance.purchase_document as d')
+              .innerJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
               .select('d.id')
               .whereRef('d.org_id', '=', 'ludy_kernel.proposal.org_id')
               .whereRef('d.proposal_id', '=', 'ludy_kernel.proposal.id'),

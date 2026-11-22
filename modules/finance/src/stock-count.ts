@@ -72,7 +72,7 @@ async function loadCount(ctx: Ctx, countId: string, lock = false): Promise<{ hea
   const { rows } = await sql<CountHead>`
     SELECT c.id::text AS id, c.legal_entity_id::text AS legal_entity_id, c.count_date::text AS count_date, c.status, c.note, c.loss_norm_percent::text AS loss_norm_percent,
            c.created_at, c.confirmed_at, c.voucher_id::text AS voucher_id
-    FROM crove_finance.stock_count c
+    FROM ludy_finance.stock_count c
     WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${countId}::uuid
     ${lock ? sql`FOR UPDATE` : sql``}`.execute(ctx.trx);
   const head = rows[0];
@@ -86,7 +86,7 @@ async function loadLines(ctx: Ctx, countIds: readonly string[]): Promise<Map<str
   if (countIds.length === 0) return byCount;
   const { rows } = await sql<LineRow & { count_id: string }>`
     SELECT l.id::text AS id, l.count_id::text AS count_id, l.item_id::text AS item_id, l.counted_quantity::text AS counted_quantity, l.unit_cost::text AS unit_cost
-    FROM crove_finance.stock_count_line l
+    FROM ludy_finance.stock_count_line l
     WHERE l.org_id = ${ctx.orgId}::uuid AND l.count_id = ANY (${[...countIds]}::uuid[])
     ORDER BY l.item_id`.execute(ctx.trx);
   for (const row of rows) {
@@ -111,7 +111,7 @@ async function loadItems(ctx: Ctx, itemIds: readonly string[]): Promise<Map<stri
   const items = new Map<string, ItemRow>();
   if (itemIds.length === 0) return items;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.stock_item')
+    .selectFrom('ludy_finance.stock_item')
     .select(['id', 'legal_entity_id', 'code', 'name', 'unit', 'stock_account', 'active'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...itemIds])
@@ -124,7 +124,7 @@ async function loadItems(ctx: Ctx, itemIds: readonly string[]): Promise<Map<stri
 async function assertOpenDate(ctx: Ctx, legalEntityId: string, countDate: string) {
   if (countDate > (await databaseToday(ctx.trx))) throw new DomainError('STOCK_COUNT_FUTURE', 422, 'Ngày kiểm kê chưa tới nên chưa kiểm kê được');
   const { rows } = await sql<{ one: number }>`
-    SELECT 1 AS one FROM crove_finance.stock_period p
+    SELECT 1 AS one FROM ludy_finance.stock_period p
     WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${legalEntityId}::uuid AND p.period_month >= pg_catalog.date_trunc('month', ${countDate}::date)::date
     LIMIT 1`.execute(ctx.trx);
   if (rows[0]) throw new DomainError('STOCK_COUNT_CLOSED', 409, `Tháng của ngày ${dateLabel(countDate)} đã đóng sổ kho nên không kiểm kê được; hãy kiểm kê vào một ngày của tháng đang mở`);
@@ -263,7 +263,7 @@ export const createStockCount = defineCommand({
       if (!item.active) throw new DomainError('STOCK_COUNT_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng; hãy bật lại trước khi kiểm kê');
     }
     const head = await ctx.trx
-      .insertInto('crove_finance.stock_count')
+      .insertInto('ludy_finance.stock_count')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -276,7 +276,7 @@ export const createStockCount = defineCommand({
       .executeTakeFirstOrThrow();
     for (const batch of chunks(input.lines, 500)) {
       await ctx.trx
-        .insertInto('crove_finance.stock_count_line')
+        .insertInto('ludy_finance.stock_count_line')
         .values(batch.map((l) => ({ org_id: ctx.orgId, count_id: head.id, item_id: l.itemId, counted_quantity: l.countedQuantity, unit_cost: l.unitCost ?? null })))
         .execute();
     }
@@ -294,7 +294,7 @@ export const cancelStockCount = defineCommand({
   handler: async (ctx, { countId }) => {
     const { head } = await loadCount(ctx, countId, true);
     requireDraft(head);
-    await ctx.trx.updateTable('crove_finance.stock_count').set({ status: 'cancelled' }).where('org_id', '=', ctx.orgId).where('id', '=', head.id).execute();
+    await ctx.trx.updateTable('ludy_finance.stock_count').set({ status: 'cancelled' }).where('org_id', '=', ctx.orgId).where('id', '=', head.id).execute();
     ctx.audit({ count_id: head.id });
     return { id: head.id };
   },
@@ -316,7 +316,7 @@ export const confirmEmptyStockCount = defineCommand({
       throw new DomainError('STOCK_COUNT_HAS_DIFFERENCE', 409, 'Lần kiểm kê này có chênh lệch so với sổ; hãy gửi đề xuất xác nhận để chủ sở hữu hoặc quản trị viên duyệt');
     }
     await ctx.trx
-      .updateTable('crove_finance.stock_count')
+      .updateTable('ludy_finance.stock_count')
       .set({ status: 'confirmed', confirmed_by: ctx.actor.type === 'user' ? ctx.actor.userId : null, confirmed_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', head.id)
@@ -381,7 +381,7 @@ export const confirmStockCount = defineCommand({
     }
     const posted = await postJournalVoucher(ctx, { ...payload, legalEntityId }, null, null, head.id);
     await ctx.trx
-      .updateTable('crove_finance.stock_count')
+      .updateTable('ludy_finance.stock_count')
       .set({ status: 'confirmed', confirmed_by: ctx.actor.type === 'user' ? ctx.actor.userId : null, confirmed_at: sql<Date>`pg_catalog.now()`, voucher_id: posted.voucherId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', head.id)
@@ -407,7 +407,7 @@ export const previewStockCount = defineQuery({
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     await assertOpenDate(ctx, legalEntityId, input.countDate);
     const items = await ctx.trx
-      .selectFrom('crove_finance.stock_item')
+      .selectFrom('ludy_finance.stock_item')
       .select(['id', 'code', 'name', 'unit'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -430,7 +430,7 @@ export const listStockCounts = defineQuery({
     const { rows } = await sql<CountHead>`
       SELECT c.id::text AS id, c.legal_entity_id::text AS legal_entity_id, c.count_date::text AS count_date, c.status, c.note, c.loss_norm_percent::text AS loss_norm_percent,
              c.created_at, c.confirmed_at, c.voucher_id::text AS voucher_id
-      FROM crove_finance.stock_count c
+      FROM ludy_finance.stock_count c
       WHERE c.org_id = ${ctx.orgId}::uuid AND (${input.legalEntityId ?? null}::uuid IS NULL OR c.legal_entity_id = ${input.legalEntityId ?? null}::uuid)
       ORDER BY c.count_date DESC, c.id DESC
       LIMIT ${input.limit ?? 30}`.execute(ctx.trx);
@@ -443,7 +443,7 @@ export const listStockCounts = defineQuery({
     if (confirmedLineIds.length > 0) {
       const { rows: moves } = await sql<{ count_line_id: string; quantity: string; amount: string }>`
         SELECT m.count_line_id::text AS count_line_id, m.quantity::text AS quantity, m.amount::text AS amount
-        FROM crove_finance.stock_move m WHERE m.org_id = ${ctx.orgId}::uuid AND m.count_line_id = ANY (${confirmedLineIds}::uuid[])`.execute(ctx.trx);
+        FROM ludy_finance.stock_move m WHERE m.org_id = ${ctx.orgId}::uuid AND m.count_line_id = ANY (${confirmedLineIds}::uuid[])`.execute(ctx.trx);
       for (const m of moves) adjustments.set(m.count_line_id, { quantity: m.quantity, amount: m.amount });
     }
     // The surplus of each confirmed count (what its adjustments brought in), and the voucher that resolved it or the proposal of one that waits (#3712 slice 2a).

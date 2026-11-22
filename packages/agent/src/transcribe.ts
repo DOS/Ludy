@@ -13,7 +13,7 @@
 //   `chat_input_audio` mode: one chunk as an `input_audio` part with a fixed instruction, the JSON it answers read as the same
 //   untrusted data (#2972).
 //   A call is metered by the audio seconds the media sandbox measured for the chunk (M4b). The run is the recorder's own Vy and
-//   it writes only its own result (member_vy_result), never crove_meetings.transcript_segment:
+//   it writes only its own result (member_vy_result), never ludy_meetings.transcript_segment:
 //   the recorder's own action then copies that result into the draft through meetings.transcript.draft_store (ADR-0049
 //   decision 8; decided on #2578 and #2756).
 //

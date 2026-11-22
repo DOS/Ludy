@@ -104,7 +104,7 @@ test('1-step Evernote (.enex) and Todoist (.csv) importers with dry-run preview,
 
     const dbNotes = sql<{ title: string; visibility: string; tainted: boolean }>(
       `SELECT n.title, n.visibility, n.tainted
-         FROM crove_notes.note n
+         FROM ludy_notes.note n
          JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
         WHERE t.slug = :'slug'
         ORDER BY n.created_at ASC`,
@@ -152,7 +152,7 @@ test('1-step Evernote (.enex) and Todoist (.csv) importers with dry-run preview,
 
     const dbTodos = sql<{ title: string; priority: number; tainted: boolean; tags: string[] }>(
       `SELECT td.title, td.priority, td.tainted, td.tags
-         FROM crove_notes.todo td
+         FROM ludy_notes.todo td
          JOIN ludy_kernel.tenant t ON t.org_id = td.org_id
         WHERE t.slug = :'slug'
         ORDER BY td.priority ASC`,

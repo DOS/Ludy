@@ -107,7 +107,7 @@ suite('social client approval on PostgreSQL (#770)', () => {
   const system = { type: 'system' as const, component: 'client-approval-test' };
   // The client answers through the public definer, as the HTTP edge calls it with the link's token.
   const answer = async (o: Org, token: string, verdict: 'approved' | 'changes_requested' | 'comment') => {
-    await pool.query('SELECT crove_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', verdict, verdict === 'comment' ? 'Đẹp' : null]);
+    await pool.query('SELECT ludy_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', verdict, verdict === 'comment' ? 'Đẹp' : null]);
     const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id);
     return worker.execute<{ settled: string[]; verdict: string | null }>('social.review.client_settle', { eventId: event as string }, { actor: system, orgId: o.orgId });
   };

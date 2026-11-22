@@ -28,7 +28,7 @@ export const postAssign = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const post = await ctx.trx
-      .selectFrom('crove_social.post')
+      .selectFrom('ludy_social.post')
       .select(['id', 'author_user_id', 'assignee_user_id', 'due_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.postId)
@@ -50,7 +50,7 @@ export const postAssign = defineCommand({
     // The reminders were about the old due date or the old assignee (#1359): both go again for the new ones.
     const rearm = (dueAt?.getTime() ?? null) !== (post.due_at?.getTime() ?? null) || input.assigneeUserId !== post.assignee_user_id;
     await ctx.trx
-      .updateTable('crove_social.post')
+      .updateTable('ludy_social.post')
       .set({ assignee_user_id: input.assigneeUserId, due_at: dueAt, ...(rearm ? { due_soon_reminded_at: null, overdue_reminded_at: null } : {}) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', post.id)

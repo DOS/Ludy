@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Sàn screen's read (#2516 slice D), on PostgreSQL 17: finance.marketplace.balance reads the ledger by account (131, 331) and by the platform's party of crove_finance.marketplace_party.
+// The Sàn screen's read (#2516 slice D), on PostgreSQL 17: finance.marketplace.balance reads the ledger by account (131, 331) and by the platform's party of ludy_finance.marketplace_party.
 // A platform with no entries shows zeros; sales, payouts and fees come from the lines that name the platform's party and nobody else's; a reversal entry takes back what it reverses and is
 // never counted as a payout; another org sees nothing and an unknown entity filter gives no rows.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -55,13 +55,13 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     admin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, $4, 'Sàn', 'test', $2, $3) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, $4, 'Sàn', 'test', $2, $3) RETURNING id`,
         [org, randomUUID(), reverses, date],
       );
       const entry = rows[0]?.id as string;
       let lineNo = 1;
       for (const [account, debit, credit, partyId] of lines) {
-        await c.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, $4, $5, $6, $7)', [org, entry, lineNo++, account, debit, credit, partyId]);
+        await c.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, $4, $5, $6, $7)', [org, entry, lineNo++, account, debit, credit, partyId]);
       }
       await c.query('COMMIT');
       return entry;
@@ -113,7 +113,7 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
 
   it('shows a linked platform with zeros when nothing was posted for it, in the order of the platform key', async () => {
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2), ($1, 'shopee', $3)", [orgA, tiktok, shopee]);
+      await c.query("INSERT INTO ludy_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2), ($1, 'shopee', $3)", [orgA, tiktok, shopee]);
     });
     const zero = { salesPosted: '0', paidOut: '0', awaitingPayout: '0', feesAwaitingInvoice: '0', oldestFeeDate: null, feesAgeDays: null, feesOverdue: false, legalEntityId: entity };
     expect(await balance()).toEqual({
@@ -164,7 +164,7 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     const other = randomUUID();
     await admin(async (c) => {
       await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Shopee B')", [orgB, other]);
-      await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgB, other]);
+      await c.query("INSERT INTO ludy_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgB, other]);
     });
     await post([['131', 42_000, 0, other], ['511', 0, 42_000, null]], null, orgB);
     const theirs = await balance(stranger, orgB);
@@ -176,7 +176,7 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
   it('flags fees nobody has invoiced for longer than one settlement cycle, clearing the oldest first (#3711 slice 2)', async () => {
     const lazada = await party('Lazada');
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'lazada', $2)", [orgA, lazada]);
+      await c.query("INSERT INTO ludy_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'lazada', $2)", [orgA, lazada]);
     });
     // Dates well away from a day boundary (the database counts the day in Vietnam time), relative to now.
     const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);

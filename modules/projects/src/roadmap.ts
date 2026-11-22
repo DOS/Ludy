@@ -33,8 +33,8 @@ import { sealEphemeralOtpCode } from './roadmap-mail.ts';
 import { READERS, WRITERS, assertNotArchived, memberProfilesMap, userOf, type ProjectRow, type Trx } from './shared.ts';
 
 const TABLES = projectsManifest.tables;
-const BOARD_TABLE = TABLES.crove_projects.roadmap_board;
-const ITEM_TABLE = TABLES.crove_projects.roadmap_item;
+const BOARD_TABLE = TABLES.ludy_projects.roadmap_board;
+const ITEM_TABLE = TABLES.ludy_projects.roadmap_item;
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const ROADMAP_OTP_TTL_MS = 10 * 60_000;
 
@@ -100,7 +100,7 @@ async function assertPublicProjectAllowed(
     visibility: string | null;
   }>`
     SELECT p.id, p.name, p.status, p.is_template, pg_catalog.to_jsonb(p)->>'visibility' AS visibility
-      FROM crove_projects.project p
+      FROM ludy_projects.project p
      WHERE p.org_id = ${orgId}::uuid
        AND p.id = ${projectId}::uuid
      ${lock ? sql`FOR SHARE` : sql``}`.execute(trx);
@@ -147,12 +147,12 @@ async function loadBoardSummary(trx: Trx, orgId: string, boardId: string): Promi
       b.allow_voting,
       b.require_moderation,
       b.embed_allowed_origins,
-      (SELECT pg_catalog.count(*)::text FROM crove_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'pending') AS pending_count,
-      (SELECT pg_catalog.count(*)::text FROM crove_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'published') AS published_count,
+      (SELECT pg_catalog.count(*)::text FROM ludy_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'pending') AS pending_count,
+      (SELECT pg_catalog.count(*)::text FROM ludy_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'published') AS published_count,
       b.created_at,
       b.updated_at
-    FROM crove_projects.roadmap_board b
-    LEFT JOIN crove_projects.project p
+    FROM ludy_projects.roadmap_board b
+    LEFT JOIN ludy_projects.project p
       ON p.org_id = b.org_id AND p.id = b.project_id
     WHERE b.org_id = ${orgId}::uuid
       AND b.id = ${boardId}::uuid`.execute(trx);
@@ -219,12 +219,12 @@ async function loadAdminItem(trx: Trx, orgId: string, itemId: string): Promise<R
       i.submitter_display_name,
       i.created_at,
       i.updated_at
-    FROM crove_projects.roadmap_item i
+    FROM ludy_projects.roadmap_item i
     LEFT JOIN ludy_kernel.task t
       ON t.org_id = i.org_id AND t.id = i.linked_task_id
-    LEFT JOIN crove_projects.project_task pt
+    LEFT JOIN ludy_projects.project_task pt
       ON pt.org_id = i.org_id AND pt.task_id = i.linked_task_id
-    LEFT JOIN crove_projects.project p
+    LEFT JOIN ludy_projects.project p
       ON p.org_id = i.org_id AND p.id = pt.project_id
     WHERE i.org_id = ${orgId}::uuid
       AND i.id = ${itemId}::uuid`.execute(trx);
@@ -308,12 +308,12 @@ export const roadmapBoards = defineQuery({
         b.allow_voting,
         b.require_moderation,
         b.embed_allowed_origins,
-        (SELECT pg_catalog.count(*)::text FROM crove_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'pending') AS pending_count,
-        (SELECT pg_catalog.count(*)::text FROM crove_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'published') AS published_count,
+        (SELECT pg_catalog.count(*)::text FROM ludy_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'pending') AS pending_count,
+        (SELECT pg_catalog.count(*)::text FROM ludy_projects.roadmap_item i WHERE i.org_id = b.org_id AND i.board_id = b.id AND i.moderation_status = 'published') AS published_count,
         b.created_at,
         b.updated_at
-      FROM crove_projects.roadmap_board b
-      LEFT JOIN crove_projects.project p
+      FROM ludy_projects.roadmap_board b
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id AND p.id = b.project_id
       WHERE b.org_id = ${ctx.orgId}::uuid
       ORDER BY b.created_at DESC, b.id DESC
@@ -321,7 +321,7 @@ export const roadmapBoards = defineQuery({
 
     const { rows: projects } = await sql<{ id: string; name: string; status: string }>`
       SELECT p.id, p.name, p.status
-        FROM crove_projects.project p
+        FROM ludy_projects.project p
        WHERE p.org_id = ${ctx.orgId}::uuid
          AND p.is_template = false
          AND p.status <> 'archived'
@@ -429,12 +429,12 @@ export const roadmapBoardGet = defineQuery({
         i.submitter_display_name,
         i.created_at,
         i.updated_at
-      FROM crove_projects.roadmap_item i
+      FROM ludy_projects.roadmap_item i
       LEFT JOIN ludy_kernel.task t
         ON t.org_id = i.org_id AND t.id = i.linked_task_id
-      LEFT JOIN crove_projects.project_task pt
+      LEFT JOIN ludy_projects.project_task pt
         ON pt.org_id = i.org_id AND pt.task_id = i.linked_task_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = i.org_id AND p.id = pt.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
         AND i.board_id = ${board.id}::uuid
@@ -485,7 +485,7 @@ export const roadmapBoardCreate = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'roadmap_board', [
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_board', [
       'org_id',
       'slug',
       'title',
@@ -509,7 +509,7 @@ export const roadmapBoardCreate = defineCommand({
     let finalSlug = baseSlug;
     if (!input.slug) {
       const existing = await ctx.trx
-        .selectFrom('crove_projects.roadmap_board')
+        .selectFrom('ludy_projects.roadmap_board')
         .select('slug')
         .where('org_id', '=', ctx.orgId)
         .where('slug', 'like', `${baseSlug}%`)
@@ -541,7 +541,7 @@ export const roadmapBoardCreate = defineCommand({
     let insertedId: string;
     try {
       const row = await ctx.trx
-        .insertInto('crove_projects.roadmap_board')
+        .insertInto('ludy_projects.roadmap_board')
         .values({
           org_id: ctx.orgId,
           slug: finalSlug,
@@ -586,7 +586,7 @@ export const roadmapBoardUpdate = defineCommand({
   access: MANAGERS,
   target: roadmapBoardTarget,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'roadmap_board', [
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_board', [
       'slug',
       'title',
       'description',
@@ -604,7 +604,7 @@ export const roadmapBoardUpdate = defineCommand({
     assertManager(ctx);
 
     const existing = await ctx.trx
-      .selectFrom('crove_projects.roadmap_board')
+      .selectFrom('ludy_projects.roadmap_board')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.boardId)
@@ -630,7 +630,7 @@ export const roadmapBoardUpdate = defineCommand({
 
     try {
       await ctx.trx
-        .updateTable('crove_projects.roadmap_board')
+        .updateTable('ludy_projects.roadmap_board')
         .set({
           slug: nextSlug,
           title: nextTitle,
@@ -672,7 +672,7 @@ export const roadmapItemCreate = defineCommand({
   access: WRITERS,
   target: roadmapBoardTarget,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'roadmap_item', [
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_item', [
       'org_id',
       'board_id',
       'source',
@@ -691,7 +691,7 @@ export const roadmapItemCreate = defineCommand({
   handler: async (ctx, input): Promise<{ item: RoadmapAdminItem }> => {
     const userId = userOf(ctx.actor);
     const board = await ctx.trx
-      .selectFrom('crove_projects.roadmap_board')
+      .selectFrom('ludy_projects.roadmap_board')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.boardId)
@@ -707,7 +707,7 @@ export const roadmapItemCreate = defineCommand({
     const moderationStatus = input.moderationStatus ?? 'published';
 
     const inserted = await ctx.trx
-      .insertInto('crove_projects.roadmap_item')
+      .insertInto('ludy_projects.roadmap_item')
       .values({
         org_id: ctx.orgId,
         board_id: board.id,
@@ -748,7 +748,7 @@ export const roadmapItemModerate = defineCommand({
   access: WRITERS,
   target: (input) => ({ type: 'projects.roadmap_item', id: input.itemId }),
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'roadmap_item', [
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_item', [
       'moderation_status',
       'stage',
       'public_title',
@@ -760,7 +760,7 @@ export const roadmapItemModerate = defineCommand({
   handler: async (ctx, input): Promise<{ item: RoadmapAdminItem }> => {
     userOf(ctx.actor);
     const existing = await ctx.trx
-      .selectFrom('crove_projects.roadmap_item')
+      .selectFrom('ludy_projects.roadmap_item')
       .select(['id', 'board_id', 'moderation_status', 'stage', 'public_title', 'public_summary', 'category'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.itemId)
@@ -780,7 +780,7 @@ export const roadmapItemModerate = defineCommand({
     const nextCategory = input.category !== undefined ? cleanOptional(input.category) : existing.category;
 
     await ctx.trx
-      .updateTable('crove_projects.roadmap_item')
+      .updateTable('ludy_projects.roadmap_item')
       .set({
         moderation_status: nextModerationStatus,
         stage: nextStage,
@@ -820,8 +820,8 @@ export const roadmapItemMerge = defineCommand({
   access: WRITERS,
   target: (input) => ({ type: 'projects.roadmap_item', id: input.targetItemId }),
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'roadmap_vote', ['org_id', 'board_id', 'item_id', 'voter_email_hash', 'notify_on_ship', 'created_at']),
-    tableWrite(TABLES, 'crove_projects', 'roadmap_item', ['vote_count', 'moderation_status', 'merged_into_item_id', 'updated_at']),
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_vote', ['org_id', 'board_id', 'item_id', 'voter_email_hash', 'notify_on_ship', 'created_at']),
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_item', ['vote_count', 'moderation_status', 'merged_into_item_id', 'updated_at']),
   ],
   handler: async (ctx, input) => {
     userOf(ctx.actor);
@@ -831,7 +831,7 @@ export const roadmapItemMerge = defineCommand({
 
     const orderedIds = [input.sourceItemId, input.targetItemId].sort();
     const lockedRows = await ctx.trx
-      .selectFrom('crove_projects.roadmap_item')
+      .selectFrom('ludy_projects.roadmap_item')
       .select(['id', 'board_id', 'moderation_status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', orderedIds)
@@ -857,35 +857,35 @@ export const roadmapItemMerge = defineCommand({
 
     // Move distinct votes into the canonical target item without inflating counts.
     await sql`
-      INSERT INTO crove_projects.roadmap_vote (org_id, board_id, item_id, voter_email_hash, notify_on_ship, created_at)
+      INSERT INTO ludy_projects.roadmap_vote (org_id, board_id, item_id, voter_email_hash, notify_on_ship, created_at)
       SELECT v.org_id, v.board_id, ${target.id}::uuid, v.voter_email_hash, v.notify_on_ship, v.created_at
-        FROM crove_projects.roadmap_vote v
+        FROM ludy_projects.roadmap_vote v
        WHERE v.org_id = ${ctx.orgId}::uuid
          AND v.item_id = ${source.id}::uuid
       ON CONFLICT (org_id, item_id, voter_email_hash) DO NOTHING`.execute(ctx.trx);
 
     await ctx.trx
-      .deleteFrom('crove_projects.roadmap_vote')
+      .deleteFrom('ludy_projects.roadmap_vote')
       .where('org_id', '=', ctx.orgId)
       .where('item_id', '=', source.id)
       .execute();
 
     const { rows: countRows } = await sql<{ n: string }>`
       SELECT pg_catalog.count(*)::text AS n
-        FROM crove_projects.roadmap_vote
+        FROM ludy_projects.roadmap_vote
        WHERE org_id = ${ctx.orgId}::uuid
          AND item_id = ${target.id}::uuid`.execute(ctx.trx);
     const mergedVoteCount = Number(countRows[0]?.n ?? 0);
 
     await ctx.trx
-      .updateTable('crove_projects.roadmap_item')
+      .updateTable('ludy_projects.roadmap_item')
       .set({ vote_count: mergedVoteCount, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', target.id)
       .execute();
 
     await ctx.trx
-      .updateTable('crove_projects.roadmap_item')
+      .updateTable('ludy_projects.roadmap_item')
       .set({
         moderation_status: 'merged',
         merged_into_item_id: target.id,
@@ -926,7 +926,7 @@ export const roadmapItemConvertToTask = defineCommand({
   handler: async (ctx, input): Promise<{ item: RoadmapAdminItem; projectId: string; taskId: string }> => {
     const userId = userOf(ctx.actor);
     const item = await ctx.trx
-      .selectFrom('crove_projects.roadmap_item')
+      .selectFrom('ludy_projects.roadmap_item')
       .select(['id', 'board_id', 'linked_task_id', 'moderation_status', 'stage', 'public_title', 'public_summary'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.itemId)
@@ -943,7 +943,7 @@ export const roadmapItemConvertToTask = defineCommand({
     }
 
     const board = await ctx.trx
-      .selectFrom('crove_projects.roadmap_board')
+      .selectFrom('ludy_projects.roadmap_board')
       .select(['id', 'project_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', item.board_id)
@@ -956,7 +956,7 @@ export const roadmapItemConvertToTask = defineCommand({
     }
 
     // Preview project without row lock before kernel.task.create_from_roadmap (which locks ludy_kernel.position),
-    // then lock crove_projects.project FOR SHARE afterwards to maintain canonical position -> project lock order.
+    // then lock ludy_projects.project FOR SHARE afterwards to maintain canonical position -> project lock order.
     const preview = await assertPublicProjectAllowed(ctx.trx, ctx.orgId, targetProjectId, false);
     assertNotArchived(preview);
 
@@ -972,7 +972,7 @@ export const roadmapItemConvertToTask = defineCommand({
     assertNotArchived(project);
 
     await ctx.trx
-      .insertInto('crove_projects.project_task')
+      .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: project.id,
@@ -984,7 +984,7 @@ export const roadmapItemConvertToTask = defineCommand({
 
     const nextStage: RoadmapItemStage = item.stage === 'under_review' ? 'planned' : (item.stage as RoadmapItemStage);
     await ctx.trx
-      .updateTable('crove_projects.roadmap_item')
+      .updateTable('ludy_projects.roadmap_item')
       .set({
         linked_task_id: taskId,
         stage: nextStage,
@@ -1024,11 +1024,11 @@ export const roadmapItemSyncStage = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   target: (input) => ({ type: 'projects.roadmap_item', id: input.itemId }),
-  writes: [tableWrite(TABLES, 'crove_projects', 'roadmap_item', ['stage', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'roadmap_item', ['stage', 'updated_at'])],
   handler: async (ctx, input): Promise<{ item: RoadmapAdminItem }> => {
     userOf(ctx.actor);
     const existing = await ctx.trx
-      .selectFrom('crove_projects.roadmap_item')
+      .selectFrom('ludy_projects.roadmap_item')
       .select(['id', 'board_id', 'linked_task_id', 'moderation_status', 'stage'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.itemId)
@@ -1057,7 +1057,7 @@ export const roadmapItemSyncStage = defineCommand({
 
     if (nextStage !== existing.stage) {
       await ctx.trx
-        .updateTable('crove_projects.roadmap_item')
+        .updateTable('ludy_projects.roadmap_item')
         .set({ stage: nextStage, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
@@ -1079,7 +1079,7 @@ export const roadmapOtpMailData = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  writes: [tableWrite(TABLES, 'crove_projects', 'roadmap_otp', ['otp_sha256', 'expires_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'roadmap_otp', ['otp_sha256', 'expires_at'])],
   handler: async (
     ctx,
     input,
@@ -1103,7 +1103,7 @@ export const roadmapOtpMailData = defineCommand({
         expiresAt: string;
       } | null;
     }>`
-      SELECT crove_projects.public_roadmap_otp_issue(
+      SELECT ludy_projects.public_roadmap_otp_issue(
         ${input.otpId}::uuid,
         ${expiresAt}::timestamptz,
         ${ctx.now}::timestamptz

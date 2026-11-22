@@ -19,7 +19,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
-const PLACE = 'crove_hr.payroll_employee.national_id_sealed';
+const PLACE = 'ludy_hr.payroll_employee.national_id_sealed';
 const VALUE = '079 123 456 789';
 
 suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {

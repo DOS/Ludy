@@ -54,15 +54,15 @@ export const meetingBriefSourceQuery = defineQuery({
     if (booking.status !== 'confirmed' || Date.parse(booking.endsAt) <= Date.now()) throw new DomainError('BOOKING_NOT_UPCOMING', 409, 'Chỉ chuẩn bị được cho lịch hẹn sắp tới');
     const found = await sql<{ title: string; amount: string; expected_close: string | null; party_id: string; party_name: string; stage: string; kind: 'open' | 'won' | 'lost' }>`
       SELECT d.title, d.amount::text AS amount, d.expected_close::text AS expected_close, d.party_id, p.name AS party_name, s.name AS stage, s.kind
-      FROM crove_crm.deal d
+      FROM ludy_crm.deal d
       JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
-      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND d.id = ${booking.deal.id}::uuid`.execute(ctx.trx);
     const deal = found.rows[0];
     if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
     const steps = await sql<{ reason: MeetingBriefStepReason; since_on: string }>`
       SELECT n.reason, n.since_on::text AS since_on
-      FROM crove_crm.deal_next_step n
+      FROM ludy_crm.deal_next_step n
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.deal_id = ${booking.deal.id}::uuid AND n.status = 'open' AND (n.snoozed_until IS NULL OR n.snoozed_until <= now())
       ORDER BY n.since_on, n.id
       LIMIT 3`.execute(ctx.trx);
@@ -72,7 +72,7 @@ export const meetingBriefSourceQuery = defineQuery({
       SELECT q.number, q.revision, q.total::text AS total, q.status, q.valid_until::text AS valid_until,
              (q.status = 'sent' AND q.valid_until < (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS expired,
              ((coalesce(q.sent_at, q.created_at)) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS sent_on
-      FROM crove_crm.quote q
+      FROM ludy_crm.quote q
       WHERE q.org_id = ${ctx.orgId}::uuid AND q.deal_id = ${booking.deal.id}::uuid AND q.party_id = ${deal.party_id}::uuid AND q.number IS NOT NULL AND q.status IN ('sent', 'accepted', 'declined')
       ORDER BY coalesce(q.sent_at, q.created_at) DESC, q.id DESC
       LIMIT 1`.execute(ctx.trx);

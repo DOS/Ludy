@@ -53,8 +53,8 @@ import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, monthStart, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const RUN = hrManifest.tables.crove_hr.payroll_run;
-const LINE = hrManifest.tables.crove_hr.payroll_line;
+const RUN = hrManifest.tables.ludy_hr.payroll_run;
+const LINE = hrManifest.tables.ludy_hr.payroll_line;
 
 type Ctx = CommandContext;
 type ReadCtx = QueryContext;
@@ -221,7 +221,7 @@ export async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEn
   const start = monthStart(month);
   const end = monthEnd(month);
   const employees = await ctx.trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'ended_on', 'erased_at', 'is_foreign', 'work_permit_exempt', 'work_permit_expires_on'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -231,14 +231,14 @@ export async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEn
   if (paid.length === 0) return [];
   const ids = paid.map((e) => e.id);
   const terms = await ctx.trx
-    .selectFrom('crove_hr.payroll_employment')
+    .selectFrom('ludy_hr.payroll_employment')
     .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_basis', 'hourly_rate', 'piece_rate', 'tax_resident', 'term_months'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', 'in', ids)
     .orderBy('effective_from', 'asc')
     .execute();
   const dependents = await ctx.trx
-    .selectFrom('crove_hr.payroll_dependent')
+    .selectFrom('ludy_hr.payroll_dependent')
     .select(['employee_id', 'registered_on', 'ended_on'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', 'in', ids)
@@ -302,7 +302,7 @@ export async function loadBhxhLeaveByEmployee(
   const result = new Map<string, BhxhLeaveSummary>();
   if (employeeIds.length === 0) return result;
   const rows = await ctx.trx
-    .selectFrom('crove_hr.payroll_leave_entry')
+    .selectFrom('ludy_hr.payroll_leave_entry')
     .select(['employee_id', 'kind', 'days'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', 'in', [...employeeIds])
@@ -354,7 +354,7 @@ export function initialInputsFor(
 
 async function loadRun(ctx: Ctx, runId: string) {
   const run = await ctx.trx
-    .selectFrom('crove_hr.payroll_run')
+    .selectFrom('ludy_hr.payroll_run')
     .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', runId)
@@ -376,8 +376,8 @@ export const runOpen = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['id', 'legal_entity_id', 'month', 'status', 'working_days', 'created_by', 'created_at', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['id', 'legal_entity_id', 'month', 'status', 'working_days', 'created_by', 'created_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [
       'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net',
       'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'created_by', 'created_at', 'updated_at',
     ]),
@@ -389,7 +389,7 @@ export const runOpen = defineCommand({
       : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
     if (!entity) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của bảng lương');
     const exists = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity.id)
@@ -398,15 +398,15 @@ export const runOpen = defineCommand({
     if (exists) throw new DomainError('HR_RUN_EXISTS', 409, `Đã có bảng lương tháng ${input.month}`, { runId: exists.id });
     const workingDays = input.workingDays ?? HR_DEFAULT_WORKING_DAYS;
     const run = await ctx.trx
-      .insertInto('crove_hr.payroll_run')
+      .insertInto('ludy_hr.payroll_run')
       .values({ org_id: ctx.orgId, legal_entity_id: entity.id, month: input.month, working_days: workingDays, created_by: userId, created_at: ctx.now, updated_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
     const people = await peopleOf(ctx, entity.id, input.month);
     // Last month's pay lines of the same entity, for what recurs.
     const before = await ctx.trx
-      .selectFrom('crove_hr.payroll_line as l')
-      .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
+      .selectFrom('ludy_hr.payroll_line as l')
+      .innerJoin('ludy_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
       .select(['l.employee_id', 'l.employment_id', 'l.inputs'])
       .where('l.org_id', '=', ctx.orgId)
       .where('r.legal_entity_id', '=', entity.id)
@@ -423,7 +423,7 @@ export const runOpen = defineCommand({
       const inputs = initialInputsFor(person, lastInputs.get(person.employeeId), bhxhByEmployee.get(person.employeeId));
       const f = figuresOf(person, inputs, input.month, workingDays);
       await ctx.trx
-        .insertInto('crove_hr.payroll_line')
+        .insertInto('ludy_hr.payroll_line')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: entity.id,
@@ -453,8 +453,8 @@ export const runRecalculate = defineCommand({
   permission: 'hr.payroll.run',
   target: runTarget,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['working_days', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['working_days', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [
       'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net',
       'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'created_by', 'created_at', 'updated_at',
     ]),
@@ -465,11 +465,11 @@ export const runRecalculate = defineCommand({
     if (run.status !== 'draft') throw notDraft();
     const workingDays = input.workingDays ?? run.working_days;
     if (workingDays !== run.working_days) {
-      await ctx.trx.updateTable('crove_hr.payroll_run').set({ working_days: workingDays, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', run.id).execute();
+      await ctx.trx.updateTable('ludy_hr.payroll_run').set({ working_days: workingDays, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', run.id).execute();
     }
     const people = await peopleOf(ctx, run.legal_entity_id, run.month);
     const lines = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select(['id', 'employee_id', 'employment_id', 'inputs'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
@@ -489,7 +489,7 @@ export const runRecalculate = defineCommand({
             : parsed;
         const f = figuresOf(person, nextInputs, run.month, workingDays);
         await ctx.trx
-          .updateTable('crove_hr.payroll_line')
+          .updateTable('ludy_hr.payroll_line')
           .set({
             employment_id: person.terms.id,
             ...(nextInputs !== parsed ? { inputs: JSON.stringify(nextInputs) } : {}),
@@ -504,7 +504,7 @@ export const runRecalculate = defineCommand({
         const freshInputs = initialInputsFor(person, undefined, bhxhByEmployee.get(person.employeeId));
         const f = figuresOf(person, freshInputs, run.month, workingDays);
         await ctx.trx
-          .insertInto('crove_hr.payroll_line')
+          .insertInto('ludy_hr.payroll_line')
           .values({ org_id: ctx.orgId, legal_entity_id: run.legal_entity_id, run_id: run.id, employee_id: person.employeeId, employment_id: person.terms.id, kind: 'pay', inputs: JSON.stringify(freshInputs), ...f, created_by: userId, created_at: ctx.now, updated_at: ctx.now })
           .execute();
         added += 1;
@@ -516,7 +516,7 @@ export const runRecalculate = defineCommand({
     const gone = lines.filter((l) => !paidNow.has(l.employee_id));
     if (gone.length > 0) {
       await ctx.trx
-        .deleteFrom('crove_hr.payroll_line')
+        .deleteFrom('ludy_hr.payroll_line')
         .where('org_id', '=', ctx.orgId)
         .where('run_id', '=', run.id)
         .where('kind', '=', 'pay')
@@ -538,7 +538,7 @@ const LINE_UPDATE_COLUMNS = [
 
 async function updatePayLine(ctx: CommandContext, lineId: string, employmentId: string, inputs: HrPayrollInputs, figures: LineFigures): Promise<void> {
   await ctx.trx
-    .updateTable('crove_hr.payroll_line')
+    .updateTable('ludy_hr.payroll_line')
     .set({ employment_id: employmentId, inputs: JSON.stringify(inputs), ...figures, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', lineId)
@@ -553,15 +553,15 @@ export const lineInputsSet = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: (input: { lineId: string }) => ({ type: 'hr.payroll_line', id: input.lineId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS])],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
     // The run is locked before the line, as every other command does, so two requests cannot wait on each other.
-    const found = await ctx.trx.selectFrom('crove_hr.payroll_line').select(['run_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_hr.payroll_line').select(['run_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).executeTakeFirst();
     if (!found) throw lineNotFound();
     const run = await loadRun(ctx, found.run_id);
     const line = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select(['id', 'run_id', 'employee_id', 'kind', 'inputs'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.lineId)
@@ -637,7 +637,7 @@ async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly string
     return { payRun: run, locked: [], byLineId: new Map<string, { id: string; employee_id: string; kind: 'pay' | 'adjustment'; inputs: unknown }>(), people: new Map<string, Person>() };
   }
   const locked = await ctx.trx
-    .selectFrom('crove_hr.payroll_line')
+    .selectFrom('ludy_hr.payroll_line')
     .select(['id', 'employee_id', 'kind', 'inputs'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', run.id)
@@ -672,7 +672,7 @@ async function applyBatchLineUpdates(
   for (const u of updates) {
     await updatePayLine(ctx, u.lineId, u.employmentId, u.inputs, u.figures);
   }
-  await ctx.trx.updateTable('crove_hr.payroll_run').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', runId).execute();
+  await ctx.trx.updateTable('ludy_hr.payroll_run').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', runId).execute();
 }
 
 export const runImportTimekeeping = defineCommand({
@@ -684,8 +684,8 @@ export const runImportTimekeeping = defineCommand({
   permission: 'hr.payroll.run',
   target: (input: { runId: string }) => ({ type: 'hr.payroll_run', id: input.runId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['updated_at']),
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
@@ -717,8 +717,8 @@ export const runApplyThirteenthMonth = defineCommand({
   permission: 'hr.payroll.run',
   target: runTarget,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['updated_at']),
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
@@ -821,8 +821,8 @@ export const runSyncLeave = defineCommand({
   permission: 'hr.payroll.run',
   target: runTarget,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['updated_at']),
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
@@ -834,7 +834,7 @@ export const runSyncLeave = defineCommand({
       paidEmployeeIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_hr.payroll_leave_entry')
+            .selectFrom('ludy_hr.payroll_leave_entry')
             .select(['employee_id', 'kind', 'days', 'approved'])
             .where('org_id', '=', ctx.orgId)
             .where('employee_id', 'in', paidEmployeeIds)
@@ -925,7 +925,7 @@ export const runSyncLeave = defineCommand({
         if (needsUnpaidStamp) {
           const stamped = zHrPayrollInputs.parse({ ...existing, unpaidLeaveFromLedger: false });
           await ctx.trx
-            .updateTable('crove_hr.payroll_line')
+            .updateTable('ludy_hr.payroll_line')
             .set({ inputs: JSON.stringify(stamped), updated_at: ctx.now })
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', line.id)
@@ -966,7 +966,7 @@ export const lineAdjust = defineCommand({
   permission: 'hr.payroll.run',
   target: runTarget,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [
       'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'breakdown', 'adjusts_run_id', 'note',
       'created_by', 'created_at', 'updated_at',
     ]),
@@ -976,7 +976,7 @@ export const lineAdjust = defineCommand({
     const run = await loadRun(ctx, input.runId);
     if (run.status !== 'draft') throw notDraft();
     const target = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.adjustsRunId)
@@ -987,7 +987,7 @@ export const lineAdjust = defineCommand({
       throw new DomainError('HR_ADJUST_NOT_EARLIER', 422, 'Dòng điều chỉnh nằm ở bảng lương của một tháng sau tháng được sửa, cùng pháp nhân');
     }
     const employee = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', run.legal_entity_id)
@@ -995,7 +995,7 @@ export const lineAdjust = defineCommand({
       .executeTakeFirst();
     if (!employee) throw new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên này');
     const paid = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select(['id', 'employment_id'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', target.id)
@@ -1022,7 +1022,7 @@ export const lineAdjust = defineCommand({
     const net = gross.minus(money(input.employeeInsurance)).minus(money(input.pit));
     const employerCost = gross.plus(money(input.employerInsurance)).plus(money(input.unionFee));
     const line = await ctx.trx
-      .insertInto('crove_hr.payroll_line')
+      .insertInto('ludy_hr.payroll_line')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: run.legal_entity_id,
@@ -1163,12 +1163,12 @@ export const runApprove = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: runTarget,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['status', 'approved_by', 'approved_at', 'approval', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['status', 'approved_by', 'approved_at', 'approval', 'updated_at'])],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     const userId = userOf(ctx.actor);
     const run = await loadRun(ctx, input.runId);
     if (run.status !== 'draft') throw new DomainError('HR_RUN_NOT_DRAFT', 409, 'Bảng lương này đã được duyệt');
-    const lines = (await ctx.trx.selectFrom('crove_hr.payroll_line').select(LINE_COLUMNS).where('org_id', '=', ctx.orgId).where('run_id', '=', run.id).execute()) as StoredLine[];
+    const lines = (await ctx.trx.selectFrom('ludy_hr.payroll_line').select(LINE_COLUMNS).where('org_id', '=', ctx.orgId).where('run_id', '=', run.id).execute()) as StoredLine[];
     if (lines.length === 0) throw new DomainError('HR_RUN_EMPTY', 422, 'Bảng lương chưa có dòng nào để duyệt');
     const refused = lines.filter((l) => l.status === 'refused').length;
     if (refused > 0) throw new DomainError('HR_RUN_HAS_REFUSED', 422, `${refused} dòng chưa tính được; sửa số liệu của các dòng đó rồi mới duyệt`, { refused });
@@ -1218,7 +1218,7 @@ export const runApprove = defineCommand({
     }
     const totals = totalsOf(lines);
     await ctx.trx
-      .updateTable('crove_hr.payroll_run')
+      .updateTable('ludy_hr.payroll_run')
       .set({
         status: 'approved',
         approved_by: userId,
@@ -1247,7 +1247,7 @@ export const runList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrRunSummary[]> => {
     const runs = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_at'])
       .where('org_id', '=', ctx.orgId)
       .$if(input.legalEntityId !== undefined, (q) => q.where('legal_entity_id', '=', input.legalEntityId as string))
@@ -1257,7 +1257,7 @@ export const runList = defineQuery({
       .execute();
     if (runs.length === 0) return [];
     const lines = (await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select([...LINE_COLUMNS, 'run_id'])
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -1296,14 +1296,14 @@ export const runSheet = defineQuery({
   target: runTarget,
   handler: async (ctx, input): Promise<HrRunSheet> => {
     const run = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_at', 'approval'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.runId)
       .executeTakeFirst();
     if (!run) throw runNotFound();
     const lines = (await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select([...LINE_COLUMNS, 'breakdown', 'note', 'adjusts_run_id'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
@@ -1314,21 +1314,21 @@ export const runSheet = defineQuery({
     const employees = employeeIds.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_employee')
+          .selectFrom('ludy_hr.payroll_employee')
           .select(['id', 'display_name', 'ended_on', 'erased_at', 'is_foreign', 'work_permit_exempt', 'work_permit_expires_on'])
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', employeeIds)
           .execute();
     const firstTerms = employeeIds.length === 0
       ? []
-      : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'employee_id', 'effective_from', 'contract_type', 'contract_end_on', 'probation_end_on']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', employeeIds).execute();
+      : await ctx.trx.selectFrom('ludy_hr.payroll_employment').select(['id', 'employee_id', 'effective_from', 'contract_type', 'contract_end_on', 'probation_end_on']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', employeeIds).execute();
     const adjusted = [...new Set(lines.flatMap((l) => (l.adjusts_run_id ? [l.adjusts_run_id] : [])))];
-    const adjustedRuns = adjusted.length === 0 ? [] : await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjusted).execute();
+    const adjustedRuns = adjusted.length === 0 ? [] : await ctx.trx.selectFrom('ludy_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjusted).execute();
     const leaveYear = run.month.slice(0, 4);
     const leaveRows = employeeIds.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_leave_entry')
+          .selectFrom('ludy_hr.payroll_leave_entry')
           .select(['employee_id', 'month', 'kind', 'days', 'approved'])
           .where('org_id', '=', ctx.orgId)
           .where('employee_id', 'in', employeeIds)
@@ -1479,15 +1479,15 @@ export const linePayslip = defineQuery({
   target: (input: { lineId: string }) => ({ type: 'hr.payroll_line', id: input.lineId }),
   handler: async (ctx, input): Promise<HrPayslip> => {
     const line = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select([...LINE_COLUMNS, 'run_id', 'breakdown'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.lineId)
       .executeTakeFirst();
     if (!line) throw lineNotFound();
     if (line.kind !== 'pay' || line.status !== 'calculated' || line.breakdown === null) throw new DomainError('HR_NO_PAYSLIP', 422, 'Dòng này chưa có phiếu lương (chưa tính được hoặc là dòng điều chỉnh)');
-    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', line.run_id).executeTakeFirstOrThrow();
-    const employee = await ctx.trx.selectFrom('crove_hr.payroll_employee').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', line.employee_id).executeTakeFirstOrThrow();
+    const run = await ctx.trx.selectFrom('ludy_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', line.run_id).executeTakeFirstOrThrow();
+    const employee = await ctx.trx.selectFrom('ludy_hr.payroll_employee').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', line.employee_id).executeTakeFirstOrThrow();
     const figures = figuresOfLine(line as StoredLine);
     if (!figures) throw new DomainError('HR_NO_PAYSLIP', 422, 'Dòng này chưa có phiếu lương');
     return {
@@ -1512,7 +1512,7 @@ export const runThirteenthMonthPreview = defineQuery({
   target: runTarget,
   handler: async (ctx, input): Promise<HrThirteenthMonthPreviewResult> => {
     const run = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.runId)
@@ -1524,7 +1524,7 @@ export const runThirteenthMonthPreview = defineQuery({
     const minDaysForMonth = input.minDaysForMonth;
     const rulesUsed = [...calculateThirteenthMonthSalary({ baseWage: '0', workedMonths: 0 }).rulesUsed];
     const lines = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select(['id', 'employee_id', 'employment_id', 'inputs'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
@@ -1537,14 +1537,14 @@ export const runThirteenthMonthPreview = defineQuery({
     const people = new Map((await peopleOf(ctx, run.legal_entity_id, run.month)).map((p) => [p.employeeId, p]));
     const employeeIds = [...new Set(lines.map((l) => l.employee_id))];
     const employees = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'display_name', 'ended_on', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', employeeIds)
       .execute();
     const employeeMap = new Map(employees.map((e) => [e.id, e]));
     const employments = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(['id', 'employee_id', 'effective_from', 'base_wage'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', 'in', employeeIds)

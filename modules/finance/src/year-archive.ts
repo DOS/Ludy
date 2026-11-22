@@ -76,7 +76,7 @@ function recorded(row: { occurred_at: Date; detail: unknown }): RecordedArchive 
 // the earliest lock of all of them: an entity that has posted and never locked leaves the year open. Owners see every
 // entity.
 async function lockedThrough(ctx: QueryContext): Promise<string | null> {
-  const rows = await ctx.trx.selectFrom('crove_finance.period_lock').select('locked_through').where('org_id', '=', ctx.orgId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_finance.period_lock').select('locked_through').where('org_id', '=', ctx.orgId).execute();
   if (rows.length === 0 || rows.some((r) => r.locked_through === null)) return null;
   return rows.map((r) => r.locked_through as string).sort()[0] ?? null;
 }
@@ -93,7 +93,7 @@ async function archiveEntities(ctx: QueryContext, year: number): Promise<Array<{
         eb('e.is_default', '=', true),
         eb.exists(
           eb
-            .selectFrom('crove_finance.journal_entry as j')
+            .selectFrom('ludy_finance.journal_entry as j')
             .select('j.id')
             .whereRef('j.org_id', '=', 'e.org_id')
             .whereRef('j.legal_entity_id', '=', 'e.id')
@@ -190,8 +190,8 @@ export const yearArchiveSource = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
     const files = await ctx.trx
-      .selectFrom('crove_finance.journal_entry as j')
-      .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id'))
+      .selectFrom('ludy_finance.journal_entry as j')
+      .innerJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id'))
       .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'd.org_id').onRef('f.id', '=', 'd.source_file_id'))
       .select(['f.id', 'f.filename', 'f.content_type', 'f.storage_key', 'f.generation', 'f.sha256'])
       .distinct()

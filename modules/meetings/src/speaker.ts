@@ -12,7 +12,7 @@ import { ROLES, openMeeting, userOf } from './transcript.ts';
 // The people of a meeting a speaker may be named after (#3502): the recorder first, then the readers they added, by the display name the org knows them by (member_profiles answers for
 // members only). A member with no display name has no name to offer, and an email address is never one.
 export async function attendeeNames(ctx: CommandContext | QueryContext, meetingId: string, recorderId: string): Promise<Array<{ userId: string; name: string }>> {
-  const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
+  const readers = await ctx.trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
   const ids = [recorderId, ...readers.map((r) => r.user_id).filter((id) => id !== recorderId)];
   const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
   const names = new Map(rows.map((r) => [r.user_id, cleanName(r.display_name)]));
@@ -32,7 +32,7 @@ export function cleanName(raw: string | null | undefined): string {
 // The distinct speaker labels the recorder's DRAFT lines carry now (a published line is never renamed here).
 export async function draftLabels(ctx: CommandContext | QueryContext, meetingId: string): Promise<Set<string>> {
   const rows = await ctx.trx
-    .selectFrom('crove_meetings.transcript_segment')
+    .selectFrom('ludy_meetings.transcript_segment')
     .select('speaker_label')
     .distinct()
     .where('org_id', '=', ctx.orgId)
@@ -65,7 +65,7 @@ export const speakerName = defineCommand({
       throw new DomainError('SPEAKER_NAME_TAKEN', 409, 'Another speaker of this meeting already has this name');
     }
     const renamed = await ctx.trx
-      .updateTable('crove_meetings.transcript_segment')
+      .updateTable('ludy_meetings.transcript_segment')
       .set({ speaker_label: input.name, corrected: true, updated_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)

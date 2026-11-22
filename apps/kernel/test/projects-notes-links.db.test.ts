@@ -298,7 +298,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
       }
     }
 
-    // Raw SQL RLS on crove_notes.link and crove_notes.todo isolates the link row to the owner only.
+    // Raw SQL RLS on ludy_notes.link and ludy_notes.todo isolates the link row to the owner only.
     const sqlActors = [
       { name: 'other member', url: appUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.other, o.orgId)]) },
       { name: 'owner', url: appUrl, enter: (c: pg.Client) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]) },
@@ -309,8 +309,8 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     ];
     for (const actor of sqlActors) {
       const seen = await inSqlContext(actor.url, actor.enter, async (c) => ({
-        todos: (await c.query('SELECT id FROM crove_notes.todo WHERE id = $1', [todoId])).rowCount,
-        links: (await c.query('SELECT id FROM crove_notes.link WHERE todo_id = $1', [todoId])).rowCount,
+        todos: (await c.query('SELECT id FROM ludy_notes.todo WHERE id = $1', [todoId])).rowCount,
+        links: (await c.query('SELECT id FROM ludy_notes.link WHERE todo_id = $1', [todoId])).rowCount,
       }));
       expect(seen, actor.name).toEqual({ todos: 0, links: 0 });
     }
@@ -318,7 +318,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     const authorSql = await inSqlContext(
       appUrl,
       (c) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.author, o.orgId)]),
-      async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_notes.link WHERE todo_id = $1', [todoId])).rowCount,
+      async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_notes.link WHERE todo_id = $1', [todoId])).rowCount,
     );
     expect(authorSql).toBe(2);
 
@@ -361,7 +361,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
     await o.exec(o.author, 'notes.todo.restore', { todoId });
     expect((await o.query<NoteRecordPanel>(o.author, 'notes.record.panel', { targetType: 'kernel.task', targetId: o.taskId })).todos.map((t) => t.id)).toEqual([todoId]);
 
-    // Deleting the linked task cascades on crove_notes.link without deleting the personal to-do.
+    // Deleting the linked task cascades on ludy_notes.link without deleting the personal to-do.
     await withAdmin((c) => c.query('DELETE FROM ludy_kernel.task WHERE org_id = $1 AND id = $2', [o.orgId, o.taskId]));
     expect((await o.query<Todo>(o.author, 'notes.todo.get', { todoId })).links).toEqual([]);
 

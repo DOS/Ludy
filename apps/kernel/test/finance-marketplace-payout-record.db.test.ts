@@ -80,18 +80,18 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
-        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
+        c.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
     // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
-    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
+    await withAdmin((c) => c.query("INSERT INTO ludy_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
     if (household) {
       await withAdmin(async (c) => {
         await c.query("UPDATE ludy_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
-        await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
-        await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
+        await c.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
+        await c.query("UPDATE ludy_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
       });
     }
     return { orgId, owner, admin, member, entity };
@@ -104,13 +104,13 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await withAdmin(async (c) => {
       const net = lines.reduce((n, l) => n + netOf(l), 0);
       await c.query('BEGIN');
-      await c.query('INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, platform, start, end, net]);
+      await c.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, platform, start, end, net]);
       for (const [i, l] of lines.entries()) {
         const orderId = randomUUID();
-        await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
-        if (l.delivered !== null) await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
+        await c.query('INSERT INTO ludy_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
+        if (l.delivered !== null) await c.query("INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
         await c.query(
-          'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)',
+          'INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)',
           [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.commission ?? '0', l.service ?? '0', l.payment ?? '0', l.shipping ?? '0', l.tax ?? '0', l.refund ?? '0', l.other ?? '0', netOf(l)],
         );
       }
@@ -121,7 +121,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   // A bank line of the entity's bank account (1121), money in unless the amount is negative.
   async function bankLine(o: Org, date: string, amount: string | number, account = '1121'): Promise<string> {
     const [line] = await rows<{ id: string }>(
-      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref) VALUES ($1, $2, $3, 1, $4, 'Shopee thanh toan', $5, $6) RETURNING id`,
+      `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref) VALUES ($1, $2, $3, 1, $4, 'Shopee thanh toan', $5, $6) RETURNING id`,
       [o.orgId, account, randomUUID(), date, String(amount), `FT${randomUUID().slice(0, 8)}`],
     );
     return line?.id as string;
@@ -136,7 +136,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   const askWith = (o: Org, settlementId: string, bankLineId: string, adjustments: unknown[], user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId, adjustments } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const lineIdsOf = async (o: Org, settlementId: string) =>
-    (await rows<{ id: string }>('SELECT id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2 ORDER BY line_key', [o.orgId, settlementId])).map((r) => r.id);
+    (await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2 ORDER BY line_key', [o.orgId, settlementId])).map((r) => r.id);
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
@@ -147,11 +147,11 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[]; adjustments?: unknown[] } & Record<string, unknown> }>('SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
   const entryOf = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
       [o.orgId, entryId],
     );
-  const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
-  const payoutsOf = (o: Org, settlementId: string) => rows<{ id: string; proposal_id: string; payout_bank_line_id: string }>('SELECT id, proposal_id, payout_bank_line_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id = $2', [o.orgId, settlementId]);
+  const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM ludy_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
+  const payoutsOf = (o: Org, settlementId: string) => rows<{ id: string; proposal_id: string; payout_bank_line_id: string }>('SELECT id, proposal_id, payout_bank_line_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id = $2', [o.orgId, settlementId]);
   const balance = (o: Org) => rt.query<{ rows: { platform: string; salesPosted: string; paidOut: string; awaitingPayout: string; feesAwaitingInvoice: string }[] }>('finance.marketplace.balance', {}, { actor: asUser(o.owner), orgId: o.orgId });
 
   // Two orders: sales 100 000 + 250 000, seller discounts 5 000 + 10 000 (the settlement posts Dr 131 335 000); fees 10 000 + 18 000, withheld tax 3 000: money received 85 000 + 219 000 = 304 000.
@@ -224,7 +224,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const { o, settlement, line } = await posted();
     await approve(o, (await ask(o, settlement, line)).proposalId);
     const totals = await rows<{ account_code: string; debit: string; credit: string }>(
-      "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333') GROUP BY 1 ORDER BY 1",
+      "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333') GROUP BY 1 ORDER BY 1",
       [o.orgId],
     );
     expect(totals).toEqual([{ account_code: '3331', debit: '2000', credit: '2000' }, { account_code: '3335', debit: '1000', credit: '1000' }]);
@@ -240,15 +240,15 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     // A household on the deduction method: the settlement credits 33311 for the output VAT (#4303 S3b) and 3331 / 3335 for what the platform withheld; the payout debits the withheld tax exactly.
     const o = await org();
     await withAdmin(async (c) => {
-      await c.query('DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1', [o.orgId]);
-      await c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method, vat_percent) VALUES ($1, $2, '2026-01-01', 'deduction', 8)", [o.orgId, o.entity]);
+      await c.query('DELETE FROM ludy_finance.marketplace_vat_rate WHERE org_id = $1', [o.orgId]);
+      await c.query("INSERT INTO ludy_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method, vat_percent) VALUES ($1, $2, '2026-01-01', 'deduction', 8)", [o.orgId, o.entity]);
     });
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', PAID);
     await post(o, settlement);
     const line = await bankLine(o, '2026-10-20', RECEIVED);
     await approve(o, (await ask(o, settlement, line)).proposalId);
     const totals = await rows<{ account_code: string; debit: string; credit: string }>(
-      "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '33311') GROUP BY 1 ORDER BY 1",
+      "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '33311') GROUP BY 1 ORDER BY 1",
       [o.orgId],
     );
     const byAccount = Object.fromEntries(totals.map((t) => [t.account_code, [t.debit, t.credit]]));
@@ -269,7 +269,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   const monthEntries = async (o: Org, settlementId: string) =>
     (
       await rows<{ id: string }>(
-        `SELECT e.id FROM crove_finance.journal_voucher v JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL
+        `SELECT e.id FROM ludy_finance.journal_voucher v JOIN ludy_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL
          WHERE v.org_id = $1 AND v.settlement_id = $2 ORDER BY v.settlement_month`,
         [o.orgId, settlementId],
       )
@@ -359,7 +359,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await expect(askAccrual(o, offer as NonNullable<typeof offer>)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_ACCRUAL_PENDING', status: 409 });
     expect((await worklist(o)).accruals[0]?.proposalId).toBe(asked.proposalId);
     await approve(o, asked.proposalId);
-    const posted = Object.fromEntries((await rows<{ a: string; d: string; c: string }>('SELECT account_code AS a, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN (\'6421\', \'335\') GROUP BY 1', [o.orgId])).map((r) => [r.a, [Number(r.d), Number(r.c)]]));
+    const posted = Object.fromEntries((await rows<{ a: string; d: string; c: string }>('SELECT account_code AS a, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code IN (\'6421\', \'335\') GROUP BY 1', [o.orgId])).map((r) => [r.a, [Number(r.d), Number(r.c)]]));
     expect(posted).toEqual({ '6421': [12000, 0], '335': [0, 12000] });
     // It stands: no second accrual (of any month), nothing offered again for the month, and the reversal waits for the first day of the next month.
     await expect(askAccrual(o, offer as NonNullable<typeof offer>)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_ACCRUAL_STANDS', status: 409 });
@@ -387,7 +387,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const net = async () =>
       Object.fromEntries(
         (await rows<{ a: string; n: string }>(
-          "SELECT account_code AS a, (sum(debit) - sum(credit))::bigint::text AS n FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('131', '331', '335', '6421', '1331') GROUP BY 1",
+          "SELECT account_code AS a, (sum(debit) - sum(credit))::bigint::text AS n FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code IN ('131', '331', '335', '6421', '1331') GROUP BY 1",
           [o.orgId],
         )).map((r) => [r.a, Number(r.n)]),
       );
@@ -406,8 +406,8 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     expect(await net()).toMatchObject({ '131': 0, '331': 12000, '335': 0, '6421': 0 });
     // The platform's fee invoice for the 12 000 (11 111 of fees and 889 of VAT, 8%): the ordinary purchase entry, naming the platform on the 331 line.
     await rows(
-      `WITH e AS (INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-05', 'Hóa đơn phí sàn Shopee', 'test', $2, $3) RETURNING id)
-       INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+      `WITH e AS (INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-05', 'Hóa đơn phí sàn Shopee', 'test', $2, $3) RETURNING id)
+       INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
        SELECT $1, e.id, v.n, v.account, v.debit, v.credit, v.party, $3 FROM e, (VALUES (1, '6421', 11111, 0, NULL::uuid), (2, '1331', 889, 0, NULL::uuid), (3, '331', 0, 12000, $4::uuid)) AS v(n, account, debit, credit, party)`,
       [o.orgId, randomUUID(), o.entity, party],
     );
@@ -456,12 +456,12 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
     const line = await bankLine(o, '2026-10-20', '300000');
     const done = await post(o, settlement);
-    expect(await rows("SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2", [o.orgId, settlement])).toHaveLength(2);
+    expect(await rows("SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2", [o.orgId, settlement])).toHaveLength(2);
     const { proposalId } = await ask(o, settlement, line);
     await approve(o, proposalId);
     expect(await payoutsOf(o, settlement)).toHaveLength(1);
     // The credit to 131 is what the two months posted (the stored lines' whole): the platform's balance on 131 is nil.
-    const balance = await rows<{ net: string }>("SELECT coalesce(sum(l.debit - l.credit), 0)::text AS net FROM crove_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '131'", [o.orgId]);
+    const balance = await rows<{ net: string }>("SELECT coalesce(sum(l.debit - l.credit), 0)::text AS net FROM ludy_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '131'", [o.orgId]);
     expect(Number(balance[0]?.net)).toBe(0);
     expect(done.journalEntryId).toBeTruthy();
   });
@@ -499,7 +499,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     // The accountant reverses the settlement's posting through the proposal path (finance.journal.reverse), and the reversal must exist before anything is asserted.
     const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-16', reason: 'Đảo để sửa' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
     await approve(o, asked.proposalId);
-    expect(await rows('SELECT 1 FROM crove_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId])).toHaveLength(1);
     await expect(approve(o, pending.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
     await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
     expect(await payoutsOf(o, settlement)).toHaveLength(0);
@@ -530,8 +530,8 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     expect(await payoutsOf(o, settlement)).toHaveLength(1);
     // After the posting the line is matched for a bank voucher, and the settlement is paid out once whatever the command does.
     await expect(rt.execute('kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_credit', date: '2026-10-20', cashAccount: '1121', description: 'trùng', lines: [{ account: '711', amount: RECEIVED }], bankLineId: line } }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'BANK_LINE_MATCHED' });
-    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-20', 'x', $2, $3, $4)`, [o.orgId, first.proposalId, settlement, randomUUID()])).rejects.toMatchObject({ code: '23505' });
-    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-20', 'x', $2, $3, $4)`, [o.orgId, first.proposalId, randomUUID(), line])).rejects.toMatchObject({ code: '23505' });
+    await expect(rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-20', 'x', $2, $3, $4)`, [o.orgId, first.proposalId, settlement, randomUUID()])).rejects.toMatchObject({ code: '23505' });
+    await expect(rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-20', 'x', $2, $3, $4)`, [o.orgId, first.proposalId, randomUUID(), line])).rejects.toMatchObject({ code: '23505' });
   });
 
   it('does not post a reversed payout again: the settlement and the line stay with it, and a bank voucher may take the freed line', async () => {
@@ -540,7 +540,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     // The accountant reverses the payout (a wrong line, for instance) through the ordinary reversal.
     const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-21', reason: 'Nhầm dòng sao kê' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
     await approve(o, asked.proposalId);
-    expect((await rows('SELECT 1 FROM crove_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId])).length).toBe(1);
+    expect((await rows('SELECT 1 FROM ludy_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId])).length).toBe(1);
     // Asking again is refused cleanly at the request (the database holds one payout voucher per settlement and per line for good), never as a unique violation at the approval.
     await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_POSTED', status: 409 });
     const other = await bankLine(o, '2026-10-21', RECEIVED);
@@ -571,7 +571,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_BANK_LINE', status: 409 });
     // The bank voucher is approved and posted, so the line is matched, not only proposed.
     await approve(o, voucher.proposalId);
-    expect(await rows('SELECT 1 FROM crove_finance.cash_voucher WHERE org_id = $1 AND bank_line_id = $2', [o.orgId, line])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.cash_voucher WHERE org_id = $1 AND bank_line_id = $2', [o.orgId, line])).toHaveLength(1);
     await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_BANK_LINE', status: 409 });
   });
 
@@ -623,7 +623,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const tt99 = await org('tt99');
     const there = await seed(tt99, 'shopee', '2026-10-01', '2026-10-15', PAID);
     await expect(ask(tt99, there, await bankLine(tt99, '2026-10-20', RECEIVED))).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id IS NOT NULL', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id IS NOT NULL', [o.orgId])).toHaveLength(0);
   });
 
   it('takes the four-eyes rule of every ledger command: the requester does not approve while another may, a member cannot approve', async () => {
@@ -674,7 +674,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(rowsOf(await entryOf(o, done.journalEntryId))).toEqual(expected);
       // 131 is cleared, and 632 and 711 hold what the payout credited.
       const totals = await rows<{ account_code: string; debit: string; credit: string }>(
-        "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('131', '632', '711') GROUP BY 1 ORDER BY 1",
+        "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code IN ('131', '632', '711') GROUP BY 1 ORDER BY 1",
         [o.orgId],
       );
       expect(totals).toEqual([{ account_code: '131', debit: '150000', credit: '150000' }, { account_code: '632', debit: '0', credit: '1500' }, { account_code: '711', debit: '0', credit: '6500' }]);
@@ -697,7 +697,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       expect(accounts(await payloadOf(o, proposalId))).toEqual(expected);
       const done = await approve(o, proposalId);
       expect(rowsOf(await entryOf(o, done.journalEntryId))).toEqual(expected);
-      expect(await rows("SELECT 1 FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333')", [o.orgId])).toHaveLength(0);
+      expect(await rows("SELECT 1 FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333')", [o.orgId])).toHaveLength(0);
     });
 
     it('refuses a tax classified as withheld in error on a household, whose withheld tax goes through 3331 and 3335, at the request and at the approval of a forged proposal', async () => {
@@ -732,7 +732,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       await expect(askWith(neg.o, neg.settlement, neg.line, [{ kind: 'incentive', lineId: neg.ids[0], amount: '6000' }])).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422, details: { reason: 'OTHER_NEGATIVE' } });
       for (const x of [o, neg.o]) {
         expect(await rows("SELECT 1 FROM ludy_kernel.proposal WHERE org_id = $1 AND command = 'finance.marketplace_payout.record'", [x.orgId])).toHaveLength(0);
-        expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id IS NOT NULL', [x.orgId])).toHaveLength(0);
+        expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payout_settlement_id IS NOT NULL', [x.orgId])).toHaveLength(0);
       }
     });
 
@@ -767,7 +767,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     // The order line of a settlement line, made a returned one with its shipment out of an item (the stage moves forward from completed), and optionally its return move.
     async function cameBack(o: Org, settlementLineId: string, withReturn = false) {
       const [found] = await rows<{ id: string; legal_entity_id: string }>(
-        'SELECT l.id, l.legal_entity_id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_settlement_line sl ON sl.org_id = l.org_id AND sl.order_id = l.order_id WHERE sl.org_id = $1 AND sl.id = $2',
+        'SELECT l.id, l.legal_entity_id FROM ludy_finance.channel_order_line l JOIN ludy_finance.channel_settlement_line sl ON sl.org_id = l.org_id AND sl.order_id = l.order_id WHERE sl.org_id = $1 AND sl.id = $2',
         [o.orgId, settlementLineId],
       );
       const lineId = found?.id as string;
@@ -777,7 +777,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
         { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
       );
       const move = (kind: 'ship' | 'return', quantity: number) =>
-        rows("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, $3, '2026-10-12', $4, 'order_line', $5, $6, 1)", [
+        rows("INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, $3, '2026-10-12', $4, 'order_line', $5, $6, 1)", [
           o.orgId,
           found?.legal_entity_id,
           item.id,
@@ -786,7 +786,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
           kind,
         ]);
       await move('ship', -1);
-      await rows("UPDATE crove_finance.channel_order_line SET stage = 'returned' WHERE org_id = $1 AND id = $2", [o.orgId, lineId]);
+      await rows("UPDATE ludy_finance.channel_order_line SET stage = 'returned' WHERE org_id = $1 AND id = $2", [o.orgId, lineId]);
       if (withReturn) await move('return', 1);
       return lineId;
     }
@@ -805,7 +805,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       await approve(o, proposalId);
       expect(await offered(o)).toEqual([]);
       await expect(decide(o, orderLine, 'back')).rejects.toMatchObject({ code: 'MARKETPLACE_RETURN_COMPENSATED', status: 409 });
-      expect(await rows("SELECT 1 FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'", [o.orgId, orderLine])).toHaveLength(0);
+      expect(await rows("SELECT 1 FROM ludy_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'", [o.orgId, orderLine])).toHaveLength(0);
     });
 
     it('offers the order again once the proposal that named compensation is rejected, and lets compensation follow a "not back" answer (#4355)', async () => {
@@ -945,7 +945,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   it('holds the voucher shape in the database: both columns or none, and no other source on a payout voucher', async () => {
     const { o, settlement, line } = await posted();
     const { proposalId } = await ask(o, settlement, line);
-    const insert = (cols: string, vals: unknown[]) => rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, ${cols}) VALUES ($1, '2026-10-20', 'x', ${vals.map((_, i) => `$${i + 2}`).join(', ')})`, [o.orgId, ...vals]);
+    const insert = (cols: string, vals: unknown[]) => rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, ${cols}) VALUES ($1, '2026-10-20', 'x', ${vals.map((_, i) => `$${i + 2}`).join(', ')})`, [o.orgId, ...vals]);
     await expect(insert('proposal_id, payout_settlement_id', [proposalId, randomUUID()])).rejects.toMatchObject({ code: '23514' });
     await expect(insert('proposal_id, payout_bank_line_id', [proposalId, randomUUID()])).rejects.toMatchObject({ code: '23514' });
     await expect(insert('payout_settlement_id, payout_bank_line_id', [randomUUID(), randomUUID()])).rejects.toBeTruthy();

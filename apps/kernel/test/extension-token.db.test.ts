@@ -404,11 +404,11 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       const response = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: form });
       return { status: response.status, body: (await response.json()) as { code?: string } };
     };
-    const segment = () => admin(async (c) => (await c.query<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows);
+    const segment = () => admin(async (c) => (await c.query<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows);
     // The first recording stands as a joined one (as if the app had joined the live pieces).
     expect((await send('30')).status).toBe(200);
     const [joined] = await segment();
-    await admin(async (c) => void (await c.query('UPDATE crove_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId])));
+    await admin(async (c) => void (await c.query('UPDATE ludy_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId])));
     // The extension's retry of the complete recording, with its own token, replaces it.
     expect((await send('60')).status).toBe(200);
     const after = await segment();
@@ -419,8 +419,8 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(await send('61')).toMatchObject({ status: 409, body: { code: 'MEDIA_ALREADY_RECORDED' } });
     // Joined again, but a transcript was made from it: the retry is refused and the joined recording stays.
     await admin(async (c) => {
-      await c.query('UPDATE crove_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId]);
-      await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) SELECT org_id, id, 0, 1, 'xin chào' FROM crove_meetings.meeting WHERE id = $1`, [meetingId]);
+      await c.query('UPDATE ludy_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId]);
+      await c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) SELECT org_id, id, 0, 1, 'xin chào' FROM ludy_meetings.meeting WHERE id = $1`, [meetingId]);
     });
     const keep = await segment();
     expect(await send('62')).toMatchObject({ status: 409, body: { code: 'MEDIA_JOINED_IN_USE' } });
@@ -432,14 +432,14 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const make = async (title: string) => String((await rpc('meetings/create', asToken(token), { title, consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false })).body.meetingId);
     const row = (id: string) =>
       admin(async (c) => (await c.query<{ ended: boolean; secs: number | null; reason: string | null; touched: string }>(
-        `SELECT ended_at IS NOT NULL AS ended, extract(epoch FROM ended_at - started_at)::int AS secs, recording_stop_reason AS reason, updated_at::text AS touched FROM crove_meetings.meeting WHERE id = $1`, [id])).rows[0]!);
+        `SELECT ended_at IS NOT NULL AS ended, extract(epoch FROM ended_at - started_at)::int AS secs, recording_stop_reason AS reason, updated_at::text AS touched FROM ludy_meetings.meeting WHERE id = $1`, [id])).rows[0]!);
     const chip = async () => (await rpc('meetings/recordingNow', await asBrowser('recorder'), {})).body.recording as { meetingId: string } | null;
     const stopped = (headers: Record<string, string>, input: Record<string, unknown>) => rpc('meetings/recordingStopped', headers, input);
 
     // A silent stop: the chip lists the meeting until the token reports it, then lets go at once.
     const silent = await make('Dừng im lặng');
     // Started ten minutes ago: the end time is the start plus the reported length, never later than now.
-    const back = (id: string) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting SET started_at = now() - interval '10 minutes' WHERE id = $1`, [id])));
+    const back = (id: string) => admin(async (c) => void (await c.query(`UPDATE ludy_meetings.meeting SET started_at = now() - interval '10 minutes' WHERE id = $1`, [id])));
     await back(silent);
     expect(await chip()).toMatchObject({ meetingId: silent });
     expect(await stopped(asToken(token), { meetingId: silent, reason: 'mic_lost', lengthSeconds: 90 })).toMatchObject({ status: 200, body: { meetingId: silent, ended: true } });
@@ -479,7 +479,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     again.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
     again.set('lengthSeconds', '60');
     expect((await app.request(`/api/meetings/${legacy}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: again })).status).toBe(200);
-    await admin(async (c) => void (await c.query('UPDATE crove_meetings.meeting SET ended_at = NULL WHERE id = $1', [legacy])));
+    await admin(async (c) => void (await c.query('UPDATE ludy_meetings.meeting SET ended_at = NULL WHERE id = $1', [legacy])));
     expect(await stopped(asToken(token), { meetingId: legacy, lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
     expect((await row(legacy)).ended).toBe(false);
 

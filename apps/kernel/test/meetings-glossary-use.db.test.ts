@@ -2,7 +2,7 @@
 // The organization's glossary in member-Vy text runs (#4043, step 3b) on PostgreSQL 17 with a fake model:
 // - the recorder's summary, translation (summary + transcript), chapters, and title receive the org's glossary as JSON data under a fixed line and spell/check outputs deterministically;
 // - a non-recorder attendee (and a non-recorder owner/admin on an org-visible meeting) translates published text normally with zero glossary terms and zero glossary queries;
-// - crove_meetings.glossary_for_recorder(uuid) is executable by ludy_app alone in a user context with active org, non-disabled member standing, is_meeting_recorder, and non-expired text
+// - ludy_meetings.glossary_for_recorder(uuid) is executable by ludy_app alone in a user context with active org, non-disabled member standing, is_meeting_recorder, and non-expired text
 //   retention, refusing worker/tenant/definer_tenant/other-org/non-recorder/viewer/disabled/inactive-org callers while keeping glossary_term RLS owner/admin-only;
 // - prompt-injection and invisible-character strings remain inert data, and AI-off behavior is unchanged.
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -62,7 +62,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     }
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
-  const wipeGlossary = (org = orgId) => sqlAdmin('DELETE FROM crove_meetings.glossary_term WHERE org_id = $1', [org]);
+  const wipeGlossary = (org = orgId) => sqlAdmin('DELETE FROM ludy_meetings.glossary_term WHERE org_id = $1', [org]);
 
   let modelCalls = 0;
   let prompts: Array<{ system: string; user: string; feature?: string | undefined }> = [];
@@ -126,12 +126,12 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     const meetingId = randomUUID();
     const retentionOffset = opts.retentionDays ?? 365;
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, $4, 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::integer)`,
       [org, meetingId, users[recorder], opts.visibility ?? 'attendees', retentionOffset],
     );
     if (org === orgId && (opts.visibility ?? 'attendees') === 'attendees') {
-      await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [org, randomUUID(), meetingId, users.attendee]);
+      await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [org, randomUUID(), meetingId, users.attendee]);
     }
     const segs = opts.segments ?? [
       [0, 10, 'Hôm nay bàn việc đẩy chứng từ từ MISA AMIS sang Crove.'],
@@ -158,7 +158,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
       const id = randomUUID();
       ids.push(id);
       await sqlAdmin(
-        `INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
+        `INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
          VALUES ($1, $2, $3, $4, $5, 'Hà', $6, 'published')`,
         [org, id, meetingId, i * 25, i * 25 + 24, text],
       );
@@ -329,7 +329,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     expect(JSON.stringify(auditRows)).not.toContain('MISA');
   });
 
-  it('enforces crove_meetings.glossary_for_recorder role, context, org, member, recorder, retention, and bounding invariants in PostgreSQL', async () => {
+  it('enforces ludy_meetings.glossary_for_recorder role, context, org, member, recorder, retention, and bounding invariants in PostgreSQL', async () => {
     await wipeGlossary();
     await wipeGlossary(otherOrgId);
     await exec('owner', 'meetings.glossary.add', { term: 'Crove' });
@@ -341,20 +341,20 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     const viewerMeeting = await seedMeeting({ recorder: 'viewer' });
     const disabledMeeting = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Disabled rec', 'vi', now(), now() + interval '10 minutes', 600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, disabledMeeting, users.disabledRec],
     );
     const closedMeeting = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Closed org', 'vi', now(), now() + interval '10 minutes', 600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [closingOrgId, closedMeeting, users.closingOwner],
     );
 
     // Privilege matrix: EXECUTE belongs strictly to ludy_app alone among runtime/public roles.
     const { rows: privs } = await sqlAdmin<{ role: string; can_exec: boolean }>(
-      `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_meetings.glossary_for_recorder(uuid)'::regprocedure, 'EXECUTE') AS can_exec
+      `SELECT r AS role, pg_catalog.has_function_privilege(r, 'ludy_meetings.glossary_for_recorder(uuid)'::regprocedure, 'EXECUTE') AS can_exec
        FROM pg_catalog.unnest(ARRAY['public', 'ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) AS r`,
     );
     expect(privs).toEqual([
@@ -370,7 +370,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
       try {
         await c.query('BEGIN');
         if (who !== null) await enterUser(c, users[who] as string, org);
-        const r = await c.query<{ term: string }>('SELECT term FROM crove_meetings.glossary_for_recorder($1::uuid)', [meetingId]);
+        const r = await c.query<{ term: string }>('SELECT term FROM ludy_meetings.glossary_for_recorder($1::uuid)', [meetingId]);
         return { ok: true, terms: r.rows.map((x) => x.term) };
       } catch (error: unknown) {
         const e = error as { code?: string; message?: string };
@@ -400,7 +400,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     try {
       await appClient.query('BEGIN');
       await enterUser(appClient, users.recorder as string, orgId);
-      const direct = await appClient.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_meetings.glossary_term');
+      const direct = await appClient.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_meetings.glossary_term');
       expect(direct.rows[0]?.n).toBe(0);
     } finally {
       await appClient.query('ROLLBACK').catch(() => undefined);
@@ -410,10 +410,10 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     // Worker login (raw, system context) and tenant/definer_tenant roles cannot execute glossary_for_recorder.
     const wc = await workerPool.connect();
     try {
-      await expect(wc.query('SELECT term FROM crove_meetings.glossary_for_recorder($1::uuid)', [orgMeeting])).rejects.toMatchObject({ code: '42501' });
+      await expect(wc.query('SELECT term FROM ludy_meetings.glossary_for_recorder($1::uuid)', [orgMeeting])).rejects.toMatchObject({ code: '42501' });
       await wc.query('BEGIN');
       await wc.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
-      await expect(wc.query('SELECT term FROM crove_meetings.glossary_for_recorder($1::uuid)', [orgMeeting])).rejects.toMatchObject({ code: '42501' });
+      await expect(wc.query('SELECT term FROM ludy_meetings.glossary_for_recorder($1::uuid)', [orgMeeting])).rejects.toMatchObject({ code: '42501' });
     } finally {
       await wc.query('ROLLBACK').catch(() => undefined);
       wc.release();
@@ -423,7 +423,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
         await c.query('BEGIN');
         try {
           await c.query(`SET LOCAL ROLE ${role}`);
-          await expect(c.query('SELECT term FROM crove_meetings.glossary_for_recorder($1::uuid)', [orgMeeting]), role).rejects.toMatchObject({ code: '42501' });
+          await expect(c.query('SELECT term FROM ludy_meetings.glossary_for_recorder($1::uuid)', [orgMeeting]), role).rejects.toMatchObject({ code: '42501' });
         } finally {
           await c.query('ROLLBACK').catch(() => undefined);
         }
@@ -445,7 +445,7 @@ suite('meetings glossary integration and definer gate (#4043, step 3b)', () => {
     await seedPublishedTranscript(meetingId, ['Nội dung an toàn.']);
 
     // Invisible chars from #4192 are rejected directly in DB CHECK or collapsed to plain text via add/update.
-    const dirtyCode = await sqlAdmin(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3)`, [orgId, 'x\u180b\u206a\uffa0\u{1d173}y', users.owner]).then(
+    const dirtyCode = await sqlAdmin(`INSERT INTO ludy_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3)`, [orgId, 'x\u180b\u206a\uffa0\u{1d173}y', users.owner]).then(
       () => null,
       (e: { code?: string }) => e.code ?? 'ERR',
     );

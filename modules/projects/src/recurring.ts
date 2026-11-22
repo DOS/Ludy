@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Recurring project tasks (#2607): weekly and monthly schedules on crove_projects.project_task.
+// Recurring project tasks (#2607): weekly and monthly schedules on ludy_projects.project_task.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
@@ -185,8 +185,8 @@ export const projectTaskRecurrenceGet = defineQuery({
   handler: async (ctx, input): Promise<ProjectTaskRecurrenceView | null> => {
     userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_projects.project as p', (join) =>
+      .selectFrom('ludy_projects.project_task as pt')
+      .innerJoin('ludy_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pt.org_id').onRef('p.id', '=', 'pt.project_id'),
       )
       .innerJoin('ludy_kernel.task as t', (join) =>
@@ -216,7 +216,7 @@ export const projectTaskRecurrenceSet = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['recurrence', 'recurrence_next_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['recurrence', 'recurrence_next_at'])],
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectTaskRecurrenceView> => {
     userOf(ctx.actor);
@@ -232,7 +232,7 @@ export const projectTaskRecurrenceSet = defineCommand({
     if (!visibleTask) throw taskNotFound();
 
     const pt = await ctx.trx
-      .selectFrom('crove_projects.project_task')
+      .selectFrom('ludy_projects.project_task')
       .select([
         'project_id',
         'task_id',
@@ -285,7 +285,7 @@ export const projectTaskRecurrenceSet = defineCommand({
     const serialized = JSON.stringify(rule);
 
     await ctx.trx
-      .updateTable('crove_projects.project_task')
+      .updateTable('ludy_projects.project_task')
       .set({
         recurrence: serialized,
         recurrence_next_at: nextAt,
@@ -328,7 +328,7 @@ export const projectTaskRecurrenceClear = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['recurrence', 'recurrence_next_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['recurrence', 'recurrence_next_at'])],
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectTaskRecurrenceClearResult> => {
     userOf(ctx.actor);
@@ -344,7 +344,7 @@ export const projectTaskRecurrenceClear = defineCommand({
     if (!visibleTask) throw taskNotFound();
 
     const pt = await ctx.trx
-      .selectFrom('crove_projects.project_task')
+      .selectFrom('ludy_projects.project_task')
       .select(['recurrence', 'recurrence_next_at'])
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -356,7 +356,7 @@ export const projectTaskRecurrenceClear = defineCommand({
     const cleared = pt.recurrence !== null || pt.recurrence_next_at !== null;
     if (cleared) {
       await ctx.trx
-        .updateTable('crove_projects.project_task')
+        .updateTable('ludy_projects.project_task')
         .set({
           recurrence: null,
           recurrence_next_at: null,
@@ -388,11 +388,11 @@ export const projectRecurringAdvance = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  // Writes across ludy_kernel.task, ludy_kernel.agent_wakeup, and crove_projects.project_task (system-only).
+  // Writes across ludy_kernel.task, ludy_kernel.agent_wakeup, and ludy_projects.project_task (system-only).
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectRecurringAdvanceResult> => {
     // 1. Pre-read the source task's seat without locks so we lock ludy_kernel.position BEFORE
-    // crove_projects.project -> crove_projects.project_task (canonical position -> project -> project_task hierarchy).
+    // ludy_projects.project -> ludy_projects.project_task (canonical position -> project -> project_task hierarchy).
     const previewTask = await ctx.trx
       .selectFrom('ludy_kernel.task')
       .select(['assignee_position_id'])
@@ -414,7 +414,7 @@ export const projectRecurringAdvance = defineCommand({
 
     // 2. Lock the project before project_task so concurrent set/clear commands and the project_task_not_on_template trigger share the same lock hierarchy.
     const project = await ctx.trx
-      .selectFrom('crove_projects.project')
+      .selectFrom('ludy_projects.project')
       .select(['id', 'status', 'is_template'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.projectId)
@@ -425,7 +425,7 @@ export const projectRecurringAdvance = defineCommand({
     }
 
     const pt = await ctx.trx
-      .selectFrom('crove_projects.project_task')
+      .selectFrom('ludy_projects.project_task')
       .select([
         'project_id',
         'task_id',
@@ -469,7 +469,7 @@ export const projectRecurringAdvance = defineCommand({
     }
 
     const openCopy = await ctx.trx
-      .selectFrom('crove_projects.project_task as cpt')
+      .selectFrom('ludy_projects.project_task as cpt')
       .innerJoin('ludy_kernel.task as ct', (join) =>
         join.onRef('ct.org_id', '=', 'cpt.org_id').onRef('ct.id', '=', 'cpt.task_id'),
       )
@@ -485,7 +485,7 @@ export const projectRecurringAdvance = defineCommand({
     const dueDate = zonedDate(rule.timeZone, nextAtMs);
     if ((rule.times !== undefined && rule.times !== null && pt.recurrence_count >= rule.times) || (rule.until && dueDate > rule.until)) {
       await ctx.trx
-        .updateTable('crove_projects.project_task')
+        .updateTable('ludy_projects.project_task')
         .set({ recurrence: null, recurrence_next_at: null })
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', input.projectId)
@@ -498,7 +498,7 @@ export const projectRecurringAdvance = defineCommand({
       const followingDueDate = nextProjectRecurrenceDate(rule, dueDate);
       const nextAt = followingDueDate ? new Date(zonedInstant(rule.timeZone, followingDueDate, 0)) : null;
       await ctx.trx
-        .updateTable('crove_projects.project_task')
+        .updateTable('ludy_projects.project_task')
         .set({
           recurrence: followingDueDate ? JSON.stringify(rule) : null,
           recurrence_next_at: nextAt,
@@ -549,7 +549,7 @@ export const projectRecurringAdvance = defineCommand({
       .executeTakeFirstOrThrow();
 
     await ctx.trx
-      .insertInto('crove_projects.project_task')
+      .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: input.projectId,
@@ -574,7 +574,7 @@ export const projectRecurringAdvance = defineCommand({
       !seriesEnded && followingDueDate !== null ? new Date(zonedInstant(rule.timeZone, followingDueDate, 0)) : null;
 
     await ctx.trx
-      .updateTable('crove_projects.project_task')
+      .updateTable('ludy_projects.project_task')
       .set({
         recurrence_count: nextCount,
         recurrence_last_due: dueDate,

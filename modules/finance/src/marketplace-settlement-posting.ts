@@ -31,7 +31,7 @@ export interface SettlementPostingLine {
   rateDate?: string | null;
 }
 
-// The VAT of the entity's marketplace sales on one day, from crove_finance.marketplace_vat_rate (marketplaceVatRateAt): `deduction` splits output VAT at `vatPercent` (a decimal string, percent), `none` adds no VAT line.
+// The VAT of the entity's marketplace sales on one day, from ludy_finance.marketplace_vat_rate (marketplaceVatRateAt): `deduction` splits output VAT at `vatPercent` (a decimal string, percent), `none` adds no VAT line.
 export type SettlementVatRate = { method: 'deduction'; vatPercent: string } | { method: 'none' };
 // The rate in force on each date the pieces need (vatDatesOf), resolved by the caller; null where no row covers the date, which holds the settlement back.
 export type SettlementVatRates = Readonly<Record<string, SettlementVatRate | null>>;
@@ -51,7 +51,7 @@ export interface SettlementProposalInput {
   // The month of delivery the entry is for (YYYY-MM) and the date of the entry (marketplace-settlement-months.ts).
   month: string;
   date: string;
-  // The platform's party (crove_finance.marketplace_party, a later slice); null until then.
+  // The platform's party (ludy_finance.marketplace_party, a later slice); null until then.
   partyId: string | null;
   lines: readonly SettlementPostingLine[];
   // A household seller's rate pair, or null for any other seller: the withheld tax is posted only for a household (an enterprise seller has no tax lines, plan row 18).

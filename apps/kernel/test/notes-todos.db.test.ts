@@ -180,8 +180,8 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     // A stale revision is refused, and names the current one.
     await expect(edit(1, [])).rejects.toMatchObject({ code: 'TODO_REVISION_CONFLICT', status: 409 });
     // The database keeps the shape of a checklist whoever writes it.
-    await expect(admin((c) => c.query(`UPDATE crove_notes.todo SET checklist = '[{"text": "", "done": false}]'::jsonb WHERE id = $1`, [todoId]))).rejects.toMatchObject({ code: '23514' });
-    await expect(admin((c) => c.query(`UPDATE crove_notes.todo SET checklist = '[{"text": "x", "done": "yes"}]'::jsonb WHERE id = $1`, [todoId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query(`UPDATE ludy_notes.todo SET checklist = '[{"text": "", "done": false}]'::jsonb WHERE id = $1`, [todoId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query(`UPDATE ludy_notes.todo SET checklist = '[{"text": "x", "done": "yes"}]'::jsonb WHERE id = $1`, [todoId]))).rejects.toMatchObject({ code: '23514' });
     const audit = await admin((c) =>
       c.query<{ command: string; detail: unknown }>(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%' ORDER BY occurred_at, id`, [o.orgId]),
     );
@@ -213,17 +213,17 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     // Many moves to the same place stay in order: the keys get fresh ones when they grow long.
     for (let i = 0; i < 60; i++) await o.exec(o.mine, 'notes.todo.reorder', { todoId: i % 2 === 0 ? a : b, place: 'after', anchorId: c });
     expect(await order()).toBe('CBA');
-    const keys = await admin((cl) => cl.query<{ sort_key: string }>(`SELECT sort_key FROM crove_notes.todo WHERE org_id = $1`, [o.orgId]));
+    const keys = await admin((cl) => cl.query<{ sort_key: string }>(`SELECT sort_key FROM ludy_notes.todo WHERE org_id = $1`, [o.orgId]));
     for (const r of keys.rows) expect(r.sort_key.length).toBeLessThanOrEqual(49);
     // Keys so close that the one between them would be long: the list gets fresh keys in one statement, in its order.
-    const setKey = (id: string, key: string) => admin((cl) => cl.query(`UPDATE crove_notes.todo SET sort_key = $2 WHERE id = $1`, [id, key]));
+    const setKey = (id: string, key: string) => admin((cl) => cl.query(`UPDATE ludy_notes.todo SET sort_key = $2 WHERE id = $1`, [id, key]));
     await setKey(c, 'V');
     await setKey(b, `V${'0'.repeat(47)}1`);
     await setKey(a, 'k');
     expect(await order()).toBe('CBA');
     await o.exec(o.mine, 'notes.todo.reorder', { todoId: a, place: 'before', anchorId: b });
     expect(await order()).toBe('CAB');
-    const fresh = await admin((cl) => cl.query<{ sort_key: string }>(`SELECT sort_key FROM crove_notes.todo WHERE org_id = $1`, [o.orgId]));
+    const fresh = await admin((cl) => cl.query<{ sort_key: string }>(`SELECT sort_key FROM ludy_notes.todo WHERE org_id = $1`, [o.orgId]));
     expect(new Set(fresh.rows.map((r) => r.sort_key)).size).toBe(3);
     await o.exec(o.mine, 'notes.todo.reorder', { todoId: a, place: 'after', anchorId: b });
     expect(await order()).toBe('CBA');
@@ -255,7 +255,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     );
     await expect(o.query(o.mine, 'notes.todo.counts')).rejects.toMatchObject({ status: 403 });
     // In the trash for longer than the limit: the system's sweep removes it, and only it.
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET deleted_at = now() - interval '31 days' WHERE id = $1`, [old.todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET deleted_at = now() - interval '31 days' WHERE id = $1`, [old.todoId]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
     expect((await o.list(o.mine)).map((t) => t.id)).toEqual([kept.todoId]);
     // A former member's to-dos go with their private notes; the other member's stay.
@@ -270,7 +270,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
         ).rows[0]?.id ?? randomUUID(),
     );
     expect(await worker.execute('notes.member_items.purge', { userId: o.mine, eventId: event }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
-    const left = await admin((c) => c.query<{ owner_user_id: string }>(`SELECT owner_user_id FROM crove_notes.todo WHERE org_id = $1`, [o.orgId]));
+    const left = await admin((c) => c.query<{ owner_user_id: string }>(`SELECT owner_user_id FROM ludy_notes.todo WHERE org_id = $1`, [o.orgId]));
     expect(left.rows).toEqual([{ owner_user_id: o.other }]);
   });
 
@@ -515,7 +515,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       sectionId: null,
     });
 
-    await admin((c) => c.query(`UPDATE crove_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
   });
 });

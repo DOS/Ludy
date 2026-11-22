@@ -67,7 +67,7 @@ test('a member imports contacts from a CSV after reading the preview', async ({ 
     expect(text).toContain('Email không hợp lệ');
     expect(text).toContain('Trùng một dòng trước trong tệp');
     // The staged rows are gone with the commit.
-    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_crm.import_row r JOIN ludy_kernel.tenant t ON t.org_id = r.org_id WHERE t.slug = :'slug'`, { slug })[0]?.n).toBe(0);
+    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_crm.import_row r JOIN ludy_kernel.tenant t ON t.org_id = r.org_id WHERE t.slug = :'slug'`, { slug })[0]?.n).toBe(0);
   });
 
   await test.step('the contacts list shows the new contacts', async () => {

@@ -78,7 +78,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
     });
   const all = (v: PostView['variants'][number]) => v.checklist.map((c) => c.id);
   const stored = (postId: string) =>
-    admin(async (c) => (await c.query<{ variant_id: string; decision: string; checklist: unknown }>('SELECT variant_id, decision, checklist FROM crove_social.post_approval WHERE post_id = $1 ORDER BY id', [postId])).rows);
+    admin(async (c) => (await c.query<{ variant_id: string; decision: string; checklist: unknown }>('SELECT variant_id, decision, checklist FROM ludy_social.post_approval WHERE post_id = $1 ORDER BY id', [postId])).rows);
   async function inReview(o: Org, channels: string[], body = 'Khai trương cửa hàng') {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body, channels: channels.map((connectionId) => ({ connectionId })) });
     await exec(o, o.member, 'social.post.submit', { postId });
@@ -284,7 +284,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
     expect((await list(o, o.member)).items.map((c) => c.label)).toEqual(['Đã soát chính tả']);
     expect((await list(o, o.owner)).items).toHaveLength(2);
     // A removed channel takes its items with it.
-    await admin((c) => c.query('DELETE FROM crove_social.review_check WHERE org_id = $1 AND channel_connection_id IS NOT NULL', [o.orgId]));
+    await admin((c) => c.query('DELETE FROM ludy_social.review_check WHERE org_id = $1 AND channel_connection_id IS NOT NULL', [o.orgId]));
     expect((await list(o, o.owner)).items.map((c) => c.label)).toEqual(['Đã soát chính tả']);
   });
 
@@ -343,7 +343,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
     const conn = await connection(o.orgId, o.owner);
     await setList(o, o.owner, Array.from({ length: 10 }, (_, i) => ({ connectionId: null, label: `Mục ${i + 1}` })));
     // An 11th item written outside the command.
-    await admin((c) => c.query("INSERT INTO crove_social.review_check (org_id, channel_connection_id, position, label, created_by) VALUES ($1, NULL, 9, 'Mục lạ', $2)", [o.orgId, o.owner]));
+    await admin((c) => c.query("INSERT INTO ludy_social.review_check (org_id, channel_connection_id, position, label, created_by) VALUES ($1, NULL, 9, 'Mục lạ', $2)", [o.orgId, o.owner]));
     expect(await refusal(list(o, o.owner))).toBe('CHECKLIST_INVALID');
     const postId = await inReview(o, [conn]);
     expect(await refusal(get(o, postId))).toBe('CHECKLIST_INVALID');
@@ -358,7 +358,7 @@ suite('social review checklist on PostgreSQL (#1105)', () => {
       admin((c) =>
         c
           .query(
-            `INSERT INTO crove_social.post_approval (org_id, post_id, variant_id, revision, content_hash, decision, decided_by, snapshot, checklist)
+            `INSERT INTO ludy_social.post_approval (org_id, post_id, variant_id, revision, content_hash, decision, decided_by, snapshot, checklist)
              VALUES ($1, $2, $3, $4, $5, $6, $7, '{}'::jsonb, $8::jsonb)`,
             [o.orgId, postId, v.id, v.revision, v.contentHash, decision, o.owner, checklist === null ? null : JSON.stringify(checklist)],
           )

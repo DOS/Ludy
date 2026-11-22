@@ -90,7 +90,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     await addMember(o, o.member, 'member');
     await addMember(o, o.viewer, 'viewer');
     if (zone !== null) {
-      await admin((c) => c.query('INSERT INTO crove_social.goal (org_id, connection_id, time_zone, posts, created_by, updated_by) VALUES ($1, NULL, $2, 10, $3, $3)', [orgId, zone, owner]));
+      await admin((c) => c.query('INSERT INTO ludy_social.goal (org_id, connection_id, time_zone, posts, created_by, updated_by) VALUES ($1, NULL, $2, 10, $3, $3)', [orgId, zone, owner]));
     }
     return o;
   }
@@ -116,7 +116,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
   // A draft on one channel; returns the post and its variant.
   async function post(o: Org, connectionId: string, body: string, author = o.owner) {
     const { postId } = await exec<{ postId: string }>(o, author, 'social.post.create', { body, channels: [{ connectionId }] });
-    const [v] = await one<{ id: string }>('SELECT id FROM crove_social.post_variant WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]);
+    const [v] = await one<{ id: string }>('SELECT id FROM ludy_social.post_variant WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]);
     return { postId, variantId: v?.id as string };
   }
   // The org's week as the database sees it now in a zone.
@@ -133,22 +133,22 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
   const hours = (d: Date, h: number) => new Date(d.getTime() + h * 3_600_000);
   async function published(o: Org, connectionId: string, body: string, at: Date, engagement: number) {
     const p = await post(o, connectionId, body);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = $3, external_post_id = $4 WHERE org_id = $1 AND id = $2", [o.orgId, p.variantId, at, `ext-${p.variantId.slice(0, 8)}`]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = $3, external_post_id = $4 WHERE org_id = $1 AND id = $2", [o.orgId, p.variantId, at, `ext-${p.variantId.slice(0, 8)}`]));
     if (engagement > 0) {
       await admin((c) =>
-        c.query('INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, $3, $4)', [o.orgId, p.variantId, `test-${p.variantId}`, JSON.stringify({ reactions: engagement, comments: 0 })]),
+        c.query('INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, $3, $4)', [o.orgId, p.variantId, `test-${p.variantId}`, JSON.stringify({ reactions: engagement, comments: 0 })]),
       );
     }
     return p;
   }
   async function failed(o: Org, connectionId: string, body: string, at: Date) {
     const p = await post(o, connectionId, body);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'failed', updated_at = $3 WHERE org_id = $1 AND id = $2", [o.orgId, p.variantId, at]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed', updated_at = $3 WHERE org_id = $1 AND id = $2", [o.orgId, p.variantId, at]));
     return p;
   }
   async function planned(o: Org, connectionId: string, body: string, at: Date) {
     const p = await post(o, connectionId, body);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'scheduled', scheduled_at = $3 WHERE org_id = $1 AND id = $2", [o.orgId, p.variantId, at]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'scheduled', scheduled_at = $3 WHERE org_id = $1 AND id = $2", [o.orgId, p.variantId, at]));
     return p;
   }
   // A post sent to review by its author.
@@ -168,7 +168,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     const email = await emailOf(userId);
     return (await digests(o)).filter((m) => m.to_address === email);
   };
-  const markers = (o: Org) => one<{ id: string; iso_week: string }>('SELECT id::text, iso_week FROM crove_social.digest_week WHERE org_id = $1', [o.orgId]);
+  const markers = (o: Org) => one<{ id: string; iso_week: string }>('SELECT id::text, iso_week FROM ludy_social.digest_week WHERE org_id = $1', [o.orgId]);
   const sweep = () => sweepDigests({ runtime: worker, workerDb });
 
   beforeAll(async () => {
@@ -282,13 +282,13 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
   it('saves a goal zone as PostgreSQL spells it, so the digest finds it (#1115)', async () => {
     const o = await org(null);
     await exec(o, o.owner, 'social.goal.set', { connectionId: null, targets: { posts: 5 }, timeZone: 'asia/ho_chi_minh' });
-    expect(await one<{ time_zone: string }>('SELECT time_zone FROM crove_social.goal WHERE org_id = $1', [o.orgId])).toEqual([{ time_zone: HCM }]);
+    expect(await one<{ time_zone: string }>('SELECT time_zone FROM ludy_social.goal WHERE org_id = $1', [o.orgId])).toEqual([{ time_zone: HCM }]);
     await exec(o, o.owner, 'social.goal.set', { connectionId: null, targets: { posts: 6 }, timeZone: 'EUROPE/LONDON' });
-    expect(await one<{ time_zone: string }>('SELECT time_zone FROM crove_social.goal WHERE org_id = $1', [o.orgId])).toEqual([{ time_zone: 'Europe/London' }]);
+    expect(await one<{ time_zone: string }>('SELECT time_zone FROM ludy_social.goal WHERE org_id = $1', [o.orgId])).toEqual([{ time_zone: 'Europe/London' }]);
     // An empty or unknown zone is refused, never saved to fall back later.
     await expect(exec(o, o.owner, 'social.goal.set', { connectionId: null, targets: { posts: 6 }, timeZone: '' })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(exec(o, o.owner, 'social.goal.set', { connectionId: null, targets: { posts: 6 }, timeZone: 'Mars/Olympus' })).rejects.toMatchObject({ code: 'VALIDATION' });
-    expect(await one<{ time_zone: string }>('SELECT time_zone FROM crove_social.goal WHERE org_id = $1', [o.orgId])).toEqual([{ time_zone: 'Europe/London' }]);
+    expect(await one<{ time_zone: string }>('SELECT time_zone FROM ludy_social.goal WHERE org_id = $1', [o.orgId])).toEqual([{ time_zone: 'Europe/London' }]);
   });
 
   it('claims a week once when two commands run at the same time', async () => {
@@ -317,9 +317,9 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     const reviewA = await inReview(o, a, 'Duyệt trên A', o.member);
     const reviewB = await inReview(o, b, 'Duyệt trên B', o.member);
     // The admin already approved B's content in this round: it no longer waits for them.
-    const [vb] = await one<{ id: string; revision: number; content_hash: string }>('SELECT id, revision, content_hash FROM crove_social.post_variant WHERE org_id = $1 AND id = $2', [o.orgId, reviewB.variantId]);
+    const [vb] = await one<{ id: string; revision: number; content_hash: string }>('SELECT id, revision, content_hash FROM ludy_social.post_variant WHERE org_id = $1 AND id = $2', [o.orgId, reviewB.variantId]);
     await admin((c) =>
-      c.query("INSERT INTO crove_social.post_approval (org_id, post_id, variant_id, decision, decided_by, revision, content_hash, snapshot) VALUES ($1, $2, $3, 'approved', $4, $5, $6, '{}'::jsonb)", [
+      c.query("INSERT INTO ludy_social.post_approval (org_id, post_id, variant_id, decision, decided_by, revision, content_hash, snapshot) VALUES ($1, $2, $3, 'approved', $4, $5, $6, '{}'::jsonb)", [
         o.orgId,
         reviewB.postId,
         vb?.id,
@@ -356,14 +356,14 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
     const badSchedule = await org(null);
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_social.report_schedule (org_id, name, cadence, weekday, time_zone, period, recipients, next_run_at, created_by) VALUES ($1, 'Báo cáo', 'weekly', 1, 'Nowhere/Land', 'previous_week', ARRAY['khach@digest.test'], now() + interval '1 day', $2)",
+        "INSERT INTO ludy_social.report_schedule (org_id, name, cadence, weekday, time_zone, period, recipients, next_run_at, created_by) VALUES ($1, 'Báo cáo', 'weekly', 1, 'Nowhere/Land', 'previous_week', ARRAY['khach@digest.test'], now() + interval '1 day', $2)",
         [badSchedule.orgId, badSchedule.owner],
       ),
     );
     const good = [await org(), await org()];
     for (const o of [bad, badSchedule, ...good]) await inReview(o, await connection(o, 'Trang'), 'Chờ duyệt', o.member);
     // The scan itself answers, whatever the zones.
-    const { rows } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_social.digest_due(NULL, 500)');
+    const { rows } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_social.digest_due(NULL, 500)');
     const due = new Set(rows.map((r) => r.org_id));
     for (const o of good) expect(due.has(o.orgId)).toBe(true);
     await sweep();
@@ -409,7 +409,7 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
       orgs.set(z.orgId, zone);
     }
     const expected = new Map(zones.map((zone) => [zone, dueIn(zone)]));
-    const { rows } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_social.digest_due(NULL, 500)');
+    const { rows } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_social.digest_due(NULL, 500)');
     const named = new Set(rows.map((r) => r.org_id));
     let checked = 0;
     for (const [orgId, zone] of orgs) {
@@ -450,21 +450,21 @@ suite('social weekly digest on PostgreSQL (#1104)', () => {
   it('keeps the scan for the worker login, the command for the system, and pages with a clamped limit', async () => {
     const { rows } = await admin((c) =>
       c.query<{ role: string; ok: boolean }>(
-        "SELECT r AS role, has_function_privilege(r, 'crove_social.digest_due(uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_worker', 'ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) r",
+        "SELECT r AS role, has_function_privilege(r, 'ludy_social.digest_due(uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_worker', 'ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) r",
       ),
     );
     expect(Object.fromEntries(rows.map((r) => [r.role, r.ok]))).toEqual({ ludy_worker: true, ludy_app: false, ludy_tenant: false, ludy_definer_tenant: false });
-    const [acl] = await one<{ acl: string }>("SELECT proacl::text AS acl FROM pg_proc WHERE oid = 'crove_social.digest_due(uuid, int)'::regprocedure");
+    const [acl] = await one<{ acl: string }>("SELECT proacl::text AS acl FROM pg_proc WHERE oid = 'ludy_social.digest_due(uuid, int)'::regprocedure");
     // No PUBLIC entry (an ACL item with an empty grantee).
     expect(acl?.acl).not.toMatch(/[{,]=/);
-    await expect(pool.query('SELECT * FROM crove_social.digest_due(NULL, 10)')).rejects.toThrow(/permission denied/);
+    await expect(pool.query('SELECT * FROM ludy_social.digest_due(NULL, 10)')).rejects.toThrow(/permission denied/);
     const o = await org();
     await expect(exec(o, o.owner, 'social.digest.send', {})).rejects.toThrow();
     // The limit is clamped: zero or less still reads one, the order is by org.
     await inReview(o, await connection(o, 'Trang'), 'Chờ duyệt', o.member);
-    const page = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_social.digest_due(NULL, 0)');
+    const page = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_social.digest_due(NULL, 0)');
     expect(page.rows).toHaveLength(1);
-    const after = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_social.digest_due($1, 500)', [page.rows[0]?.org_id]);
+    const after = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_social.digest_due($1, 500)', [page.rows[0]?.org_id]);
     expect(after.rows.every((r) => r.org_id > (page.rows[0]?.org_id ?? ''))).toBe(true);
   });
 });

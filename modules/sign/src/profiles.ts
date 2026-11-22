@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Runtime.execute() command and query handlers for eSign Slice 4a (#3817):
-//   - Member-private saved signature and initials profiles (crove_sign.member_signature, author-only RLS).
-//   - Corporate and title stamp profiles (crove_sign.org_stamp, owner/admin write, SIGN_WRITERS read).
+//   - Member-private saved signature and initials profiles (ludy_sign.member_signature, author-only RLS).
+//   - Corporate and title stamp profiles (ludy_sign.org_stamp, owner/admin write, SIGN_WRITERS read).
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
@@ -125,7 +125,7 @@ export const memberSignatureList = defineQuery({
       throw new DomainError('FORBIDDEN', 403, 'Saved signatures are scoped to a signed-in member');
     }
     const rows = await ctx.trx
-      .selectFrom('crove_sign.member_signature')
+      .selectFrom('ludy_sign.member_signature')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', ctx.actor.userId)
@@ -150,7 +150,7 @@ export const orgStampList = defineQuery({
     }
     const effectiveStatus = input.status ?? (canManage ? undefined : 'active');
     let q = ctx.trx
-      .selectFrom('crove_sign.org_stamp')
+      .selectFrom('ludy_sign.org_stamp')
       .selectAll()
       .where('org_id', '=', ctx.orgId);
 
@@ -183,7 +183,7 @@ export const memberSignatureUpsert = defineCommand({
   sideEffect: 'internal',
   access: SIGN_WRITERS,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'member_signature', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'member_signature', [
       'org_id',
       'user_id',
       'kind',
@@ -210,7 +210,7 @@ export const memberSignatureUpsert = defineCommand({
     }
 
     const row = await ctx.trx
-      .insertInto('crove_sign.member_signature')
+      .insertInto('ludy_sign.member_signature')
       .values({
         org_id: ctx.orgId,
         user_id: userId,
@@ -267,11 +267,11 @@ export const memberSignatureDelete = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: SIGN_WRITERS,
-  writes: [tableWrite(signManifest.tables, 'crove_sign', 'member_signature', ['id'])],
+  writes: [tableWrite(signManifest.tables, 'ludy_sign', 'member_signature', ['id'])],
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);
     const deletedRow = await ctx.trx
-      .deleteFrom('crove_sign.member_signature')
+      .deleteFrom('ludy_sign.member_signature')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
       .where('kind', '=', input.kind)
@@ -296,7 +296,7 @@ export const orgStampCreate = defineCommand({
   sideEffect: 'internal',
   access: SIGN_ADMINS,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'org_stamp', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'org_stamp', [
       'org_id',
       'name',
       'stamp_kind',
@@ -334,7 +334,7 @@ export const orgStampCreate = defineCommand({
         fileRow.source === 'sign_attachment'
       ) {
         const { rows } = await sql<{ allowed: boolean }>`
-          SELECT crove_sign.can_read_sign_file(${fileRow.id}::uuid) AS allowed
+          SELECT ludy_sign.can_read_sign_file(${fileRow.id}::uuid) AS allowed
         `.execute(ctx.trx);
         if (!rows[0]?.allowed) {
           throw new DomainError('SIGN_STAMP_FILE_NOT_FOUND', 404, 'Stamp image file was not found');
@@ -358,7 +358,7 @@ export const orgStampCreate = defineCommand({
     );
 
     const activeCountRow = await ctx.trx
-      .selectFrom('crove_sign.org_stamp')
+      .selectFrom('ludy_sign.org_stamp')
       .select((eb) => eb.fn.countAll<string>().as('cnt'))
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')
@@ -368,7 +368,7 @@ export const orgStampCreate = defineCommand({
     }
 
     const existingActive = await ctx.trx
-      .selectFrom('crove_sign.org_stamp')
+      .selectFrom('ludy_sign.org_stamp')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')
@@ -379,7 +379,7 @@ export const orgStampCreate = defineCommand({
     }
 
     const inserted = await ctx.trx
-      .insertInto('crove_sign.org_stamp')
+      .insertInto('ludy_sign.org_stamp')
       .values({
         org_id: ctx.orgId,
         name: stampTitle,
@@ -433,7 +433,7 @@ export const orgStampArchive = defineCommand({
   access: SIGN_ADMINS,
   target: stampTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'org_stamp', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'org_stamp', [
       'status',
       'archived_at',
       'archived_by',
@@ -443,7 +443,7 @@ export const orgStampArchive = defineCommand({
   handler: async (ctx, input) => {
     const userId = assertOrgStampAdmin(ctx);
     const existing = await ctx.trx
-      .selectFrom('crove_sign.org_stamp')
+      .selectFrom('ludy_sign.org_stamp')
       .select(['id', 'status', 'archived_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.stampId)
@@ -463,7 +463,7 @@ export const orgStampArchive = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_sign.org_stamp')
+      .updateTable('ludy_sign.org_stamp')
       .set({
         status: 'archived',
         archived_at: ctx.now,

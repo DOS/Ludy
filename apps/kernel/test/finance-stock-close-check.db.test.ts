@@ -46,7 +46,7 @@ suite('the 1381 warning before closing a month of stock (#3712 slice 3)', () => 
     await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
     if (regime === 'tt99') {
       await admin((c) =>
-        c.query("INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default", [orgId]),
+        c.query("INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default", [orgId]),
       );
     }
     return { orgId, owner, admin: adminUser, member, viewer };
@@ -56,7 +56,7 @@ suite('the 1381 warning before closing a month of stock (#3712 slice 3)', () => 
   const makeItem = (o: Org, code: string) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods' }).then((r) => r.id);
   const move = (o: Org, item: string, date: string, quantity: string) =>
-    rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
+    rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
   type Line = { itemId: string; countedQuantity: string; unitCost?: string };
   const count = (o: Org, countDate: string, lines: Line[], user = o.member) =>
     execute<{ id: string }>(o, 'finance.stock_count.create', { countDate, lossNormPercent: '10', lines }, user).then((r) => r.id);
@@ -74,7 +74,7 @@ suite('the 1381 warning before closing a month of stock (#3712 slice 3)', () => 
     await approve(o, (await askCount(o, countId)).proposalId);
   }
   const balance1381 = async (o: Org) =>
-    (await rows<{ balance: string }>("SELECT COALESCE(SUM(debit - credit), 0)::bigint::text AS balance FROM crove_finance.journal_line WHERE org_id = $1 AND account_code = '1381'", [o.orgId]))[0]?.balance;
+    (await rows<{ balance: string }>("SELECT COALESCE(SUM(debit - credit), 0)::bigint::text AS balance FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code = '1381'", [o.orgId]))[0]?.balance;
   const check = (o: Org, month: string, input: Record<string, unknown> = {}, user = o.member) => query<StockCloseCheck>(o, 'finance.stock.close_check', { month, ...input }, user);
 
   beforeAll(async () => {
@@ -130,9 +130,9 @@ suite('the 1381 warning before closing a month of stock (#3712 slice 3)', () => 
   it('does not warn without a 1381 balance, is read only, and names an entity of the org only', async () => {
     const o = await org('tt99');
     expect(await check(o, '2026-10')).toMatchObject({ balance1381: '0', applies: false });
-    const before = await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.journal_entry WHERE org_id = $1', [o.orgId]);
+    const before = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_finance.journal_entry WHERE org_id = $1', [o.orgId]);
     await check(o, '2026-10');
-    expect(await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.journal_entry WHERE org_id = $1', [o.orgId])).toEqual(before);
+    expect(await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_finance.journal_entry WHERE org_id = $1', [o.orgId])).toEqual(before);
     await expect(check(o, '2026-10', { legalEntityId: randomUUID() })).rejects.toBeDefined();
   });
 

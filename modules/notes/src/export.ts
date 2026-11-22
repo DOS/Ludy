@@ -30,7 +30,7 @@ export const notesExportMine = defineQuery({
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
                pg_catalog.sum(pg_catalog.length(title) + pg_catalog.length(body) + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))) OVER w AS running
-          FROM crove_notes.note
+          FROM ludy_notes.note
          WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) t
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
@@ -39,7 +39,7 @@ export const notesExportMine = defineQuery({
       (
         await sql<{ used: string | null }>`
           SELECT pg_catalog.sum(pg_catalog.length(title) + pg_catalog.length(body) + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))) AS used
-            FROM crove_notes.note WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${noteIds.filter((r) => r.fits).map((r) => r.id)}::uuid[])`.execute(ctx.trx)
+            FROM ludy_notes.note WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${noteIds.filter((r) => r.fits).map((r) => r.id)}::uuid[])`.execute(ctx.trx)
       ).rows[0]?.used ?? 0,
     );
     const { rows: todoIds } = await sql<{ id: string; fits: boolean }>`
@@ -51,7 +51,7 @@ export const notesExportMine = defineQuery({
                  + pg_catalog.length(checklist::text)
                  + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
                ) OVER w AS running
-          FROM crove_notes.todo
+          FROM ludy_notes.todo
          WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) t
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
@@ -66,14 +66,14 @@ export const notesExportMine = defineQuery({
                    + pg_catalog.length(checklist::text)
                    + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
                  ) AS used
-            FROM crove_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${todoKeep}::uuid[])`.execute(ctx.trx)
+            FROM ludy_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${todoKeep}::uuid[])`.execute(ctx.trx)
       ).rows[0]?.used ?? 0,
     );
     const { rows: todoListIds } = await sql<{ id: string; fits: boolean }>`
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
                pg_catalog.sum(pg_catalog.length(name) + pg_catalog.length(sections::text)) OVER w AS running
-          FROM crove_notes.todo_list
+          FROM ludy_notes.todo_list
          WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY sort_key, id)) l
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
@@ -82,14 +82,14 @@ export const notesExportMine = defineQuery({
       (
         await sql<{ used: string | null }>`
           SELECT pg_catalog.sum(pg_catalog.length(name) + pg_catalog.length(sections::text)) AS used
-            FROM crove_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${listKeep}::uuid[])`.execute(ctx.trx)
+            FROM ludy_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${listKeep}::uuid[])`.execute(ctx.trx)
       ).rows[0]?.used ?? 0,
     );
     const { rows: notebookIds } = await sql<{ id: string; fits: boolean }>`
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
                pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) OVER w AS running
-          FROM crove_notes.notebook
+          FROM ludy_notes.notebook
          WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY sort_key, id)) b
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
@@ -98,7 +98,7 @@ export const notesExportMine = defineQuery({
       (
         await sql<{ used: string | null }>`
           SELECT pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) AS used
-            FROM crove_notes.notebook WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${notebookKeep}::uuid[])`.execute(ctx.trx)
+            FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${notebookKeep}::uuid[])`.execute(ctx.trx)
       ).rows[0]?.used ?? 0,
     );
     const { rows: templateIds } = await sql<{ id: string; fits: boolean }>`
@@ -110,7 +110,7 @@ export const notesExportMine = defineQuery({
                  + pg_catalog.length(body)
                  + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
                ) OVER w AS running
-          FROM crove_notes.note_template
+          FROM ludy_notes.note_template
          WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) tpl
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
@@ -119,7 +119,7 @@ export const notesExportMine = defineQuery({
       noteKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.note')
+            .selectFrom('ludy_notes.note')
             .select(['id', 'notebook_id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
@@ -131,7 +131,7 @@ export const notesExportMine = defineQuery({
       notebookKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.notebook')
+            .selectFrom('ludy_notes.notebook')
             .select(['id', 'visibility', 'name', 'stack_name', 'pinned', 'sort_key', 'created_at', 'updated_at'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
@@ -143,7 +143,7 @@ export const notesExportMine = defineQuery({
       todoKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.todo')
+            .selectFrom('ludy_notes.todo')
             .select([
               'id',
               'title',
@@ -177,7 +177,7 @@ export const notesExportMine = defineQuery({
       listKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.todo_list')
+            .selectFrom('ludy_notes.todo_list')
             .select(['id', 'name', 'color', 'sections', 'sort_key', 'created_at', 'updated_at', 'deleted_at'])
             .where('org_id', '=', ctx.orgId)
             .where('owner_user_id', '=', userId)
@@ -189,7 +189,7 @@ export const notesExportMine = defineQuery({
       templateKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.note_template')
+            .selectFrom('ludy_notes.note_template')
             .select(['id', 'visibility', 'name', 'title', 'body', 'tags', 'created_at', 'updated_at'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
@@ -204,7 +204,7 @@ export const notesExportMine = defineQuery({
       noteIdsList.length === 0 && todoIdsList.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.link')
+            .selectFrom('ludy_notes.link')
             .select(['note_id', 'todo_id', 'target_type', 'target_id'])
             .where('org_id', '=', ctx.orgId)
             .where((eb) => {
@@ -230,7 +230,7 @@ export const notesExportMine = defineQuery({
       noteIdsList.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.attachment')
+            .selectFrom('ludy_notes.attachment')
             .select(['id', 'note_id', 'filename', 'content_type', 'size_bytes', 'sha256', 'extract_status', 'created_at'])
             .where('org_id', '=', ctx.orgId)
             .where('note_id', 'in', noteIdsList)

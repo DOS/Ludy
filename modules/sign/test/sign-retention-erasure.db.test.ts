@@ -222,7 +222,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     }
 
     const fieldRows = await adminPool!.query<{ id: string; signer_id: string }>(
-      'SELECT id, signer_id FROM crove_sign.field WHERE org_id = $1 AND envelope_id = $2 ORDER BY id',
+      'SELECT id, signer_id FROM ludy_sign.field WHERE org_id = $1 AND envelope_id = $2 ORDER BY id',
       [opts.orgId, created.envelopeId],
     );
     const fieldIdsBySigner = new Map<string, string[]>();
@@ -336,16 +336,16 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     });
 
     await adminPool!.query(
-      "UPDATE crove_sign.envelope SET created_at = now() - interval '45 days', updated_at = now() - interval '45 days' WHERE id = $1",
+      "UPDATE ludy_sign.envelope SET created_at = now() - interval '45 days', updated_at = now() - interval '45 days' WHERE id = $1",
       [oldDraft45.envelopeId],
     );
     await adminPool!.query(
-      "UPDATE crove_sign.envelope SET created_at = now() - interval '400 days', updated_at = now() - interval '400 days' WHERE id = $1",
+      "UPDATE ludy_sign.envelope SET created_at = now() - interval '400 days', updated_at = now() - interval '400 days' WHERE id = $1",
       [oldDraft400.envelopeId],
     );
 
     const dueWithOnlyDrafts = await workerPool!.query<{ org_id: string }>(
-      "SELECT org_id FROM crove_sign.cleanup_due_orgs(now() - interval '1 day', now() - interval '1 day', 100)",
+      "SELECT org_id FROM ludy_sign.cleanup_due_orgs(now() - interval '1 day', now() - interval '1 day', 100)",
     );
     expect(dueWithOnlyDrafts.rows).toEqual([]);
 
@@ -361,7 +361,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await workerClient.query('BEGIN');
       await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgA]);
       const directStale = await workerClient.query<{ res: Record<string, number> }>(
-        "SELECT crove_sign.cleanup_org_stale(now() - interval '1 day', now() - interval '30 days') AS res",
+        "SELECT ludy_sign.cleanup_org_stale(now() - interval '1 day', now() - interval '30 days') AS res",
       );
       expect(directStale.rows[0]?.res).toEqual({ otps: 0, tokens: 0, drafts: 0, draftEvents: 0 });
 
@@ -369,7 +369,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await workerClient.query('SAVEPOINT sp_append_only');
       await workerClient.query(`SET LOCAL crove.sign_cleanup = '${orgA}'`);
       await expect(
-        workerClient.query('DELETE FROM crove_sign.signing_event WHERE org_id = $1 AND envelope_id = $2', [
+        workerClient.query('DELETE FROM ludy_sign.signing_event WHERE org_id = $1 AND envelope_id = $2', [
           orgA,
           oldDraft45.envelopeId,
         ]),
@@ -385,7 +385,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await adminClient.query('BEGIN');
       await adminClient.query(`SET LOCAL crove.sign_cleanup = '${orgA}'`);
       await expect(
-        adminClient.query('DELETE FROM crove_sign.signing_event WHERE org_id = $1 AND envelope_id = $2', [
+        adminClient.query('DELETE FROM ludy_sign.signing_event WHERE org_id = $1 AND envelope_id = $2', [
           orgA,
           oldDraft45.envelopeId,
         ]),
@@ -396,12 +396,12 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     }
 
     const remainingDrafts = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.envelope WHERE id = ANY($1::uuid[]) ORDER BY id',
+      'SELECT id FROM ludy_sign.envelope WHERE id = ANY($1::uuid[]) ORDER BY id',
       [[oldDraft45.envelopeId, oldDraft400.envelopeId]],
     );
     expect(remainingDrafts.rows).toHaveLength(2);
     const remainingDraftSigners = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signer WHERE envelope_id = ANY($1::uuid[])',
+      'SELECT id FROM ludy_sign.signer WHERE envelope_id = ANY($1::uuid[])',
       [[oldDraft45.envelopeId, oldDraft400.envelopeId]],
     );
     expect(remainingDraftSigners.rows).toHaveLength(2);
@@ -432,7 +432,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     }): Promise<string> => {
       const hash = hashSigningToken(generateRawSigningToken());
       const res = await adminPool!.query<{ id: string }>(
-        `INSERT INTO crove_sign.signing_token
+        `INSERT INTO ludy_sign.signing_token
            (org_id, envelope_id, signer_id, token_sha256, expires_at, used_at, revoked_at, revoked_by, created_by)
          VALUES ($1, $2, $3, $4, ${opts.expiresAtSql}, ${opts.usedAtSql ?? 'NULL'}, ${opts.revokedAtSql ?? 'NULL'}, ${
            opts.revokedAtSql ? '$5' : 'NULL'
@@ -445,7 +445,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
 
     const insertOtp = async (opts: { expiresAtSql: string; createdAtSql: string; verifiedAtSql?: string; invalidatedAtSql?: string }): Promise<string> => {
       const res = await adminPool!.query<{ id: string }>(
-        `INSERT INTO crove_sign.signing_otp
+        `INSERT INTO ludy_sign.signing_otp
            (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, verified_at, invalidated_at, created_at)
          VALUES ($1, $2, $3, $4, $5, ${opts.expiresAtSql}, ${opts.verifiedAtSql ?? 'NULL'}, ${opts.invalidatedAtSql ?? 'NULL'}, ${opts.createdAtSql})
          RETURNING id`,
@@ -495,7 +495,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     expect(cleanupRes).toEqual({ otps: 3, tokens: 4, drafts: 0, draftEvents: 0 });
 
     const tokensAfter = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signing_token WHERE org_id = $1 AND envelope_id = $2',
+      'SELECT id FROM ludy_sign.signing_token WHERE org_id = $1 AND envelope_id = $2',
       [orgA, env.envelopeId],
     );
     const tokenSet = new Set(tokensAfter.rows.map((r) => r.id));
@@ -509,7 +509,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     expect(tokenSet.has(activeTokenId)).toBe(true);
 
     const otpsAfter = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signing_otp WHERE org_id = $1 AND signer_id = $2',
+      'SELECT id FROM ludy_sign.signing_otp WHERE org_id = $1 AND signer_id = $2',
       [orgA, signerId],
     );
     const otpSet = new Set(otpsAfter.rows.map((r) => r.id));
@@ -554,9 +554,9 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     const e2TargetFieldId = e2Voided.fieldIdsBySigner.get(e2TargetSignerId)![0]!;
     const e2TargetHash = hashSigningToken(e2Voided.links[0]!.token);
 
-    await appPool!.query('SELECT crove_sign.public_request_otp($1, $2)', [e2TargetHash, DEFAULT_MESSAGE_ID_DOMAIN]);
+    await appPool!.query('SELECT ludy_sign.public_request_otp($1, $2)', [e2TargetHash, DEFAULT_MESSAGE_ID_DOMAIN]);
     const e2OtpRow = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signing_otp WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at DESC LIMIT 1',
+      'SELECT id FROM ludy_sign.signing_otp WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at DESC LIMIT 1',
       [orgA, e2TargetSignerId],
     );
     const e2OtpMail = await workerRuntime.execute<{ code: string }>(
@@ -564,7 +564,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       { signerId: e2TargetSignerId, otpId: e2OtpRow.rows[0]!.id },
       { actor: asSystem('mail-worker'), orgId: orgA },
     );
-    const otpVerified = await appPool!.query<{ v: { ok: boolean } }>('SELECT crove_sign.public_verify_otp($1, $2, $3, $4) AS v', [
+    const otpVerified = await appPool!.query<{ v: { ok: boolean } }>('SELECT ludy_sign.public_verify_otp($1, $2, $3, $4) AS v', [
       e2TargetHash,
       e2OtpMail.code,
       ipHash,
@@ -573,7 +573,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     expect(otpVerified.rows[0]?.v.ok).toBe(true);
 
     const e2Submit = await appPool!.query<{ v: { status: string } }>(
-      "SELECT crove_sign.public_submit($1, true, 'type', 'Target Typed Signature', $2::jsonb, $3, 'RetTest/1.0', $4) AS v",
+      "SELECT ludy_sign.public_submit($1, true, 'type', 'Target Typed Signature', $2::jsonb, $3, 'RetTest/1.0', $4) AS v",
       [e2TargetHash, JSON.stringify([{ fieldId: e2TargetFieldId, signaturePngBase64: VALID_PNG_BASE64 }]), ipHash, DEFAULT_MESSAGE_ID_DOMAIN],
     );
     expect(e2Submit.rows[0]?.v).toMatchObject({ status: 'ok' });
@@ -595,7 +595,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
         { routingOrder: 1, signerRole: 'signer', name: 'CoSigner Expired', email: coSignerEmail },
       ],
     });
-    await adminPool!.query("UPDATE crove_sign.envelope SET expires_at = now() - interval '2 hours' WHERE id = $1", [e3Expired.envelopeId]);
+    await adminPool!.query("UPDATE ludy_sign.envelope SET expires_at = now() - interval '2 hours' WHERE id = $1", [e3Expired.envelopeId]);
     await workerRuntime.execute('sign.envelope.expire_sweep', {}, { actor: asSystem('sign-worker'), orgId: orgA });
 
     // E4: declined via public_decline (unsealed)
@@ -611,7 +611,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     });
     const e4TargetHash = hashSigningToken(e4Declined.links.find((l) => l.signerId === e4Declined.signerIds[0])!.token);
     const e4DeclineRes = await appPool!.query<{ v: { status: string } }>(
-      "SELECT crove_sign.public_decline($1, 'Declined in test', $2, 'RetTest/1.0') AS v",
+      "SELECT ludy_sign.public_decline($1, 'Declined in test', $2, 'RetTest/1.0') AS v",
       [e4TargetHash, ipHash],
     );
     expect(e4DeclineRes.rows[0]?.v).toMatchObject({ status: 'ok' });
@@ -627,7 +627,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     const e5TargetHash = hashSigningToken(e5Sealed.links[0]!.token);
     const e5FieldId = e5Sealed.fieldIdsBySigner.get(e5Sealed.signerIds[0]!)![0]!;
     const e5Submit = await appPool!.query<{ v: { status: string } }>(
-      "SELECT crove_sign.public_submit($1, true, 'type', 'Target Sealed Name', $2::jsonb, $3, 'RetTest/1.0', $4) AS v",
+      "SELECT ludy_sign.public_submit($1, true, 'type', 'Target Sealed Name', $2::jsonb, $3, 'RetTest/1.0', $4) AS v",
       [e5TargetHash, JSON.stringify([{ fieldId: e5FieldId, signaturePngBase64: VALID_PNG_BASE64 }]), ipHash, DEFAULT_MESSAGE_ID_DOMAIN],
     );
     expect(e5Submit.rows[0]?.v).toMatchObject({ status: 'ok' });
@@ -656,7 +656,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     });
 
     const eventCountBefore = await adminPool!.query<{ n: string }>(
-      'SELECT count(*)::text AS n FROM crove_sign.signing_event WHERE org_id = $1',
+      'SELECT count(*)::text AS n FROM ludy_sign.signing_event WHERE org_id = $1',
       [orgA],
     );
 
@@ -680,7 +680,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     ]);
     const preservedSignerIds = new Set([e5Sealed.signerIds[0]!, e6Active.signerIds[0]!]);
 
-    const emailSignerMatches = foundByEmail.matches.filter((m) => m.column === 'crove_sign.signer.email');
+    const emailSignerMatches = foundByEmail.matches.filter((m) => m.column === 'ludy_sign.signer.email');
     expect(emailSignerMatches).toHaveLength(6);
     for (const m of emailSignerMatches) {
       if (unsealedSignerIds.has(m.rowId!)) {
@@ -696,7 +696,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       { value: targetPhoneLocal },
       { actor: asMfa(ownerA), orgId: orgA },
     );
-    const phoneSignerMatches = foundByPhone.matches.filter((m) => m.column === 'crove_sign.signer.phone');
+    const phoneSignerMatches = foundByPhone.matches.filter((m) => m.column === 'ludy_sign.signer.phone');
     expect(phoneSignerMatches).toHaveLength(6);
     for (const m of phoneSignerMatches) {
       expect(m.handling).toBe(unsealedSignerIds.has(m.rowId!) ? 'erase' : 'keep_record');
@@ -720,7 +720,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await appClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, adminToken]);
       await appClient.query('SAVEPOINT sp_non_owner');
       await expect(
-        appClient.query("SELECT crove_sign.personal_erase_unsealed_signers('email', $1)", [targetEmail]),
+        appClient.query("SELECT ludy_sign.personal_erase_unsealed_signers('email', $1)", [targetEmail]),
       ).rejects.toThrow(/SIGN_FORBIDDEN/);
       await appClient.query('ROLLBACK TO SAVEPOINT sp_non_owner');
       await appClient.query('ROLLBACK');
@@ -737,7 +737,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await appClient.query('SAVEPOINT sp_forged_guc');
       await appClient.query(`SET LOCAL crove.sign_personal_erase = '${orgA}'`);
       await expect(
-        appClient.query('DELETE FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [orgA, e2TargetSignerId]),
+        appClient.query('DELETE FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [orgA, e2TargetSignerId]),
       ).rejects.toThrow(/ENVELOPE_FROZEN/);
       await appClient.query('ROLLBACK TO SAVEPOINT sp_forged_guc');
       await appClient.query('ROLLBACK');
@@ -753,17 +753,17 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     );
     expect(eraseByEmail.erased).toEqual(
       expect.arrayContaining([
-        { column: 'crove_sign.signer.email', rows: 4 },
-        { column: 'crove_sign.signer.phone', rows: 4 },
-        { column: 'crove_sign.signer.signature_typed_text', rows: 1 },
-        { column: 'crove_sign.signer.signer_user_agent', rows: 2 },
-        { column: 'crove_sign.field.signature_png_base64', rows: 1 },
-        { column: 'crove_sign.signing_otp.email', rows: 1 },
+        { column: 'ludy_sign.signer.email', rows: 4 },
+        { column: 'ludy_sign.signer.phone', rows: 4 },
+        { column: 'ludy_sign.signer.signature_typed_text', rows: 1 },
+        { column: 'ludy_sign.signer.signer_user_agent', rows: 2 },
+        { column: 'ludy_sign.field.signature_png_base64', rows: 1 },
+        { column: 'ludy_sign.signing_otp.email', rows: 1 },
       ]),
     );
     expect(eraseByEmail.kept).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ column: 'crove_sign.signer.email', rows: 2 }),
+        expect.objectContaining({ column: 'ludy_sign.signer.email', rows: 2 }),
       ]),
     );
 
@@ -772,30 +772,30 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       { value: targetPhoneLocal },
       { actor: asMfa(ownerA), orgId: orgA },
     );
-    const remainingPhones = remainingPhoneMatches.matches.filter((m) => m.column === 'crove_sign.signer.phone');
+    const remainingPhones = remainingPhoneMatches.matches.filter((m) => m.column === 'ludy_sign.signer.phone');
     expect(remainingPhones).toHaveLength(2);
     expect(remainingPhones.every((m) => preservedSignerIds.has(m.rowId!) && m.handling === 'keep_record')).toBe(true);
 
     const deletedSignersCheck = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signer WHERE id = ANY($1::uuid[])',
+      'SELECT id FROM ludy_sign.signer WHERE id = ANY($1::uuid[])',
       [[...unsealedSignerIds]],
     );
     expect(deletedSignersCheck.rows).toEqual([]);
 
     const deletedFieldsCheck = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.field WHERE id = ANY($1::uuid[])',
+      'SELECT id FROM ludy_sign.field WHERE id = ANY($1::uuid[])',
       [[...unsealedFieldIds]],
     );
     expect(deletedFieldsCheck.rows).toEqual([]);
 
     const deletedTokensCheck = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signing_token WHERE signer_id = ANY($1::uuid[])',
+      'SELECT id FROM ludy_sign.signing_token WHERE signer_id = ANY($1::uuid[])',
       [[...unsealedSignerIds]],
     );
     expect(deletedTokensCheck.rows).toEqual([]);
 
     const deletedOtpsCheck = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signing_otp WHERE signer_id = ANY($1::uuid[])',
+      'SELECT id FROM ludy_sign.signing_otp WHERE signer_id = ANY($1::uuid[])',
       [[...unsealedSignerIds]],
     );
     expect(deletedOtpsCheck.rows).toEqual([]);
@@ -810,14 +810,14 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       e6Active.signerIds[0]!,
     ];
     const intactCheck = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signer WHERE id = ANY($1::uuid[])',
+      'SELECT id FROM ludy_sign.signer WHERE id = ANY($1::uuid[])',
       [intactSignerIds],
     );
     expect(intactCheck.rows).toHaveLength(6);
 
     // Event log and hash chain are strictly untouched and valid.
     const eventCountAfter = await adminPool!.query<{ n: string }>(
-      'SELECT count(*)::text AS n FROM crove_sign.signing_event WHERE org_id = $1',
+      'SELECT count(*)::text AS n FROM ludy_sign.signing_event WHERE org_id = $1',
       [orgA],
     );
     expect(eventCountAfter.rows[0]?.n).toBe(eventCountBefore.rows[0]?.n);
@@ -826,7 +826,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       const chainRows = await adminPool!.query<SigningEventChainRow>(
         `SELECT id, org_id, envelope_id, signer_id, seq, event_type, actor_type, actor_id, actor_label,
                 ip_hash, user_agent, document_sha256, prev_event_hash, event_hash, payload_json, occurred_at
-         FROM crove_sign.signing_event
+         FROM ludy_sign.signing_event
          WHERE org_id = $1 AND envelope_id = $2
          ORDER BY seq ASC`,
         [orgA, envId],
@@ -859,12 +859,12 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     );
     expect(eraseByPhone.erased).toEqual(
       expect.arrayContaining([
-        { column: 'crove_sign.signer.email', rows: 1 },
-        { column: 'crove_sign.signer.phone', rows: 1 },
+        { column: 'ludy_sign.signer.email', rows: 1 },
+        { column: 'ludy_sign.signer.phone', rows: 1 },
       ]),
     );
     const e7Remaining = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signer WHERE envelope_id = $1',
+      'SELECT id FROM ludy_sign.signer WHERE envelope_id = $1',
       [e7PhoneVoid.envelopeId],
     );
     expect(e7Remaining.rows).toEqual([]);
@@ -879,14 +879,14 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
         routingMode: 'parallel',
         signers: [{ routingOrder: 1, signerRole: 'signer', name: 'Order Signer', email: `order-${orgId.slice(0, 6)}@sign-ret.test` }],
       });
-      await adminPool!.query("UPDATE crove_sign.envelope SET expires_at = now() - interval '1 hour' WHERE id = $1", [env.envelopeId]);
+      await adminPool!.query("UPDATE ludy_sign.envelope SET expires_at = now() - interval '1 hour' WHERE id = $1", [env.envelopeId]);
       await adminPool!.query(
-        `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
+        `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
          VALUES ($1, $2, $3, $4, $5, now() - interval '30 hours', now() - interval '31 hours')`,
         [orgId, env.signerIds[0]!, env.links[0]!.tokenId, `order-${orgId.slice(0, 6)}@sign-ret.test`, sha256Hex(`ord-${orgId}`)],
       );
       await adminPool!.query(
-        `INSERT INTO crove_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, revoked_by, created_by)
+        `INSERT INTO ludy_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, revoked_by, created_by)
          VALUES ($1, $2, $3, $4, now() - interval '35 days', now() - interval '35 days', $5, $5)`,
         [orgId, env.envelopeId, env.signerIds[0]!, hashSigningToken(generateRawSigningToken()), actorUserId],
       );
@@ -898,16 +898,16 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
 
     const expectedOrder = [orgA, orgB].sort();
 
-    const expireDue = await workerPool!.query<{ org_id: string }>('SELECT org_id FROM crove_sign.expire_sweep_due_orgs(100)');
+    const expireDue = await workerPool!.query<{ org_id: string }>('SELECT org_id FROM ludy_sign.expire_sweep_due_orgs(100)');
     expect(expireDue.rows.map((r) => r.org_id)).toEqual(expectedOrder);
 
     const cleanupSecretsDue = await workerPool!.query<{ org_id: string }>(
-      "SELECT org_id FROM crove_sign.cleanup_due_orgs_secrets(now() - interval '24 hours', now() - interval '30 days', 100)",
+      "SELECT org_id FROM ludy_sign.cleanup_due_orgs_secrets(now() - interval '24 hours', now() - interval '30 days', 100)",
     );
     expect(cleanupSecretsDue.rows.map((r) => r.org_id)).toEqual(expectedOrder);
 
     const cleanupCompatDue = await workerPool!.query<{ org_id: string }>(
-      "SELECT org_id FROM crove_sign.cleanup_due_orgs(now() - interval '90 days', now() - interval '30 days', 100)",
+      "SELECT org_id FROM ludy_sign.cleanup_due_orgs(now() - interval '90 days', now() - interval '30 days', 100)",
     );
     expect(cleanupCompatDue.rows.map((r) => r.org_id)).toEqual(expectedOrder);
   });
@@ -924,7 +924,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
     const pendingHash = hashSigningToken(pendingSeal.links[0]!.token);
     const pendingFieldId = pendingSeal.fieldIdsBySigner.get(pendingSeal.signerIds[0]!)![0]!;
     const pendingSubmit = await appPool!.query<{ v: { status: string } }>(
-      "SELECT crove_sign.public_submit($1, true, 'type', 'Pending Seal Name', $2::jsonb, $3, 'RetTest/1.0', $4) AS v",
+      "SELECT ludy_sign.public_submit($1, true, 'type', 'Pending Seal Name', $2::jsonb, $3, 'RetTest/1.0', $4) AS v",
       [pendingHash, JSON.stringify([{ fieldId: pendingFieldId, signaturePngBase64: VALID_PNG_BASE64 }]), ipHash, DEFAULT_MESSAGE_ID_DOMAIN],
     );
     expect(pendingSubmit.rows[0]?.v).toMatchObject({ status: 'ok' });
@@ -934,8 +934,8 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       { value: pendingSealEmail },
       { actor: asMfa(ownerA), orgId: orgA },
     );
-    expect(pendingFound.matches.filter((m) => m.column === 'crove_sign.signer.email')).toHaveLength(1);
-    expect(pendingFound.matches.find((m) => m.column === 'crove_sign.signer.email')?.handling).toBe('keep_record');
+    expect(pendingFound.matches.filter((m) => m.column === 'ludy_sign.signer.email')).toHaveLength(1);
+    expect(pendingFound.matches.find((m) => m.column === 'ludy_sign.signer.email')?.handling).toBe('keep_record');
 
     const pendingErased = await runtime.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
@@ -943,10 +943,10 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       { actor: asMfa(ownerA), orgId: orgA },
     );
     expect(pendingErased.kept).toEqual(
-      expect.arrayContaining([expect.objectContaining({ column: 'crove_sign.signer.email', rows: 1 })]),
+      expect.arrayContaining([expect.objectContaining({ column: 'ludy_sign.signer.email', rows: 1 })]),
     );
     const pendingSignerRows = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.signer WHERE org_id = $1 AND envelope_id = $2',
+      'SELECT id FROM ludy_sign.signer WHERE org_id = $1 AND envelope_id = $2',
       [orgA, pendingSeal.envelopeId],
     );
     expect(pendingSignerRows.rows).toHaveLength(1);
@@ -967,14 +967,14 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
 
       const signerId = env.signerIds[0]!;
       const deadTokenRes = await adminPool!.query<{ id: string }>(
-        `INSERT INTO crove_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, revoked_by, created_by)
+        `INSERT INTO ludy_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, revoked_by, created_by)
          VALUES ($1, $2, $3, $4, now() - interval '35 days', now() - interval '35 days', $5, $5)
          RETURNING id`,
         [orgA, env.envelopeId, signerId, hashSigningToken(generateRawSigningToken()), ownerA],
       );
       const deadTokenId = deadTokenRes.rows[0]!.id;
       await adminPool!.query(
-        `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
+        `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
          VALUES ($1, $2, $3, $4, $5, now() - interval '30 hours', now() - interval '31 hours')`,
         [orgA, signerId, deadTokenId, email, sha256Hex(`conc-${round}`)],
       );
@@ -987,9 +987,9 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
 
       const remaining = await adminPool!.query<{ n: string }>(
         `SELECT (
-           (SELECT count(*) FROM crove_sign.signer WHERE org_id = $1 AND envelope_id = $2)
-           + (SELECT count(*) FROM crove_sign.signing_token WHERE org_id = $1 AND envelope_id = $2)
-           + (SELECT count(*) FROM crove_sign.signing_otp WHERE org_id = $1 AND signer_id = $3)
+           (SELECT count(*) FROM ludy_sign.signer WHERE org_id = $1 AND envelope_id = $2)
+           + (SELECT count(*) FROM ludy_sign.signing_token WHERE org_id = $1 AND envelope_id = $2)
+           + (SELECT count(*) FROM ludy_sign.signing_otp WHERE org_id = $1 AND signer_id = $3)
          )::text AS n`,
         [orgA, env.envelopeId, signerId],
       );

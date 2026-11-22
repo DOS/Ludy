@@ -47,7 +47,7 @@ const COMMAND_USERS = [
   'modules/meetings/src/translate.ts',
   'packages/kernel/src/member-vy-sinks.ts',
 ];
-const NAMES_TABLE = /crove_meetings\.translation\b|['"`]translation['"`]|\bMeetingsTranslationTable\b/;
+const NAMES_TABLE = /ludy_meetings\.translation\b|['"`]translation['"`]|\bMeetingsTranslationTable\b/;
 const NAMES_COMMAND = /['"`]meetings\.translat(?:e|ion)\./;
 
 describe('a translation is never a source (E1, #3184)', () => {

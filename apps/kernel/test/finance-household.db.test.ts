@@ -121,7 +121,7 @@ suite('household business profile and rules (#2517)', () => {
     // A later dated layout row that is still `commentary` brings the label back from its date, far in the future so no other test of this file reads it.
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S1a', '2035.1', DATE '2035-01-01', 'Sổ S1a (test)', ARRAY['none']::text[], 'a later dated row (test)', 'commentary')",
+        "INSERT INTO ludy_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S1a', '2035.1', DATE '2035-01-01', 'Sổ S1a (test)', ARRAY['none']::text[], 'a later dated row (test)', 'commentary')",
       ),
     );
     expect(await profileAt(o, '2034-12-31')).toMatchObject({ commentary: false });
@@ -153,7 +153,7 @@ suite('household business profile and rules (#2517)', () => {
       await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
     // The database holds the kind rule too, for a writer that skips the command.
-    await expect(admin((c) => c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [o.orgId, o.company]))).rejects.toMatchObject({
+    await expect(admin((c) => c.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [o.orgId, o.company]))).rejects.toMatchObject({
       message: expect.stringContaining('HOUSEHOLD_PROFILE_KIND'),
     });
   });
@@ -178,7 +178,7 @@ suite('household business profile and rules (#2517)', () => {
     await setProfile(o, { taxGroup: 3, pitMethod: 'income' });
     expect((await profileAt(o, '2026-12-31')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
     await admin((c) =>
-      c.query("INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2e', '2027.1', '2027-01-01', 'Sổ chi tiết tiền', '{}', 'a retiring version (test)', 'confirmed')"),
+      c.query("INSERT INTO ludy_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2e', '2027.1', '2027-01-01', 'Sổ chi tiết tiền', '{}', 'a retiring version (test)', 'confirmed')"),
     );
     expect((await profileAt(o, '2026-12-31')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
     expect((await profileAt(o, '2027-06-01')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d']);
@@ -189,7 +189,7 @@ suite('household business profile and rules (#2517)', () => {
     await setProfile(o, { effectiveFrom: '2026-03-01' });
     for (const date of ['2026-03-01', '2026-02-01']) await expect(setProfile(o, { effectiveFrom: date, taxGroup: 2, pitMethod: 'percentage' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_ORDER' });
     await admin((c) =>
-      c.query("INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30') ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = excluded.locked_from, locked_through = excluded.locked_through", [o.orgId, o.household]),
+      c.query("INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30') ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = excluded.locked_from, locked_through = excluded.locked_through", [o.orgId, o.household]),
     );
     await expect(setProfile(o, { effectiveFrom: '2026-06-30', taxGroup: 2, pitMethod: 'percentage' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_LOCKED' });
     await setProfile(o, { effectiveFrom: '2026-07-01', taxGroup: 2, pitMethod: 'percentage' });
@@ -208,12 +208,12 @@ suite('household business profile and rules (#2517)', () => {
     await locker.connect();
     try {
       await locker.query('BEGIN');
-      await locker.query('INSERT INTO crove_finance.period_lock (org_id, legal_entity_id) VALUES ($1, $2) ON CONFLICT (org_id, legal_entity_id) DO NOTHING', [o.orgId, o.household]);
-      await locker.query('SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 AND legal_entity_id = $2 FOR UPDATE', [o.orgId, o.household]);
+      await locker.query('INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id) VALUES ($1, $2) ON CONFLICT (org_id, legal_entity_id) DO NOTHING', [o.orgId, o.household]);
+      await locker.query('SELECT 1 FROM ludy_finance.period_lock WHERE org_id = $1 AND legal_entity_id = $2 FOR UPDATE', [o.orgId, o.household]);
       const write = setProfile(o, { effectiveFrom: '2026-05-01', taxGroup: 2, pitMethod: 'percentage' });
       write.catch(() => undefined);
       expect(await pending(write)).toBe(true);
-      await locker.query("UPDATE crove_finance.period_lock SET locked_from = '2026-01-01', locked_through = '2026-06-30' WHERE org_id = $1 AND legal_entity_id = $2", [o.orgId, o.household]);
+      await locker.query("UPDATE ludy_finance.period_lock SET locked_from = '2026-01-01', locked_through = '2026-06-30' WHERE org_id = $1 AND legal_entity_id = $2", [o.orgId, o.household]);
       await locker.query('COMMIT');
       await expect(write).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_LOCKED' });
     } finally {
@@ -229,8 +229,8 @@ suite('household business profile and rules (#2517)', () => {
     await locker.connect();
     try {
       await locker.query('BEGIN');
-      await locker.query('INSERT INTO crove_finance.period_lock (org_id, legal_entity_id) VALUES ($1, $2) ON CONFLICT (org_id, legal_entity_id) DO NOTHING', [o.orgId, o.household]);
-      await locker.query('SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 AND legal_entity_id = $2 FOR UPDATE', [o.orgId, o.household]);
+      await locker.query('INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id) VALUES ($1, $2) ON CONFLICT (org_id, legal_entity_id) DO NOTHING', [o.orgId, o.household]);
+      await locker.query('SELECT 1 FROM ludy_finance.period_lock WHERE org_id = $1 AND legal_entity_id = $2 FOR UPDATE', [o.orgId, o.household]);
       const write = setProfile(o, { effectiveFrom: '2026-05-01', taxGroup: 2, pitMethod: 'percentage' });
       expect(await pending(write)).toBe(true);
       await locker.query('ROLLBACK');
@@ -268,7 +268,7 @@ suite('household business profile and rules (#2517)', () => {
     // The audit row holds the answer (it is not personal data), and the table refuses a value outside the two.
     const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok' ORDER BY detail->>'effectiveFrom'`, [o.orgId])).rows);
     expect(audit.map((r) => r.detail.vatCutEligible)).toEqual([null, 'yes', 'no']);
-    await expect(admin((c) => c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, vat_cut_eligible) VALUES ($1, $2, '2027-01-01', 1, 'maybe')", [o.orgId, o.household]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, vat_cut_eligible) VALUES ($1, $2, '2027-01-01', 1, 'maybe')", [o.orgId, o.household]))).rejects.toMatchObject({ code: '23514' });
   });
 
   it("shows another org's household nothing", async () => {
@@ -276,7 +276,7 @@ suite('household business profile and rules (#2517)', () => {
     const b = await org();
     await setProfile(a);
     await expect(query(b, 'finance.household.profile_get', { legalEntityId: a.household })).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED' });
-    const seen = await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.household_profile WHERE org_id = $1', [b.orgId])).rowCount);
+    const seen = await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.household_profile WHERE org_id = $1', [b.orgId])).rowCount);
     expect(seen).toBe(0);
   });
 
@@ -332,7 +332,7 @@ suite('household business profile and rules (#2517)', () => {
     const o = await org();
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', '2027-01-01', 2, 1, 'a later dated row (test)', 'confirmed')",
+        "INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', '2027-01-01', 2, 1, 'a later dated row (test)', 'confirmed')",
       ),
     );
     const goods = async (date: string) => (await query<HouseholdRules>(o, 'finance.household.rules', { date })).tradeRates.find((r) => r.trade === 'goods');
@@ -352,19 +352,19 @@ suite('household business profile and rules (#2517)', () => {
           const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [orgId])).rows[0]?.id;
           document = (
             await a.query<{ id: string }>(
-              "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'sale', $7) RETURNING id",
+              "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'sale', $7) RETURNING id",
               [orgId, party, over.invoice.series, over.invoice.number, date, over.invoice.total, entity],
             )
           ).rows[0]?.id as string;
         }
         const id = (
           await a.query<{ id: string }>(
-            `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
             [orgId, date, description, document ? 'finance.purchase_document' : 'finance.journal_voucher', document ?? randomUUID(), entity, over.reverses ?? null],
           )
         ).rows[0]?.id as string;
         let no = 1;
-        for (const [account, debit, credit] of lines) await a.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, no++, account, debit, credit]);
+        for (const [account, debit, credit] of lines) await a.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, no++, account, debit, credit]);
         await a.query('COMMIT');
         return id;
       } catch (error) {

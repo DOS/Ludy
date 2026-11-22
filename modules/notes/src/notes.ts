@@ -57,8 +57,8 @@ export { NOTE_TARGET_QUERIES };
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const NOTE = notesManifest.tables.crove_notes.note;
-const NOTE_TEMPLATE = notesManifest.tables.crove_notes.note_template;
+const NOTE = notesManifest.tables.ludy_notes.note;
+const NOTE_TEMPLATE = notesManifest.tables.ludy_notes.note_template;
 
 const SUMMARY = ['id', 'author_user_id', 'notebook_id', 'visibility', 'title', 'tags', 'pinned', 'tainted', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'] as const;
 export const NOTE_SUMMARY_COLUMNS = SUMMARY;
@@ -122,7 +122,7 @@ export async function resolveNotebookForNote(
   noteVisibility: NoteVisibility,
 ): Promise<{ id: string; visibility: NoteVisibility }> {
   const first = await ctx.trx
-    .selectFrom('crove_notes.notebook')
+    .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', notebookId)
@@ -130,7 +130,7 @@ export async function resolveNotebookForNote(
   if (!first) throw notebookNotFound();
   await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${notebookId}`}, 0))`.execute(ctx.trx);
   const nb = await ctx.trx
-    .selectFrom('crove_notes.notebook')
+    .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', notebookId)
@@ -146,7 +146,7 @@ const notebookAuditFact = (noteVisibility: NoteVisibility, notebookId: string | 
 
 // The note as the caller may read it (row policies), with its body, locked for a change when `lock` is set.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lock: boolean): Promise<SummaryRow & { body: string }> {
-  let q = ctx.trx.selectFrom('crove_notes.note').select([...SUMMARY, 'body']).where('org_id', '=', ctx.orgId).where('id', '=', noteId);
+  let q = ctx.trx.selectFrom('ludy_notes.note').select([...SUMMARY, 'body']).where('org_id', '=', ctx.orgId).where('id', '=', noteId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
   if (!row) throw notFound();
@@ -193,12 +193,12 @@ const linkTargetFact = (visibility: NoteVisibility, targetType: string, targetId
 // A link added or removed changes the note as others see it; touching the note sends its stream hint (#69), so open
 // apps read the note and the record's panel again.
 async function touch(ctx: CommandContext, noteId: string): Promise<void> {
-  await ctx.trx.updateTable('crove_notes.note').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', noteId).execute();
+  await ctx.trx.updateTable('ludy_notes.note').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', noteId).execute();
 }
 const target = (input: { noteId: string }) => ({ type: 'notes.note', id: input.noteId });
 
-// Saves the pre-edit state of a note into crove_notes.note_version (#3562, Notes v2 E3). A database trigger on
-// crove_notes.note_version automatically prunes snapshots beyond the newest NOTE_VERSION_RETENTION (20) per note.
+// Saves the pre-edit state of a note into ludy_notes.note_version (#3562, Notes v2 E3). A database trigger on
+// ludy_notes.note_version automatically prunes snapshots beyond the newest NOTE_VERSION_RETENTION (20) per note.
 export async function recordNoteVersionSnapshot(
   ctx: CommandContext,
   before: {
@@ -213,7 +213,7 @@ export async function recordNoteVersionSnapshot(
   },
 ): Promise<void> {
   await ctx.trx
-    .insertInto('crove_notes.note_version')
+    .insertInto('ludy_notes.note_version')
     .values({
       org_id: ctx.orgId,
       note_id: before.id,
@@ -242,7 +242,7 @@ export const noteCreate = defineCommand({
       await resolveNotebookForNote(ctx, notebookId, userId, input.visibility);
     }
     const row = await ctx.trx
-      .insertInto('crove_notes.note')
+      .insertInto('ludy_notes.note')
       .values({
         org_id: ctx.orgId,
         author_user_id: userId,
@@ -285,7 +285,7 @@ export const noteClip = defineCommand({
     const userId = userOf(ctx.actor);
     const body = formatClippedNoteBody(input.body, input.sourceUrl ?? null);
     const row = await ctx.trx
-      .insertInto('crove_notes.note')
+      .insertInto('ludy_notes.note')
       .values({
         org_id: ctx.orgId,
         author_user_id: userId,
@@ -378,7 +378,7 @@ export const noteUpdate = defineCommand({
       await recordNoteVersionSnapshot(ctx, before);
     }
     const row = await ctx.trx
-      .updateTable('crove_notes.note')
+      .updateTable('ludy_notes.note')
       .set({
         ...(input.title !== undefined ? { title: nextTitle } : {}),
         ...(input.body !== undefined ? { body: nextBody } : {}),
@@ -426,7 +426,7 @@ export const noteFromMeetingSummary = defineCommand({
     const title = input.title.trim().slice(0, NOTE_TITLE_MAX) || 'Tóm tắt cuộc họp';
     const body = input.body.slice(0, NOTE_BODY_MAX);
     const row = await ctx.trx
-      .insertInto('crove_notes.note')
+      .insertInto('ludy_notes.note')
       .values({
         org_id: ctx.orgId,
         author_user_id: userId,
@@ -476,7 +476,7 @@ export const noteSetVisibility = defineCommand({
       // Do not acquire a new notebook lock while already holding note FOR UPDATE (canonical lock order is notebook -> note);
       // verify accessibility without locking and rely on b_note_notebook_integrity to enforce cross-visibility atomically.
       const movedNb = await ctx.trx
-        .selectFrom('crove_notes.notebook')
+        .selectFrom('ludy_notes.notebook')
         .select(['id', 'author_user_id', 'visibility'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', before.notebook_id)
@@ -489,7 +489,7 @@ export const noteSetVisibility = defineCommand({
     let row: { id: string; revision: number };
     try {
       row = await ctx.trx
-        .updateTable('crove_notes.note')
+        .updateTable('ludy_notes.note')
         .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
@@ -525,7 +525,7 @@ function stateCommand(name: string, change: (now: Date) => { pinned?: boolean; a
       const before = await loadForChange(ctx, input.noteId, (row) => assertMayManage(ctx, row, userId));
       if (!allowInTrash) assertNotInTrash(before);
       const set = change(ctx.now);
-      await ctx.trx.updateTable('crove_notes.note').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.noteId).execute();
+      await ctx.trx.updateTable('ludy_notes.note').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.noteId).execute();
       ctx.audit({ noteId: input.noteId, visibility: before.visibility, authorUserId: before.author_user_id, changed: Object.keys(set) });
       return written(before);
     },
@@ -567,14 +567,14 @@ export const linkRemove = defineCommand({
   handler: async (ctx, input): Promise<{ noteId: string; linkId: string }> => {
     const userId = userOf(ctx.actor);
     const link = await ctx.trx
-      .selectFrom('crove_notes.link')
+      .selectFrom('ludy_notes.link')
       .select(['note_id', 'target_type', 'target_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.linkId)
       .executeTakeFirst();
     if (!link || link.note_id === null) throw new DomainError('NOTE_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết này');
     const note = await loadForChange(ctx, link.note_id, (row) => assertAuthor(row, userId));
-    await ctx.trx.deleteFrom('crove_notes.link').where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).execute();
+    await ctx.trx.deleteFrom('ludy_notes.link').where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).execute();
     await touch(ctx, link.note_id);
     ctx.audit({ noteId: link.note_id, linkId: input.linkId, ...linkTargetFact(note.visibility, link.target_type, link.target_id) });
     return { noteId: link.note_id, linkId: input.linkId };
@@ -587,7 +587,7 @@ export const noteList = defineQuery({
   access: READERS,
   handler: async (ctx, input): Promise<NoteSummary[]> => {
     const userId = userOf(ctx.actor);
-    let q = ctx.trx.selectFrom('crove_notes.note as n').select(SUMMARY.map((c) => `n.${c}` as const)).where('n.org_id', '=', ctx.orgId);
+    let q = ctx.trx.selectFrom('ludy_notes.note as n').select(SUMMARY.map((c) => `n.${c}` as const)).where('n.org_id', '=', ctx.orgId);
     if (input.view === 'trash') q = q.where('n.deleted_at', 'is not', null);
     else {
       q = q.where('n.deleted_at', 'is', null);
@@ -603,7 +603,7 @@ export const noteList = defineQuery({
     if (stackName !== undefined) {
       q = q.where(({ exists, selectFrom }) =>
         exists(
-          selectFrom('crove_notes.notebook as b')
+          selectFrom('ludy_notes.notebook as b')
             .select('b.id')
             .whereRef('b.org_id', '=', 'n.org_id')
             .whereRef('b.id', '=', 'n.notebook_id')
@@ -616,7 +616,7 @@ export const noteList = defineQuery({
     if (t) {
       q = q.where(({ exists, selectFrom }) =>
         exists(
-          selectFrom('crove_notes.link as l')
+          selectFrom('ludy_notes.link as l')
             .select('l.id')
             .whereRef('l.org_id', '=', 'n.org_id')
             .whereRef('l.note_id', '=', 'n.id')
@@ -637,7 +637,7 @@ export const noteGet = defineQuery({
   handler: async (ctx, input): Promise<Note> => {
     const userId = userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select([...SUMMARY, 'body'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -662,13 +662,13 @@ export const noteSearch = defineQuery({
   handler: async (ctx, input): Promise<NoteSummary[]> => {
     const userId = userOf(ctx.actor);
     const rows = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select(SUMMARY)
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)
       .where(
         sql<boolean>`(note.search @@ ludy_kernel.search_query(${input.q}) OR EXISTS (
-          SELECT 1 FROM crove_notes.attachment a
+          SELECT 1 FROM ludy_notes.attachment a
            WHERE a.org_id = note.org_id AND a.note_id = note.id AND a.search @@ ludy_kernel.search_query(${input.q})))`,
       )
       .orderBy(sql`pg_catalog.ts_rank(note.search, ludy_kernel.search_query(${input.q}))`, 'desc')
@@ -700,8 +700,8 @@ export const recordPanel = defineQuery({
       }
     }
     const base = ctx.trx
-      .selectFrom('crove_notes.note as n')
-      .innerJoin('crove_notes.link as l', (j) => j.onRef('l.org_id', '=', 'n.org_id').onRef('l.note_id', '=', 'n.id'))
+      .selectFrom('ludy_notes.note as n')
+      .innerJoin('ludy_notes.link as l', (j) => j.onRef('l.org_id', '=', 'n.org_id').onRef('l.note_id', '=', 'n.id'))
       .select(SUMMARY.map((c) => `n.${c}` as const))
       .where('n.org_id', '=', ctx.orgId)
       .where('l.target_type', '=', input.targetType)
@@ -711,8 +711,8 @@ export const recordPanel = defineQuery({
     const pinned = await base.where('n.pinned', '=', true).orderBy('n.updated_at', 'desc').orderBy('n.id').limit(PANEL_PINNED).execute();
     const latest = await base.where('n.pinned', '=', false).orderBy('n.updated_at', 'desc').orderBy('n.id').limit(PANEL_LATEST).execute();
     const todoRows = await ctx.trx
-      .selectFrom('crove_notes.todo as t')
-      .innerJoin('crove_notes.link as l', (j) => j.onRef('l.org_id', '=', 't.org_id').onRef('l.todo_id', '=', 't.id'))
+      .selectFrom('ludy_notes.todo as t')
+      .innerJoin('ludy_notes.link as l', (j) => j.onRef('l.org_id', '=', 't.org_id').onRef('l.todo_id', '=', 't.id'))
       .select(TODO_SUMMARY_COLUMNS.map((c) => `t.${c}` as const))
       .where('t.org_id', '=', ctx.orgId)
       .where('l.target_type', '=', input.targetType)
@@ -735,13 +735,13 @@ export const recordPanel = defineQuery({
 });
 
 // How many private notes each member has, for an owner or admin before removing one (ADR-0037 §4): a count from
-// crove_notes.private_counts(), which checks the caller's role itself, never the text.
+// ludy_notes.private_counts(), which checks the caller's role itself, never the text.
 export const privateCounts = defineQuery({
   name: 'notes.private_counts',
   input: z.strictObject({}),
   access: MANAGERS,
   handler: async (ctx): Promise<NotePrivateCount[]> => {
-    const { rows } = await sql<{ author_user_id: string; notes: string }>`SELECT author_user_id, notes FROM crove_notes.private_counts()`.execute(ctx.trx);
+    const { rows } = await sql<{ author_user_id: string; notes: string }>`SELECT author_user_id, notes FROM ludy_notes.private_counts()`.execute(ctx.trx);
     return rows.map((r) => ({ userId: r.author_user_id, notes: Number(r.notes) }));
   },
 });
@@ -757,14 +757,14 @@ export const noteVersions = defineQuery({
   handler: async (ctx, input): Promise<NoteVersion[]> => {
     userOf(ctx.actor);
     const note = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
       .executeTakeFirst();
     if (!note) throw notFound();
     const rows = await ctx.trx
-      .selectFrom('crove_notes.note_version')
+      .selectFrom('ludy_notes.note_version')
       .select(['id', 'note_id', 'author_user_id', 'revision', 'title', 'body', 'tags', 'tainted', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('note_id', '=', input.noteId)
@@ -803,7 +803,7 @@ export const noteRestoreVersion = defineCommand({
       });
     }
     const version = await ctx.trx
-      .selectFrom('crove_notes.note_version')
+      .selectFrom('ludy_notes.note_version')
       .select(['id', 'revision', 'title', 'body', 'tags', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('note_id', '=', input.noteId)
@@ -829,7 +829,7 @@ export const noteRestoreVersion = defineCommand({
       ...(nextTainted !== before.tainted ? ['tainted'] : []),
     ];
     const row = await ctx.trx
-      .updateTable('crove_notes.note')
+      .updateTable('ludy_notes.note')
       .set({
         title: version.title,
         body: version.body,
@@ -892,7 +892,7 @@ function templateView(r: TemplateRow, userId: string): NoteTemplate {
 }
 
 async function loadTemplate(ctx: Pick<QueryContext, 'trx' | 'orgId'>, templateId: string, lock: boolean): Promise<TemplateRow> {
-  let q = ctx.trx.selectFrom('crove_notes.note_template').select(TEMPLATE_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', templateId);
+  let q = ctx.trx.selectFrom('ludy_notes.note_template').select(TEMPLATE_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', templateId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
   if (!row) throw templateNotFound();
@@ -919,7 +919,7 @@ export const noteTemplateList = defineQuery({
   handler: async (ctx): Promise<NoteTemplate[]> => {
     const userId = userOf(ctx.actor);
     const rows = await ctx.trx
-      .selectFrom('crove_notes.note_template')
+      .selectFrom('ludy_notes.note_template')
       .select(TEMPLATE_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .orderBy('updated_at', 'desc')
@@ -939,7 +939,7 @@ export const noteTemplateCreate = defineCommand({
   handler: async (ctx, input): Promise<NoteTemplateWritten> => {
     const userId = userOf(ctx.actor);
     const row = await ctx.trx
-      .insertInto('crove_notes.note_template')
+      .insertInto('ludy_notes.note_template')
       .values({
         org_id: ctx.orgId,
         author_user_id: userId,
@@ -992,7 +992,7 @@ export const noteTemplateUpdate = defineCommand({
       ...(before.visibility !== input.visibility ? ['visibility'] : []),
     ];
     const row = await ctx.trx
-      .updateTable('crove_notes.note_template')
+      .updateTable('ludy_notes.note_template')
       .set({
         name: input.name,
         title: input.title,
@@ -1027,7 +1027,7 @@ export const noteTemplateDelete = defineCommand({
   handler: async (ctx, input): Promise<NoteTemplateDeleted> => {
     const userId = userOf(ctx.actor);
     const before = await loadTemplateForChange(ctx, input.templateId, (row) => assertMayManageTemplate(ctx, row, userId));
-    await ctx.trx.deleteFrom('crove_notes.note_template').where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).execute();
+    await ctx.trx.deleteFrom('ludy_notes.note_template').where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).execute();
     ctx.audit({ templateId: input.templateId, visibility: before.visibility, authorUserId: before.author_user_id });
     return { templateId: input.templateId };
   },

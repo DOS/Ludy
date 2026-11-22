@@ -124,13 +124,13 @@ suite('finance exports: no audit row, no download (#365)', () => {
     try {
       const owner = (await admin.query<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
       await admin.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Xuất file', 'household', $3)", [orgId, household, owner]);
-      await admin.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [orgId, household]);
+      await admin.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [orgId, household]);
       // The 01/CNKD worksheet (#2518) needs a household on the percentage method, and its Excel needs rows the accountant confirmed: later dated rows from 2026-10-01, so Q4 is exportable and Q3 is not.
       percentageHousehold = randomUUID();
       await admin.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Tờ khai', 'household', $3)", [orgId, percentageHousehold, owner]);
-      await admin.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method) VALUES ($1, $2, '2026-01-01', 2, 'percentage')", [orgId, percentageHousehold]);
-      await admin.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
-      await admin.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 1, 0.5, 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      await admin.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method) VALUES ($1, $2, '2026-01-01', 2, 'percentage')", [orgId, percentageHousehold]);
+      await admin.query("INSERT INTO ludy_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      await admin.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 1, 0.5, 'test', 'confirmed') ON CONFLICT DO NOTHING");
     } finally {
       await admin.end();
     }

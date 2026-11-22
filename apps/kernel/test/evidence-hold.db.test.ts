@@ -116,7 +116,7 @@ suite('retention holds on evidence files (#1009)', () => {
   }
   const postedUs = async (journalEntryId: string) => {
     const { rows } = await admin((c) =>
-      c.query<{ us: string }>('SELECT (extract(epoch FROM created_at) * 1000000)::bigint::text AS us FROM crove_finance.journal_entry WHERE id = $1', [journalEntryId]),
+      c.query<{ us: string }>('SELECT (extract(epoch FROM created_at) * 1000000)::bigint::text AS us FROM ludy_finance.journal_entry WHERE id = $1', [journalEntryId]),
     );
     if (rows[0] === undefined) throw new Error(`no journal entry ${journalEntryId}`);
     return BigInt(rows[0].us);
@@ -221,7 +221,7 @@ suite('retention holds on evidence files (#1009)', () => {
     expect(holdErrorText(Object.assign(new Error('Access Denied on crove-prod'), { name: 'AccessDenied' }))).toBe('STORE_ERROR:AccessDenied');
     expect(holdErrorText(Object.assign(new Error('x'), { name: 'not a name!' }))).toBe('STORE_ERROR');
     // The posting stands.
-    const { rows } = await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_finance.purchase_document WHERE source_file_id = $1', [posted.fileId]));
+    const { rows } = await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_finance.purchase_document WHERE source_file_id = $1', [posted.fileId]));
     expect(rows[0]?.n).toBe(1);
     // Within the backoff nothing is tried; past it, the hold is set and the error cleared.
     store.refuse = null;
@@ -270,7 +270,7 @@ suite('retention holds on evidence files (#1009)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         await c.query("SET LOCAL session_replication_role = 'replica'");
-        await c.query('UPDATE crove_finance.journal_entry SET created_at = $2::timestamptz WHERE id = $1', [journalEntryId, at]);
+        await c.query('UPDATE ludy_finance.journal_entry SET created_at = $2::timestamptz WHERE id = $1', [journalEntryId, at]);
         await c.query('COMMIT');
       });
     for (const [at, until] of [

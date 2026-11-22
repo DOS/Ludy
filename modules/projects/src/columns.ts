@@ -31,7 +31,7 @@ import { assertCanManage, assertNotArchived, loadProject, taskNotFound, userOf, 
 type TaskStatus = ProjectTaskCard['status'];
 
 const TABLES = projectsManifest.tables;
-const PROJECT_COLUMN = TABLES.crove_projects.project_column;
+const PROJECT_COLUMN = TABLES.ludy_projects.project_column;
 
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
 
@@ -100,7 +100,7 @@ export async function loadProjectColumns(
   lock = false,
 ): Promise<ProjectColumn[]> {
   let query = trx
-    .selectFrom('crove_projects.project_column')
+    .selectFrom('ludy_projects.project_column')
     .select(['id', 'project_id', 'name', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'])
     .where('org_id', '=', orgId)
     .where('project_id', '=', projectId)
@@ -136,7 +136,7 @@ async function rebalanceProjectTasks(
   const keys = spreadKeys(rows.length);
   const taskIds = rows.map((r) => r.task_id);
   if (taskIds.length > 0) {
-    await sql`UPDATE crove_projects.project_task AS pt SET sort_key = v.key
+    await sql`UPDATE ludy_projects.project_task AS pt SET sort_key = v.key
       FROM unnest(${taskIds}::uuid[], ${keys}::text[]) AS v(task_id, key)
       WHERE pt.org_id = ${ctx.orgId}::uuid
         AND pt.project_id = ${projectId}::uuid
@@ -179,7 +179,7 @@ async function ensureRemainingSortKeys(ctx: CommandContext, projectId: string, r
     for (const r of rows) r.sort_key = fresh.get(r.task_id) ?? null;
     return;
   }
-  await sql`UPDATE crove_projects.project_task AS pt SET sort_key = v.key
+  await sql`UPDATE ludy_projects.project_task AS pt SET sort_key = v.key
     FROM unnest(${filledIds}::uuid[], ${filledKeys}::text[]) AS v(task_id, key)
     WHERE pt.org_id = ${ctx.orgId}::uuid
       AND pt.project_id = ${projectId}::uuid
@@ -223,7 +223,7 @@ async function rebalanceProjectColumns(
   const keys = spreadKeys(columns.length);
   const columnIds = columns.map((c) => c.id);
   if (columnIds.length > 0) {
-    await sql`UPDATE crove_projects.project_column AS pc
+    await sql`UPDATE ludy_projects.project_column AS pc
       SET sort_key = v.key,
           updated_at = ${ctx.now}
       FROM unnest(${columnIds}::uuid[], ${keys}::text[]) AS v(id, key)
@@ -264,7 +264,7 @@ export const projectColumnInitDefaults = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_column', [
+    tableWrite(TABLES, 'ludy_projects', 'project_column', [
       'org_id',
       'project_id',
       'name',
@@ -275,7 +275,7 @@ export const projectColumnInitDefaults = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(TABLES, 'crove_projects', 'project_task', ['column_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['column_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectColumnInitDefaultsResult> => {
@@ -292,7 +292,7 @@ export const projectColumnInitDefaults = defineCommand({
 
     const keys = spreadKeys(DEFAULT_COLUMNS.length);
     const inserted = await ctx.trx
-      .insertInto('crove_projects.project_column')
+      .insertInto('ludy_projects.project_column')
       .values(
         DEFAULT_COLUMNS.map((spec, index) => ({
           org_id: ctx.orgId,
@@ -315,7 +315,7 @@ export const projectColumnInitDefaults = defineCommand({
 
     // Map visible non-cancelled project tasks to the newly created default columns atomically.
     // Joining ludy_kernel.task respects le_scope RLS; any hidden task keeps column_id = NULL and resolves cleanly on read.
-    await sql`UPDATE crove_projects.project_task AS pt
+    await sql`UPDATE ludy_projects.project_task AS pt
       SET column_id = m.column_id
       FROM ludy_kernel.task AS t
       JOIN unnest(${statuses}::text[], ${columnIds}::uuid[]) AS m(task_status, column_id)
@@ -340,7 +340,7 @@ export const projectColumnCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_column', [
+    tableWrite(TABLES, 'ludy_projects', 'project_column', [
       'org_id',
       'project_id',
       'name',
@@ -380,7 +380,7 @@ export const projectColumnCreate = defineCommand({
     }
 
     const created = await ctx.trx
-      .insertInto('crove_projects.project_column')
+      .insertInto('ludy_projects.project_column')
       .values({
         org_id: ctx.orgId,
         project_id: project.id,
@@ -417,8 +417,8 @@ export const projectColumnUpdate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_column', ['name', 'task_status', 'color', 'wip_limit', 'updated_at']),
-    tableWrite(TABLES, 'crove_projects', 'project_task', ['column_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_column', ['name', 'task_status', 'color', 'wip_limit', 'updated_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['column_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectColumnMutateResult> => {
@@ -449,7 +449,7 @@ export const projectColumnUpdate = defineCommand({
     if (input.wipLimit !== undefined) patch.wip_limit = input.wipLimit;
 
     const updated = await ctx.trx
-      .updateTable('crove_projects.project_column')
+      .updateTable('ludy_projects.project_column')
       .set(patch)
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -462,7 +462,7 @@ export const projectColumnUpdate = defineCommand({
     // fall back to a column matching each task's canonical status.
     if (nextStatus !== target.taskStatus) {
       await ctx.trx
-        .updateTable('crove_projects.project_task')
+        .updateTable('ludy_projects.project_task')
         .set({ column_id: null })
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', project.id)
@@ -491,7 +491,7 @@ export const projectColumnReorder = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_column', ['sort_key', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_column', ['sort_key', 'updated_at'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectColumnReorderResult> => {
     const userId = userOf(ctx.actor);
@@ -512,7 +512,7 @@ export const projectColumnReorder = defineCommand({
         : await placeColumnBetween(ctx, project.id, remaining, at, at + 1);
 
     await ctx.trx
-      .updateTable('crove_projects.project_column')
+      .updateTable('ludy_projects.project_column')
       .set({ sort_key: nextKey, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -532,7 +532,7 @@ export const projectColumnDelete = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   // May call kernel.task.set_status via ctx.run when the fallback column maps to a different canonical status;
-  // omit writes so nested ludy_kernel.task / outbox updates are not rejected against crove_projects-only writes.
+  // omit writes so nested ludy_kernel.task / outbox updates are not rejected against ludy_projects-only writes.
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectColumnDeleteResult> => {
     const userId = userOf(ctx.actor);
@@ -559,7 +559,7 @@ export const projectColumnDelete = defineCommand({
       checkout_run_id: string | null;
       lock_expires_at: Date | string | null;
     }>`SELECT t.id, t.status, t.checkout_run_id, t.lock_expires_at
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
       INNER JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
       WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -583,7 +583,7 @@ export const projectColumnDelete = defineCommand({
     if (target.taskStatus === fallback.taskStatus) {
       // Move active same-status tasks and le_scope-hidden tasks (NOT EXISTS hides callers from seeing hidden rows)
       // while leaving visible stale/cancelled tasks pointing at target so ON DELETE SET NULL clears their column_id.
-      await sql`UPDATE crove_projects.project_task AS pt
+      await sql`UPDATE ludy_projects.project_task AS pt
         SET column_id = ${fallback.id}::uuid
         WHERE pt.org_id = ${ctx.orgId}::uuid
           AND pt.project_id = ${project.id}::uuid
@@ -598,7 +598,7 @@ export const projectColumnDelete = defineCommand({
     } else if (attachedTasks.length > 0) {
       const visibleIds = attachedTasks.map((t) => t.id);
       await ctx.trx
-        .updateTable('crove_projects.project_task')
+        .updateTable('ludy_projects.project_task')
         .set({ column_id: fallback.id })
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', project.id)
@@ -610,7 +610,7 @@ export const projectColumnDelete = defineCommand({
     // Any remaining project_task rows pointing to target (stale status mismatches, cancelled, or le_scope-hidden
     // tasks when statuses differed) fall back to column_id = NULL via ON DELETE SET NULL (column_id).
     await ctx.trx
-      .deleteFrom('crove_projects.project_column')
+      .deleteFrom('ludy_projects.project_column')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
       .where('id', '=', target.id)
@@ -647,7 +647,7 @@ export const projectTaskMoveColumn = defineCommand({
     assertNotArchived(project);
 
     const targetColumn = await ctx.trx
-      .selectFrom('crove_projects.project_column')
+      .selectFrom('ludy_projects.project_column')
       .select(['id', 'task_status'])
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -661,7 +661,7 @@ export const projectTaskMoveColumn = defineCommand({
       checkout_run_id: string | null;
       lock_expires_at: Date | string | null;
     }>`SELECT t.id, t.status, t.checkout_run_id, t.lock_expires_at
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
       INNER JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
       WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -681,7 +681,7 @@ export const projectTaskMoveColumn = defineCommand({
     let nextSortKey: string | undefined;
     if (input.place !== undefined && input.anchorId !== undefined) {
       const anchorVisible = await ctx.trx
-        .selectFrom('crove_projects.project_task as pt')
+        .selectFrom('ludy_projects.project_task as pt')
         .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
         .select('t.id')
         .where('pt.org_id', '=', ctx.orgId)
@@ -692,7 +692,7 @@ export const projectTaskMoveColumn = defineCommand({
 
       const { rows: allRows } = await sql<ProjectOrderRow>`
         SELECT pt.task_id, pt.sort_key
-          FROM crove_projects.project_task pt
+          FROM ludy_projects.project_task pt
           LEFT JOIN ludy_kernel.task t
             ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -713,7 +713,7 @@ export const projectTaskMoveColumn = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_projects.project_task')
+      .updateTable('ludy_projects.project_task')
       .set(nextSortKey !== undefined ? { column_id: targetColumn.id, sort_key: nextSortKey } : { column_id: targetColumn.id })
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)

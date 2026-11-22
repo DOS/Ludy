@@ -27,14 +27,14 @@ test('an owner writes a template and uses it on a meeting; a member cannot write
   // A stored meeting of the given recorder: recording one needs a microphone and is covered by meeting-record.spec.ts.
   const store = (title: string, email: string): string => {
     exec(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        SELECT t.org_id, gen_random_uuid(), :'title', 'vi', now(), now() + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email, title },
     );
-    return (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.title = :'title'`, { slug, title })[0] as { id: string }).id;
+    return (sql<{ id: string }>(`SELECT m.id FROM ludy_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.title = :'title'`, { slug, title })[0] as { id: string }).id;
   };
-  const templates = () => sql<{ name: string }>(`SELECT x.name FROM crove_meetings.minutes_template x JOIN ludy_kernel.tenant t ON t.org_id = x.org_id WHERE t.slug = :'slug' ORDER BY x.name`, { slug });
+  const templates = () => sql<{ name: string }>(`SELECT x.name FROM ludy_meetings.minutes_template x JOIN ludy_kernel.tenant t ON t.org_id = x.org_id WHERE t.slug = :'slug' ORDER BY x.name`, { slug });
 
   await test.step('the owner writes a template with two sections in Settings', async () => {
     await page.goto(`/o/${slug}/settings/apps`);

@@ -283,7 +283,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     lateDocument = documentId;
 
     // The document keeps the invoice date; the entry is dated on the posting date; the Inbox shows the date chosen.
-    const doc = await admin(async (c) => (await c.query(`SELECT invoice_date::text FROM crove_finance.purchase_document WHERE id = $1`, [documentId])).rows[0]);
+    const doc = await admin(async (c) => (await c.query(`SELECT invoice_date::text FROM ludy_finance.purchase_document WHERE id = $1`, [documentId])).rows[0]);
     expect(doc).toEqual({ invoice_date: day(LOCKED, 20) });
     expect((await rpc('journal/get', await tokenFor(owner), { id: journalEntryId })).body).toMatchObject({
       entryDate: day(OPEN, 1),
@@ -325,7 +325,7 @@ suite('late purchase invoice in an open month (#478)', () => {
   });
 
   it('refuses a posting date for a proposal that is not an invoice', async () => {
-    const entries = await admin(async (c) => (await c.query(`SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND entry_date = $2`, [org.orgId, day(OPEN, 2)])).rows);
+    const entries = await admin(async (c) => (await c.query(`SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND entry_date = $2`, [org.orgId, day(OPEN, 2)])).rows);
     const asked = await rpc('inbox/request', await tokenFor(owner), {
       command: 'finance.journal.reverse',
       input: { entryId: entries[0].id, entryDate: day(OPEN, 5), reason: 'Ghi nhầm' },
@@ -417,8 +417,8 @@ suite('late purchase invoice in an open month (#478)', () => {
         async (c) =>
           (
             await c.query<{ n: number }>(
-              `SELECT count(*)::int AS n FROM crove_finance.purchase_document d
-               JOIN crove_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
+              `SELECT count(*)::int AS n FROM ludy_finance.purchase_document d
+               JOIN ludy_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
                WHERE d.org_id = $1 AND d.proposal_id = $2`,
               [org.orgId, proposalId],
             )
@@ -430,8 +430,8 @@ suite('late purchase invoice in an open month (#478)', () => {
       const client = new pg.Client({ connectionString: adminUrl });
       await client.connect();
       await client.query('BEGIN');
-      await client.query(`SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 FOR UPDATE`, [org.orgId]);
-      await client.query(`UPDATE crove_finance.period_lock SET locked_from = NULL, locked_through = NULL WHERE org_id = $1`, [org.orgId]);
+      await client.query(`SELECT 1 FROM ludy_finance.period_lock WHERE org_id = $1 FOR UPDATE`, [org.orgId]);
+      await client.query(`UPDATE ludy_finance.period_lock SET locked_from = NULL, locked_through = NULL WHERE org_id = $1`, [org.orgId]);
       return client;
     };
 
@@ -489,9 +489,9 @@ suite('late purchase invoice in an open month (#478)', () => {
         await c.query('BEGIN');
         try {
           await c.query(
-            `INSERT INTO crove_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+            `INSERT INTO ludy_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
              SELECT org_id, $2, 'purchase', party_id, 'C26TZZ', $3, $4, 100, 10, 110
-             FROM crove_finance.purchase_document WHERE org_id = $1 AND direction = 'purchase' LIMIT 1`,
+             FROM ludy_finance.purchase_document WHERE org_id = $1 AND direction = 'purchase' LIMIT 1`,
             [org.orgId, id, id.slice(0, 8), day(OPEN, 15)],
           );
           await steps(c, id);
@@ -506,7 +506,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     // A balanced entry for the document (or another source), posted after it.
     const post = async (c: pg.Client, sourceId: string, sourceType = 'finance.purchase_document') => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'test', $3, $4) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'test', $3, $4) RETURNING id`,
         [org.orgId, day(OPEN, 15), sourceType, sourceId],
       );
       const lines: Array<[number, string, number, number]> = [
@@ -515,7 +515,7 @@ suite('late purchase invoice in an open month (#478)', () => {
         [3, '331', 0, 110],
       ];
       for (const [n, account, debit, credit] of lines) {
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)`, [
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)`, [
           org.orgId,
           rows[0]?.id,
           n,
@@ -531,7 +531,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     // Checked early, before the entry is posted: refused.
     expect(
       await attempt(async (c, id) => {
-        await c.query('SET CONSTRAINTS crove_finance.purchase_document_entry IMMEDIATE');
+        await c.query('SET CONSTRAINTS ludy_finance.purchase_document_entry IMMEDIATE');
         await post(c, id);
       }),
     ).toMatchObject({ ok: false, code: '23514' });

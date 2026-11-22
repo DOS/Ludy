@@ -43,7 +43,7 @@ const oneLine = (value: string, max: number): string => Array.from(value.replace
 // The open items of the series as of the previous meeting, as agenda lines: the title only (an item's person, date and task status are not agenda).
 async function openItemLines(trx: Trx, orgId: string, meetingId: string): Promise<{ previous: { id: string; title: string; at: Date } | null; lines: string[] }> {
   const meeting = await trx
-    .selectFrom('crove_meetings.meeting')
+    .selectFrom('ludy_meetings.meeting')
     .select(['series_id', sql<Date>`coalesce(started_at, created_at)`.as('at')])
     .where('org_id', '=', orgId)
     .where('id', '=', meetingId)
@@ -60,7 +60,7 @@ async function openItemLines(trx: Trx, orgId: string, meetingId: string): Promis
 async function transcriptOf(trx: Trx, orgId: string, meetingId: string, limit: number): Promise<{ startSeconds: number; text: string }[]> {
   const { rows } = await sql<{ start_seconds: string; text: string }>`
     WITH s AS (
-      SELECT id, start_seconds, text, stage FROM crove_meetings.transcript_segment WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid
+      SELECT id, start_seconds, text, stage FROM ludy_meetings.transcript_segment WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid
     )
     SELECT start_seconds::text AS start_seconds, text FROM s
     WHERE stage = CASE WHEN EXISTS (SELECT 1 FROM s WHERE stage = 'draft') THEN 'draft' ELSE 'published' END
@@ -84,7 +84,7 @@ export const adherenceAgenda = defineQuery({
     // Counted in the database over the lines the recorder reads (the draft, else the published ones), so a very long transcript is never loaded to be counted.
     const counted = await sql<{ n: string; bytes: string }>`
       WITH s AS (
-        SELECT text, stage FROM crove_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid
+        SELECT text, stage FROM ludy_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid
       ), pick AS (
         SELECT text FROM s WHERE stage = CASE WHEN EXISTS (SELECT 1 FROM s WHERE stage = 'draft') THEN 'draft' ELSE 'published' END
       )

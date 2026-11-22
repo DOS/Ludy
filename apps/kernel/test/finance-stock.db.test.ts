@@ -65,7 +65,7 @@ suite('stock items, aliases and moves (#2512)', () => {
   const list = (o: Org, input: Record<string, unknown> = {}, user = o.owner) => query<Item[]>(o, 'finance.stock_item.list', input, user);
   // A move straight into the table as the database owner: the triggers fire, RLS does not (the commands that write moves come with the posting of document lines).
   const addMove = async (o: Org, itemId: string, quantity: string, date = '2026-11-03') =>
-    String((await rows<{ id: string }>("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, itemId, date, quantity]))[0]?.id);
+    String((await rows<{ id: string }>("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, itemId, date, quantity]))[0]?.id);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -113,7 +113,7 @@ suite('stock items, aliases and moves (#2512)', () => {
     expect(await execute(o, 'finance.stock_item.set_active', { itemId: id, active: false })).toEqual({ active: false });
     expect(await list(o)).toEqual([]);
     expect(await list(o, { includeInactive: true })).toHaveLength(1);
-    expect((await rows('SELECT 1 FROM crove_finance.stock_item WHERE org_id = $1 AND id = $2', [o.orgId, id])).length).toBe(1);
+    expect((await rows('SELECT 1 FROM ludy_finance.stock_item WHERE org_id = $1 AND id = $2', [o.orgId, id])).length).toBe(1);
     // Audit facts name ids, never the item's name.
     const audits = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.stock_item.%' AND outcome = 'ok'", [o.orgId]);
     expect(JSON.stringify(audits)).not.toContain('Gạo');
@@ -128,7 +128,7 @@ suite('stock items, aliases and moves (#2512)', () => {
     await expect(save(o, { itemId: id, unit: 'tấn' })).rejects.toMatchObject({ code: 'STOCK_ITEM_IN_USE' });
     // The name and the trade still change; the database says the same to a direct update of the unit.
     await save(o, { itemId: id, name: 'Gạo mới', trade: 'goods' });
-    await expect(rows("UPDATE crove_finance.stock_item SET unit = 'tấn' WHERE org_id = $1 AND id = $2", [o.orgId, id])).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_ITEM_IN_USE') });
+    await expect(rows("UPDATE ludy_finance.stock_item SET unit = 'tấn' WHERE org_id = $1 AND id = $2", [o.orgId, id])).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_ITEM_IN_USE') });
   });
 
   it('teaches a name once, normalizes it, keeps a name to one item and forgets it', async () => {
@@ -138,7 +138,7 @@ suite('stock items, aliases and moves (#2512)', () => {
     const teach = (itemId: string, key: string, factor = '1') => execute<{ id: string; existing: boolean }>(o, 'finance.stock_alias.teach', { itemId, source: 'text', key, factor });
     const first = await teach(a.id, '  GẠO  Thơm   5kg ');
     expect(first.existing).toBe(false);
-    expect((await rows<{ alias_key: string }>('SELECT alias_key FROM crove_finance.stock_alias WHERE org_id = $1 AND id = $2', [o.orgId, first.id]))[0]?.alias_key).toBe('gạo thơm 5kg');
+    expect((await rows<{ alias_key: string }>('SELECT alias_key FROM ludy_finance.stock_alias WHERE org_id = $1 AND id = $2', [o.orgId, first.id]))[0]?.alias_key).toBe('gạo thơm 5kg');
     // The same name written another way is the same alias for the same item, refused for another item or another factor.
     expect(await teach(a.id, 'gạo thơm 5KG')).toEqual({ id: first.id, existing: true });
     await expect(teach(b.id, 'gạo thơm 5kg')).rejects.toMatchObject({ code: 'STOCK_ALIAS_TAKEN' });
@@ -154,8 +154,8 @@ suite('stock items, aliases and moves (#2512)', () => {
     await execute(o, 'finance.stock_item.set_active', { itemId: b.id, active: true });
     await expect(teach(b.id, 'gạo thơm 5kg')).resolves.toMatchObject({ existing: false });
     // An alias takes its item's entity (that no tenant role updates one is tested in SQL below).
-    const entity = (await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_finance.stock_item WHERE org_id = $1 AND id = $2', [o.orgId, a.id]))[0]?.legal_entity_id;
-    expect((await rows<{ legal_entity_id: string }>('SELECT DISTINCT legal_entity_id FROM crove_finance.stock_alias WHERE org_id = $1 AND item_id = $2', [o.orgId, a.id])).map((r) => r.legal_entity_id)).toEqual([entity]);
+    const entity = (await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_finance.stock_item WHERE org_id = $1 AND id = $2', [o.orgId, a.id]))[0]?.legal_entity_id;
+    expect((await rows<{ legal_entity_id: string }>('SELECT DISTINCT legal_entity_id FROM ludy_finance.stock_alias WHERE org_id = $1 AND item_id = $2', [o.orgId, a.id])).map((r) => r.legal_entity_id)).toEqual([entity]);
   });
 
   it('keeps the moves append-only for every role, reverses a move once by the opposite quantity, and sums on hand from the moves', async () => {
@@ -168,9 +168,9 @@ suite('stock items, aliases and moves (#2512)', () => {
     const refuseAll = async (sqlText: string) => {
       await expect(rows(sqlText, [o.orgId])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('append-only') });
     };
-    await refuseAll("UPDATE crove_finance.stock_move SET quantity = 99 WHERE org_id = $1");
-    await refuseAll('DELETE FROM crove_finance.stock_move WHERE org_id = $1');
-    await expect(rows('TRUNCATE crove_finance.stock_move')).rejects.toMatchObject({ code: '42501' });
+    await refuseAll("UPDATE ludy_finance.stock_move SET quantity = 99 WHERE org_id = $1");
+    await refuseAll('DELETE FROM ludy_finance.stock_move WHERE org_id = $1');
+    await expect(rows('TRUNCATE ludy_finance.stock_move')).rejects.toMatchObject({ code: '42501' });
     const asRuntime = async (sqlText: string, who = o.member) => {
       const c = await pool.connect();
       try {
@@ -182,12 +182,12 @@ suite('stock items, aliases and moves (#2512)', () => {
         c.release();
       }
     };
-    await expect(asRuntime('UPDATE crove_finance.stock_move SET quantity = 99 WHERE org_id = $1', o.owner)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
-    await expect(asRuntime('DELETE FROM crove_finance.stock_move WHERE org_id = $1', o.owner)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(asRuntime('UPDATE ludy_finance.stock_move SET quantity = 99 WHERE org_id = $1', o.owner)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(asRuntime('DELETE FROM ludy_finance.stock_move WHERE org_id = $1', o.owner)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     // A correction is a reversing move of the opposite quantity, written by the command, once.
     const reversal = await execute<{ id: string }>(o, 'finance.stock_move.reverse', { moveId: outMove });
     expect((await list(o))[0]).toMatchObject({ onHand: '5.5', moves: 3 });
-    expect(await rows<{ quantity: string; source_type: string; reverses_move_id: string }>('SELECT quantity::text, source_type, reverses_move_id FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, reversal.id])).toEqual([
+    expect(await rows<{ quantity: string; source_type: string; reverses_move_id: string }>('SELECT quantity::text, source_type, reverses_move_id FROM ludy_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, reversal.id])).toEqual([
       { quantity: '3.000000', source_type: 'reversal', reverses_move_id: outMove },
     ]);
     await expect(execute(o, 'finance.stock_move.reverse', { moveId: outMove })).rejects.toMatchObject({ code: 'STOCK_MOVE_REVERSED' });
@@ -198,13 +198,13 @@ suite('stock items, aliases and moves (#2512)', () => {
     expect(moves.find((m) => m.id === outMove)?.reversed).toBe(true);
     expect(moves.find((m) => m.id === inMove)?.reversed).toBe(false);
     const rawReversal = (moveId: string, quantity: string) =>
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-11-04', $3, 'reversal', $4)", [o.orgId, id, quantity, moveId]);
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-11-04', $3, 'reversal', $4)", [o.orgId, id, quantity, moveId]);
     await expect(rawReversal(inMove, '-5')).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_REVERSAL') });
     await expect(rawReversal(reversal.id, '-3')).rejects.toMatchObject({ code: '23514' });
     await expect(rawReversal(outMove, '3')).rejects.toMatchObject({ code: '23505' });
     // A move is never zero, and a manual move names no document line.
     await expect(addMove(o, id, '0')).rejects.toMatchObject({ code: '23514' });
-    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no) VALUES ($1, $2, '2026-11-03', 1, 'manual', $3, 1)", [o.orgId, id, randomUUID()])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no) VALUES ($1, $2, '2026-11-03', 1, 'manual', $3, 1)", [o.orgId, id, randomUUID()])).rejects.toMatchObject({ code: '23514' });
   });
 
   it('keeps the unit of an item that has taught names, whose factors are against that unit, until they are forgotten', async () => {
@@ -212,7 +212,7 @@ suite('stock items, aliases and moves (#2512)', () => {
     const { id } = await save(o, { unit: 'chai' });
     await execute(o, 'finance.stock_alias.teach', { itemId: id, source: 'text', key: 'thùng nước', factor: '12', unit: 'thùng' });
     await expect(save(o, { itemId: id, unit: 'thùng' })).rejects.toMatchObject({ code: 'STOCK_ITEM_IN_USE' });
-    const alias = (await rows<{ id: string }>('SELECT id FROM crove_finance.stock_alias WHERE org_id = $1 AND item_id = $2', [o.orgId, id]))[0]?.id;
+    const alias = (await rows<{ id: string }>('SELECT id FROM ludy_finance.stock_alias WHERE org_id = $1 AND item_id = $2', [o.orgId, id]))[0]?.id;
     await execute(o, 'finance.stock_alias.forget', { aliasId: alias });
     await expect(save(o, { itemId: id, unit: 'thùng' })).resolves.toEqual({ id });
   });
@@ -246,23 +246,23 @@ suite('stock items, aliases and moves (#2512)', () => {
         c.release();
       }
     }
-    const insertItem = "INSERT INTO crove_finance.stock_item (org_id, code, name, unit, stock_account) VALUES ($1, 'SQL1', 'x', 'cái', '156')";
+    const insertItem = "INSERT INTO ludy_finance.stock_item (org_id, code, name, unit, stock_account) VALUES ($1, 'SQL1', 'x', 'cái', '156')";
     await expect(asRole(o.viewer, (c) => c.query(insertItem, [o.orgId]))).rejects.toMatchObject({ code: '42501' });
     expect(await asRole(o.member, async (c) => (await c.query(insertItem, [o.orgId])).rowCount)).toBe(1);
-    const insertMove = "INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-11-03', 1, 'manual')";
+    const insertMove = "INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-11-03', 1, 'manual')";
     await expect(asRole(o.viewer, (c) => c.query(insertMove, [o.orgId, id]))).rejects.toMatchObject({ code: '42501' });
     expect(await asRole(o.member, async (c) => (await c.query(insertMove, [o.orgId, id])).rowCount)).toBe(1);
     // The update grant is the five columns; the code, the entity, the kind and who made it are fixed for every tenant role, and an item is never deleted.
-    expect(await asRole(o.member, async (c) => (await c.query("UPDATE crove_finance.stock_item SET name = 'y', trade = 'other', active = false WHERE org_id = $1 AND id = $2", [o.orgId, id])).rowCount)).toBe(1);
-    expect(await asRole(o.viewer, async (c) => (await c.query("UPDATE crove_finance.stock_item SET name = 'y' WHERE org_id = $1 AND id = $2", [o.orgId, id])).rowCount)).toBe(0);
+    expect(await asRole(o.member, async (c) => (await c.query("UPDATE ludy_finance.stock_item SET name = 'y', trade = 'other', active = false WHERE org_id = $1 AND id = $2", [o.orgId, id])).rowCount)).toBe(1);
+    expect(await asRole(o.viewer, async (c) => (await c.query("UPDATE ludy_finance.stock_item SET name = 'y' WHERE org_id = $1 AND id = $2", [o.orgId, id])).rowCount)).toBe(0);
     for (const column of ["code = 'ZZ'", "kind = 'goods'", `legal_entity_id = '${randomUUID()}'`, "created_at = now()"]) {
-      await expect(asRole(o.owner, (c) => c.query(`UPDATE crove_finance.stock_item SET ${column} WHERE org_id = $1 AND id = $2`, [o.orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+      await expect(asRole(o.owner, (c) => c.query(`UPDATE ludy_finance.stock_item SET ${column} WHERE org_id = $1 AND id = $2`, [o.orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     }
-    await expect(asRole(o.owner, (c) => c.query('DELETE FROM crove_finance.stock_item WHERE org_id = $1 AND id = $2', [o.orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(asRole(o.owner, (c) => c.query('DELETE FROM ludy_finance.stock_item WHERE org_id = $1 AND id = $2', [o.orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     // An alias is inserted and deleted, never updated.
-    const aliasInsert = "INSERT INTO crove_finance.stock_alias (org_id, item_id, alias_key) VALUES ($1, $2, 'sql alias')";
+    const aliasInsert = "INSERT INTO ludy_finance.stock_alias (org_id, item_id, alias_key) VALUES ($1, $2, 'sql alias')";
     await expect(asRole(o.viewer, (c) => c.query(aliasInsert, [o.orgId, id]))).rejects.toMatchObject({ code: '42501' });
     expect(await asRole(o.member, async (c) => (await c.query(aliasInsert, [o.orgId, id])).rowCount)).toBe(1);
-    await expect(asRole(o.member, async (c) => { await c.query(aliasInsert, [o.orgId, id]); return c.query("UPDATE crove_finance.stock_alias SET alias_key = 'z' WHERE org_id = $1", [o.orgId]); })).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(asRole(o.member, async (c) => { await c.query(aliasInsert, [o.orgId, id]); return c.query("UPDATE ludy_finance.stock_alias SET alias_key = 'z' WHERE org_id = $1", [o.orgId]); })).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
   });
 });

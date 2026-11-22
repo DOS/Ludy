@@ -14,21 +14,21 @@ test('Vy summarizes a stored transcript, the recorder reads, edits and shares it
 
   await test.step('a stored meeting of the recorder with a three-line transcript', async () => {
     exec(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        SELECT t.org_id, gen_random_uuid(), 'Họp báo giá khách A', 'vi', now(), now() + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
-      `INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
+      `INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
        SELECT m.org_id, m.id, v.from_s, v.to_s, v.who, v.said, 'draft'
-         FROM crove_meetings.meeting m JOIN ludy_kernel.tenant tn ON tn.org_id = m.org_id,
+         FROM ludy_meetings.meeting m JOIN ludy_kernel.tenant tn ON tn.org_id = m.org_id,
               (VALUES (0, 10, 'Hà', 'Chúng ta chốt giá cũ cho khách A.'), (10, 20, 'Nam', 'Em sẽ gửi báo giá vào thứ sáu.'), (20, 30, 'Hà', 'Được, họp tiếp tuần sau.')) AS v(from_s, to_s, who, said)
         WHERE tn.slug = :'slug'`,
       { slug },
     );
   });
-  const meetingId = (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
+  const meetingId = (sql<{ id: string }>(`SELECT m.id FROM ludy_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
 
   const panel = page.getByTestId('meeting-results');
   await test.step('the recorder asks Vy and is told, in a live region, that the summary is ready', async () => {

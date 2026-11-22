@@ -84,15 +84,15 @@ suite("Vy's brief before a meeting (#3543)", () => {
   async function meeting(recorder: string, title: string, startMinutes: number, readers: string[], series: string | null): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
        VALUES ($1, $2, $6, 'vi', $4, $5, 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365, $7)`,
       [orgId, id, users[recorder], iso(startMinutes), iso(startMinutes + 60), title, series],
     );
-    for (const who of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
+    for (const who of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
     return id;
   }
   const publish = (meetingId: string, decisions: string[]) =>
-    sqlAdmin(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt buổi họp', $3::jsonb, 'manual', 'published')`, [orgId, meetingId, JSON.stringify(decisions)]);
+    sqlAdmin(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt buổi họp', $3::jsonb, 'manual', 'published')`, [orgId, meetingId, JSON.stringify(decisions)]);
   async function item(meetingId: string, title: string, task?: string): Promise<void> {
     let taskId: string | null = null;
     if (task !== undefined) {
@@ -100,14 +100,14 @@ suite("Vy's brief before a meeting (#3543)", () => {
       await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, task]);
     }
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
        VALUES ($1, $2, $3, $4, 'Lan', $5, 'thứ sáu', 'published', $6, $7, false, 10)`,
       [orgId, randomUUID(), meetingId, title, users.lan, taskId === null ? 'suggested' : 'accepted', taskId],
     );
   }
   const party = (name: string) => sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id);
   const linkParty = (meetingId: string, partyId: string) =>
-    sqlAdmin("INSERT INTO crove_meetings.meeting_link (org_id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4)", [orgId, meetingId, partyId, users.rec]);
+    sqlAdmin("INSERT INTO ludy_meetings.meeting_link (org_id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4)", [orgId, meetingId, partyId, users.rec]);
   async function deal(partyId: string, title: string, amount: string, won = false): Promise<Deal> {
     const created = await exec<Deal>('rec', 'crm.deal.create', { partyId, title, amount, expectedClose: '2026-12-31' });
     if (!won) return created;
@@ -205,11 +205,11 @@ suite("Vy's brief before a meeting (#3543)", () => {
   it('prepares an upcoming calendar event of the member\'s own agenda, from the series of the event; another member\'s event is not found', async () => {
     const s = await seeded(['lan', 'nam']);
     // The meeting of this week is not recorded yet: the event is what comes after the previous one.
-    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, s.current]);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, s.current]);
     const connection = randomUUID();
     await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'lan@calendar.test', 'lan', '{}', true)`, [orgId, connection, users.lan]);
     const agenda = (await sqlAdmin<{ id: string }>(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
        VALUES ($1, $2, $3, $4, 'Giao ban', $5, $6, 'Asia/Ho_Chi_Minh', $7) RETURNING id`,
       [orgId, connection, users.lan, randomUUID(), iso(60), iso(120), s.series],
     )).rows[0]!.id;

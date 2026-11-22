@@ -8,7 +8,7 @@
 // - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context: an owner, an admin, or a
 //   member holding finance.proposal.approve org-wide, #2751) and refuses a stored proposal that differs from it (the entity, the month, the chart, the description, the lines, the total, the cash
 //   flag, the co-author); then it records the voucher with the run and the kind on it (one live voucher per run and kind: a trigger holds it, 20261212114500) and posts its entry, in the same
-//   transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   transaction. The database checks at commit that the proposal has such a voucher (ludy_finance.ledger_effect_recorded).
 // No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -31,7 +31,7 @@ const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
 async function checkPayable(ctx: QueryContext, runId: string, kind: string): Promise<void> {
   // A run can be posted again after a reversal (#2931), so it may hold several posting vouchers: it is payable against the one that stands.
   const postings = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
+    .selectFrom('ludy_finance.journal_voucher as j')
     .select(['j.id', reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed')])
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payroll_run_id', '=', runId)
@@ -39,7 +39,7 @@ async function checkPayable(ctx: QueryContext, runId: string, kind: string): Pro
   if (postings.length === 0) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
   if (postings.every((p) => p.reversed)) throw new DomainError('HR_PAYMENT_POSTING_REVERSED', 409, 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được');
   const paid = await ctx.trx
-    .selectFrom('crove_finance.cash_voucher as v')
+    .selectFrom('ludy_finance.cash_voucher as v')
     .select('v.id')
     .where('v.org_id', '=', ctx.orgId)
     .where('v.payroll_run_id', '=', runId)

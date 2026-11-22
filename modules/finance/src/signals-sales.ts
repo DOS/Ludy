@@ -32,8 +32,8 @@ export const financeSalesSignals = defineQuery({
       SELECT a.id AS party_id, to_char(max(d.invoice_date), 'YYYY-MM-DD') AS last_sale_on, count(*)::text AS sales
       FROM ludy_kernel.party a
       JOIN ludy_kernel.party x ON x.org_id = a.org_id AND coalesce(x.duplicate_of, x.id) = coalesce(a.duplicate_of, a.id)
-      JOIN crove_finance.purchase_document d ON d.org_id = x.org_id AND d.party_id = x.id
-      LEFT JOIN crove_finance.purchase_document_void v ON v.org_id = d.org_id AND v.document_id = d.id
+      JOIN ludy_finance.purchase_document d ON d.org_id = x.org_id AND d.party_id = x.id
+      LEFT JOIN ludy_finance.purchase_document_void v ON v.org_id = d.org_id AND v.document_id = d.id
       WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(input.partyIds.map((id) => sql`${id}::uuid`))})
         AND d.direction = 'sale' AND d.total > 0 AND v.document_id IS NULL
       GROUP BY a.id

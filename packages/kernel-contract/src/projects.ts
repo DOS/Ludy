@@ -514,7 +514,7 @@ export const zProjectTaskProjectEntry = z.object({
 export type ProjectTaskProjectEntry = z.infer<typeof zProjectTaskProjectEntry>;
 
 // Vy's weekly status of one project (projects P6, #2597): deterministic counts and task lists read from
-// ludy_kernel.task and ludy_kernel.task_comment only (never crove_notes), plus 3 to 5 plain sentences from Vy when
+// ludy_kernel.task and ludy_kernel.task_comment only (never ludy_notes), plus 3 to 5 plain sentences from Vy when
 // the model is on and passes every safety check. Ephemeral to the caller: nothing is stored or sent.
 export const PROJECT_WEEKLY_STATUS_STATES = [
   'used',

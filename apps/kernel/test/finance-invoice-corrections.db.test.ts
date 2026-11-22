@@ -106,7 +106,7 @@ suite('replacement and adjustment invoices (#916)', () => {
     Number(
       (
         await admin((c) =>
-          c.query<{ net: string }>(`SELECT coalesce(sum(debit - credit), 0)::text AS net FROM crove_finance.journal_line WHERE org_id = $1 AND account_code = $2`, [orgId, account]),
+          c.query<{ net: string }>(`SELECT coalesce(sum(debit - credit), 0)::text AS net FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code = $2`, [orgId, account]),
         )
       ).rows[0]?.net,
     );
@@ -177,8 +177,8 @@ suite('replacement and adjustment invoices (#916)', () => {
     const rows = await admin((c) =>
       c.query(
         `SELECT d.invoice_number, d.correction_kind, d.corrects_document_id, d.corrected_series, d.corrected_number, d.corrected_date::text,
-                EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id) AS voided
-           FROM crove_finance.purchase_document d WHERE d.org_id = $1 ORDER BY d.invoice_number`,
+                EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id) AS voided
+           FROM ludy_finance.purchase_document d WHERE d.org_id = $1 ORDER BY d.invoice_number`,
         [orgId],
       ),
     );
@@ -196,7 +196,7 @@ suite('replacement and adjustment invoices (#916)', () => {
     ]);
     // The reversal is dated the replacement's day.
     const reversal = await admin((c) =>
-      c.query<{ entry_date: string }>(`SELECT entry_date::text FROM crove_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2`, [orgId, first.journalEntryId]),
+      c.query<{ entry_date: string }>(`SELECT entry_date::text FROM ludy_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2`, [orgId, first.journalEntryId]),
     );
     expect(reversal.rows).toEqual([{ entry_date: '2026-09-20' }]);
   });
@@ -211,7 +211,7 @@ suite('replacement and adjustment invoices (#916)', () => {
     expect(await balance('331')).toBe(-1760000);
     expect(await balance('1331')).toBe(160000);
     const voided = await admin((c) =>
-      c.query(`SELECT 1 FROM crove_finance.purchase_document_void WHERE org_id = $1 AND document_id = $2`, [orgId, replacement]),
+      c.query(`SELECT 1 FROM ludy_finance.purchase_document_void WHERE org_id = $1 AND document_id = $2`, [orgId, replacement]),
     );
     expect(voided.rows).toEqual([]);
     // The VAT working says what it adjusts, and that, as every purchase, it counts by its posting date (#916).
@@ -227,7 +227,7 @@ suite('replacement and adjustment invoices (#916)', () => {
     const recorded = await approve(proposal);
     expect(recorded.correctsDocumentId).toBeUndefined();
     const row = await admin((c) =>
-      c.query(`SELECT correction_kind, corrects_document_id, corrected_number FROM crove_finance.purchase_document WHERE org_id = $1 AND id = $2`, [orgId, recorded.documentId]),
+      c.query(`SELECT correction_kind, corrects_document_id, corrected_number FROM ludy_finance.purchase_document WHERE org_id = $1 AND id = $2`, [orgId, recorded.documentId]),
     );
     expect(row.rows).toEqual([{ correction_kind: 'replacement', corrects_document_id: null, corrected_number: '7777' }]);
   });
@@ -257,11 +257,11 @@ suite('replacement and adjustment invoices (#916)', () => {
     const insert = (kind: string, corrects: string, number: string) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_finance.purchase_document
+          `INSERT INTO ludy_finance.purchase_document
              (org_id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total,
               correction_kind, corrects_document_id, corrected_series, corrected_number)
            SELECT org_id, direction, party_id, 'C26TAB', $4, '2026-10-10', 0, 0, 0, $2, $3, 'C26TAB', $5
-             FROM crove_finance.purchase_document WHERE org_id = $1 AND id = $3`,
+             FROM ludy_finance.purchase_document WHERE org_id = $1 AND id = $3`,
           [orgId, kind, corrects, `X${randomUUID().slice(0, 6)}`, number],
         ),
       );
@@ -322,7 +322,7 @@ suite('replacement and adjustment invoices (#916)', () => {
       await runtime.execute('kernel.org.set_tax_code', { taxCode: '0101234564' }, { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() });
       await admin((c) =>
         c.query(
-          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default",
+          "INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default",
           [orgId],
         ),
       );
@@ -353,7 +353,7 @@ suite('replacement and adjustment invoices (#916)', () => {
       await runtime.execute('kernel.org.set_tax_code', { taxCode: '0101234564' }, { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() });
       await admin((c) =>
         c.query(
-          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, r.regime, '2026.1', r.since::date FROM ludy_kernel.legal_entity, (VALUES ('tt133', '2025-01-01'), ('tt99', '2026-01-01')) AS r(regime, since) WHERE org_id = $1 AND is_default",
+          "INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, r.regime, '2026.1', r.since::date FROM ludy_kernel.legal_entity, (VALUES ('tt133', '2025-01-01'), ('tt99', '2026-01-01')) AS r(regime, since) WHERE org_id = $1 AND is_default",
           [orgId],
         ),
       );

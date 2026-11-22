@@ -153,7 +153,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     await client.connect();
     try {
       const catalog = await readPurgeCatalog(client);
-      expect(catalog.tables).toContain('crove_finance.household_profile');
+      expect(catalog.tables).toContain('ludy_finance.household_profile');
       expect(exportCoverageProblems(catalog.tables, exportedTables())).toEqual([]);
       // Every name an entry omits is a real column of its table: `jsonb - text[]` ignores an unknown key, so a typo would export the secret.
       const found = await client.query<{ tbl: string; col: string }>(
@@ -276,15 +276,15 @@ suite('org offboarding on PostgreSQL (#38)', () => {
         [org.orgId, member.id],
       );
       await seeder.query(
-        "INSERT INTO crove_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Riêng', '{}'::jsonb, false), ($1, $2, 'Chung', '{}'::jsonb, true)",
+        "INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Riêng', '{}'::jsonb, false), ($1, $2, 'Chung', '{}'::jsonb, true)",
         [org.orgId, member.id],
       );
       // A member's own notification and daily mail setting stay private to them: the export must not carry them.
       await seeder.query("INSERT INTO ludy_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'finance.invoice')", [org.orgId, member.id]);
-      await seeder.query("INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Đàm phán', 'open', 1)", [org.orgId]);
+      await seeder.query("INSERT INTO ludy_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Đàm phán', 'open', 1)", [org.orgId]);
       await seeder.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [org.orgId, householdId, owner.id]);
       await seeder.query(
-        "INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades, einvoice_registered, representative_name, created_by) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods'], false, 'Nguyễn Văn A', $3)",
+        "INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades, einvoice_registered, representative_name, created_by) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods'], false, 'Nguyễn Văn A', $3)",
         [org.orgId, householdId, owner.id],
       );
     } finally {

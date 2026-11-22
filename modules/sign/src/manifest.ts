@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The eSign module's manifest (plan docs/plan/esign.md, #3323): every table it owns and the privacy class of every
-// column. Any migration adding or dropping a crove_sign table or column updates this list in the same PR.
+// column. Any migration adding or dropping a ludy_sign table or column updates this list in the same PR.
 import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const SIGN_ENVELOPE_TABLE = columns([
@@ -187,7 +187,7 @@ export const signManifest = defineModule({
   id: 'sign',
   dependsOn: ['kernel'],
   tables: {
-    crove_sign: {
+    ludy_sign: {
       ai_analysis: columns([
         'org_id',
         'id',

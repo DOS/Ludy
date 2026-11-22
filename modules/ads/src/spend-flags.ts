@@ -19,7 +19,7 @@ const day = (value: Date | string | null): string | null => (value === null ? nu
 // The flags of the org as of `now`: what ads.flags answers and what ads.today lists. Read only.
 export async function loadFlags(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: Date): Promise<AdsFlag[]> {
   const accounts = await ctx.trx
-    .selectFrom('crove_ads.ad_account')
+    .selectFrom('ludy_ads.ad_account')
     .select(['id', 'name', 'currency', 'time_zone', 'result_kind', 'synced_through'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('name')
@@ -29,7 +29,7 @@ export async function loadFlags(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: D
   const judgeable = accounts.filter((a) => a.currency !== null && a.time_zone !== null && a.synced_through !== null);
   if (judgeable.length === 0) return [];
   // The caps in force: the latest row of each (scope, account, period).
-  const capRows = await ctx.trx.selectFrom('crove_ads.ad_spend_cap').select(['id', 'scope', 'ad_account_id', 'period', 'amount', 'currency']).where('org_id', '=', ctx.orgId).orderBy('id').execute();
+  const capRows = await ctx.trx.selectFrom('ludy_ads.ad_spend_cap').select(['id', 'scope', 'ad_account_id', 'period', 'amount', 'currency']).where('org_id', '=', ctx.orgId).orderBy('id').execute();
   const latest = new Map<string, FlagCap>();
   for (const c of capRows) latest.set(`${c.scope}:${c.ad_account_id ?? ''}:${c.period}`, { scope: c.scope as FlagCap['scope'], adAccountId: c.ad_account_id, period: c.period as FlagCap['period'], amount: String(c.amount), currency: c.currency });
   const caps = [...latest.values()];
@@ -41,8 +41,8 @@ export async function loadFlags(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: D
   // days leads with the account and its entity).
   const accountDays = (
     await ctx.trx
-      .selectFrom('crove_ads.ad_spend_day as d')
-      .innerJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'))
+      .selectFrom('ludy_ads.ad_spend_day as d')
+      .innerJoin('ludy_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'))
       .select(['d.ad_account_id', 'd.day', sql<string>`d.spend::text`.as('spend')])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.level', '=', 'account')
@@ -54,8 +54,8 @@ export async function loadFlags(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: D
   const campaignFrom = addDays(earliestToday, -(1 + CPR_RECENT_DAYS - 1 + CPR_HISTORY_DAYS + 1));
   const campaignDays = (
     await ctx.trx
-      .selectFrom('crove_ads.ad_spend_day as d')
-      .innerJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'))
+      .selectFrom('ludy_ads.ad_spend_day as d')
+      .innerJoin('ludy_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'))
       .select(['d.ad_account_id', 'd.external_object_id', 'd.object_name', 'd.day', sql<string>`d.spend::text`.as('spend'), sql<string | null>`(d.results ->> a.result_kind)`.as('result')])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.level', '=', 'campaign')

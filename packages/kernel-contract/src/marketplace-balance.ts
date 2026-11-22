@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Sàn screen's read (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"): for each platform an entity sells on, where the platform's money stands in the books,
-// read from the ledger by account and by the platform's party (crove_finance.marketplace_party). Facts only: no model call, nothing stored, no buyer or order data. Amounts are decimal strings.
+// read from the ledger by account and by the platform's party (ludy_finance.marketplace_party). Facts only: no model call, nothing stored, no buyer or order data. Amounts are decimal strings.
 import { z } from 'zod';
 import { zMonth } from './journal-voucher.ts';
 import { MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX } from './marketplace.ts';

@@ -104,8 +104,8 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
   const events = (o: Org) =>
     admin(async (c) => (await c.query<{ payload: { option_id: string; kind: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at", [o.orgId])).rows);
   const optionId = async (o: Org, connectionId: string) =>
-    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
-  const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM crove_social.channel_option WHERE id = $1', [id])).rows[0]);
+    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
+  const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM ludy_social.channel_option WHERE id = $1', [id])).rows[0]);
   const job = (o: Org, id: string, publishers: Readonly<Record<string, Publisher>>, deadlineMs?: number) =>
     runChannelOptionJob({ runtime: worker, broker: vault, publishers, ...(deadlineMs === undefined ? {} : { deadlineMs }) }, o.orgId, id);
   const system = (o: Org) => ({ actor: { type: 'system' as const, component: 'channel-option-kinds-test' }, orgId: o.orgId });
@@ -215,7 +215,7 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
 
   it('records why a list could not be read, as for Pinterest', async () => {
     const o = await org();
-    const rest = (connectionId: string) => admin((c) => c.query("UPDATE crove_social.channel_option SET fetched_at = fetched_at - interval '6 minutes' WHERE channel_connection_id = $1", [connectionId]));
+    const rest = (connectionId: string) => admin((c) => c.query("UPDATE ludy_social.channel_option SET fetched_at = fetched_at - interval '6 minutes' WHERE channel_connection_id = $1", [connectionId]));
     const y = await youtube(o);
     const yt = (answer: Answer) => ({ youtube: new YouTubePublisher(GOOGLE, platform({ [PLAYLISTS]: [answer] }).fetchImpl) });
     const google = (status: number, reason: string) => ({ status, body: { error: { code: status, message: reason, errors: [{ reason }] } } });
@@ -280,20 +280,20 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
     const wId = await optionId(o, w.connectionId);
     const answerOnly = /only the worker records an answer; a member may only ask again/;
     const forged = JSON.stringify([{ id: '7', name: 'Giả mạo', taxonomy: 'category' }]);
-    await expect(asMember(o, o.owner, "UPDATE crove_social.channel_option SET status = 'ready', items = $2::jsonb, fetched_at = now() WHERE id = $1", [wId, forged])).rejects.toThrow(answerOnly);
-    await expect(asMember(o, o.owner, 'UPDATE crove_social.channel_option SET items = $2::jsonb WHERE id = $1', [yId, JSON.stringify([{ id: SALE, name: 'x' }])])).rejects.toThrow(answerOnly);
-    await expect(asMember(o, o.owner, "UPDATE crove_social.channel_option SET kind = 'wordpress_term' WHERE id = $1", [yId])).rejects.toThrow(/permission denied/);
+    await expect(asMember(o, o.owner, "UPDATE ludy_social.channel_option SET status = 'ready', items = $2::jsonb, fetched_at = now() WHERE id = $1", [wId, forged])).rejects.toThrow(answerOnly);
+    await expect(asMember(o, o.owner, 'UPDATE ludy_social.channel_option SET items = $2::jsonb WHERE id = $1', [yId, JSON.stringify([{ id: SALE, name: 'x' }])])).rejects.toThrow(answerOnly);
+    await expect(asMember(o, o.owner, "UPDATE ludy_social.channel_option SET kind = 'wordpress_term' WHERE id = $1", [yId])).rejects.toThrow(/permission denied/);
     // A new list starts pending with no answer, and its kind is one of the three.
     const other = await youtube(o);
     await expect(
-      asMember(o, o.owner, "INSERT INTO crove_social.channel_option (org_id, channel_connection_id, kind, status, items, requested_at, fetched_at) VALUES ($1, $2, 'youtube_playlist', 'ready', $3::jsonb, now(), now())", [o.orgId, other.connectionId, forged]),
+      asMember(o, o.owner, "INSERT INTO ludy_social.channel_option (org_id, channel_connection_id, kind, status, items, requested_at, fetched_at) VALUES ($1, $2, 'youtube_playlist', 'ready', $3::jsonb, now(), now())", [o.orgId, other.connectionId, forged]),
     ).rejects.toThrow(/a channel option list starts pending, with no answer/);
     await expect(
-      asMember(o, o.owner, "INSERT INTO crove_social.channel_option (org_id, channel_connection_id, kind, status, requested_at) VALUES ($1, $2, 'youtube_video', 'pending', now())", [o.orgId, other.connectionId]),
+      asMember(o, o.owner, "INSERT INTO ludy_social.channel_option (org_id, channel_connection_id, kind, status, requested_at) VALUES ($1, $2, 'youtube_video', 'pending', now())", [o.orgId, other.connectionId]),
     ).rejects.toThrow(/channel_option_kind_check/);
     const site = await wordpress(o);
     expect(
-      (await asMember(o, o.owner, "INSERT INTO crove_social.channel_option (org_id, channel_connection_id, kind, status, requested_at) VALUES ($1, $2, 'wordpress_term', 'pending', now())", [o.orgId, site.connectionId])).rowCount,
+      (await asMember(o, o.owner, "INSERT INTO ludy_social.channel_option (org_id, channel_connection_id, kind, status, requested_at) VALUES ($1, $2, 'wordpress_term', 'pending', now())", [o.orgId, site.connectionId])).rowCount,
     ).toBe(1);
 
     // The record command checks each item's taxonomy against the list's kind.
@@ -360,10 +360,10 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
     const listed = (await get(o, o.member, w.connectionId))?.options ?? [];
     expect(listed.length).toBeGreaterThan(100);
     expect(listed.length).toBeLessThan(500);
-    const bytes = await admin(async (c) => (await c.query<{ n: number }>('SELECT octet_length(items::text) AS n FROM crove_social.channel_option WHERE id = $1', [id])).rows[0]?.n ?? 0);
+    const bytes = await admin(async (c) => (await c.query<{ n: number }>('SELECT octet_length(items::text) AS n FROM ludy_social.channel_option WHERE id = $1', [id])).rows[0]?.n ?? 0);
     expect(bytes).toBeLessThanOrEqual(131_072);
     // The record command refuses a list past the cap with a 422, rather than leaving it to the database.
-    await admin((c) => c.query("UPDATE crove_social.channel_option SET status = 'pending', error = NULL, fetched_at = NULL WHERE id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.channel_option SET status = 'pending', error = NULL, fetched_at = NULL WHERE id = $1", [id]));
     const options = [0, 1, 2, 3, 4].flatMap(page).map((t) => ({ id: String(t.id), name: t.name, taxonomy: 'category' }));
     await expect(worker.execute('social.channel_option.record', { optionId: id, result: { ok: true, options } }, system(o))).rejects.toMatchObject({ status: 422 });
     // The worker cuts what an adapter hands it to the cap before recording.

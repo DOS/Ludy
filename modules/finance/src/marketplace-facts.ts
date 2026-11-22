@@ -26,11 +26,11 @@ export const marketplaceFacts = defineQuery({
     const entity = input.legalEntityId === undefined ? sql`TRUE` : sql`s.legal_entity_id = ${input.legalEntityId}::uuid`;
     const standing = (
       await sql<{ id: string; legal_entity_id: string; period_end: string }>`
-        SELECT s.id, s.legal_entity_id, s.period_end::text FROM crove_finance.channel_settlement s
+        SELECT s.id, s.legal_entity_id, s.period_end::text FROM ludy_finance.channel_settlement s
         WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND s.reversal_of IS NULL
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
           -- A settlement with a payout voucher waits for nothing (it counts in neither number), so the history of paid settlements is not read each time.
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)`.execute(ctx.trx)
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)`.execute(ctx.trx)
     ).rows;
     const ids = standing.map((s) => s.id);
     const months = await settlementMonthsFor(ctx, standing.map((s) => ({ id: s.id, periodEnd: s.period_end })));

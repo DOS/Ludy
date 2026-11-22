@@ -4,7 +4,7 @@
 // - a private message (kind direct) is read by owners, admins and holders of kernel.conversation.direct.read (the desk.agent
 //   role) and by no member, viewer or agent, in the table and in what hangs off it (messages, notes, read marks, identities);
 // - a member limited to some channels (ludy_kernel.channel_access, moved from Social by this issue) reads only those channels'
-//   threads, through Social's own commands, and the rows an older database held in crove_social.channel_access are copied
+//   threads, through Social's own commands, and the rows an older database held in ludy_social.channel_access are copied
 //   when it migrates, with the Social table dropped;
 // - a notice waiting in the intake table longer than seven days is dropped with its body, and returned by id.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own databases.
@@ -272,10 +272,10 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     expect(await previews(o, o.lan)).toEqual(['Kênh A', 'Kênh B']);
     expect(await rows('SELECT 1 FROM ludy_kernel.channel_access WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan])).toHaveLength(0);
     // The Social table is gone.
-    expect(await rows("SELECT to_regclass('crove_social.channel_access') AS t")).toEqual([{ t: null }]);
+    expect(await rows("SELECT to_regclass('ludy_social.channel_access') AS t")).toEqual([{ t: null }]);
   });
 
-  it("copies the rows of an older database's crove_social.channel_access when it migrates, and drops that table", async () => {
+  it("copies the rows of an older database's ludy_social.channel_access when it migrates, and drops that table", async () => {
     // A database migrated only up to the version before the move.
     const dir = mkdtempSync(join(tmpdir(), 'crove-migrations-'));
     mkdirSync(dir, { recursive: true });
@@ -306,14 +306,14 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     await withPreClient(async (c) => {
       await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]);
       await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', 'acct-old', 'Kênh cũ', $3)", [orgId, connectionId, owner]);
-      await c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, member, connectionId, owner]);
+      await c.query('INSERT INTO ludy_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, member, connectionId, owner]);
     });
     expect((await withPreClient((c) => c.query("SELECT to_regclass('ludy_kernel.channel_access') AS t"))).rows[0].t).toBeNull();
     // The migration that moves it runs: the row is the kernel's, with its author and time, and the Social table is gone.
     await migrate({ adminUrl: url, dir: MIGRATIONS });
     const moved = await withClient(url, (c) => c.query('SELECT user_id, channel_connection_id, created_by FROM ludy_kernel.channel_access WHERE org_id = $1', [orgId]));
     expect(moved.rows).toEqual([{ user_id: member, channel_connection_id: connectionId, created_by: owner }]);
-    expect((await withClient(url, (c) => c.query("SELECT to_regclass('crove_social.channel_access') AS t"))).rows[0].t).toBeNull();
+    expect((await withClient(url, (c) => c.query("SELECT to_regclass('ludy_social.channel_access') AS t"))).rows[0].t).toBeNull();
     // A second run changes nothing.
     await migrate({ adminUrl: url, dir: MIGRATIONS });
     expect((await withClient(url, (c) => c.query('SELECT count(*)::int AS n FROM ludy_kernel.channel_access WHERE org_id = $1', [orgId]))).rows[0].n).toBe(1);

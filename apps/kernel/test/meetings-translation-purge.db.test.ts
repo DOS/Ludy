@@ -56,12 +56,12 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
   }
   const purge = (user: string) => asWorker(true, async (c) => (await c.query<{ n: string }>('SELECT ludy_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, user])).rows[0]?.n);
   const due = () => asWorker(false, async (c) => (await c.query<{ org_id: string; user_id: string; recorded: boolean }>('SELECT * FROM ludy_kernel.member_vy_former_members_due(1000)')).rows.filter((r) => r.org_id === orgId));
-  const translationsOf = async (user: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.translation WHERE org_id = $1 AND member_user_id = $2', [orgId, user])).rows[0]?.n);
+  const translationsOf = async (user: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.translation WHERE org_id = $1 AND member_user_id = $2', [orgId, user])).rows[0]?.n);
 
   async function meeting(recorder: string = users.owner): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp giao ban', 'vi', now() - interval '40 days', now() - interval '40 days' + interval '1 hour', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
       [orgId, id, recorder],
     );
@@ -70,7 +70,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
   // A member's translation of a meeting: a summary one and a transcript one are two rows.
   const translate = (meetingId: string, user: string, kind: 'summary' | 'transcript', language: 'vi' | 'en' = 'en', ageDays = 0) =>
     sqlAdmin(
-      `INSERT INTO crove_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body, created_at)
+      `INSERT INTO ludy_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body, created_at)
        VALUES ($1, $2, $3, $4, $5, 'published', $6, '[]'::jsonb, now() - make_interval(days => $7::int))`,
       [orgId, meetingId, user, kind, language, 'a'.repeat(64), ageDays],
     );
@@ -172,14 +172,14 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
   const liveLines = async (meetingId: string, count: number, ageDays: number) => {
     for (let seq = 0; seq < count; seq += 1) {
       await sqlAdmin(
-        `INSERT INTO crove_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text, created_at) VALUES ($1, $2, $3, $4, $5, 'Bản nháp trực tiếp', now() - make_interval(days => $6::int))`,
+        `INSERT INTO ludy_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text, created_at) VALUES ($1, $2, $3, $4, $5, 'Bản nháp trực tiếp', now() - make_interval(days => $6::int))`,
         [orgId, meetingId, seq, seq * 15, seq * 15 + 15, ageDays],
       );
     }
   };
-  const liveLinesIn = async (meetingId: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.live_line WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId])).rows[0]?.n);
+  const liveLinesIn = async (meetingId: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId])).rows[0]?.n);
   const counts = () =>
-    asWorker(true, async (c) => (await c.query<{ member_user_id: string; translations: string; live_lines: string }>('SELECT * FROM crove_meetings.member_private_counts()')).rows);
+    asWorker(true, async (c) => (await c.query<{ member_user_id: string; translations: string; live_lines: string }>('SELECT * FROM ludy_meetings.member_private_counts()')).rows);
 
   // The two meetings of the counting test, whose preview lines the purge test then removes (the two tests run in this order).
   let recMeeting = '';
@@ -207,7 +207,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
       try {
         await c.query('BEGIN');
         await enter(c);
-        return (await c.query('SELECT * FROM crove_meetings.member_private_counts()')).rowCount;
+        return (await c.query('SELECT * FROM ludy_meetings.member_private_counts()')).rowCount;
       } catch (error) {
         return (error as { code?: string }).code;
       } finally {
@@ -241,7 +241,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     expect(await purge(users.rec)).toBe('4');
     expect(await liveLinesIn(theirs)).toBe(0);
     expect(await liveLinesIn(owners)).toBe(1);
-    expect(Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, theirs])).rows[0]?.n)).toBe(1);
+    expect(Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, theirs])).rows[0]?.n)).toBe(1);
     expect((await due()).find((r) => r.user_id === users.rec)).toBeUndefined();
     // A recorder removed long ago, back, who recorded again and is gone with no record: the new line is newer than the old removal, so nothing is removed.
     await runtime.execute('kernel.member.remove', { userId: users.late }, { actor: asMfa(users.owner), orgId });

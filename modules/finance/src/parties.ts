@@ -31,9 +31,9 @@ export const customersList = defineQuery({
       // Per customer, the sales documents still in the books: a voided one (#165) is no longer a sale of the org.
       .with('sales', (db) =>
         db
-          .selectFrom('crove_finance.purchase_document as d')
+          .selectFrom('ludy_finance.purchase_document as d')
           .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
-          .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+          .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
           .select(kept.as('party_id'))
           .select((eb) => [
             eb.fn.count<string>('d.id').filterWhere('v.document_id', 'is', null).as('invoice_count'),
@@ -48,7 +48,7 @@ export const customersList = defineQuery({
       // the whole subtree, as the financial statements read it.
       .with('receivable', (db) =>
         db
-          .selectFrom('crove_finance.journal_line as l')
+          .selectFrom('ludy_finance.journal_line as l')
           .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
           .select(kept.as('party_id'))
           .select(sql<string>`sum(l.debit - l.credit)`.as('balance'))

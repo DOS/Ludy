@@ -220,7 +220,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
   it('fills the suggestion with the recorded answer from the stored image, in the language asked, and writes nothing', async () => {
     const before = await snapshot();
     // The snapshot sees the tables a suggestion could touch.
-    expect(Object.keys(before)).toEqual(expect.arrayContaining(['ludy_kernel.file', 'ludy_kernel.audit_event', 'crove_social.post', 'crove_social.post_media']));
+    expect(Object.keys(before)).toEqual(expect.arrayContaining(['ludy_kernel.file', 'ludy_kernel.audit_event', 'ludy_social.post', 'ludy_social.post_media']));
     const answer = await rpc('social/posts/describeImage', await tokenFor(owner), { fileId: files.photo, language: 'vi', connectionIds: [channels.pinterest] });
     expect(answer).toMatchObject({ status: 200, body: { altText: RECORDED.altText } });
     expect(asked).toHaveLength(1);

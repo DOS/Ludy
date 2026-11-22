@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The glossary's term rules (#4043, #4137 points 2b and 3): cleaned to plain text, then judged. The same rules sit in the database (crove_meetings.glossary_term_ok, tested on a real database in
+// The glossary's term rules (#4043, #4137 points 2b and 3): cleaned to plain text, then judged. The same rules sit in the database (ludy_meetings.glossary_term_ok, tested on a real database in
 // apps/kernel/test/meetings-glossary.db.test.ts and apps/kernel/test/meetings-glossary-invisible-chars-scrub.db.test.ts).
 import { describe, expect, it } from 'vitest';
 import { GLOSSARY_TERM_MAX, INVISIBLE_PATTERN, glossaryTermProblem, zGlossaryAdd, zGlossaryRemove, zGlossaryUpdate } from '../src/index.ts';

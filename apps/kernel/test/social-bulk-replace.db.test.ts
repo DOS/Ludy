@@ -79,8 +79,8 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
   const publish = (o: Org, postId: string) =>
     admin(async (c) => {
-      await c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE org_id = $1 AND post_id = $2", [o.orgId, postId]);
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE org_id = $1 AND post_id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
     });
   const sorted = (ids: readonly string[]) => [...ids].sort();
   // What the preview says of each post, as the command answers it.
@@ -269,7 +269,7 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     const long = await post(o, [o.a], { body: 'Tiêu đề dài', title: `${'x'.repeat(490)} AB` });
     const link = await post(o, [o.a], { body: 'Có liên kết', linkUrl: 'https://shop.example/AB' });
     const going = await post(o, [o.a], { body: 'Đang đăng AB' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'publishing' WHERE org_id = $1 AND post_id = $2", [o.orgId, going]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'publishing' WHERE org_id = $1 AND post_id = $2", [o.orgId, going]));
     // The sandbox channel takes 1000 characters of text.
     const fits = await post(o, [o.a], { body: `${'y'.repeat(990)} AB` });
     const same = await post(o, [o.a], { body: 'Đã là AB' });
@@ -301,7 +301,7 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     const covered = await post(o, [o.a], { body: 'Có ảnh bìa' });
     const plain = await post(o, [o.a], { body: 'Không ảnh bìa' });
     for (const postId of [covered, plain]) await own(o, postId, o.a, { settings: { firstComment: 'Xem AB' } });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET settings = settings || jsonb_build_object('cover', jsonb_build_object('fileId', $3::text)) WHERE org_id = $1 AND post_id = $2", [o.orgId, covered, randomUUID()]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET settings = settings || jsonb_build_object('cover', jsonb_build_object('fileId', $3::text)) WHERE org_id = $1 AND post_id = $2", [o.orgId, covered, randomUUID()]));
     const seen = await preview(o, o.member, { postIds: [covered, plain], find: 'AB', replace: 'CD' });
     expect(Object.fromEntries(seen.posts.map((p) => [p.postId, p.skip]))).toEqual({ [covered]: 'over_limit', [plain]: null });
     expect(await replace(o, o.member, { postIds: [covered, plain], find: 'AB', replace: 'CD' })).toEqual(expected(seen));

@@ -45,11 +45,11 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
   async function seedMeeting(recorder: string, readers: string[]): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     return meetingId;
   }
   // A finished run of `who`'s Vy for the meeting, its result stored as the interactive route will store it.
@@ -164,7 +164,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [other, users.recorder]);
     const foreignMeeting = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp org khác', 'vi', now(), now(), 60, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [other, foreignMeeting, users.recorder],
     );
@@ -217,13 +217,13 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     const runId = await finishedRun('recorder', meetingId, BODY);
     await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId });
     const sources = await sqlAdmin<{ n: string }>(
-      `SELECT (SELECT count(*) FROM crove_meetings.meeting_result WHERE meeting_id = $1 AND source_run_id = $2)::text || '/' || (SELECT count(*) FROM crove_meetings.action_item WHERE meeting_id = $1 AND source_run_id = $2)::text AS n`,
+      `SELECT (SELECT count(*) FROM ludy_meetings.meeting_result WHERE meeting_id = $1 AND source_run_id = $2)::text || '/' || (SELECT count(*) FROM ludy_meetings.action_item WHERE meeting_id = $1 AND source_run_id = $2)::text AS n`,
       [meetingId, runId],
     );
     expect(sources.rows[0]?.n).toBe('1/3');
     // Not yet read: the publish command, and the database, refuse.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
-    expect(await refuses(sqlAdmin(`UPDATE crove_meetings.action_item SET stage = 'published' WHERE meeting_id = $1`, [meetingId]))).toBe('42501');
+    expect(await refuses(sqlAdmin(`UPDATE ludy_meetings.action_item SET stage = 'published' WHERE meeting_id = $1`, [meetingId]))).toBe('42501');
     // Only the recorder reviews, and only with their own explicit confirmation.
     const shown = await results('recorder', meetingId);
     const ids = [shown.draft?.id as string, ...shown.items.map((i) => i.id)];
@@ -252,7 +252,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     expect(view.items.map((i) => i.title).sort()).toEqual(['Tự viết', 'Việc mới']);
     expect(view.items.find((i) => i.title === 'Tự viết')?.tainted).toBe(false);
     expect(view.items.find((i) => i.title === 'Việc mới')?.tainted).toBe(true);
-    const id = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND title = 'Việc mới'`, [orgId, meetingId])).rows[0]?.id as string;
+    const id = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND title = 'Việc mới'`, [orgId, meetingId])).rows[0]?.id as string;
     await exec('recorder', 'meetings.action_item.edit', { itemId: id, whenDate: '2026-11-20' });
     expect((await results('recorder', meetingId)).items.find((i) => i.title === 'Việc mới')?.tainted).toBe(true);
     await exec('recorder', 'meetings.action_item.edit', { itemId: id, title: 'Việc mới, đã sửa' });

@@ -230,7 +230,7 @@ async function loadApprovedLineFacts(
   const termsByEmployment = new Map<string, EmploymentLineTerms>();
   if (employeeIds.length === 0) return { payMetaByEmployee, termsByEmployment };
   const runs = await ctx.trx
-    .selectFrom('crove_hr.payroll_run')
+    .selectFrom('ludy_hr.payroll_run')
     .select(['id', 'month'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entityId)
@@ -241,7 +241,7 @@ async function loadApprovedLineFacts(
   if (runs.length === 0) return { payMetaByEmployee, termsByEmployment };
   const monthByRun = new Map(runs.map((r) => [r.id, r.month]));
   const lines = await ctx.trx
-    .selectFrom('crove_hr.payroll_line')
+    .selectFrom('ludy_hr.payroll_line')
     .select(['run_id', 'employee_id', 'employment_id', 'inputs'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entityId)
@@ -452,7 +452,7 @@ function resolveEmploymentHistoryByCutoff(
 
 async function loadLaborCandidateEmployees(ctx: QueryContext, entityId: string): Promise<EmploymentRow[]> {
   return ctx.trx
-    .selectFrom('crove_hr.payroll_employment')
+    .selectFrom('ludy_hr.payroll_employment')
     .select([
       'id',
       'employee_id',
@@ -587,8 +587,8 @@ export const declarationGet = defineQuery({
 
     if (input.kind === 'labor_register' || input.kind === '01pli') {
       const rows = await ctx.trx
-        .selectFrom('crove_hr.payroll_employee as e')
-        .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+        .selectFrom('ludy_hr.payroll_employee as e')
+        .leftJoin('ludy_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
         .select([
           'e.id',
           'e.display_name',
@@ -658,7 +658,7 @@ export const declarationGet = defineQuery({
 
     const months = declarationMonths(input.kind, input.period);
     const runs = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'month'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity.id)
@@ -670,7 +670,7 @@ export const declarationGet = defineQuery({
     const rows = runs.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_line')
+          .selectFrom('ludy_hr.payroll_line')
           .select(['run_id', 'employee_id', 'kind', 'adjusts_run_id', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'breakdown'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', entity.id)
@@ -681,7 +681,7 @@ export const declarationGet = defineQuery({
     const adjustedIds = [...new Set(rows.flatMap((r) => (r.adjusts_run_id ? [r.adjusts_run_id] : [])))];
     const adjustedMonths = new Map<string, string>();
     if (adjustedIds.length > 0) {
-      const adjusted = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjustedIds).execute();
+      const adjusted = await ctx.trx.selectFrom('ludy_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjustedIds).execute();
       for (const r of adjusted) adjustedMonths.set(r.id, r.month);
     }
     const lines: DeclarationLine[] = rows.map((r) => ({
@@ -704,8 +704,8 @@ export const declarationGet = defineQuery({
     const employees = ids.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_employee as e')
-          .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+          .selectFrom('ludy_hr.payroll_employee as e')
+          .leftJoin('ludy_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
           .select([
             'e.id',
             'e.display_name',
@@ -727,7 +727,7 @@ export const declarationGet = defineQuery({
     const employmentRows = ids.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_employment')
+          .selectFrom('ludy_hr.payroll_employment')
           .select(['employee_id', 'effective_from', 'contract_type'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', entity.id)
@@ -826,8 +826,8 @@ export const laborCheckRead = defineQuery({
   handler: async (ctx, input: HrLaborCheckAsk): Promise<HrLaborCheckSnapshot> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee as e')
-      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .selectFrom('ludy_hr.payroll_employee as e')
+      .leftJoin('ludy_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
       .select([
         'e.id',
         'e.display_name',

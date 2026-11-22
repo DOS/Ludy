@@ -100,8 +100,8 @@ export const socialToday = defineQuery({
     // posts are looked at, so "N more" is exact below that.
     const at = sql<Date>`coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)`;
     const rows = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
       .select(['p.id as post_id', 'p.title', sql<Date>`min(${at})`.as('at')])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.status', '=', 'in_review')

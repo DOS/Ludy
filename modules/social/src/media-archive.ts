@@ -1,6 +1,6 @@
 // Archived media library files (issue #1302): members take failed crops and rejected designs out of the library and its
 // pickers, up to MEDIA_ARCHIVE_MAX at once, and bring them back. ludy_kernel.file never changes, so the mark lives in
-// crove_social.media_archive, one per file. An archived file stays stored: posts that already use it keep it, and the
+// ludy_social.media_archive, one per file. An archived file stays stored: posts that already use it keep it, and the
 // library lists it again on restore. Members and above, on files they may use (#1081: a member limited to some
 // channels neither archives nor restores another channel's own media). What an archived file may no longer do is in
 // library.ts (refuseUnusableMedia).
@@ -59,7 +59,7 @@ export const mediaArchive = defineCommand({
     const userId = requireUser(ctx);
     await lockLibraryFiles(ctx, input.fileIds);
     const done = await ctx.trx
-      .insertInto('crove_social.media_archive')
+      .insertInto('ludy_social.media_archive')
       .values(input.fileIds.map((fileId) => ({ org_id: ctx.orgId, file_id: fileId, archived_by: userId, archived_at: ctx.now })))
       .onConflict((oc) => oc.columns(['org_id', 'file_id']).doNothing())
       .returning('file_id')
@@ -82,7 +82,7 @@ export const mediaRestore = defineCommand({
   handler: async (ctx, input): Promise<{ restored: string[] }> => {
     requireUser(ctx);
     await lockLibraryFiles(ctx, input.fileIds);
-    const done = await ctx.trx.deleteFrom('crove_social.media_archive').where('org_id', '=', ctx.orgId).where('file_id', 'in', [...input.fileIds]).returning('file_id').execute();
+    const done = await ctx.trx.deleteFrom('ludy_social.media_archive').where('org_id', '=', ctx.orgId).where('file_id', 'in', [...input.fileIds]).returning('file_id').execute();
     const back = new Set(done.map((r) => r.file_id));
     const restored = input.fileIds.filter((id) => back.has(id));
     ctx.audit({ files: input.fileIds.length, restored: restored.length, file_ids: restored });

@@ -186,8 +186,8 @@ suite('Marketplace column check (#4036)', () => {
     return id;
   }
   const events = async (fileId: string) => (await rows<{ payload: { file_id?: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.marketplace_column_check.requested' AND payload ->> 'file_id' = $2 ORDER BY id", [orgId, fileId])).map((r) => r.payload);
-  const checkRow = async (fileId: string) => (await rows<{ state: string; failure: string | null; refusal: string | null; platform: string | null; assignments: unknown; sheet: unknown; preview: unknown; requested_by: string | null; finished_at: Date | null }>('SELECT state, failure, refusal, platform, assignments, sheet, preview, requested_by, finished_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId]))[0];
-  const requestedAt = async (fileId: string) => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId]))[0]!.requested_at).toISOString();
+  const checkRow = async (fileId: string) => (await rows<{ state: string; failure: string | null; refusal: string | null; platform: string | null; assignments: unknown; sheet: unknown; preview: unknown; requested_by: string | null; finished_at: Date | null }>('SELECT state, failure, refusal, platform, assignments, sheet, preview, requested_by, finished_at FROM ludy_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId]))[0];
+  const requestedAt = async (fileId: string) => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM ludy_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId]))[0]!.requested_at).toISOString();
   const record = async (fileId: string, result: unknown, at?: string) => worker.execute('finance.marketplace.columns_record', { fileId, requestedAt: at ?? (await requestedAt(fileId)), result }, { actor: SYSTEM, orgId });
   const status = (who: Account, fileId: string) => call('columns', who, { fileId });
   let fileId = '';
@@ -226,14 +226,14 @@ suite('Marketplace column check (#4036)', () => {
     expect(await call('columnsCheck', owner, { fileId, mapping: MAPPING, idempotencyKey: randomUUID() })).toMatchObject({ status: 200, body: { queued: true, running: false } });
     expect(await events(fileId)).toHaveLength(2);
     expect(await checkRow(fileId)).toMatchObject({ state: 'requested', platform: 'shopee', assignments: MAPPING.assignments, requested_by: owner.userId });
-    expect(await rows('SELECT 1 FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId])).toHaveLength(1);
     // The same mapping pressed again while it waits returns the waiting one: the stored jsonb keeps its keys in its own order, so the mappings are compared field by field.
     expect(await call('columnsCheck', adminUser, { fileId, mapping: MAPPING, idempotencyKey: randomUUID() })).toMatchObject({ status: 200, body: { queued: false, running: true } });
     expect(await events(fileId)).toHaveLength(2);
   });
 
   it('asks again once the waiting check is older than ten minutes (a lost job must not block the file for ever)', async () => {
-    await rows("UPDATE crove_finance.marketplace_column_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1 AND file_id = $2", [orgId, fileId]);
+    await rows("UPDATE ludy_finance.marketplace_column_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1 AND file_id = $2", [orgId, fileId]);
     expect(await call('columnsCheck', owner, { fileId, mapping: MAPPING, idempotencyKey: randomUUID() })).toMatchObject({ status: 200, body: { queued: true, running: false } });
     expect(await events(fileId)).toHaveLength(3);
   });
@@ -355,14 +355,14 @@ suite('Marketplace column check (#4036)', () => {
     expect((await call('columnsCheck', owner, { fileId: waiting, mapping: MAPPING, idempotencyKey: randomUUID() })).status).toBe(200);
     const where = `WHERE org_id = '${orgId}' AND file_id = '${waiting}'`;
     const forged = [
-      `UPDATE crove_finance.marketplace_column_check SET state = 'done', finished_at = now() ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET state = 'failed', failure = 'unavailable' ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET state = 'done', finished_at = now(), sheet = '{"headerRow":1,"columns":[]}'::jsonb, preview = '{"lines":[],"total":0,"skipped":0}'::jsonb ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET refusal = 'no_header' ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET sheet = '{"headerRow":1,"columns":[]}'::jsonb ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET preview = '{"lines":[],"total":0,"skipped":0}'::jsonb ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET finished_at = now() ${where}`,
-      `UPDATE crove_finance.marketplace_column_check SET failure = 'too_large' ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET state = 'done', finished_at = now() ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET state = 'failed', failure = 'unavailable' ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET state = 'done', finished_at = now(), sheet = '{"headerRow":1,"columns":[]}'::jsonb, preview = '{"lines":[],"total":0,"skipped":0}'::jsonb ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET refusal = 'no_header' ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET sheet = '{"headerRow":1,"columns":[]}'::jsonb ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET preview = '{"lines":[],"total":0,"skipped":0}'::jsonb ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET finished_at = now() ${where}`,
+      `UPDATE ludy_finance.marketplace_column_check SET failure = 'too_large' ${where}`,
     ];
     for (const who of [owner, adminUser, member]) {
       for (const statement of forged) expect(await asPerson(who, statement), `${who.email}: ${statement}`).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE|marketplace_column_check_state_ck/);
@@ -375,8 +375,8 @@ suite('Marketplace column check (#4036)', () => {
         try {
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
           await c.query('SET LOCAL ROLE ludy_tenant');
-          await c.query(`INSERT INTO crove_finance.marketplace_column_check (org_id, file_id, state, finished_at, refusal, sheet, preview) VALUES ($1, $2, 'done', now(), 'no_header', '{"headerRow":1,"columns":[]}'::jsonb, '{"lines":[],"total":0,"skipped":0}'::jsonb)`, [orgId, fresh]);
-          const { rows: made } = await c.query<{ state: string; failure: string | null; refusal: string | null; sheet: unknown; preview: unknown; finished_at: Date | null }>('SELECT state, failure, refusal, sheet, preview, finished_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fresh]);
+          await c.query(`INSERT INTO ludy_finance.marketplace_column_check (org_id, file_id, state, finished_at, refusal, sheet, preview) VALUES ($1, $2, 'done', now(), 'no_header', '{"headerRow":1,"columns":[]}'::jsonb, '{"lines":[],"total":0,"skipped":0}'::jsonb)`, [orgId, fresh]);
+          const { rows: made } = await c.query<{ state: string; failure: string | null; refusal: string | null; sheet: unknown; preview: unknown; finished_at: Date | null }>('SELECT state, failure, refusal, sheet, preview, finished_at FROM ludy_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fresh]);
           return made[0];
         } catch (error) {
           return String((error as Error).message);
@@ -388,12 +388,12 @@ suite('Marketplace column check (#4036)', () => {
     }
     // What a person may do: ask again (the platform, the mapping, who and when change together; the verdict is cleared).
     for (const who of [owner, adminUser, member]) {
-      expect(await asPerson(who, `UPDATE crove_finance.marketplace_column_check SET platform = 'lazada', assignments = '[{"index":0,"field":"orderNo"}]'::jsonb, requested_by = '${who.userId}', requested_at = now(), state = 'requested', failure = NULL, refusal = NULL, preview = NULL ${where}`), who.email).toBe('ok');
+      expect(await asPerson(who, `UPDATE ludy_finance.marketplace_column_check SET platform = 'lazada', assignments = '[{"index":0,"field":"orderNo"}]'::jsonb, requested_by = '${who.userId}', requested_at = now(), state = 'requested', failure = NULL, refusal = NULL, preview = NULL ${where}`), who.email).toBe('ok');
     }
     // The worker's system context records a result, and never changes what was asked.
-    expect(await asSystem(`UPDATE crove_finance.marketplace_column_check SET platform = 'tiktok_shop' ${where}`)).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE/);
-    expect(await asSystem(`UPDATE crove_finance.marketplace_column_check SET assignments = '[]'::jsonb ${where}`)).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE/);
-    expect(await asSystem(`UPDATE crove_finance.marketplace_column_check SET state = 'done', finished_at = now() ${where}`)).toBe('ok');
+    expect(await asSystem(`UPDATE ludy_finance.marketplace_column_check SET platform = 'tiktok_shop' ${where}`)).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE/);
+    expect(await asSystem(`UPDATE ludy_finance.marketplace_column_check SET assignments = '[]'::jsonb ${where}`)).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE/);
+    expect(await asSystem(`UPDATE ludy_finance.marketplace_column_check SET state = 'done', finished_at = now() ${where}`)).toBe('ok');
     // Nothing above changed the row: it still waits, as the person last asked.
     expect(await checkRow(waiting)).toMatchObject({ state: 'requested', failure: null, refusal: null, sheet: null, preview: null, finished_at: null, platform: 'shopee' });
   });
@@ -402,23 +402,23 @@ suite('Marketplace column check (#4036)', () => {
     const old = await fileOf(orgId, { method: 'unsupported', result: null });
     expect((await call('columnsCheck', owner, { fileId: old, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await record(old, { state: 'done', sheet: SHEET, refusal: null, preview: null })).toMatchObject({ recorded: true });
-    await rows("UPDATE crove_finance.marketplace_column_check SET finished_at = now() - interval '8 days', requested_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, old]);
+    await rows("UPDATE ludy_finance.marketplace_column_check SET finished_at = now() - interval '8 days', requested_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, old]);
     // The app role (the API) cannot call it; the worker can, and it removes the old check and keeps the recent one.
-    await expect(pool.query('SELECT crove_finance.marketplace_column_check_prune(7)')).rejects.toThrow(/permission denied|WORKER_ONLY/);
+    await expect(pool.query('SELECT ludy_finance.marketplace_column_check_prune(7)')).rejects.toThrow(/permission denied|WORKER_ONLY/);
     const recent = (await checkRow(fileId))?.state;
-    const pruned = await workerPool.query<{ n: number }>('SELECT crove_finance.marketplace_column_check_prune(7) AS n');
+    const pruned = await workerPool.query<{ n: number }>('SELECT ludy_finance.marketplace_column_check_prune(7) AS n');
     expect(pruned.rows[0]?.n).toBeGreaterThanOrEqual(1);
     expect(await checkRow(old)).toBeUndefined();
     expect((await checkRow(fileId))?.state).toBe(recent);
-    await expect(workerPool.query('SELECT crove_finance.marketplace_column_check_prune(0)')).rejects.toThrow(/RETENTION_DAYS/);
+    await expect(workerPool.query('SELECT ludy_finance.marketplace_column_check_prune(0)')).rejects.toThrow(/RETENTION_DAYS/);
     // A check asked again today keeps its old finish time (the guard allows no other move), and the prune looks at the later of the two: the waiting request is not deleted for an old finish.
     const again = await fileOf(orgId, { method: 'unsupported', result: null });
     expect((await call('columnsCheck', owner, { fileId: again, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await record(again, { state: 'done', sheet: SHEET, refusal: null, preview: null })).toMatchObject({ recorded: true });
-    await rows("UPDATE crove_finance.marketplace_column_check SET finished_at = now() - interval '8 days', requested_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, again]);
+    await rows("UPDATE ludy_finance.marketplace_column_check SET finished_at = now() - interval '8 days', requested_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, again]);
     expect((await call('columnsCheck', owner, { fileId: again, mapping: MAPPING, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await checkRow(again)).toMatchObject({ state: 'requested' });
-    await workerPool.query('SELECT crove_finance.marketplace_column_check_prune(7)');
+    await workerPool.query('SELECT ludy_finance.marketplace_column_check_prune(7)');
     expect((await checkRow(again))?.state).toBe('requested');
   });
 
@@ -430,7 +430,7 @@ suite('Marketplace column check (#4036)', () => {
     expect((await call('columnsCheck', owner, { fileId: clean, mapping: MAPPING, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await record(clean, { state: 'done', sheet: SHEET, refusal: null, preview: { ...PREVIEW, lines: [{ ...PREVIEW.lines[0], lineKey: 'Bút|Xanh' }] } })).toMatchObject({ recorded: true });
     const erased = await api.execute<{ cleared: Record<string, number> }>('kernel.personal_data.erase', { value: BUYER_EMAIL }, { actor: asUser(owner), orgId, idempotencyKey: randomUUID() });
-    expect(JSON.stringify(erased)).toContain('crove_finance.marketplace_column_check.preview');
+    expect(JSON.stringify(erased)).toContain('ludy_finance.marketplace_column_check.preview');
     expect(await checkRow(quoted)).toBeUndefined();
     expect((await checkRow(clean))?.state).toBe('done');
   });

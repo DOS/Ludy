@@ -78,7 +78,7 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
   async function item(who: string, over: { status?: string; whoParsed?: string | null; stage?: string; meeting?: string } = {}): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, tainted, transcript_seconds)
        VALUES ($1, $2, $3, 'Gửi báo giá cho khách', $4, $5, 'thứ sáu', $7, $6, false, 10)`,
       [orgId, id, over.meeting ?? meetingId, who, over.whoParsed ?? null, over.status ?? 'suggested', over.stage ?? 'published'],
     );
@@ -109,18 +109,18 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`, [orgId, users.rec, users.lan, users.thuy, users.hung, users.stranger, users.nam2]);
     meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Giao ban', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users.rec],
     );
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.lan]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.lan]);
     twinsId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Giao ban hai Nam', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, twinsId, users.rec],
     );
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), twinsId, users.nam2]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), twinsId, users.nam2]);
     await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, 'Kho', 'kernel', 'member', $3)`, [orgId, randomUUID(), users.thuy]);
   }, 300_000);
 
@@ -219,7 +219,7 @@ suite('Vy naming who an action item belongs to (#3921)', () => {
     expect(JSON.stringify(rows)).not.toMatch(/Thuỷ|Thuý|Lan|Nam/u);
     expect(logged.join('\n')).not.toMatch(/Thuỷ|Thuý|Lan|Nam|Hùng/u);
     // Nothing was stored about the item: the person still picks the seat and makes the task.
-    const stored = await sqlAdmin<{ who_parsed: string | null }>('SELECT who_parsed FROM crove_meetings.action_item WHERE org_id = $1 AND id = $2', [orgId, id]);
+    const stored = await sqlAdmin<{ who_parsed: string | null }>('SELECT who_parsed FROM ludy_meetings.action_item WHERE org_id = $1 AND id = $2', [orgId, id]);
     expect(stored.rows[0]?.who_parsed).toBeNull();
   });
 

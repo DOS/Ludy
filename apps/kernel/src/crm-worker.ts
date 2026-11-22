@@ -19,7 +19,7 @@ const ACTOR = { type: 'system' as const, component: 'crm.import' };
 // One pass: every org with a staged batch past the limit, cleared in its own system context. Returns the rows deleted.
 export async function sweepCrmImports(deps: { runtime: Runtime; workerDb: Db }, now = new Date()): Promise<number> {
   const before = new Date(now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
-  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_crm.import_expired(${before}::timestamptz, ${SWEEP_ORGS}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_crm.import_expired(${before}::timestamptz, ${SWEEP_ORGS}::int)`.execute(deps.workerDb);
   let removed = 0;
   for (const row of rows) {
     try {
@@ -48,7 +48,7 @@ export async function raiseCrmNextSteps(deps: { runtime: Runtime; workerDb: Db }
   let raised = 0;
   for (let batch = 0; batch < STALE_MAX_BATCHES; batch++) {
     // The keyset paging below relies on the order, so it is asked for here and not left to what the function happens to return.
-    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_crm.deal_stale_orgs(${after}::uuid, ${STALE_ORGS_BATCH}::int) ORDER BY org_id`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_crm.deal_stale_orgs(${after}::uuid, ${STALE_ORGS_BATCH}::int) ORDER BY org_id`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.

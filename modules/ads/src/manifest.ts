@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The ads module's manifest (plan §5.2, #1588, #1599; ads plan docs/plan/ads.md section 7): the tables it owns and the
-// class of every column. A migration that adds or drops a table or column of crove_ads changes this list in the same PR;
+// class of every column. A migration that adds or drops a table or column of ludy_ads changes this list in the same PR;
 // apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the second argument of
 // columns() classifies it. The module stores no personal data (plan section 9): the figures are aggregates, and the names
 // of accounts and campaigns are text the owner typed on the platform, so internal.
@@ -10,7 +10,7 @@ export const adsManifest = defineModule({
   id: 'ads',
   dependsOn: ['kernel'],
   tables: {
-    crove_ads: {
+    ludy_ads: {
       // granted_by_hash: a keyed hash of the platform user who granted the connection, which the platform's deletion callback
       // finds the account by (plan section 9); never the platform's id of the person. write_granted_by_hash is the same for the
       // write connection (W0b), kept apart because a read link overwrites the first and the write app may not be the read app.

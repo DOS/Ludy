@@ -7,7 +7,7 @@
 // credential_get); the others reseal when they are reconnected, and the counts say how many there are. No token is ever logged.
 // Orgs being offboarded are resealed too, as they are counted (#1889): one may return to active before its purge.
 //
-// The sealed targets of team chat alerts (#863, crove_social.chat_alert_target) go through the same pass, under the
+// The sealed targets of team chat alerts (#863, ludy_social.chat_alert_target) go through the same pass, under the
 // same lock, when the Social module is on: those whose saver is still an owner or admin are resealed, the others when
 // the chat is saved again, and both are in the counts. With Social left out (ADR-0031: its tables stay) they are
 // counted all the same (#1878), apart: they reseal only once Social is on again, so the previous key must stay until
@@ -123,9 +123,9 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
       const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_kernel.credential_key_counts()`.execute(db);
       // Counted whatever is installed: the tables exist with Social left out too (ADR-0031), and a target left under the
       // previous key must keep it from being retired (#1878).
-      const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_social.chat_alert_target_key_counts()`.execute(db);
-      const { rows: mediaCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_meetings.media_key_counts()`.execute(db);
-      const { rows: minutesCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_meetings.chat_target_key_counts()`.execute(db);
+      const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_social.chat_alert_target_key_counts()`.execute(db);
+      const { rows: mediaCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_meetings.media_key_counts()`.execute(db);
+      const { rows: minutesCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_meetings.chat_target_key_counts()`.execute(db);
       const openable = openableKeysOf(deps.broker);
       const unopenable = new Map<string, UnopenableKey>();
       const lost = (keyId: string, active: number, waiting: number) => {
@@ -227,7 +227,7 @@ async function resealChatAlerts(deps: ResealDeps, db: Db, current: string, outco
   let after = null as { sealed: Date; id: string } | null;
   for (let page = 0; page < RESEAL_PAGES; page += 1) {
     const { rows } = await sql<{ org_id: string; alert_id: string; key_id: string; sealed_at: Date }>`
-      SELECT org_id, alert_id, key_id, sealed_at FROM crove_social.chat_alert_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
+      SELECT org_id, alert_id, key_id, sealed_at FROM ludy_social.chat_alert_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
     for (const row of rows) {
       const done = await resealChatAlert(deps, row).catch((error: unknown) => {
         // The alert id only: never the envelope or what it holds.
@@ -271,7 +271,7 @@ async function resealMinutesChannels(deps: ResealDeps, db: Db, current: string, 
   let after = null as { sealed: Date; id: string } | null;
   for (let page = 0; page < RESEAL_PAGES; page += 1) {
     const { rows } = await sql<{ org_id: string; channel_id: string; key_id: string; sealed_at: Date }>`
-      SELECT org_id, channel_id, key_id, sealed_at FROM crove_meetings.chat_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
+      SELECT org_id, channel_id, key_id, sealed_at FROM ludy_meetings.chat_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
     for (const row of rows) {
       const done = await resealMinutesChannel(deps, row).catch((error: unknown) => {
         // The channel id only: never the envelope or the address.
@@ -319,7 +319,7 @@ async function resealMediaKeys(deps: ResealDeps, db: Db, current: string, outcom
       created_at: Date;
     }>`
       SELECT org_id, meeting_id, id, key_id, kind, wrapped_key, created_at
-        FROM crove_meetings.media_key_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.created ?? null}::timestamptz, ${after?.id ?? null}::uuid)
+        FROM ludy_meetings.media_key_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.created ?? null}::timestamptz, ${after?.id ?? null}::uuid)
     `.execute(db);
 
     for (const row of rows) {

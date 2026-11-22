@@ -110,7 +110,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     for (const [partyId, days] of [[a, 8], [c, 8]] as const) {
       const deal = await exec<Deal>('crm.deal.create', { partyId, title: 'x', amount: '1000000', expectedClose: null });
       await exec('crm.deal.move', { dealId: deal.id, version: deal.version, stageId: won });
-      await rows("UPDATE crove_crm.deal SET closed_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
+      await rows("UPDATE ludy_crm.deal SET closed_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
     }
     await exec('crm.deal.create', { partyId: b, title: 'y', amount: '2000000', expectedClose: null });
     const sale = (partyId: string, number: string, date: string) =>
@@ -118,12 +118,12 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
         const doc = randomUUID();
         await cl.query('BEGIN');
         await cl.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', 1000000, 0, 1000000, 'sale', $6)`,
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', 1000000, 0, 1000000, 'sale', $6)`,
           [orgId, doc, partyId, number, date, entity],
         );
         const entry = randomUUID();
-        await cl.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'HĐ', 'finance.purchase_document', $4, $5)`, [orgId, entry, date, doc, entity]);
-        await cl.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', 1000000, 0, $3, $4), ($1, $2, 2, '511', 0, 1000000, NULL, $4)`, [orgId, entry, partyId, entity]);
+        await cl.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'HĐ', 'finance.purchase_document', $4, $5)`, [orgId, entry, date, doc, entity]);
+        await cl.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', 1000000, 0, $3, $4), ($1, $2, 2, '511', 0, 1000000, NULL, $4)`, [orgId, entry, partyId, entity]);
         await cl.query('COMMIT');
       });
     await sale(b, '1', addDays(TODAY, -40));

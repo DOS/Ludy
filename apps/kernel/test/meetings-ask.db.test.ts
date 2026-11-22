@@ -74,15 +74,15 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
   async function meeting(recorder: string, title: string, visibility: 'attendees' | 'org', readers: string[] = [], startedAt = '2026-11-10T03:00:00Z', retention = 'current_date + 365'): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $3, 'vi', $6, '2026-11-10T03:30:00Z', 1800, $4, $5, 'ready', 'told_at_start', $4, now(), '1.0', current_date + 20, ${retention})`,
       [orgId, id, title, users[recorder], visibility, startedAt],
     );
-    for (const reader of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
+    for (const reader of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
     return id;
   }
   const line = async (meetingId: string, text: string, stage: 'draft' | 'published', start = 0) =>
-    (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Hà', $4, $5) RETURNING id`, [orgId, meetingId, start, text, stage])).rows[0]?.id as string;
+    (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Hà', $4, $5) RETURNING id`, [orgId, meetingId, start, text, stage])).rows[0]?.id as string;
   const resultRows = async () => (await sqlAdmin<{ status: string; feature: string; subject_type: string; body: string | null; error_code: string | null }>(`SELECT status, feature, subject_type, body, error_code FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND feature = 'meetings.ask' ORDER BY created_at`, [orgId])).rows;
   const tasks = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1', [orgId])).rows[0]?.n);
 
@@ -257,7 +257,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
       const found = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ${t.table_schema}.${t.table_name} x WHERE x::text LIKE '%Zorbaxx%'`);
       expect(Number(found.rows[0]?.n), `${t.table_schema}.${t.table_name}`).toBe(0);
     }
-    const copies = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.meeting_result x WHERE x::text LIKE '%Zorbaxx%'`);
+    const copies = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_meetings.meeting_result x WHERE x::text LIKE '%Zorbaxx%'`);
     expect(Number(copies.rows[0]?.n)).toBe(0);
     expect(logged.join('\n')).not.toContain('Zorbaxx');
     // The read of the lines left an audit row naming the query (this test's runtime has no audit key, so the row carries no hash here; the question text is in none of the kernel's tables, audit included).

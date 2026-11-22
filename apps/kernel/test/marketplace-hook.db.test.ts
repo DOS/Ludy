@@ -93,8 +93,8 @@ suite('Marketplace push hook (#4316)', () => {
   const asApi = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => (await pool.query<T>(text, values)).rows;
   const asWorker = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => (await workerPool.query<T>(text, values)).rows;
   const put = async (hook: string, keyHash: string, dedupe: string, body: Buffer = BODY, requestUrl: string | null = null) =>
-    (await asApi<{ put: string }>('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, keyHash, dedupe, HEADER, body, requestUrl]))[0]?.put;
-  const waiting = async () => rows<{ hook_id: string; dedupe_key: string }>('SELECT hook_id, dedupe_key FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id');
+    (await asApi<{ put: string }>('SELECT ludy_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, keyHash, dedupe, HEADER, body, requestUrl]))[0]?.put;
+  const waiting = async () => rows<{ hook_id: string; dedupe_key: string }>('SELECT hook_id, dedupe_key FROM ludy_finance.marketplace_hook_notice ORDER BY received_at, id');
 
   async function tokenFor(who: Account) {
     return new SignJWT({ role: 'authenticated', email: who.email, session_id: who.session, aal: 'aal1', is_anonymous: false })
@@ -160,13 +160,13 @@ suite('Marketplace push hook (#4316)', () => {
       const channel = randomUUID();
       const connection = randomUUID();
       await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Sàn thử', $5)", [org, channel, `marketplace_${adapter}`, `acct-${randomUUID().slice(0, 8)}`, by]);
-      await rows('INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [org, connection, channel, `marketplace_${adapter}`, adapter]);
+      await rows('INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [org, connection, channel, `marketplace_${adapter}`, adapter]);
       return connection;
     };
     connectionId = await connect(orgId, owner.userId, 'shopee');
     otherConnectionId = await connect(otherOrgId, outsider.userId, 'tiktok_shop');
-    hookId = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(key)]))[0]?.id ?? '';
-    otherHookId = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(otherKey)]))[0]?.id ?? '';
+    hookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(key)]))[0]?.id ?? '';
+    otherHookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(otherKey)]))[0]?.id ?? '';
   }, 120_000);
 
   afterAll(async () => {
@@ -187,20 +187,20 @@ suite('Marketplace push hook (#4316)', () => {
     const pushSet = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHookSet', await tokenFor(who), { id }, orgOf(who));
     const pushStatus = async (who: Account, id: string = pushConnectionId) => rpc('marketplace/connections/pushHook', await tokenFor(who), { id }, orgOf(who));
     const keyOf = (address: string) => String(address.split('/').pop());
-    const lookupTiktok = (hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', hash]);
+    const lookupTiktok = (hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM ludy_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', hash]);
 
     beforeAll(async () => {
       const channel = randomUUID();
       pushConnectionId = randomUUID();
       await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_tiktok_shop', $3, 'Sàn thử', $4)", [orgId, channel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
-      await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_tiktok_shop', 'tiktok_shop')", [orgId, pushConnectionId, channel]);
+      await rows("INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_tiktok_shop', 'tiktok_shop')", [orgId, pushConnectionId, channel]);
     });
 
     it('lets owners and admins make the address, refuses a member and an outsider, and keeps only the hash of the key', async () => {
       expect((await pushSet(member)).status).toBe(403);
       // The outsider's own org does not hold this connection: the same 404 an unknown id gets.
       expect(await pushSet(outsider)).toMatchObject({ status: 404, body: { code: 'MARKETPLACE_CONNECTION_NOT_FOUND' } });
-      expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toHaveLength(0);
       const made = await pushSet(owner);
       expect(made.status).toBe(200);
       expect(made.body).toMatchObject({ adapter: 'tiktok_shop', created: true });
@@ -210,7 +210,7 @@ suite('Marketplace push hook (#4316)', () => {
       // The address is the configured public URL, the adapter and the key, and nothing else.
       expect(address).toBe(`https://api.example.test/api/marketplace/tiktok_shop/webhook/${newKey}`);
       expect(made.body.key).toBeUndefined();
-      const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
       expect(stored).toEqual([{ key_sha256: sha(newKey) }]);
       expect(await lookupTiktok(sha(newKey))).toEqual([{ hook_id: expect.any(String), standing: 'ok' }]);
       // The key, its hash and the address are in no audit row, and the status answers never carry them.
@@ -230,12 +230,12 @@ suite('Marketplace push hook (#4316)', () => {
     });
 
     it('replaces the address: the old key stops at once, waiting pushes go, and a hook stopped by refused pushes takes pushes again', async () => {
-      const [first] = await rows<{ id: string; key_sha256: string }>('SELECT id, key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      const [first] = await rows<{ id: string; key_sha256: string }>('SELECT id, key_sha256 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
       const hookOfPush = first?.id ?? '';
       const oldHash = first?.key_sha256 ?? '';
       expect(await put(hookOfPush, oldHash, sha('before-rotation'))).toBe('accepted');
-      for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: false }]);
-      expect(await asWorker<{ r: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: true }]);
+      for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: false }]);
+      expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS r', [hookOfPush])).toEqual([{ r: true }]);
       expect((await pushStatus(owner)).body).toMatchObject({ stopped: true, rejectedCount: 10 });
       const rotated = await pushSet(adminUser);
       expect(rotated.status).toBe(200);
@@ -249,7 +249,7 @@ suite('Marketplace push hook (#4316)', () => {
       expect(await put(hookOfPush, oldHash, sha('after-rotation'))).toBe('gone');
       expect(await put(hookOfPush, newHash, sha('with-new-key'))).toBe('accepted');
       expect((await pushStatus(owner)).body).toMatchObject({ stopped: false, rejectedCount: 0 });
-      await rows('DELETE FROM crove_finance.marketplace_hook_notice WHERE hook_id = $1', [hookOfPush]);
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice WHERE hook_id = $1', [hookOfPush]);
     });
 
     it('refuses an adapter that takes no push, and a call that carries an idempotency key (the key would be replayed from the stored answer)', async () => {
@@ -257,30 +257,30 @@ suite('Marketplace push hook (#4316)', () => {
       const channel = randomUUID();
       const offline = randomUUID();
       await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_sandbox', $3, 'Sàn ngoại tuyến', $4)", [orgId, channel, `acct-${randomUUID().slice(0, 8)}`, owner.userId]);
-      await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_sandbox', 'shopee')", [orgId, offline, channel]);
+      await rows("INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, 'marketplace_sandbox', 'shopee')", [orgId, offline, channel]);
       expect(await pushSet(owner, offline)).toMatchObject({ status: 422, body: { code: 'MARKETPLACE_PUSH_UNSUPPORTED' } });
-      expect(await rows('SELECT 1 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [offline])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [offline])).toHaveLength(0);
       expect(await pushStatus(owner, offline)).toMatchObject({ status: 200, body: { exists: false } });
       // The command itself, below the HTTP layer, refuses a member (access is owner and admin), and makes no hook.
       await expect(runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: member.userId, aal: 'aal1', sessionId: member.session }, orgId })).rejects.toMatchObject({ status: 403 });
       // The runtime refuses an idempotency key on this command (its answer holds the key), and makes no hook for it either.
-      const before = await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
+      const before = await rows('SELECT key_sha256 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId]);
       await expect(
         runtime.execute('finance.marketplace_connection.push_hook_set', { id: pushConnectionId }, { actor: { type: 'user', userId: owner.userId, aal: 'aal1', sessionId: owner.session }, orgId, idempotencyKey: randomUUID() }),
       ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
-      expect(await rows('SELECT key_sha256 FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toEqual(before);
+      expect(await rows('SELECT key_sha256 FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = $1', [pushConnectionId])).toEqual(before);
     });
 
     it('refuses a connection whose channel connection is not active, and a connection that does not exist', async () => {
-      await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
+      await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
       expect((await pushSet(owner)).body).toMatchObject({ code: 'CHANNEL_NOT_ACTIVE' });
-      await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
+      await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, pushConnectionId]);
       expect((await pushSet(owner, randomUUID())).body).toMatchObject({ code: 'MARKETPLACE_CONNECTION_NOT_FOUND' });
     });
   });
 
   it('finds a hook only for its own adapter and a real key: an unknown key, another adapter, the offline adapter and a malformed hash all find nothing', async () => {
-    const lookup = (adapter: string, hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', [adapter, hash]);
+    const lookup = (adapter: string, hash: string) => asApi<{ hook_id: string; standing: string }>('SELECT * FROM ludy_finance.marketplace_hook_lookup($1, $2)', [adapter, hash]);
     expect(await lookup('shopee', sha(key))).toEqual([{ hook_id: hookId, standing: 'ok' }]);
     expect(await lookup('tiktok_shop', sha(otherKey))).toEqual([{ hook_id: otherHookId, standing: 'ok' }]);
     expect(await lookup('lazada', sha(key))).toEqual([]);
@@ -298,7 +298,7 @@ suite('Marketplace push hook (#4316)', () => {
     expect(await put(hookId, sha(otherKey), sha('two'))).toBe('gone');
     expect(await put(randomUUID(), sha(key), sha('three'))).toBe('gone');
     expect(await waiting()).toHaveLength(1);
-    const [stored] = await rows<{ body: Buffer; authorization_header: string; org_id: string }>('SELECT body, authorization_header, org_id FROM crove_finance.marketplace_hook_notice');
+    const [stored] = await rows<{ body: Buffer; authorization_header: string; org_id: string }>('SELECT body, authorization_header, org_id FROM ludy_finance.marketplace_hook_notice');
     expect(Buffer.compare(stored?.body ?? Buffer.alloc(0), BODY)).toBe(0);
     expect(stored).toMatchObject({ authorization_header: HEADER, org_id: orgId });
     // A body past 16 KB, an empty one and a dedupe key of the wrong shape are refused before any row is read.
@@ -309,17 +309,17 @@ suite('Marketplace push hook (#4316)', () => {
 
   it('keeps both tables definer-only and each function to its own login', async () => {
     for (const table of ['marketplace_hook', 'marketplace_hook_notice']) {
-      await expect(pool.query(`SELECT 1 FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
-      await expect(workerPool.query(`SELECT 1 FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query(`SELECT 1 FROM ludy_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
+      await expect(workerPool.query(`SELECT 1 FROM ludy_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
     }
-    await expect(workerPool.query("SELECT * FROM crove_finance.marketplace_hook_lookup('shopee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool.query('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6)', [randomUUID(), '0'.repeat(64), '0'.repeat(64), 'a', Buffer.from('b'), null])).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT crove_finance.marketplace_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT crove_finance.marketplace_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query("SELECT * FROM ludy_finance.marketplace_hook_lookup('shopee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query('SELECT ludy_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6)', [randomUUID(), '0'.repeat(64), '0'.repeat(64), 'a', Buffer.from('b'), null])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.marketplace_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.marketplace_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
     // The owner's side needs a sealed context of an owner or admin: with none, even the API login is refused.
-    await expect(pool.query('SELECT crove_finance.marketplace_hook_set($1::uuid, $2)', [connectionId, '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT * FROM crove_finance.marketplace_hook_status($1::uuid)', [connectionId])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.marketplace_hook_set($1::uuid, $2)', [connectionId, '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT * FROM ludy_finance.marketplace_hook_status($1::uuid)', [connectionId])).rejects.toMatchObject({ code: '42501' });
   });
 
   it('claims the waiting pushes with their bytes and deletes them as it hands them out, one push for each org', async () => {
@@ -328,7 +328,7 @@ suite('Marketplace push hook (#4316)', () => {
     expect(await put(otherHookId, sha(otherKey), sha('other'), BODY, URL_SIGNED)).toBe('accepted');
     expect(await put(hookId, sha(key), sha('shopee-with-address'), BODY, URL_SIGNED)).toBe('accepted');
     const claimed = await asWorker<{ org_id: string; hook_id: string; marketplace_connection_id: string; adapter: string; platform: string; dedupe_key: string; authorization_header: string; body: Buffer; request_url: string | null }>(
-      'SELECT * FROM crove_finance.marketplace_hook_claim(10)',
+      'SELECT * FROM ludy_finance.marketplace_hook_claim(10)',
     );
     expect(claimed.map((c) => [c.org_id, c.hook_id, c.marketplace_connection_id, c.adapter, c.platform, c.dedupe_key]).sort()).toEqual(
       [
@@ -344,31 +344,31 @@ suite('Marketplace push hook (#4316)', () => {
     expect(claimed.find((c) => c.hook_id === otherHookId)?.request_url).toBeNull();
     expect(Buffer.compare(mine?.body ?? Buffer.alloc(0), BODY)).toBe(0);
     expect(await waiting()).toEqual([]);
-    expect(await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).toEqual([]);
+    expect(await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).toEqual([]);
   });
 
   it('sweeps a push older than ten minutes, whatever it holds, with the next claim and with the sweep', async () => {
-    await rows("INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('old-1'), HEADER, BODY]);
-    await rows("INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '12 minutes')", [orgId, hookId, sha('old-2'), HEADER, BODY]);
-    expect(await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).toEqual([]);
+    await rows("INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('old-1'), HEADER, BODY]);
+    await rows("INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '12 minutes')", [orgId, hookId, sha('old-2'), HEADER, BODY]);
+    expect(await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).toEqual([]);
     expect(await waiting()).toEqual([]);
-    await rows("INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('old-3'), HEADER, BODY]);
-    expect((await asWorker<{ swept: number }>('SELECT crove_finance.marketplace_hook_sweep() AS swept'))[0]?.swept).toBe(1);
+    await rows("INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('old-3'), HEADER, BODY]);
+    expect((await asWorker<{ swept: number }>('SELECT ludy_finance.marketplace_hook_sweep() AS swept'))[0]?.swept).toBe(1);
     expect(await waiting()).toEqual([]);
   });
 
   it('deletes what its own hook holds past ten minutes on the next put, even with no claim', async () => {
-    await rows("INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('stale'), HEADER, BODY]);
+    await rows("INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body, received_at) VALUES ($1, $2, $3, $4, $5, now() - interval '11 minutes')", [orgId, hookId, sha('stale'), HEADER, BODY]);
     expect(await put(hookId, sha(key), sha('fresh'))).toBe('accepted');
     expect(await waiting()).toEqual([{ hook_id: hookId, dedupe_key: sha('fresh') }]);
-    expect((await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).length).toBe(1);
+    expect((await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).length).toBe(1);
   });
 
   it('bounds the backlog: twenty waiting for a hook, then busy; a retry of one that waits is still acknowledged', async () => {
     for (let n = 0; n < 20; n++) expect(await put(hookId, sha(key), sha(`bulk-${n}`))).toBe('accepted');
     expect(await put(hookId, sha(key), sha('bulk-extra'))).toBe('busy');
     expect(await put(hookId, sha(key), sha('bulk-3'))).toBe('duplicate');
-    expect((await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(100)')).length).toBe(20);
+    expect((await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(100)')).length).toBe(20);
     expect(await waiting()).toEqual([]);
   });
 
@@ -383,7 +383,7 @@ suite('Marketplace push hook (#4316)', () => {
     await listener.end();
     expect(heard.length).toBeGreaterThan(0);
     expect(heard.every((payload) => payload === '')).toBe(true);
-    await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)');
+    await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)');
     const tables = await rows<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('ludy_kernel', 'ludy_jobs') AND table_type = 'BASE TABLE'");
     for (const { table_schema, table_name } of tables) {
       // The row as text shows a bytea column in hex, so the canary is looked for as text and as hex.
@@ -393,35 +393,35 @@ suite('Marketplace push hook (#4316)', () => {
   });
 
   it('stops a hook after ten refused pushes in an hour: the lookup says stopped, a push stores nothing, and the claim hands back nothing of it', async () => {
-    for (let n = 1; n < 10; n++) expect((await asWorker<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [otherHookId]))[0]?.stopped).toBe(false);
-    expect((await asWorker<{ stopped: boolean }>('SELECT crove_finance.marketplace_hook_reject($1::uuid) AS stopped', [otherHookId]))[0]?.stopped).toBe(true);
-    expect(await asApi('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', sha(otherKey)])).toEqual([{ hook_id: otherHookId, standing: 'stopped' }]);
+    for (let n = 1; n < 10; n++) expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [otherHookId]))[0]?.stopped).toBe(false);
+    expect((await asWorker<{ stopped: boolean }>('SELECT ludy_finance.marketplace_hook_reject($1::uuid) AS stopped', [otherHookId]))[0]?.stopped).toBe(true);
+    expect(await asApi('SELECT * FROM ludy_finance.marketplace_hook_lookup($1, $2)', ['tiktok_shop', sha(otherKey)])).toEqual([{ hook_id: otherHookId, standing: 'stopped' }]);
     expect(await put(otherHookId, sha(otherKey), sha('stopped'))).toBe('gone');
     // A push that waited when the hook was stopped is deleted by the claim and not handed out.
-    await rows('INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body) VALUES ($1, $2, $3, $4, $5)', [otherOrgId, otherHookId, sha('late'), HEADER, BODY]);
-    expect(await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).toEqual([]);
+    await rows('INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body) VALUES ($1, $2, $3, $4, $5)', [otherOrgId, otherHookId, sha('late'), HEADER, BODY]);
+    expect(await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).toEqual([]);
     expect(await waiting()).toEqual([]);
     // The other hook is untouched by it.
-    expect(await asApi('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['shopee', sha(key)])).toEqual([{ hook_id: hookId, standing: 'ok' }]);
+    expect(await asApi('SELECT * FROM ludy_finance.marketplace_hook_lookup($1, $2)', ['shopee', sha(key)])).toEqual([{ hook_id: hookId, standing: 'ok' }]);
   });
 
   it('takes nothing for a closed org connection and removes the pushes with their hook', async () => {
     expect(await put(hookId, sha(key), sha('closing'))).toBe('accepted');
-    await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, connectionId]);
-    expect(await asApi('SELECT * FROM crove_finance.marketplace_hook_lookup($1, $2)', ['shopee', sha(key)])).toEqual([]);
+    await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, connectionId]);
+    expect(await asApi('SELECT * FROM ludy_finance.marketplace_hook_lookup($1, $2)', ['shopee', sha(key)])).toEqual([]);
     expect(await put(hookId, sha(key), sha('closed'))).toBe('gone');
     // What waited for a connection that is no longer active is deleted by the claim, not handed out.
-    expect(await asWorker('SELECT * FROM crove_finance.marketplace_hook_claim(10)')).toEqual([]);
+    expect(await asWorker('SELECT * FROM ludy_finance.marketplace_hook_claim(10)')).toEqual([]);
     expect(await waiting()).toEqual([]);
-    await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, connectionId]);
-    await rows('INSERT INTO crove_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body) VALUES ($1, $2, $3, $4, $5)', [orgId, hookId, sha('cascade'), HEADER, BODY]);
-    await rows('DELETE FROM crove_finance.marketplace_hook WHERE org_id = $1 AND id = $2', [orgId, hookId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2)", [orgId, connectionId]);
+    await rows('INSERT INTO ludy_finance.marketplace_hook_notice (org_id, hook_id, dedupe_key, authorization_header, body) VALUES ($1, $2, $3, $4, $5)', [orgId, hookId, sha('cascade'), HEADER, BODY]);
+    await rows('DELETE FROM ludy_finance.marketplace_hook WHERE org_id = $1 AND id = $2', [orgId, hookId]);
     expect(await waiting()).toEqual([]);
   });
 
   it('names both tables in the org purge', async () => {
     const [purge] = await rows<{ ok: boolean }>(
-      "SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.marketplace_hook_notice' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.marketplace_hook[^_]' AS ok",
+      "SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_finance.marketplace_hook_notice' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_finance.marketplace_hook[^_]' AS ok",
     );
     expect(purge?.ok).toBe(true);
   });
@@ -434,17 +434,17 @@ suite('Marketplace push hook (#4316)', () => {
     let routeHook = '';
     let routeOtherHook = '';
     beforeAll(async () => {
-      await rows('DELETE FROM crove_finance.marketplace_hook WHERE marketplace_connection_id = ANY($1::uuid[])', [[connectionId, otherConnectionId]]);
-      routeHook = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(routeKey)]))[0]?.id ?? '';
-      routeOtherHook = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(routeOtherKey)]))[0]?.id ?? '';
+      await rows('DELETE FROM ludy_finance.marketplace_hook WHERE marketplace_connection_id = ANY($1::uuid[])', [[connectionId, otherConnectionId]]);
+      routeHook = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(routeKey)]))[0]?.id ?? '';
+      routeOtherHook = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [otherOrgId, otherConnectionId, sha(routeOtherKey)]))[0]?.id ?? '';
       // The channel connections are active (the closing test above puts them back).
       await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = ANY($1::uuid[])", [[orgId, otherOrgId]]);
-      await rows('DELETE FROM crove_finance.marketplace_hook_notice');
+      await rows('DELETE FROM ludy_finance.marketplace_hook_notice');
     });
     const push = (adapter: string, hookKey: string, body: Buffer | string = BODY, headers: Record<string, string> = { authorization: HEADER }, origin = 'http://localhost:8080') =>
       app.request(`${origin}/api/marketplace/${adapter}/webhook/${hookKey}`, { method: 'POST', headers, body: typeof body === 'string' ? body : new Uint8Array(body) });
-    const stored = () => rows<{ hook_id: string; dedupe_key: string; request_url: string | null; authorization_header: string; body: Buffer }>('SELECT hook_id, dedupe_key, request_url, authorization_header, body FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id');
-    const clear = () => rows('DELETE FROM crove_finance.marketplace_hook_notice');
+    const stored = () => rows<{ hook_id: string; dedupe_key: string; request_url: string | null; authorization_header: string; body: Buffer }>('SELECT hook_id, dedupe_key, request_url, authorization_header, body FROM ludy_finance.marketplace_hook_notice ORDER BY received_at, id');
+    const clear = () => rows('DELETE FROM ludy_finance.marketplace_hook_notice');
 
     it('stores the raw push of a Shopee hook with the address from the configured public URL, whatever Host and X-Forwarded-* say, and answers an empty 200', async () => {
       await clear();
@@ -482,9 +482,9 @@ suite('Marketplace push hook (#4316)', () => {
 
     it('answers an empty 200 and stores nothing for a stopped hook, a push with no header, an empty body and a body over 16 KB', async () => {
       await clear();
-      await rows('UPDATE crove_finance.marketplace_hook SET stopped_at = now() WHERE org_id = $1 AND id = $2', [orgId, routeHook]);
+      await rows('UPDATE ludy_finance.marketplace_hook SET stopped_at = now() WHERE org_id = $1 AND id = $2', [orgId, routeHook]);
       expect((await push('shopee', routeKey)).status).toBe(200);
-      await rows('UPDATE crove_finance.marketplace_hook SET stopped_at = NULL WHERE org_id = $1 AND id = $2', [orgId, routeHook]);
+      await rows('UPDATE ludy_finance.marketplace_hook SET stopped_at = NULL WHERE org_id = $1 AND id = $2', [orgId, routeHook]);
       const noHeader = await push('shopee', routeKey, BODY, {});
       expect(noHeader.status).toBe(200);
       expect(await noHeader.text()).toBe('');

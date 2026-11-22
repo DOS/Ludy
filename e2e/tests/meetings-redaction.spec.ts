@@ -67,26 +67,26 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
     let meetingId = '';
     await test.step('seed draft meeting across surfaces with non-PII numbers and draft translation', async () => {
       exec(
-        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          SELECT t.org_id, gen_random_uuid(), :'title', 'vi', now(), now() + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365
            FROM ludy_kernel.tenant t, ludy_kernel.user_account u
           WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
         { slug, email: recorderEmail, title: `Họp chốt ${PHONE} năm 2026` },
       );
-      meetingId = (sql<{ id: string }>(`SELECT m.id FROM crove_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
+      meetingId = (sql<{ id: string }>(`SELECT m.id FROM ludy_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0] as { id: string }).id;
 
       exec(
-        `INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id)
+        `INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id)
          SELECT m.org_id, gen_random_uuid(), m.id, u.id
-           FROM crove_meetings.meeting m, ludy_kernel.user_account u
+           FROM ludy_meetings.meeting m, ludy_kernel.user_account u
           WHERE m.id = :'id'::uuid AND lower(u.email) = lower(:'email')`,
         { id: meetingId, email: readerEmail },
       );
 
       exec(
-        `INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
+        `INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
          SELECT m.org_id, m.id, v.from_s, v.to_s, v.who, v.said, 'draft'
-           FROM crove_meetings.meeting m,
+           FROM ludy_meetings.meeting m,
                 jsonb_to_recordset(:'segments'::jsonb) AS v(from_s int, to_s int, who text, said text)
           WHERE m.id = :'id'::uuid`,
         {
@@ -99,23 +99,23 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
       );
 
       exec(
-        `INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds, tainted)
+        `INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds, tainted)
          SELECT m.org_id, m.id, 'draft', 1, :'title', 0, false
-           FROM crove_meetings.meeting m WHERE m.id = :'id'::uuid`,
+           FROM ludy_meetings.meeting m WHERE m.id = :'id'::uuid`,
         { id: meetingId, title: `Mở đầu ${PHONE}` },
       );
 
       // Recorder's draft translation (dropped on redaction per D5) and attendee's published translation (kept).
       exec(
-        `INSERT INTO crove_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
+        `INSERT INTO ludy_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
          SELECT m.org_id, m.id, m.recorder_user_id, 'summary', 'en', 'draft', repeat('a', 64), :'draftBody'::jsonb
-           FROM crove_meetings.meeting m WHERE m.id = :'id'::uuid`,
+           FROM ludy_meetings.meeting m WHERE m.id = :'id'::uuid`,
         { id: meetingId, draftBody: JSON.stringify([{ key: 'summary', text: `Call ${PHONE}`, state: 'ok', codes: [] }]) },
       );
       exec(
-        `INSERT INTO crove_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
+        `INSERT INTO ludy_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
          SELECT m.org_id, m.id, u.id, 'summary', 'en', 'published', repeat('b', 64), '[]'::jsonb
-           FROM crove_meetings.meeting m, ludy_kernel.user_account u
+           FROM ludy_meetings.meeting m, ludy_kernel.user_account u
           WHERE m.id = :'id'::uuid AND lower(u.email) = lower(:'email')`,
         { id: meetingId, email: readerEmail },
       );
@@ -206,7 +206,7 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
       await expect(dialog).toBeHidden();
       await expect(page.getByTestId('redaction-prepublish-nudge-open')).toBeFocused();
       const stillUnredacted = sql<{ summary: string }>(
-        `SELECT summary FROM crove_meetings.meeting_result WHERE meeting_id = :'id'::uuid AND stage = 'draft'`,
+        `SELECT summary FROM ludy_meetings.meeting_result WHERE meeting_id = :'id'::uuid AND stage = 'draft'`,
         { id: meetingId },
       );
       expect(stillUnredacted[0]?.summary).toContain(PHONE);
@@ -247,13 +247,13 @@ test('recorder reviews PII candidates, confirms redaction without blocking publi
 
       // Original values are gone from DB and recorder draft translation is dropped while attendee published translation remains.
       const translations = sql<{ source_stage: string }>(
-        `SELECT source_stage FROM crove_meetings.translation WHERE meeting_id = :'id'::uuid`,
+        `SELECT source_stage FROM ludy_meetings.translation WHERE meeting_id = :'id'::uuid`,
         { id: meetingId },
       );
       expect(translations).toEqual([{ source_stage: 'published' }]);
 
       const segs = sql<{ text: string }>(
-        `SELECT text FROM crove_meetings.transcript_segment WHERE meeting_id = :'id'::uuid ORDER BY start_seconds`,
+        `SELECT text FROM ludy_meetings.transcript_segment WHERE meeting_id = :'id'::uuid ORDER BY start_seconds`,
         { id: meetingId },
       );
       expect(segs.map((s) => s.text)).toEqual([

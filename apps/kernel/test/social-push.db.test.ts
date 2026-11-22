@@ -81,7 +81,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
   const devices = (o: Org, user: string, ep: string | null = null) => rt.query<{ devices: PushDevice[]; subscribed: boolean }>('social.push.devices', { endpoint: ep }, { actor: asUser(user), orgId: o.orgId });
   const subscribe = (o: Org, user: string, ep = endpoint(), label = 'Chrome trên Windows') => exec<{ id: string }>(o, user, 'social.push.subscribe', { endpoint: ep, ...browserKeys(), label });
   const rows = (o: Org) =>
-    one<{ id: string; user_id: string; failure_count: number; last_used_at: Date | null }>('SELECT id, user_id, failure_count, last_used_at FROM crove_social.push_subscription WHERE org_id = $1 ORDER BY id', [o.orgId]);
+    one<{ id: string; user_id: string; failure_count: number; last_used_at: Date | null }>('SELECT id, user_id, failure_count, last_used_at FROM ludy_social.push_subscription WHERE org_id = $1 ORDER BY id', [o.orgId]);
 
   // What the worker does for each new event: the dispatch; returns the notifications it names for push.
   async function deliver(o: Org): Promise<string[]> {
@@ -101,7 +101,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     await exec(o, o.member, 'social.post.submit', { postId });
     return { postId, push: await deliver(o) };
   }
-  const notificationOf = async (o: Org, ids: string[], user: string) => (await one<{ id: string }>('SELECT id FROM crove_social.notification WHERE org_id = $1 AND user_id = $2 AND id = ANY($3::uuid[])', [o.orgId, user, ids]))[0]?.id as string;
+  const notificationOf = async (o: Org, ids: string[], user: string) => (await one<{ id: string }>('SELECT id FROM ludy_social.notification WHERE org_id = $1 AND user_id = $2 AND id = ANY($3::uuid[])', [o.orgId, user, ids]))[0]?.id as string;
 
   // A fake push service: answers each endpoint with the status the test gives it (201 by default) and keeps the requests.
   function fakeService(statusOf: (url: string) => number = () => 201) {
@@ -181,17 +181,17 @@ suite('social browser push on PostgreSQL (#1238)', () => {
         await client.end();
       }
     };
-    expect(await asApp(o.member, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM crove_social.push_subscription')).rowCount)).toBe(1);
-    expect(await asApp(o.owner, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM crove_social.push_subscription')).rowCount)).toBe(0);
-    expect(await asApp(o.owner, async (c) => (await c.query('DELETE FROM crove_social.push_subscription')).rowCount)).toBe(0);
+    expect(await asApp(o.member, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM ludy_social.push_subscription')).rowCount)).toBe(1);
+    expect(await asApp(o.owner, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM ludy_social.push_subscription')).rowCount)).toBe(0);
+    expect(await asApp(o.owner, async (c) => (await c.query('DELETE FROM ludy_social.push_subscription')).rowCount)).toBe(0);
     await expect(
-      asApp(o.owner, (c) => c.query('INSERT INTO crove_social.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.member, endpoint(), browserKeys().p256dh, browserKeys().auth])),
+      asApp(o.owner, (c) => c.query('INSERT INTO ludy_social.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.member, endpoint(), browserKeys().p256dh, browserKeys().auth])),
     ).rejects.toThrow(/row-level security/);
-    const policy = await one<{ permissive: string }>("SELECT permissive FROM pg_policies WHERE schemaname = 'crove_social' AND tablename = 'push_subscription' AND policyname = 'own_push_subscription'", []);
+    const policy = await one<{ permissive: string }>("SELECT permissive FROM pg_policies WHERE schemaname = 'ludy_social' AND tablename = 'push_subscription' AND policyname = 'own_push_subscription'", []);
     expect(policy).toEqual([{ permissive: 'RESTRICTIVE' }]);
 
     // The same endpoint again refreshes its keys and label and clears its failures: still one row.
-    await admin((c) => c.query('UPDATE crove_social.push_subscription SET failure_count = 3 WHERE id = $1', [id]));
+    await admin((c) => c.query('UPDATE ludy_social.push_subscription SET failure_count = 3 WHERE id = $1', [id]));
     expect((await subscribe(o, o.member, ep, 'Firefox trên Linux')).id).toBe(id);
     expect((await rows(o)).map((r) => r.failure_count)).toEqual([0]);
     expect((await devices(o, o.member, ep)).devices.map((d) => d.label)).toEqual(['Firefox trên Linux']);
@@ -216,7 +216,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     // Padded standard base64, as some browsers give it, is stored as base64url.
     const padded = { endpoint: endpoint(), p256dh: Buffer.from(keys.p256dh, 'base64url').toString('base64'), auth: Buffer.from(keys.auth, 'base64url').toString('base64') };
     await exec(o, o.member, 'social.push.subscribe', padded);
-    expect(await one('SELECT p256dh, auth FROM crove_social.push_subscription WHERE org_id = $1', [o.orgId])).toEqual([{ p256dh: keys.p256dh, auth: keys.auth }]);
+    expect(await one('SELECT p256dh, auth FROM ludy_social.push_subscription WHERE org_id = $1', [o.orgId])).toEqual([{ p256dh: keys.p256dh, auth: keys.auth }]);
     for (let i = 0; i < PUSH_DEVICE_LIMIT + 2; i++) await subscribe(o, o.member);
     expect(await rows(o)).toHaveLength(PUSH_DEVICE_LIMIT);
   });
@@ -242,16 +242,16 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     expect(JSON.parse(service.payloads[0] ?? '{}')).toEqual({ title: 'Crove', body: 'Có bài đang chờ bạn duyệt', url: `/o/${slug}/social/${postId}`, tag: `review_requested:${postId}` });
     for (const p of service.payloads) expect(p).not.toContain('Khai trương');
     // 404 and 410 deleted; the failed one counts; the delivered one is marked used.
-    const after = await one<{ endpoint: string; failure_count: number; used: boolean }>('SELECT endpoint, failure_count, last_used_at IS NOT NULL AS used FROM crove_social.push_subscription WHERE org_id = $1 AND user_id = $2 ORDER BY endpoint', [o.orgId, o.admin]);
+    const after = await one<{ endpoint: string; failure_count: number; used: boolean }>('SELECT endpoint, failure_count, last_used_at IS NOT NULL AS used FROM ludy_social.push_subscription WHERE org_id = $1 AND user_id = $2 ORDER BY endpoint', [o.orgId, o.admin]);
     expect(after).toEqual([{ endpoint: busy, failure_count: 1, used: false }, { endpoint: ok, failure_count: 0, used: true }].sort((a, b) => a.endpoint.localeCompare(b.endpoint)));
     // The owner's own notice reaches only the owner's device.
     const owners = fakeService();
     expect(await push(owners.sender, o, await notificationOf(o, ids, o.owner))).toEqual({ sent: 1, gone: 0, failed: 0 });
 
     // A subscription that keeps failing goes at the limit.
-    await admin((c) => c.query('UPDATE crove_social.push_subscription SET failure_count = $3 WHERE org_id = $1 AND endpoint = $2', [o.orgId, busy, PUSH_FAILURE_LIMIT - 1]));
+    await admin((c) => c.query('UPDATE ludy_social.push_subscription SET failure_count = $3 WHERE org_id = $1 AND endpoint = $2', [o.orgId, busy, PUSH_FAILURE_LIMIT - 1]));
     expect(await push(fakeService(() => 500).sender, o, notice)).toEqual({ sent: 0, gone: 0, failed: 2 });
-    expect((await one<{ endpoint: string }>('SELECT endpoint FROM crove_social.push_subscription WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).map((r) => r.endpoint)).toEqual([ok]);
+    expect((await one<{ endpoint: string }>('SELECT endpoint FROM ludy_social.push_subscription WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).map((r) => r.endpoint)).toEqual([ok]);
   });
 
   it('pushes nothing for a kind that is not pushed, a read notice, a disabled account or a member who left', async () => {
@@ -263,7 +263,7 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     const { postId, push: ids } = await reviewAsked(o, 'Bài thử');
     await exec(o, o.owner, 'social.post_comment.add', { postId, body: 'Ảnh hơi tối' });
     expect(await deliver(o)).toEqual([]);
-    const comment = (await one<{ id: string }>("SELECT id FROM crove_social.notification WHERE org_id = $1 AND kind = 'comment'", [o.orgId]))[0]?.id as string;
+    const comment = (await one<{ id: string }>("SELECT id FROM ludy_social.notification WHERE org_id = $1 AND kind = 'comment'", [o.orgId]))[0]?.id as string;
     expect(await worker.query('social.push.targets', { notificationId: comment }, { actor: system, orgId: o.orgId })).toBeNull();
     // Read before the job ran.
     const ownerNotice = await notificationOf(o, ids, o.owner);

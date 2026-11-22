@@ -170,21 +170,21 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
   async function published(orgId: string, owner: string, connectionId: string, secs: number, body: string, metrics: Record<string, number> | null, opts: { url?: string; clicks?: number } = {}) {
     const { postId } = await runtime.execute<{ postId: string }>('social.post.create', { body, channels: [{ connectionId }] }, { actor: { type: 'user', userId: owner, aal: 'aal1' }, orgId });
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(secs => $2), external_url = $3 WHERE org_id = $4 AND post_id = $1 RETURNING id", [postId, secs, opts.url ?? null, orgId]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(secs => $2), external_url = $3 WHERE org_id = $4 AND post_id = $1 RETURNING id", [postId, secs, opts.url ?? null, orgId]);
       const id = rows[0]?.id as string;
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [orgId, postId]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [orgId, postId]);
       if (metrics !== null) {
-        await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, 'old', '{\"reach\": 1}', now() - interval '2 days')", [orgId, id]);
-        await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'new', $3)", [orgId, id, JSON.stringify(metrics)]);
+        await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, 'old', '{\"reach\": 1}', now() - interval '2 days')", [orgId, id]);
+        await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'new', $3)", [orgId, id, JSON.stringify(metrics)]);
       }
       if (opts.clicks !== undefined) {
-        const link = await c.query<{ id: string }>("INSERT INTO crove_social.short_link (org_id, code, variant_id, revision, post_id, target_url) VALUES ($1, $2, $3, 1, $4, 'https://shop.example/') RETURNING id", [
+        const link = await c.query<{ id: string }>("INSERT INTO ludy_social.short_link (org_id, code, variant_id, revision, post_id, target_url) VALUES ($1, $2, $3, 1, $4, 'https://shop.example/') RETURNING id", [
           orgId,
           randomUUID().replace(/-/g, '').slice(0, 12),
           id,
           postId,
         ]);
-        await c.query('INSERT INTO crove_social.short_link_click (org_id, short_link_id, day, clicks) VALUES ($1, $2, current_date, $3)', [orgId, link.rows[0]?.id, opts.clicks]);
+        await c.query('INSERT INTO ludy_social.short_link_click (org_id, short_link_id, day, clicks) VALUES ($1, $2, current_date, $3)', [orgId, link.rows[0]?.id, opts.clicks]);
       }
     });
     return postId;
@@ -194,7 +194,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     const connectionId = await channel(orgId, owner, o.connectionName ?? 'Kết nối quảng cáo', 'sandbox_ads', o.external ?? `act-${randomUUID().slice(0, 8)}`);
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone, result_kind, synced_through)
+      `INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone, result_kind, synced_through)
        VALUES ($1, $2, $3, 'sandbox_ads', $4, $5, '2025-10-01', $6, $7, $8, $9)`,
       [orgId, id, connectionId, o.external ?? `act-${randomUUID().slice(0, 8)}`, o.name, o.currency, o.timeZone, o.resultKind ?? null, o.syncedThrough ?? null],
     );
@@ -202,7 +202,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
   }
   const spendDay = (orgId: string, accountId: string, level: 'account' | 'campaign', objectId: string, name: string, day: string, amount: string, purchases: string | null = null) =>
     sqlAdmin(
-      `INSERT INTO crove_ads.ad_spend_day (org_id, ad_account_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
+      `INSERT INTO ludy_ads.ad_spend_day (org_id, ad_account_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
        VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, 1000, 10, $8::jsonb)`,
       [orgId, accountId, level, objectId, name, day, amount, purchases === null ? '{}' : JSON.stringify({ purchase: purchases })],
     );
@@ -257,22 +257,22 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     post.archivedDraft = await create(orgs.a, users.owner as string, conn.a1, `Bản nháp đã lưu trữ ${CANARY}-LƯU`);
     await runtime.execute('social.post.archive', { postId: post.archivedDraft }, { actor: asUser('owner'), orgId: orgs.a });
     post.cancelled = await create(orgs.a, users.owner as string, conn.a1, `Kênh đã hủy ${CANARY}-HỦY`);
-    await sqlAdmin("UPDATE crove_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND post_id = $2", [orgs.a, post.cancelled]);
+    await sqlAdmin("UPDATE ludy_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND post_id = $2", [orgs.a, post.cancelled]);
     post.other = await published(orgs.b, users.foreign as string, conn.b1, 86_400, `Bài của tổ chức B ${CANARY}-ORGB`, { reach: 7000, reactions: 700 }, { clicks: 70 });
     // A post the channel published outside Ludy, 3 days ago, with its latest counts; and one of another org's.
     await sqlAdmin(
-      "INSERT INTO crove_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, permalink, published_at, metrics, captured_at) VALUES ($1, $2, 'ext-3860', 'Đăng thẳng', 'https://www.facebook.com/ext-3860', now() - interval '3 days', '{\"reach\": 7}', now())",
+      "INSERT INTO ludy_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, permalink, published_at, metrics, captured_at) VALUES ($1, $2, 'ext-3860', 'Đăng thẳng', 'https://www.facebook.com/ext-3860', now() - interval '3 days', '{\"reach\": 7}', now())",
       [orgs.a, conn.a1],
     );
     await sqlAdmin(
-      "INSERT INTO crove_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, permalink, published_at, metrics, captured_at) VALUES ($1, $2, 'ext-b', 'Của B', 'https://www.facebook.com/ext-b', now() - interval '3 days', '{\"reach\": 5000}', now())",
+      "INSERT INTO ludy_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, permalink, published_at, metrics, captured_at) VALUES ($1, $2, 'ext-b', 'Của B', 'https://www.facebook.com/ext-b', now() - interval '3 days', '{\"reach\": 5000}', now())",
       [orgs.b, conn.b1],
     );
     // Org C: 52 published posts, a minute apart, for the limits.
     for (let i = 0; i < 52; i++) await create(orgs.c, users.owner as string, conn.c1, `Bài số ${i}`);
     await sqlAdmin(
-      `UPDATE crove_social.post_variant v SET status = 'published', published_at = now() - make_interval(mins => r.n::int)
-       FROM (SELECT id, row_number() OVER (ORDER BY id) AS n FROM crove_social.post_variant WHERE org_id = $1) r WHERE v.org_id = $1 AND v.id = r.id`,
+      `UPDATE ludy_social.post_variant v SET status = 'published', published_at = now() - make_interval(mins => r.n::int)
+       FROM (SELECT id, row_number() OVER (ORDER BY id) AS n FROM ludy_social.post_variant WHERE org_id = $1) r WHERE v.org_id = $1 AND v.id = r.id`,
       [orgs.c],
     );
     // Org D: a post that went out and was archived afterwards.
@@ -290,9 +290,9 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
       await spendDay(orgs.a, acct.main as string, 'campaign', 'c2', 'Chiến dịch B', addDays(yesterday, -k), '100000', '100');
     }
     // A daily cap of 5 000 against the 10 000 spent yesterday.
-    await sqlAdmin(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'daily', '5000', 'VND', $3)`, [orgs.a, acct.main, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'daily', '5000', 'VND', $3)`, [orgs.a, acct.main, users.owner]);
     await sqlAdmin(
-      `INSERT INTO crove_ads.ad_spend_day (org_id, ad_account_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
+      `INSERT INTO ludy_ads.ad_spend_day (org_id, ad_account_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
        SELECT $1, $2, 'campaign', 'camp-' || g, 'Chiến dịch ' || g, $3::date, 'VND', g * 100, 0, 0, '{}'::jsonb FROM generate_series(1, 51) g`,
       [orgs.a, acct.many, yesterday],
     );
@@ -472,7 +472,7 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
         expect(got.accounts.find((a) => a.id === fallback)?.name).toBe('Meta ad account');
         expect(JSON.stringify(got)).not.toContain('1234567890123');
       } finally {
-        await sqlAdmin('DELETE FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2', [orgs.a, fallback]);
+        await sqlAdmin('DELETE FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2', [orgs.a, fallback]);
       }
     });
 

@@ -142,7 +142,7 @@ suite('social reviews in the inbox on PostgreSQL (#749)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Hai kênh', channels: [{ connectionId: a }, { connectionId: b }] });
     await exec(o, o.member, 'social.post.submit', { postId });
     const at = new Date('2026-11-01T02:00:00Z');
-    await admin((c) => c.query('UPDATE crove_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
     const listed = await inbox(o, o.owner);
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0]?.channels).toHaveLength(2);

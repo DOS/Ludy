@@ -80,12 +80,12 @@ suite('MISA AMIS callback (#3903)', () => {
   // A push row as it stands after a send, written by the superuser (the guard keeps what a restore writes).
   async function seed(who: typeof A, refid: string, state: string, over: { voucherType?: number } = {}) {
     await rows(
-      `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state)
+      `INSERT INTO ludy_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state)
        VALUES ($1, $2, $3, 'cash_voucher', $4, $5, $6, $7, $8, $9)`,
       [who.org, who.entity, who.connection, randomUUID(), over.voucherType ?? 1, refid, `PC${refid.slice(0, 8)}`, '0'.repeat(64), state],
     );
   }
-  const stateOf = async (who: typeof A, refid: string) => (await rows<{ state: string; reason: string | null; answered_at: Date | null }>('SELECT state, reason, answered_at FROM crove_finance.misa_amis_push WHERE org_id = $1 AND org_refid = $2', [who.org, refid]))[0];
+  const stateOf = async (who: typeof A, refid: string) => (await rows<{ state: string; reason: string | null; answered_at: Date | null }>('SELECT state, reason, answered_at FROM ludy_finance.misa_amis_push WHERE org_id = $1 AND org_refid = $2', [who.org, refid]))[0];
 
   type Item = { org_refid: string; voucher_type: number; success: boolean; error_message?: string };
   const message = (items: Item[], over: Record<string, unknown> = {}) => {
@@ -101,21 +101,21 @@ suite('MISA AMIS callback (#3903)', () => {
   const enqueue = (company: string, results: Array<{ refid: string; type?: number; ok?: boolean; code?: string | null; text?: string | null }>) =>
     api.orgless(async (db) => {
       const { rows: out } = await sql<{ n: number }>`
-        SELECT crove_finance.misa_amis_callback_enqueue(${company}, ${results.map((r) => r.refid)}::uuid[], ${results.map((r) => r.type ?? 1)}::integer[], ${results.map((r) => r.ok ?? true)}::boolean[],
+        SELECT ludy_finance.misa_amis_callback_enqueue(${company}, ${results.map((r) => r.refid)}::uuid[], ${results.map((r) => r.type ?? 1)}::integer[], ${results.map((r) => r.ok ?? true)}::boolean[],
           ${results.map((r) => r.code ?? null)}::text[], ${results.map((r) => r.text ?? null)}::text[]) AS n`.execute(db);
       return Number(out[0]?.n);
     });
   const enqueueAsp = (company: string, results: Array<{ refid: string; type?: number; ok?: boolean }>) =>
     api.orgless(async (db) => {
       const { rows: out } = await sql<{ n: number }>`
-        SELECT crove_finance.misa_asp_callback_enqueue(${company}, ${results.map((r) => r.refid)}::uuid[], ${results.map((r) => r.type ?? 1)}::integer[], ${results.map((r) => r.ok ?? true)}::boolean[],
+        SELECT ludy_finance.misa_asp_callback_enqueue(${company}, ${results.map((r) => r.refid)}::uuid[], ${results.map((r) => r.type ?? 1)}::integer[], ${results.map((r) => r.ok ?? true)}::boolean[],
           ${results.map(() => null)}::text[], ${results.map(() => null)}::text[]) AS n`.execute(db);
       return Number(out[0]?.n);
     });
   const claim = (limit = 100) =>
-    worker.orgless(async (db) => (await sql<Record<string, unknown>>`SELECT * FROM crove_finance.misa_amis_callback_claim(${limit}::int)`.execute(db)).rows);
-  const pending = () => rows<{ seq: string; org_refid: string; claimed_at: Date | null }>('SELECT seq, org_refid, claimed_at FROM crove_finance.misa_amis_callback_pending ORDER BY seq');
-  const clearPending = () => rows('DELETE FROM crove_finance.misa_amis_callback_pending');
+    worker.orgless(async (db) => (await sql<Record<string, unknown>>`SELECT * FROM ludy_finance.misa_amis_callback_claim(${limit}::int)`.execute(db)).rows);
+  const pending = () => rows<{ seq: string; org_refid: string; claimed_at: Date | null }>('SELECT seq, org_refid, claimed_at FROM ludy_finance.misa_amis_callback_pending ORDER BY seq');
+  const clearPending = () => rows('DELETE FROM ludy_finance.misa_amis_callback_pending');
   const relay = () => runMisaAmisCallbacks({ runtime: worker, workerDb: createDb(workerPool) });
 
   beforeAll(async () => {
@@ -175,7 +175,7 @@ suite('MISA AMIS callback (#3903)', () => {
       who.code = String(
         (
           await rows<{ org_company_code: string }>(
-            "INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id, product, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, $5, 'works', pg_catalog.now()) RETURNING org_company_code",
+            "INSERT INTO ludy_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id, product, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, $5, 'works', pg_catalog.now()) RETURNING org_company_code",
             [who.org, who.connection, who.entity, channel, product],
           )
         )[0]?.org_company_code,
@@ -198,7 +198,7 @@ suite('MISA AMIS callback (#3903)', () => {
   });
 
   describe('the definers', () => {
-    const FNS = ['crove_finance.misa_amis_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])', 'crove_finance.misa_amis_callback_claim(integer)', 'crove_finance.misa_amis_callback_done(bigint[])'] as const;
+    const FNS = ['ludy_finance.misa_amis_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])', 'ludy_finance.misa_amis_callback_claim(integer)', 'ludy_finance.misa_amis_callback_done(bigint[])'] as const;
 
     it('are SECURITY DEFINER with a pinned search path; the API login runs the enqueue alone, the worker login the claim and done alone; no role touches the table', async () => {
       for (const fn of FNS) {
@@ -220,15 +220,15 @@ suite('MISA AMIS callback (#3903)', () => {
       }
       for (const role of ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) {
         for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
-          const got = (await rows<{ ok: boolean }>("SELECT has_table_privilege($1, 'crove_finance.misa_amis_callback_pending', $2) AS ok", [role, privilege]))[0];
+          const got = (await rows<{ ok: boolean }>("SELECT has_table_privilege($1, 'ludy_finance.misa_amis_callback_pending', $2) AS ok", [role, privilege]))[0];
           expect(got?.ok, `${role} ${privilege}`).toBe(false);
         }
       }
     });
 
     it('the private function behind both enqueues is not a definer, pins its search path and is granted to nobody, PUBLIC included; the ASP enqueue is a definer the API login alone runs (#4113)', async () => {
-      const inner = 'crove_finance.misa_callback_enqueue_for(text,text,uuid[],integer[],boolean[],text[],text[])';
-      const asp = 'crove_finance.misa_asp_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])';
+      const inner = 'ludy_finance.misa_callback_enqueue_for(text,text,uuid[],integer[],boolean[],text[],text[])';
+      const asp = 'ludy_finance.misa_asp_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])';
       const got = async (fn: string) => (await rows<{ secdef: boolean; config: string[] | null; acl: string | null }>('SELECT prosecdef AS secdef, proconfig AS config, proacl::text AS acl FROM pg_proc WHERE oid = $1::regprocedure', [fn]))[0];
       const priv = await got(inner);
       expect(priv?.secdef).toBe(false);
@@ -241,7 +241,7 @@ suite('MISA AMIS callback (#3903)', () => {
       }
       // A login that tries it directly is refused.
       await expect(
-        api.orgless(async (db) => void (await sql`SELECT crove_finance.misa_callback_enqueue_for('asp', ${C.code}, ${[randomUUID()]}::uuid[], ${[1]}::integer[], ${[true]}::boolean[], ${[null]}::text[], ${[null]}::text[])`.execute(db))),
+        api.orgless(async (db) => void (await sql`SELECT ludy_finance.misa_callback_enqueue_for('asp', ${C.code}, ${[randomUUID()]}::uuid[], ${[1]}::integer[], ${[true]}::boolean[], ${[null]}::text[], ${[null]}::text[])`.execute(db))),
       ).rejects.toBeDefined();
       // (The refusal is pinned by the privilege checks above: has_function_privilege is false for every login and tenant role.)
       expect(await pending()).toEqual([]);
@@ -260,7 +260,7 @@ suite('MISA AMIS callback (#3903)', () => {
       expect(await enqueue(A.code, [{ refid }])).toBe(1);
       expect(await enqueueAsp(C.code, [{ refid }])).toBe(1);
       expect(await enqueueAsp(C.code, [{ refid }])).toBe(0);
-      expect(await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_callback_pending ORDER BY product')).toEqual([{ product: 'amis' }, { product: 'asp' }]);
+      expect(await rows<{ product: string }>('SELECT product FROM ludy_finance.misa_amis_callback_pending ORDER BY product')).toEqual([{ product: 'amis' }, { product: 'asp' }]);
       // The ASP enqueue holds the same limits as the AMIS one.
       await expect(enqueueAsp('not a code!', [{ refid }])).rejects.toMatchObject({ code: 'INVALID' });
       await expect(enqueueAsp(C.code, [])).rejects.toMatchObject({ code: 'INVALID' });
@@ -295,12 +295,12 @@ suite('MISA AMIS callback (#3903)', () => {
       await expect(enqueue(A.code, [])).rejects.toMatchObject({ code: 'INVALID' });
       await expect(enqueue(A.code, Array.from({ length: 1001 }, () => ({ refid: randomUUID() })))).rejects.toMatchObject({ code: 'INVALID' });
       // Lists of unequal length.
-      await expect(api.orgless(async (db) => void (await sql`SELECT crove_finance.misa_amis_callback_enqueue(${A.code}, ${[randomUUID()]}::uuid[], ${[1, 2]}::integer[], ${[true]}::boolean[], ${[null]}::text[], ${[null]}::text[])`.execute(db)))).rejects.toMatchObject({ code: 'INVALID' });
+      await expect(api.orgless(async (db) => void (await sql`SELECT ludy_finance.misa_amis_callback_enqueue(${A.code}, ${[randomUUID()]}::uuid[], ${[1, 2]}::integer[], ${[true]}::boolean[], ${[null]}::text[], ${[null]}::text[])`.execute(db)))).rejects.toMatchObject({ code: 'INVALID' });
     });
 
     it('enqueue refuses past ten thousand waiting results, so a flood cannot grow the table without bound', async () => {
       await rows(
-        "INSERT INTO crove_finance.misa_amis_callback_pending (org_refid, voucher_type, org_company_code, success) SELECT gen_random_uuid(), 1, 'ludy-fill', true FROM generate_series(1, 10001)",
+        "INSERT INTO ludy_finance.misa_amis_callback_pending (org_refid, voucher_type, org_company_code, success) SELECT gen_random_uuid(), 1, 'ludy-fill', true FROM generate_series(1, 10001)",
       );
       await expect(enqueue(A.code, [{ refid: randomUUID() }])).rejects.toBeDefined();
       await clearPending();
@@ -332,14 +332,14 @@ suite('MISA AMIS callback (#3903)', () => {
       const first = await claim();
       expect(first).toHaveLength(1);
       expect(await claim()).toEqual([]);
-      await rows("UPDATE crove_finance.misa_amis_callback_pending SET claimed_at = pg_catalog.now() - interval '6 minutes'");
+      await rows("UPDATE ludy_finance.misa_amis_callback_pending SET claimed_at = pg_catalog.now() - interval '6 minutes'");
       const again = await claim();
       expect(again.map((r) => r.seq)).toEqual(first.map((r) => r.seq));
-      const done = await worker.orgless(async (db) => Number((await sql<{ n: number }>`SELECT crove_finance.misa_amis_callback_done(${first.map((r) => String(r.seq))}::bigint[]) AS n`.execute(db)).rows[0]?.n));
+      const done = await worker.orgless(async (db) => Number((await sql<{ n: number }>`SELECT ludy_finance.misa_amis_callback_done(${first.map((r) => String(r.seq))}::bigint[]) AS n`.execute(db)).rows[0]?.n));
       expect(done).toBe(1);
       expect(await pending()).toEqual([]);
       await enqueue(A.code, [{ refid: randomUUID() }]);
-      await rows("UPDATE crove_finance.misa_amis_callback_pending SET received_at = pg_catalog.now() - interval '8 days'");
+      await rows("UPDATE ludy_finance.misa_amis_callback_pending SET received_at = pg_catalog.now() - interval '8 days'");
       expect(await claim()).toEqual([]);
       expect(await pending()).toEqual([]);
     });
@@ -354,7 +354,7 @@ suite('MISA AMIS callback (#3903)', () => {
       } finally {
         await api.execute('kernel.org.set_app', { module: 'finance', enabled: true }, ownerOf(B));
       }
-      await rows("UPDATE crove_finance.misa_amis_callback_pending SET claimed_at = NULL");
+      await rows("UPDATE ludy_finance.misa_amis_callback_pending SET claimed_at = NULL");
       expect((await claim()).map((r) => r.m_org_id)).toEqual([B.org]);
     });
   });
@@ -383,12 +383,12 @@ suite('MISA AMIS callback (#3903)', () => {
       await seed(A, refid, 'sent');
       await post(message([{ org_refid: refid, voucher_type: 1, success: true }]));
       await relay();
-      const before = (await rows<{ updated_at: Date }>('SELECT updated_at FROM crove_finance.misa_amis_push WHERE org_refid = $1 AND org_id = $2', [refid, A.org]))[0];
+      const before = (await rows<{ updated_at: Date }>('SELECT updated_at FROM ludy_finance.misa_amis_push WHERE org_refid = $1 AND org_id = $2', [refid, A.org]))[0];
       await post(message([{ org_refid: refid, voucher_type: 1, success: true }]));
       await post(message([{ org_refid: refid, voucher_type: 1, success: false, error_message: REASON_TEXT }]));
       await relay();
       expect(await stateOf(A, refid)).toMatchObject({ state: 'accepted', reason: null });
-      const after = (await rows<{ updated_at: Date }>('SELECT updated_at FROM crove_finance.misa_amis_push WHERE org_refid = $1 AND org_id = $2', [refid, A.org]))[0];
+      const after = (await rows<{ updated_at: Date }>('SELECT updated_at FROM ludy_finance.misa_amis_push WHERE org_refid = $1 AND org_id = $2', [refid, A.org]))[0];
       expect(after?.updated_at).toEqual(before?.updated_at);
       expect(await pending()).toEqual([]);
     });
@@ -396,7 +396,7 @@ suite('MISA AMIS callback (#3903)', () => {
     it('records no refusal for a row that was sent again, and still records its acceptance', async () => {
       const refid = randomUUID();
       await seed(A, refid, 'sent');
-      await rows('UPDATE crove_finance.misa_amis_push SET attempts = 2 WHERE org_id = $1 AND org_refid = $2', [A.org, refid]);
+      await rows('UPDATE ludy_finance.misa_amis_push SET attempts = 2 WHERE org_id = $1 AND org_refid = $2', [A.org, refid]);
       await post(message([{ org_refid: refid, voucher_type: 1, success: false, error_message: REASON_TEXT }]));
       await relay();
       expect(await stateOf(A, refid)).toMatchObject({ state: 'sent', reason: null });
@@ -426,8 +426,8 @@ suite('MISA AMIS callback (#3903)', () => {
       // Only the result for the row still being sent waits (MISA can call back before the worker records `sent`); the others were dropped.
       expect((await pending()).map((r) => r.org_refid)).toEqual([sending]);
       // Once the row is sent, the next take records it.
-      await rows("UPDATE crove_finance.misa_amis_push SET state = 'sent' WHERE org_id = $1 AND org_refid = $2", [A.org, sending]);
-      await rows('UPDATE crove_finance.misa_amis_callback_pending SET claimed_at = pg_catalog.now() - interval \'6 minutes\'');
+      await rows("UPDATE ludy_finance.misa_amis_push SET state = 'sent' WHERE org_id = $1 AND org_refid = $2", [A.org, sending]);
+      await rows('UPDATE ludy_finance.misa_amis_callback_pending SET claimed_at = pg_catalog.now() - interval \'6 minutes\'');
       await relay();
       expect((await stateOf(A, sending))?.state).toBe('accepted');
       expect(await pending()).toEqual([]);
@@ -476,8 +476,8 @@ suite('MISA AMIS callback (#3903)', () => {
       await relay();
       for (const needle of [signature, CLIENT]) {
         const hits = await rows<{ n: number }>(
-          `SELECT (SELECT count(*) FROM crove_finance.misa_amis_callback_pending p WHERE p::text LIKE '%' || $1 || '%')::int
-                + (SELECT count(*) FROM crove_finance.misa_amis_push p WHERE p::text LIKE '%' || $1 || '%')::int
+          `SELECT (SELECT count(*) FROM ludy_finance.misa_amis_callback_pending p WHERE p::text LIKE '%' || $1 || '%')::int
+                + (SELECT count(*) FROM ludy_finance.misa_amis_push p WHERE p::text LIKE '%' || $1 || '%')::int
                 + (SELECT count(*) FROM ludy_kernel.audit_event a WHERE a::text LIKE '%' || $1 || '%')::int AS n`,
           [needle],
         );

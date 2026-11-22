@@ -240,7 +240,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
         await c.query('BEGIN');
         await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
         const { rows } = await c.query<{ id: string }>(
-          `SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'test', 'test', $1::uuid, $2::jsonb) AS id`,
+          `SELECT ludy_finance.post_journal_entry('2026-10-01'::date, 'test', 'test', $1::uuid, $2::jsonb) AS id`,
           [
             randomUUID(),
             JSON.stringify([

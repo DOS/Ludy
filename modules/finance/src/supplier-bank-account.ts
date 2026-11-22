@@ -32,8 +32,8 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 // Where each sealed value is stored: a value opens only at the place it was sealed for.
-export const NUMBER_PLACE = 'crove_finance.supplier_bank_account.number_sealed';
-export const HOLDER_PLACE = 'crove_finance.supplier_bank_account.account_holder_sealed';
+export const NUMBER_PLACE = 'ludy_finance.supplier_bank_account.number_sealed';
+export const HOLDER_PLACE = 'ludy_finance.supplier_bank_account.account_holder_sealed';
 // The subject every sealed value of one supplier is under: one key to shred.
 export const supplierSubject = (partyId: string): string => `supplier:${partyId}`;
 export const HASH_PURPOSE = 'supplier_bank_account.number';
@@ -94,7 +94,7 @@ async function requireSupplier(trx: Trx, orgId: string, partyId: string): Promis
 
 async function loadAccount(trx: Trx, orgId: string, accountId: string): Promise<AccountRow> {
   const row = await trx
-    .selectFrom('crove_finance.supplier_bank_account')
+    .selectFrom('ludy_finance.supplier_bank_account')
     .select(['id', 'party_id', 'bank_name', 'last4', 'status', 'number_hash', 'hash_key_id', 'created_at', 'retired_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', accountId.toLowerCase())
@@ -109,7 +109,7 @@ async function insertChange(
   change: { partyId: string; accountId: string; kind: 'added' | 'replaced' | 'retired'; oldHash: string | null; newHash: string | null },
 ): Promise<void> {
   await ctx.trx
-    .insertInto('crove_finance.supplier_bank_account_change')
+    .insertInto('ludy_finance.supplier_bank_account_change')
     .values({
       org_id: ctx.orgId,
       party_id: change.partyId,
@@ -130,7 +130,7 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
   // Each active account is judged under the key its own hash was made under (after a rotation a row can hold a hash under an older key id), so a number already held is refused while the
   // deployment keeps that older key; the unique index still holds the current-key case. A key the deployment no longer keeps cannot be compared without opening the number (see sameAccount).
   const active = await ctx.trx
-    .selectFrom('crove_finance.supplier_bank_account')
+    .selectFrom('ludy_finance.supplier_bank_account')
     .select(['number_hash', 'hash_key_id'])
     .where('org_id', '=', ctx.orgId)
     .where('party_id', '=', partyId)
@@ -141,7 +141,7 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
   const numberSealed = await ctx.seal(subject, NUMBER_PLACE, digits);
   const holderSealed = await ctx.seal(subject, HOLDER_PLACE, input.accountHolder);
   const row = await ctx.trx
-    .insertInto('crove_finance.supplier_bank_account')
+    .insertInto('ludy_finance.supplier_bank_account')
     .values({
       org_id: ctx.orgId,
       party_id: partyId,
@@ -190,7 +190,7 @@ export const supplierBankAccountReplace = defineCommand({
     if (sameAccount(ctx, normalizeAccountNumber(input.accountNumber), old)) {
       throw new DomainError('SUPPLIER_BANK_ACCOUNT_SAME', 409, 'Số tài khoản mới trùng với số hiện tại; hãy bỏ qua nếu không đổi');
     }
-    await ctx.trx.updateTable('crove_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', old.id).execute();
+    await ctx.trx.updateTable('ludy_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', old.id).execute();
     const { row, hash } = await insertAccount(ctx, old.party_id, input);
     await insertChange(ctx, { partyId: old.party_id, accountId: row.id, kind: 'replaced', oldHash: old.number_hash, newHash: hash });
     ctx.audit({ partyId: old.party_id, accountId: row.id, replacedAccountId: old.id, kind: 'replaced' });
@@ -209,7 +209,7 @@ export const supplierBankAccountRetire = defineCommand({
     const old = await loadAccount(ctx.trx, ctx.orgId, input.accountId);
     if (old.status !== 'active') throw new DomainError('SUPPLIER_BANK_ACCOUNT_NOT_ACTIVE', 409, 'Tài khoản này đã được ngừng dùng');
     const row = await ctx.trx
-      .updateTable('crove_finance.supplier_bank_account')
+      .updateTable('ludy_finance.supplier_bank_account')
       .set({ status: 'retired', retired_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', old.id)
@@ -235,11 +235,11 @@ export const supplierBankAccountErase = defineCommand({
     await requireSupplier(ctx.trx, ctx.orgId, partyId);
     // A payment waiting (approved, or a request not decided yet) names this supplier's account: it is cancelled or decided first, so no approver is left holding a request for an account that is gone.
     const waiting = await sql<{ n: number }>`
-      SELECT (SELECT count(*) FROM crove_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.party_id = ${partyId}::uuid AND p.status = 'approved')
+      SELECT (SELECT count(*) FROM ludy_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.party_id = ${partyId}::uuid AND p.status = 'approved')
            + (SELECT count(*) FROM ludy_kernel.proposal q WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = 'finance.supplier_payment.record' AND q.status = 'pending' AND pg_catalog.lower(q.payload->>'partyId') = ${partyId}) AS n`.execute(ctx.trx);
     if (Number(waiting.rows[0]?.n ?? 0) > 0) throw new DomainError('SUPPLIER_PAYMENT_WAITING', 409, 'Nhà cung cấp này còn khoản chi đang chờ duyệt hoặc chờ chi; hãy hủy hoặc xử lý trước khi xóa dữ liệu ngân hàng');
     const active = await ctx.trx
-      .selectFrom('crove_finance.supplier_bank_account')
+      .selectFrom('ludy_finance.supplier_bank_account')
       .select(['id', 'number_hash'])
       .where('org_id', '=', ctx.orgId)
       .where('party_id', '=', partyId)
@@ -247,7 +247,7 @@ export const supplierBankAccountErase = defineCommand({
       .forUpdate()
       .execute();
     for (const account of active) {
-      await ctx.trx.updateTable('crove_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
+      await ctx.trx.updateTable('ludy_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
       await insertChange(ctx, { partyId, accountId: account.id, kind: 'retired', oldHash: account.number_hash, newHash: null });
     }
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${supplierSubject(partyId)}]::text[]) AS n`.execute(ctx.trx);
@@ -264,7 +264,7 @@ export const supplierBankAccountList = defineQuery({
   handler: async (ctx, input): Promise<SupplierBankAccountList> => {
     const partyId = input.partyId.toLowerCase();
     const accounts = await ctx.trx
-      .selectFrom('crove_finance.supplier_bank_account')
+      .selectFrom('ludy_finance.supplier_bank_account')
       .select(['id', 'party_id', 'bank_name', 'last4', 'status', 'number_hash', 'hash_key_id', 'created_at', 'retired_at'])
       .where('org_id', '=', ctx.orgId)
       .where('party_id', '=', partyId)
@@ -272,7 +272,7 @@ export const supplierBankAccountList = defineQuery({
       .orderBy('id', 'desc')
       .execute();
     const changes = await ctx.trx
-      .selectFrom('crove_finance.supplier_bank_account_change')
+      .selectFrom('ludy_finance.supplier_bank_account_change')
       .select(['id', 'account_id', 'kind', 'changed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('party_id', '=', partyId)
@@ -300,7 +300,7 @@ export const financeSupplierBankChangesSignals = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows } = await sql<{ party_id: string; changed_on: string }>`
       SELECT c.party_id, to_char(max(c.changed_at) AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS changed_on
-      FROM crove_finance.supplier_bank_account_change c
+      FROM ludy_finance.supplier_bank_account_change c
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.changed_at >= pg_catalog.now() - (${SUPPLIER_BANK_CHANGE_DAYS}::int * interval '1 day')
       GROUP BY c.party_id
       ORDER BY c.party_id

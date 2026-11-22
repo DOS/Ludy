@@ -79,10 +79,10 @@ export const supplierPaymentBankFileGet = defineQuery({
              (v.document_id IS NOT NULL) AS voided,
              (q.payload ->> 'amount') AS frozen,
              a.number_sealed, a.account_holder_sealed AS holder_sealed, a.bank_name, d.invoice_number, p.export_count, p.exported_at
-        FROM crove_finance.supplier_payment p
-        LEFT JOIN crove_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
-        LEFT JOIN crove_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
-        LEFT JOIN crove_finance.purchase_document_void v ON v.org_id = p.org_id AND v.document_id = p.purchase_document_id
+        FROM ludy_finance.supplier_payment p
+        LEFT JOIN ludy_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
+        LEFT JOIN ludy_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
+        LEFT JOIN ludy_finance.purchase_document_void v ON v.org_id = p.org_id AND v.document_id = p.purchase_document_id
         LEFT JOIN ludy_kernel.proposal q ON q.org_id = p.org_id AND q.id = p.proposal_id AND q.command = ${SUPPLIER_PAYMENT_COMMAND}
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY (${ids}::uuid[])`.execute(ctx.trx);
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -143,13 +143,13 @@ export const supplierPaymentBankFileExport = defineCommand({
     // a change between the read and this step is caught), and never exported unless confirmed. Rows are locked in id order, so two overlapping files cannot deadlock. The guard stamps the time and counts.
     const { rows } = await sql<{ id: string; before: number }>`
       WITH picked AS (
-        SELECT p.id FROM crove_finance.supplier_payment p
+        SELECT p.id FROM ludy_finance.supplier_payment p
          WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY (${ids}::uuid[]) AND p.status = 'approved' AND (${reexport}::boolean OR p.export_count = 0)
            AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
-           AND EXISTS (SELECT 1 FROM crove_finance.supplier_bank_account a WHERE a.org_id = p.org_id AND a.id = p.bank_account_id AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id)
-           AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
+           AND EXISTS (SELECT 1 FROM ludy_finance.supplier_bank_account a WHERE a.org_id = p.org_id AND a.id = p.bank_account_id AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id)
+           AND NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
          ORDER BY p.id FOR UPDATE OF p)
-      UPDATE crove_finance.supplier_payment p SET exported_by = ${ctx.actor.userId}::uuid, export_count = p.export_count + 1
+      UPDATE ludy_finance.supplier_payment p SET exported_by = ${ctx.actor.userId}::uuid, export_count = p.export_count + 1
         FROM picked WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = picked.id
       RETURNING p.id, (p.export_count - 1) AS before`.execute(ctx.trx);
     if (rows.length !== ids.length || input.rows !== ids.length) {
@@ -160,9 +160,9 @@ export const supplierPaymentBankFileExport = defineCommand({
         ? (
             await sql<{ status: string; export_count: number; ready: boolean; account_ok: boolean; voided: boolean }>`
               SELECT p.status, p.export_count, (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now()) AS ready,
-                     EXISTS (SELECT 1 FROM crove_finance.supplier_bank_account a WHERE a.org_id = p.org_id AND a.id = p.bank_account_id AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id) AS account_ok,
-                     EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id) AS voided
-                FROM crove_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${missing}::uuid`.execute(ctx.trx)
+                     EXISTS (SELECT 1 FROM ludy_finance.supplier_bank_account a WHERE a.org_id = p.org_id AND a.id = p.bank_account_id AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id) AS account_ok,
+                     EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id) AS voided
+                FROM ludy_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${missing}::uuid`.execute(ctx.trx)
           ).rows[0]
         : undefined;
       if (!why) throw new DomainError('SUPPLIER_PAYMENT_NOT_FOUND', 404, 'Không tìm thấy một khoản chi trong danh sách', { paymentId: missing });

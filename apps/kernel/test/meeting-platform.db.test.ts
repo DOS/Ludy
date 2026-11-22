@@ -93,7 +93,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   // The meeting a click made: begin checks that it exists and is the member's to record, so the test makes a real one (as the command does) with the platform-notice consent.
   const meetingFor = async (o: { orgId: string }, user: string): Promise<string> =>
     (await sqlAdmin<{ id: string }>(
-      `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30) RETURNING id`,
       [o.orgId, user],
     )).rows[0]?.id as string;
@@ -673,7 +673,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     ): Promise<string> => {
       const id = (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_meetings.meeting
+          `INSERT INTO ludy_meetings.meeting
              (org_id, recorder_user_id, visibility, title, started_at, ended_at, length_seconds, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
            VALUES ($1, $2, $3, 'Họp thử', $4, $5, $6, 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30)
            RETURNING id`,
@@ -681,7 +681,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
         )
       ).rows[0]?.id as string;
       for (const readerId of opts.readers ?? []) {
-        await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)', [o.orgId, id, readerId]);
+        await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)', [o.orgId, id, readerId]);
       }
       return id;
     };
@@ -754,7 +754,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const insertMeeting = async (targetOrgId: string, recorder: string, startedAt: Date, endedAt: Date, visibility: 'attendees' | 'org', retentionDate: string) =>
       (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_meetings.meeting
+          `INSERT INTO ludy_meetings.meeting
              (org_id, recorder_user_id, visibility, title, started_at, ended_at, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
            VALUES ($1, $2, $3, 'Họp mật', $4, $5, 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, $6::date)
            RETURNING id`,

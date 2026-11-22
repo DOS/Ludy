@@ -154,7 +154,7 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     const d3 = await o.newDeal(o.member, party, { title: 'Ba' });
     expect((await o.board(mới)).map((d) => d.title).sort()).toEqual(['Ba', 'Hai', 'Một']);
     const order = async (stage: string) => {
-      const keys = await admin((c) => c.query<{ title: string }>('SELECT title FROM crove_crm.deal WHERE org_id = $1 AND stage_id = $2 ORDER BY sort_key, id', [o.orgId, stage]));
+      const keys = await admin((c) => c.query<{ title: string }>('SELECT title FROM ludy_crm.deal WHERE org_id = $1 AND stage_id = $2 ORDER BY sort_key, id', [o.orgId, stage]));
       return keys.rows.map((r) => r.title);
     };
     expect(await order(mới)).toEqual(['Một', 'Hai', 'Ba']);
@@ -232,7 +232,7 @@ suite('crm deals on PostgreSQL (#2225)', () => {
       expect(moved.version).toBe(2);
       titles.unshift(`Thêm ${i}`);
     }
-    const rows = await admin((c) => c.query<{ title: string; sort_key: string }>('SELECT title, sort_key FROM crove_crm.deal WHERE org_id = $1 AND stage_id = $2 ORDER BY sort_key, id', [o.orgId, mới]));
+    const rows = await admin((c) => c.query<{ title: string; sort_key: string }>('SELECT title, sort_key FROM ludy_crm.deal WHERE org_id = $1 AND stage_id = $2 ORDER BY sort_key, id', [o.orgId, mới]));
     expect(rows.rows.map((r) => r.title)).toEqual(['Đầu', ...titles]);
     expect(Math.max(...rows.rows.map((r) => r.sort_key.length))).toBeLessThanOrEqual(60);
     expect(new Set(rows.rows.map((r) => r.sort_key)).size).toBe(rows.rows.length);
@@ -307,7 +307,7 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     // And the database refuses a deal that mixes the orgs, whatever the command checks.
     const stage = await o.stageNamed('Mới');
     await expect(
-      admin((c) => c.query("INSERT INTO crove_crm.deal (org_id, party_id, title, stage_id, sort_key, created_by) VALUES ($1, $2, 'x', $3, 'V', $4)", [o.orgId, foreignParty, stage.id, o.owner])),
+      admin((c) => c.query("INSERT INTO ludy_crm.deal (org_id, party_id, title, stage_id, sort_key, created_by) VALUES ($1, $2, 'x', $3, 'V', $4)", [o.orgId, foreignParty, stage.id, o.owner])),
     ).rejects.toMatchObject({ code: '23503' });
   });
 

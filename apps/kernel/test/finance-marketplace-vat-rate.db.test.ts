@@ -132,7 +132,7 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     await setRates(o, [{ effectiveFrom: '2026-03-01', method: 'deduction', vatPercent: '8' }]);
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30') ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = excluded.locked_from, locked_through = excluded.locked_through",
+        "INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30') ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = excluded.locked_from, locked_through = excluded.locked_through",
         [o.orgId, o.entity],
       ),
     );
@@ -141,8 +141,8 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     await setRates(o, [{ effectiveFrom: '2026-07-01', method: 'deduction', vatPercent: '10' }]);
     expect((await list(o)).rows.map((r) => [r.effectiveFrom, r.vatPercent])).toEqual([['2026-03-01', '8.00'], ['2026-07-01', '10.00']]);
     // The database holds the same rule: the tenant role may not update or delete a row.
-    await expect(admin((c) => c.query("SET ROLE ludy_tenant; UPDATE crove_finance.marketplace_vat_rate SET vat_percent = 5 WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
-    await expect(admin((c) => c.query("SET ROLE ludy_tenant; DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
+    await expect(admin((c) => c.query("SET ROLE ludy_tenant; UPDATE ludy_finance.marketplace_vat_rate SET vat_percent = 5 WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
+    await expect(admin((c) => c.query("SET ROLE ludy_tenant; DELETE FROM ludy_finance.marketplace_vat_rate WHERE org_id = $1", [o.orgId]))).rejects.toBeDefined();
   });
 
   it('is all or none: a batch with a bad row stores nothing, and the dates must be ascending, in range and a real day', async () => {

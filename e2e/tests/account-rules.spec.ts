@@ -106,10 +106,10 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
   await test.step('the rule row keeps its provenance in the database', async () => {
     const rows = sql<{ match_kind: string; match_text: string; debit_account: string; confirmed_by: string; invoice_number: string }>(
       `SELECT r.match_kind, r.match_text, r.debit_account, u.email AS confirmed_by, d.invoice_number
-         FROM crove_finance.categorization_rule r
+         FROM ludy_finance.categorization_rule r
          JOIN ludy_kernel.tenant t ON t.org_id = r.org_id
          JOIN ludy_kernel.user_account u ON u.id = r.confirmed_by
-         JOIN crove_finance.purchase_document d ON d.org_id = r.org_id AND d.id = r.source_document_id
+         JOIN ludy_finance.purchase_document d ON d.org_id = r.org_id AND d.id = r.source_document_id
         WHERE t.slug = :'slug'`,
       { slug },
     );

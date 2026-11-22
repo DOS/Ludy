@@ -129,7 +129,7 @@ suite('duplicate parties (#887)', () => {
     expect(await query<DuplicateHint[]>('kernel.party.duplicate_hints', {})).toEqual([]);
 
     // Nothing moved: the lines keep their party, and the mark is audited and in the activity feed.
-    const lines = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_finance.journal_line WHERE org_id = $1 AND party_id = $2`, [o.orgId, duplicate])).rows);
+    const lines = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_finance.journal_line WHERE org_id = $1 AND party_id = $2`, [o.orgId, duplicate])).rows);
     expect(lines).toEqual([{ n: 1 }]);
     const audit = await admin(
       async (c) => (await c.query(`SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.mark_duplicate' AND outcome = 'ok'`, [o.orgId])).rows,

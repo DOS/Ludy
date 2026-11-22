@@ -42,11 +42,11 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
   async function seedMeeting(recorder: string, readers: string[] = ['reader']): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T04:00:00Z', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     await exec(recorder, 'meetings.transcript.draft_store', {
       meetingId,
       segments: [
@@ -96,7 +96,7 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
 
   // A finished run of `who`'s Vy for the meeting, its result stored as the route stores it.
   const titleRun = (who: string, meetingId: string) => exec<{ meetingId: string; runId: string }>(who, 'meetings.title.start', { meetingId });
-  const titleOf = (meetingId: string) => sqlAdmin<{ title: string }>(`SELECT title FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]).then((r) => r.rows[0]?.title);
+  const titleOf = (meetingId: string) => sqlAdmin<{ title: string }>(`SELECT title FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]).then((r) => r.rows[0]?.title);
 
   it('starts a run for the recorder alone, with the switch on and a transcript to read', async () => {
     const meetingId = await seedMeeting('recorder');
@@ -111,7 +111,7 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     expect(await titleOf(meetingId)).toBe('Họp tuần');
     // A meeting with no transcript has nothing to name it from.
     const empty = await seedMeeting('recorder');
-    await sqlAdmin(`DELETE FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, empty]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, empty]);
     expect(await refuses(titleRun('recorder', empty))).toBe('TRANSCRIPT_EMPTY');
     setSummaryEnabled(false);
     try {

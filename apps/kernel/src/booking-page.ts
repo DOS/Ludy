@@ -84,7 +84,7 @@ export async function bookingView(runtime: Runtime, org: string, type: string, r
   const from = new Date(parsed.data.from);
   const to = new Date(parsed.data.to);
   const row = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ page: PageRow | null }>`SELECT crove_crm.booking_page(${s.org}, ${s.type}, ${from}, ${to}) AS page`.execute(db);
+    const { rows } = await sql<{ page: PageRow | null }>`SELECT ludy_crm.booking_page(${s.org}, ${s.type}, ${from}, ${to}) AS page`.execute(db);
     return rows[0]?.page ?? null;
   });
   if (!row) return null;
@@ -142,9 +142,9 @@ export async function bookingRequest(runtime: Runtime, org: string, type: string
       const { rows } =
         r.dealId === undefined
           ? await sql<{ id: string | null }>`
-              SELECT crove_crm.booking_request(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}) AS id`.execute(db)
+              SELECT ludy_crm.booking_request(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}) AS id`.execute(db)
           : await sql<{ id: string | null }>`
-              SELECT crove_crm.booking_request_deal(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}, ${r.dealId}::uuid) AS id`.execute(db);
+              SELECT ludy_crm.booking_request_deal(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}, ${r.dealId}::uuid) AS id`.execute(db);
       return rows[0]?.id ?? null;
     } catch (error) {
       const code = (error as { code?: string } | null)?.code;
@@ -163,7 +163,7 @@ export async function bookingStatus(runtime: Runtime, org: string, type: string,
   const parsed = z.strictObject({ token: zToken }).safeParse(body);
   if (!parsed.success) return null;
   const row = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ status: unknown }>`SELECT crove_crm.booking_status(${s.org}, ${s.type}, ${sha256(parsed.data.token)}) AS status`.execute(db);
+    const { rows } = await sql<{ status: unknown }>`SELECT ludy_crm.booking_status(${s.org}, ${s.type}, ${sha256(parsed.data.token)}) AS status`.execute(db);
     return rows[0]?.status ?? null;
   });
   if (!row) return null;
@@ -183,7 +183,7 @@ export async function bookingManageView(runtime: Runtime, org: string, type: str
   const parsed = z.strictObject({ manage: z.string().max(100) }).safeParse(body);
   if (!parsed.success) return null;
   const row = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ view: Record<string, unknown> | null }>`SELECT crove_crm.booking_manage_view(${s.org}, ${s.type}, ${parsed.data.manage}) AS view`.execute(db);
+    const { rows } = await sql<{ view: Record<string, unknown> | null }>`SELECT ludy_crm.booking_manage_view(${s.org}, ${s.type}, ${parsed.data.manage}) AS view`.execute(db);
     return rows[0]?.view ?? null;
   });
   if (!row) return null;
@@ -203,7 +203,7 @@ export async function bookingManageAsk(runtime: Runtime, org: string, type: stri
   const id = await runtime.orgless(async (db) => {
     try {
       const { rows } = await sql<{ id: string | null }>`
-        SELECT crove_crm.booking_manage_request(${s.org}, ${s.type}, ${ask.manage}, ${ask.action}, ${startsAt}) AS id`.execute(db);
+        SELECT ludy_crm.booking_manage_request(${s.org}, ${s.type}, ${ask.manage}, ${ask.action}, ${startsAt}) AS id`.execute(db);
       return rows[0]?.id ?? null;
     } catch (error) {
       const code = (error as { code?: string } | null)?.code;

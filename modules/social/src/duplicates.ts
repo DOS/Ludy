@@ -29,8 +29,8 @@ export async function duplicatesOf(trx: Trx, orgId: string, subjects: readonly D
   for (const s of subjects) {
     if (!OPEN.includes(s.status) || duplicateText(s.body) === '') continue;
     const rows = await trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
       .select(['v.status', 'v.body', 'v.settings', 'v.content_frozen', 'v.published_at', 'v.scheduled_at', 'v.queue_slot_at', 'v.error_retry_at', 'p.body as post_body', 'p.scheduled_at as post_scheduled_at'])
       .where('v.org_id', '=', orgId)
       .where('v.channel_connection_id', '=', s.connectionId)

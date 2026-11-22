@@ -312,7 +312,7 @@ export const missingInvoicesRemind = defineCommand({
     const cutoff = new Date(Date.parse(`${today}T00:00:00Z`) - REMINDER_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
     // The lists of every legal entity (#1280): the mail goes to the company, and lists what each entity still lacks.
     const listed = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(['period', 'legal_entity_id'])
       .distinct()
       .where('org_id', '=', ctx.orgId)

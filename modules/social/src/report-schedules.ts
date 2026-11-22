@@ -93,7 +93,7 @@ export const reportScheduleSave = defineCommand({
     // The link options as saved: what the input says, else the schedule's own (a change) or none (a new one).
     const current = input.scheduleId
       ? await ctx.trx
-          .selectFrom('crove_social.report_schedule')
+          .selectFrom('ludy_social.report_schedule')
           .select(['note', 'label_id', 'include_audience', 'sections', 'top_count'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', input.scheduleId)
@@ -104,7 +104,7 @@ export const reportScheduleSave = defineCommand({
     const labelId = input.labelId !== undefined ? input.labelId : (current?.label_id ?? null);
     if (labelId && labelId !== current?.label_id) {
       // Held until the commit, so the label cannot go between this check and the write (its FK cascades to the schedule).
-      const label = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', '=', labelId).forShare().executeTakeFirst();
+      const label = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', '=', labelId).forShare().executeTakeFirst();
       if (!label) throw new DomainError('LABEL_NOT_FOUND', 404, 'Không tìm thấy nhãn này');
     }
     const sections = input.sections !== undefined ? input.sections : (current?.sections ?? null);
@@ -132,7 +132,7 @@ export const reportScheduleSave = defineCommand({
     };
     if (input.scheduleId) {
       const updated = await ctx.trx
-        .updateTable('crove_social.report_schedule')
+        .updateTable('ludy_social.report_schedule')
         .set(values)
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.scheduleId)
@@ -143,11 +143,11 @@ export const reportScheduleSave = defineCommand({
       return { scheduleId: updated.id, nextRunAt: values.next_run_at.toISOString() };
     }
     // One at a time per org, so two saves cannot both pass the limit.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.report_schedule:${ctx.orgId}`}))`.execute(ctx.trx);
-    const count = await ctx.trx.selectFrom('crove_social.report_schedule').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.report_schedule:${ctx.orgId}`}))`.execute(ctx.trx);
+    const count = await ctx.trx.selectFrom('ludy_social.report_schedule').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (Number(count.n) >= REPORT_SCHEDULE_LIMIT) throw new DomainError('REPORT_SCHEDULE_LIMIT', 409, `Mỗi tổ chức có tối đa ${REPORT_SCHEDULE_LIMIT} lịch gửi báo cáo`);
     const row = await ctx.trx
-      .insertInto('crove_social.report_schedule')
+      .insertInto('ludy_social.report_schedule')
       .values({ org_id: ctx.orgId, ...values, created_by: userId, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -164,11 +164,11 @@ export const reportScheduleRemove = defineCommand({
   access: ADMINS,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
-    const gone = await ctx.trx.deleteFrom('crove_social.report_schedule').where('org_id', '=', ctx.orgId).where('id', '=', input.scheduleId).returning('id').executeTakeFirst();
+    const gone = await ctx.trx.deleteFrom('ludy_social.report_schedule').where('org_id', '=', ctx.orgId).where('id', '=', input.scheduleId).returning('id').executeTakeFirst();
     if (!gone) throw new DomainError('REPORT_SCHEDULE_NOT_FOUND', 404, 'Không tìm thấy lịch gửi báo cáo này');
     // The links already mailed stop working with the schedule.
     const revoked = await ctx.trx
-      .updateTable('crove_social.report_link')
+      .updateTable('ludy_social.report_link')
       .set({ revoked_at: ctx.now, revoked_by: userId })
       .where('org_id', '=', ctx.orgId)
       .where('schedule_id', '=', gone.id)
@@ -213,16 +213,16 @@ async function headline(ctx: CommandContext, start: Date, end: Date, ids: readon
   const { rows } = await sql<{ posts: string; reach: string | null; impressions: string | null; engagement: string | null }>`
     WITH v AS (
       SELECT v.id, coalesce(s.metrics, '{}'::jsonb) AS metrics
-      FROM crove_social.post_variant v
+      FROM ludy_social.post_variant v
       LEFT JOIN LATERAL (
-        SELECT m.metrics FROM crove_social.metric_snapshot m
+        SELECT m.metrics FROM ludy_social.metric_snapshot m
         WHERE m.org_id = v.org_id AND m.variant_id = v.id
         ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
       ) s ON true
       WHERE v.org_id = ${ctx.orgId} AND v.status = 'published' AND v.published_at >= ${start} AND v.published_at < ${end}
         AND (cardinality(${ids}::uuid[]) = 0 OR v.channel_connection_id = ANY (${ids}::uuid[]))
         AND (${labelId}::uuid IS NULL OR EXISTS (
-          SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${labelId}::uuid))
+          SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${labelId}::uuid))
       LIMIT 5000
     ),
     n AS (
@@ -254,7 +254,7 @@ async function queueRun(ctx: CommandContext, s: ScheduleRow, kind: 'scheduled' |
   // The sending org, named in the mail's footer.
   const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const run = await ctx.trx
-    .insertInto('crove_social.report_schedule_run')
+    .insertInto('ludy_social.report_schedule_run')
     .values({ org_id: ctx.orgId, schedule_id: s.id, kind, period_start: start, period_end: end, created_by: createdBy, created_at: ctx.now })
     .returning('id')
     .executeTakeFirstOrThrow();
@@ -264,7 +264,7 @@ async function queueRun(ctx: CommandContext, s: ScheduleRow, kind: 'scheduled' |
   const capped = new Set<string>();
   if (kind === 'scheduled') {
     for (const to of [...recipients].sort()) {
-      const gate = await sql<{ ok: boolean }>`SELECT crove_social.report_mail_recipient_gate(${to}, ${REPORT_MAILS_PER_RECIPIENT_PER_DAY}::int) AS ok`.execute(ctx.trx);
+      const gate = await sql<{ ok: boolean }>`SELECT ludy_social.report_mail_recipient_gate(${to}, ${REPORT_MAILS_PER_RECIPIENT_PER_DAY}::int) AS ok`.execute(ctx.trx);
       if (gate.rows[0]?.ok !== true) capped.add(to);
     }
   }
@@ -282,7 +282,7 @@ async function queueRun(ctx: CommandContext, s: ScheduleRow, kind: 'scheduled' |
     if (mail.status === 'suppressed') suppressed++;
     else mails++;
   }
-  await ctx.trx.updateTable('crove_social.report_schedule_run').set({ mails, suppressed }).where('org_id', '=', ctx.orgId).where('id', '=', run.id).execute();
+  await ctx.trx.updateTable('ludy_social.report_schedule_run').set({ mails, suppressed }).where('org_id', '=', ctx.orgId).where('id', '=', run.id).execute();
   return { runId: run.id, mails, suppressed };
 }
 
@@ -300,7 +300,7 @@ export const reportScheduleRun = defineCommand({
   handler: async (ctx, input) => {
     requireSystem(ctx);
     const s = await ctx.trx
-      .selectFrom('crove_social.report_schedule')
+      .selectFrom('ludy_social.report_schedule')
       .select([...SCHEDULE_COLUMNS, 'paused', 'next_run_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.scheduleId)
@@ -312,7 +312,7 @@ export const reportScheduleRun = defineCommand({
     // A send that ran late (the worker was down) is not repeated for each missed time: the next one is after now.
     const next = new Date(nextReportRun(specOf(s), Math.max(due, ctx.now.getTime())));
     await ctx.trx
-      .updateTable('crove_social.report_schedule')
+      .updateTable('ludy_social.report_schedule')
       .set({ last_run_at: ctx.now, next_run_at: next, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', s.id)
@@ -332,10 +332,10 @@ export const reportScheduleTest = defineCommand({
   access: ADMINS,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
-    const s = await ctx.trx.selectFrom('crove_social.report_schedule').select(SCHEDULE_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', input.scheduleId).forUpdate().executeTakeFirst();
+    const s = await ctx.trx.selectFrom('ludy_social.report_schedule').select(SCHEDULE_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', input.scheduleId).forUpdate().executeTakeFirst();
     if (!s) throw new DomainError('REPORT_SCHEDULE_NOT_FOUND', 404, 'Không tìm thấy lịch gửi báo cáo này');
     const recent = await ctx.trx
-      .selectFrom('crove_social.report_schedule_run')
+      .selectFrom('ludy_social.report_schedule_run')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('schedule_id', '=', s.id)
@@ -374,8 +374,8 @@ export const reportScheduleMintLink = defineCommand({
       .executeTakeFirst();
     if (!mail?.source_id) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy thư báo cáo đang gửi');
     const run = await ctx.trx
-      .selectFrom('crove_social.report_schedule_run as r')
-      .innerJoin('crove_social.report_schedule as s', (j) => j.onRef('s.org_id', '=', 'r.org_id').onRef('s.id', '=', 'r.schedule_id'))
+      .selectFrom('ludy_social.report_schedule_run as r')
+      .innerJoin('ludy_social.report_schedule as s', (j) => j.onRef('s.org_id', '=', 'r.org_id').onRef('s.id', '=', 'r.schedule_id'))
       .select([
         'r.kind',
         'r.period_start',
@@ -400,7 +400,7 @@ export const reportScheduleMintLink = defineCommand({
     const by = run.created_by ?? run.schedule_by;
     // One live link per mail: a send tried again (a retry, an unknown outcome sent again) revokes the try before's.
     await ctx.trx
-      .updateTable('crove_social.report_link')
+      .updateTable('ludy_social.report_link')
       .set({ revoked_at: ctx.now, revoked_by: by })
       .where('org_id', '=', ctx.orgId)
       .where('mail_message_id', '=', input.messageId)
@@ -409,7 +409,7 @@ export const reportScheduleMintLink = defineCommand({
     const token = newReportToken();
     const expiresAt = new Date(ctx.now.getTime() + days * DAY_MS);
     await ctx.trx
-      .insertInto('crove_social.report_link')
+      .insertInto('ludy_social.report_link')
       .values({
         org_id: ctx.orgId,
         token_sha256: reportTokenHash(token),
@@ -473,7 +473,7 @@ export const reportScheduleList = defineQuery({
   access: ADMINS,
   handler: async (ctx): Promise<ReportScheduleView[]> => {
     const schedules = await ctx.trx
-      .selectFrom('crove_social.report_schedule')
+      .selectFrom('ludy_social.report_schedule')
       .select([...SCHEDULE_COLUMNS, 'paused', 'next_run_at', 'last_run_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at')
@@ -482,7 +482,7 @@ export const reportScheduleList = defineQuery({
     const { rows: runs } = await sql<{ id: string; schedule_id: string; kind: 'scheduled' | 'test'; period_start: Date; period_end: Date; created_at: Date }>`
       SELECT r.id, r.schedule_id, r.kind, r.period_start, r.period_end, r.created_at FROM (
         SELECT r.*, row_number() OVER (PARTITION BY r.schedule_id ORDER BY r.created_at DESC) AS n
-        FROM crove_social.report_schedule_run r WHERE r.org_id = ${ctx.orgId}
+        FROM ludy_social.report_schedule_run r WHERE r.org_id = ${ctx.orgId}
       ) r WHERE r.n <= 5 ORDER BY r.created_at DESC`.execute(ctx.trx);
     const mails =
       runs.length === 0
@@ -545,7 +545,7 @@ export const reportScheduleDefer = defineCommand({
   handler: async (ctx, input) => {
     requireSystem(ctx);
     const done = await sql<{ id: string }>`
-      UPDATE crove_social.report_schedule
+      UPDATE ludy_social.report_schedule
       SET next_run_at = pg_catalog.now() + pg_catalog.make_interval(mins => ${REPORT_SCHEDULE_RETRY_MINUTES}::int)
       WHERE org_id = ${ctx.orgId} AND id = ${input.scheduleId} AND NOT paused AND next_run_at <= pg_catalog.now()
       RETURNING id`.execute(ctx.trx);
@@ -560,7 +560,7 @@ const SWEEP_ACTOR = { type: 'system' as const, component: 'social.report_schedul
 
 // One pass: runs each due schedule in its org. Returns how many ran.
 export async function sweepReportSchedules(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
-  const { rows } = await sql<{ org_id: string; schedule_id: string }>`SELECT org_id, schedule_id FROM crove_social.report_schedules_due(${SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string; schedule_id: string }>`SELECT org_id, schedule_id FROM ludy_social.report_schedules_due(${SWEEP_LIMIT}::int)`.execute(deps.workerDb);
   let ran = 0;
   for (const row of rows) {
     try {

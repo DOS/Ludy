@@ -28,7 +28,7 @@ test("the TikTok block lists only the account's options and fits 360px", async (
   const [channel] = sql<{ org: string; id: string }>(`SELECT org_id AS org, id FROM ludy_kernel.channel_connection WHERE display_name = :'name'`, { name: CHANNEL });
   exec(`UPDATE ludy_kernel.channel_connection SET provider = 'tiktok' WHERE org_id = :'org' AND id = :'id'`, { org: channel?.org ?? '', id: channel?.id ?? '' });
   exec(
-    `INSERT INTO crove_social.channel_option (org_id, channel_connection_id, kind, status, items, requested_at, fetched_at)
+    `INSERT INTO ludy_social.channel_option (org_id, channel_connection_id, kind, status, items, requested_at, fetched_at)
      VALUES (:'org', :'id', 'tiktok_creator', 'ready', :'items'::jsonb, now(), now())`,
     { org: channel?.org ?? '', id: channel?.id ?? '', items: JSON.stringify(ITEMS) },
   );

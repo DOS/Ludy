@@ -27,10 +27,10 @@ export const titleStart = defineCommand({
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy for a title');
     // The meeting's media lock and a FOR SHARE hold on the meeting, as the summary's and the chapters' start take them (#3187).
     await lockMeetingMedia(ctx, input.meetingId);
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: 'meetings.transcribe', subjectId: input.meetingId });
     if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is still being transcribed; wait for it to finish');
-    const any = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
+    const any = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
     if (!any) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to suggest a title from yet');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: TITLE_FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
     // The suggestions rest on the transcript of the recording: it is in use from here on (#3187), under the media lock a replacement takes.
@@ -71,7 +71,7 @@ export const meetingRename = defineCommand({
     if (title === '') throw new DomainError('MEETING_TITLE_EMPTY', 422, 'A meeting needs a title');
     if (title.length > MEETING_TITLE_MAX) throw new DomainError('MEETING_TITLE_TOO_LONG', 422, 'A meeting title holds at most 200 characters');
     await ctx.trx
-      .updateTable('crove_meetings.meeting')
+      .updateTable('ludy_meetings.meeting')
       .set({ title, updated_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)

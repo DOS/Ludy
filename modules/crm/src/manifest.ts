@@ -7,11 +7,11 @@ export const crmManifest = defineModule({
   id: 'crm',
   dependsOn: ['kernel'],
   tables: {
-    crove_crm: {
+    ludy_crm: {
       booking: columns(['org_id', 'id', 'event_type_id', 'starts_at', 'ends_at', 'status', 'refusal', 'calendar_event_id', 'party_id', 'time_zone', 'request_token_sha256', 'created_at', 'decided_at', 'revision', 'manage_request_id', 'manage_action', 'manage_starts_at', 'manage_requested_at', 'manage_outcome', 'cancelled_at', 'hold_event_ids', 'meeting_state', 'meeting_url', 'deal_id'], { visitor_name: 'pii', email: 'contact', phone: 'contact', note: 'pii' }),
       booking_feed: columns(['org_id', 'id', 'user_id', 'token_sha256', 'created_at', 'revoked_at']),
       deal: columns(['org_id', 'id', 'party_id', 'amount', 'currency', 'stage_id', 'sort_key', 'expected_close', 'owner_user_id', 'closed_at', 'version', 'created_by', 'created_at', 'updated_by', 'updated_at', 'actor_origin', 'tainted'], { title: 'pii', lost_reason: 'pii' }),
-      // A reason code, a state and dates: no text, so every column is internal (the deal's own title stays in crove_crm.deal).
+      // A reason code, a state and dates: no text, so every column is internal (the deal's own title stays in ludy_crm.deal).
       deal_next_step: columns(['org_id', 'id', 'deal_id', 'reason', 'assignee_user_id', 'since_on', 'raised_at', 'status', 'snoozed_until', 'resolved_at', 'resolved_by', 'closed_reason']),
       deal_setting: columns(['org_id', 'id', 'stale_days', 'set_by', 'created_at', 'updated_at']),
       event_type: columns(['org_id', 'id', 'slug', 'title', 'description', 'duration_min', 'buffer_before_min', 'buffer_after_min', 'min_notice_min', 'horizon_days', 'daily_limit', 'location_kind', 'location_value', 'host_user_id', 'active', 'created_by', 'created_at', 'updated_by', 'updated_at', 'assignment', 'co_host_user_ids']),

@@ -8,7 +8,7 @@
 //   that the period of the entry is open and the accounts usable, then returns the proposal. It writes nothing.
 // - finance.marketplace_fee_clearing.record (R3): runs only through kernel.proposal.approve. It builds the entry again, in the approver's context under the platform's lock, and refuses a stored
 //   proposal that differs from it. Then, in the same transaction, it records the voucher with the document on it and posts its entry. The database checks at commit that the proposal has such a voucher
-//   (crove_finance.ledger_effect_recorded, 20261231230000).
+//   (ludy_finance.ledger_effect_recorded, 20261231230000).
 // An invoice may be cleared more than once, as the fees wait and payouts arrive: the sum of its standing clearings never exceeds its credit to 331, and a reversed clearing frees its amount. It works in
 // either order of arrival: the clearing is asked for once the payout (1388 up) and the invoice (331 up) both stand. No model call is made: everything here is deterministic over posted facts.
 import { sql } from 'kysely';
@@ -54,8 +54,8 @@ interface Built {
 // The invoice's standing entry: its latest revision, original (not a reversal), with whether a reversal points at it. Null when the document has no entry.
 export async function standingInvoiceEntry(ctx: QueryContext, documentId: string): Promise<{ id: string; entryDate: string; reversed: boolean } | null> {
   const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
-    .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
+    .selectFrom('ludy_finance.journal_entry as e')
+    .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
     .select(['e.id', 'e.entry_date', 'r.id as reversal'])
     .where('e.org_id', '=', ctx.orgId)
     .where('e.source_type', '=', PURCHASE_SOURCE)
@@ -70,7 +70,7 @@ export async function standingInvoiceEntry(ctx: QueryContext, documentId: string
 export async function invoicePayable(ctx: QueryContext, entryId: string, partyId: string): Promise<string> {
   return (
     await ctx.trx
-      .selectFrom('crove_finance.journal_line as l')
+      .selectFrom('ludy_finance.journal_line as l')
       .select(sql<string>`coalesce(sum(l.credit) - sum(l.debit), 0)`.as('total'))
       .where('l.org_id', '=', ctx.orgId)
       .where('l.entry_id', '=', entryId)
@@ -84,9 +84,9 @@ export async function invoicePayable(ctx: QueryContext, entryId: string, partyId
 export async function invoiceCleared(ctx: QueryContext, documentId: string): Promise<string> {
   return (
     await ctx.trx
-      .selectFrom('crove_finance.journal_voucher as j')
-      .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null))
-      .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
+      .selectFrom('ludy_finance.journal_voucher as j')
+      .innerJoin('ludy_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null))
+      .innerJoin('ludy_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
       .select(sql<string>`coalesce(sum(l.credit), 0)`.as('total'))
       .where('j.org_id', '=', ctx.orgId)
       .where('j.fee_document_id', '=', documentId)
@@ -99,8 +99,8 @@ export async function invoiceCleared(ctx: QueryContext, documentId: string): Pro
 // The sum of the account's lines (debit minus credit) that name the party, in the entity: a reversal entry takes back what it reverses, so the balance already counts it.
 export async function balanceOf(ctx: QueryContext, legalEntityId: string, partyId: string, prefix: string): Promise<{ balance: string; lastDate: string | null }> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
     .select([sql<string>`coalesce(sum(l.debit) - sum(l.credit), 0)`.as('balance'), sql<string | null>`max(e.entry_date)::text`.as('last_date')])
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', legalEntityId)
@@ -114,7 +114,7 @@ export async function balanceOf(ctx: QueryContext, legalEntityId: string, partyI
 // takes the platform's lock (the one the settlement guards use, 20261126110000) for the rest of the transaction, so the sum of an invoice's clearings and the 1388 balance are read and written together.
 async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, lock: boolean): Promise<Built> {
   const doc = await ctx.trx
-    .selectFrom('crove_finance.purchase_document')
+    .selectFrom('ludy_finance.purchase_document')
     .select(['id', 'party_id', 'legal_entity_id', 'invoice_series', 'invoice_number', 'invoice_date', 'currency', 'direction'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', documentId)
@@ -123,7 +123,7 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
   if (doc.direction !== 'purchase') throw notUsable('DIRECTION');
   if (doc.currency !== 'VND') throw notUsable('CURRENCY');
   const link = await ctx.trx
-    .selectFrom('crove_finance.marketplace_party as m')
+    .selectFrom('ludy_finance.marketplace_party as m')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['m.platform', 'p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)

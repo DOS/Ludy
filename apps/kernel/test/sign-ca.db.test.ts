@@ -486,7 +486,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       await adminClient.connect();
       try {
         await adminClient.query(
-          "UPDATE crove_sign.ca_signing_request SET next_poll_at = now() - interval '1 second' WHERE org_id = $1::uuid AND id = $2::uuid",
+          "UPDATE ludy_sign.ca_signing_request SET next_poll_at = now() - interval '1 second' WHERE org_id = $1::uuid AND id = $2::uuid",
           [org.orgId, requestId],
         );
       } finally {
@@ -845,7 +845,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
     expect(creatorOtherDl.status).toBe(404);
 
     // Unauthorized member and viewer receive 404 on RPC list_requests, 404 on PAdES download,
-    // 0 rows under PostgreSQL RLS on crove_sign.ca_signing_request, and false from crove_sign.can_read_sign_file!
+    // 0 rows under PostgreSQL RLS on ludy_sign.ca_signing_request, and false from ludy_sign.can_read_sign_file!
     for (const unauthorized of [member, viewer]) {
       for (const hrTarget of [ownerHr, creatorHr]) {
         const listRes = await rpc('sign/ca/list_requests', unauthorized, { envelopeId: hrTarget.envelopeId });
@@ -870,13 +870,13 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
         await appClient.query(`SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)`, [org.orgId, ctxToken]);
 
         const rlsCount = await appClient.query<{ cnt: string }>(
-          `SELECT count(*)::text AS cnt FROM crove_sign.ca_signing_request WHERE org_id = $1::uuid AND envelope_id = ANY($2::uuid[])`,
+          `SELECT count(*)::text AS cnt FROM ludy_sign.ca_signing_request WHERE org_id = $1::uuid AND envelope_id = ANY($2::uuid[])`,
           [org.orgId, [ownerHr.envelopeId, creatorHr.envelopeId]],
         );
         expect(Number(rlsCount.rows[0]?.cnt ?? -1)).toBe(0);
 
         const canRead = await appClient.query<{ ok: boolean }>(
-          `SELECT crove_sign.can_read_sign_file($1::uuid) AS ok`,
+          `SELECT ludy_sign.can_read_sign_file($1::uuid) AS ok`,
           [ownerHr.padesFileId],
         );
         expect(canRead.rows[0]?.ok).toBe(false);

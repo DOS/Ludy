@@ -42,8 +42,8 @@ export const zReportBrandingSave = z.strictObject({
 });
 
 async function lockBranding(ctx: CommandContext) {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.report_branding:${ctx.orgId}`}))`.execute(ctx.trx);
-  return ctx.trx.selectFrom('crove_social.report_branding').select('id').where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.report_branding:${ctx.orgId}`}))`.execute(ctx.trx);
+  return ctx.trx.selectFrom('ludy_social.report_branding').select('id').where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
 }
 
 export const reportBrandingSave = defineCommand({
@@ -75,10 +75,10 @@ export const reportBrandingSave = defineCommand({
     const existing = await lockBranding(ctx);
     const first = existing[0];
     if (first) {
-      await ctx.trx.updateTable('crove_social.report_branding').set(values).where('org_id', '=', ctx.orgId).where('id', '=', first.id).execute();
+      await ctx.trx.updateTable('ludy_social.report_branding').set(values).where('org_id', '=', ctx.orgId).where('id', '=', first.id).execute();
     } else {
       await ctx.trx
-        .insertInto('crove_social.report_branding')
+        .insertInto('ludy_social.report_branding')
         .values({ org_id: ctx.orgId, ...values, created_at: ctx.now })
         .execute();
     }
@@ -100,7 +100,7 @@ export const reportBrandingRemove = defineCommand({
     const rows = await lockBranding(ctx);
     if (rows.length > 0)
       await ctx.trx
-        .deleteFrom('crove_social.report_branding')
+        .deleteFrom('ludy_social.report_branding')
         .where('org_id', '=', ctx.orgId)
         .where(
           'id',
@@ -116,7 +116,7 @@ export const reportBrandingRemove = defineCommand({
 /** The org's report branding, or null when none is saved (the first row, as the commands keep one). */
 export async function reportBrandingOf(trx: Trx, orgId: string): Promise<(ReportBrand & { updatedAt: string }) | null> {
   const row = await trx
-    .selectFrom('crove_social.report_branding')
+    .selectFrom('ludy_social.report_branding')
     .select(['display_name', 'logo', 'accent', 'hide_crove', 'updated_at'])
     .where('org_id', '=', orgId)
     .orderBy('created_at')

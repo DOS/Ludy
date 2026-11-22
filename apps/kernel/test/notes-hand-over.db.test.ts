@@ -181,14 +181,14 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
     await o.exec(o.mine, 'notes.todo.delete', { todoId });
     await expect(handOver(o.mine)).rejects.toMatchObject({ code: 'TODO_IN_TRASH', status: 409 });
     expect(await tasks()).toBe(0);
-    const [todo] = (await admin((c) => c.query<{ status: string; task_id: string | null }>(`SELECT status, task_id FROM crove_notes.todo WHERE id = $1`, [todoId]))).rows;
+    const [todo] = (await admin((c) => c.query<{ status: string; task_id: string | null }>(`SELECT status, task_id FROM ludy_notes.todo WHERE id = $1`, [todoId]))).rows;
     expect(todo).toEqual({ status: 'open', task_id: null });
   });
 
   it('carries a tainted to-do’s taint to its task', async () => {
     const o = await org();
     const { todoId } = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', { title: TITLE });
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET tainted = true WHERE id = $1`, [todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET tainted = true WHERE id = $1`, [todoId]));
     const handed = await o.exec<TodoHandedOver>(o.mine, 'notes.todo.hand_over', { todoId, revision: 1, positionId: o.positions.team, title: TEAM_TITLE, description: '' });
     const { task } = await o.query<{ task: TaskView }>(o.other, 'kernel.task.get', { id: handed.taskId });
     expect(task.tainted).toBe(true);

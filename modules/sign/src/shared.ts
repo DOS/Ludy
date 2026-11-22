@@ -49,9 +49,9 @@ export interface IssuedSigningLink {
   expiresAt: string;
 }
 
-export const ENVELOPE_VERSION_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['version', 'updated_at']);
+export const ENVELOPE_VERSION_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'envelope', ['version', 'updated_at']);
 
-export const SIGNING_EVENT_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_event', [
+export const SIGNING_EVENT_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'signing_event', [
   'org_id',
   'envelope_id',
   'signer_id',
@@ -70,7 +70,7 @@ export const SIGNING_EVENT_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'occurred_at',
 ]);
 
-export const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_token', [
+export const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'signing_token', [
   'org_id',
   'envelope_id',
   'signer_id',
@@ -83,7 +83,7 @@ export const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'created_at',
 ]);
 
-export const SIGNING_OTP_INVALIDATE_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['invalidated_at']);
+export const SIGNING_OTP_INVALIDATE_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'signing_otp', ['invalidated_at']);
 
 export const MAIL_MESSAGE_WRITE = tableWrite(kernelManifest.tables, 'ludy_kernel', 'mail_message', [
   'org_id',
@@ -193,7 +193,7 @@ export async function requireSignSourceFile(ctx: CommandContext, sourceFileId: s
     ctx.actor.type !== 'system'
   ) {
     const { rows } = await sql<{ allowed: boolean }>`
-      SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed
+      SELECT ludy_sign.can_read_sign_file(${file.id}::uuid) AS allowed
     `.execute(ctx.trx);
     if (!rows[0]?.allowed) {
       throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
@@ -476,7 +476,7 @@ export async function sendDraftEnvelope(
 
   const nextVersion = row.version + 1;
   await ctx.trx
-    .updateTable('crove_sign.envelope')
+    .updateTable('ludy_sign.envelope')
     .set({
       status: 'sent',
       sent_at: ctx.now,
@@ -488,7 +488,7 @@ export async function sendDraftEnvelope(
     .execute();
 
   await ctx.trx
-    .updateTable('crove_sign.signer')
+    .updateTable('ludy_sign.signer')
     .set({ status: 'pending', updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('envelope_id', '=', row.id)
@@ -529,7 +529,7 @@ export async function sendDraftEnvelope(
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows: minted } = await sql<{ id: string }>`
-      SELECT crove_sign.mint_signing_token(
+      SELECT ludy_sign.mint_signing_token(
         ${row.id}::uuid,
         ${signer.id}::uuid,
         ${tokenHash},

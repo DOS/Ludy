@@ -84,14 +84,14 @@ export interface Published {
 // published result's id and time, so a result shared again (a new row) or unpublished is a different key.
 export async function publishedFacts(trx: Trx, orgId: string, meetingId: string): Promise<Published> {
   const result = await trx
-    .selectFrom('crove_meetings.meeting_result')
+    .selectFrom('ludy_meetings.meeting_result')
     .select(['id', 'summary', 'decisions', 'updated_at'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
     .where('stage', '=', 'published')
     .executeTakeFirst();
   const items = await trx
-    .selectFrom('crove_meetings.action_item')
+    .selectFrom('ludy_meetings.action_item')
     .select(['id', 'title', 'who_drafted', 'when_drafted'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
@@ -126,9 +126,9 @@ interface Candidate {
 // The people the draft suggests, and the addresses the mail may go to without a tick: the readers of the meeting that are members, then the contacts linked to it (L1). The
 // recorder is the sender, so they are not suggested. A contact is read under the caller's own policies.
 async function candidates(trx: Trx, orgId: string, meetingId: string, recorder: string): Promise<Candidate[]> {
-  const readers = await trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).orderBy('created_at').orderBy('id').execute();
+  const readers = await trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).orderBy('created_at').orderBy('id').execute();
   const people = await memberProfiles(trx, readers.map((r) => r.user_id).filter((id) => id !== recorder));
-  const links = await trx.selectFrom('crove_meetings.meeting_link').select('party_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('party_id', 'is not', null).orderBy('created_at').orderBy('id').execute();
+  const links = await trx.selectFrom('ludy_meetings.meeting_link').select('party_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('party_id', 'is not', null).orderBy('created_at').orderBy('id').execute();
   const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
   const parties = partyIds.length === 0 ? [] : await trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', orgId).where('id', 'in', partyIds).execute();
   const out: Candidate[] = [];
@@ -180,7 +180,7 @@ async function sendsToday(ctx: { trx: Trx; orgId: string }, meetingId: string): 
 }
 
 export async function meetingFacts(trx: Trx, orgId: string, meetingId: string): Promise<{ lang: Lang; day: string }> {
-  const row = await trx.selectFrom('crove_meetings.meeting').select(['language', 'started_at', 'created_at']).where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
+  const row = await trx.selectFrom('ludy_meetings.meeting').select(['language', 'started_at', 'created_at']).where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
   return { lang: row.language === 'en' ? 'en' : 'vi', day: vnDay(row.started_at ?? row.created_at) };
 }
 

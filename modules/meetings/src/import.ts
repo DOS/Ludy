@@ -68,7 +68,7 @@ async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordi
 // agenda link) takes a key-share lock on it, so one added in another tab waits until this command ends instead of slipping in between the check and the delete.
 async function isEmptyOwnMeeting(trx: Trx, orgId: string, userId: string, meetingId: string): Promise<boolean> {
   const row = await trx
-    .selectFrom('crove_meetings.meeting')
+    .selectFrom('ludy_meetings.meeting')
     .select(['recorder_user_id', 'created_at', 'updated_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', meetingId)
@@ -78,17 +78,17 @@ async function isEmptyOwnMeeting(trx: Trx, orgId: string, userId: string, meetin
   if (!row || row.recorder_user_id !== userId || new Date(row.updated_at).getTime() !== new Date(row.created_at).getTime()) return false;
   const { rows } = await sql<{ empty: boolean }>`
     SELECT EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
+      SELECT 1 FROM ludy_meetings.meeting m
       WHERE m.org_id = ${orgId}::uuid AND m.id = ${meetingId}::uuid AND m.recorder_user_id = ${userId}::uuid
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.audio_segment x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_video x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.transcript_segment x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_result x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.action_item x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_note x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_link x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.calendar_agenda x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_meetings.live_line x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.audio_segment x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.meeting_video x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.meeting_result x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.action_item x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.meeting_note x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.meeting_link x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.calendar_agenda x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_meetings.live_line x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
     ) AS empty`.execute(trx);
   return rows[0]?.empty === true;
 }
@@ -248,7 +248,7 @@ export const meetingImportTakeTranscript = defineCommand({
     // The call ended when the platform says it did, else with its last line; never later than now (the rule of recording a media).
     const seconds = row.length_seconds ?? Math.ceil(Math.max(...input.segments.map((s) => s.endSeconds)));
     await sql`
-      UPDATE crove_meetings.meeting
+      UPDATE ludy_meetings.meeting
       SET ended_at = LEAST(started_at + (${seconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
       WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
     ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source, cut: input.platformCut });

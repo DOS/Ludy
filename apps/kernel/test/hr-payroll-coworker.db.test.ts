@@ -400,7 +400,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
       );
       const id = rows[0]!.id;
       await c.query(
-        `INSERT INTO crove_hr.payroll_run (org_id, legal_entity_id, month, status, working_days, created_by)
+        `INSERT INTO ludy_hr.payroll_run (org_id, legal_entity_id, month, status, working_days, created_by)
          SELECT $1,
                 $2,
                 to_char(date '2027-01-01' + ((g - 1) || ' months')::interval, 'YYYY-MM'),

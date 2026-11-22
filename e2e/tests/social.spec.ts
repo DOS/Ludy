@@ -53,7 +53,7 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   // Its slot comes now instead of at 09:00: the worker's sweep finds it and publishes it to the sandbox, and the page
   // follows without a reload.
   await page.goto(postUrl);
-  exec(`UPDATE crove_social.post_variant SET queue_slot_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postUrl.split('/').pop() ?? '' });
+  exec(`UPDATE ludy_social.post_variant SET queue_slot_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postUrl.split('/').pop() ?? '' });
   await expect(page.getByText('Đã đăng', { exact: true }).first()).toBeVisible({ timeout: 45_000 });
   await expect(page.getByTestId('published-summary').getByText(/Đã đăng lúc/)).toBeVisible();
 });

@@ -35,7 +35,7 @@ export const householdS2c = defineQuery({
 
     // The expense lines (a closing entry to 911, if one exists, shows as a negative row, the same net effect as on 511 in S1a): every journal line of the entity on a class 6 or 8 account in the book's days.
     const mapRows = await ctx.trx
-      .selectFrom('crove_finance.household_expense_group_map')
+      .selectFrom('ludy_finance.household_expense_group_map')
       .select(['expense_group', 'account_prefix', 'effective_from', 'source', 'status'])
       .where('effective_from', '<=', w.to)
       .execute();
@@ -69,7 +69,7 @@ export const householdS2c = defineQuery({
 
     // What the answer rests on and the accountant has not confirmed: the S2c layout in force on the last day, and each map row that decided at least one line.
     const unconfirmed: HouseholdS2c['unconfirmed'] = [];
-    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2c').where('effective_from', '<=', w.to).execute();
+    const formRows = await ctx.trx.selectFrom('ludy_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2c').where('effective_from', '<=', w.to).execute();
     const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
     const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
     if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2c ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });

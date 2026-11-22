@@ -402,13 +402,13 @@ suite('HR Home Today alerts (#4444)', () => {
       employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' },
     });
     await adminPool.query(
-      `INSERT INTO crove_hr.payroll_employment (
+      `INSERT INTO ludy_hr.payroll_employment (
          org_id, legal_entity_id, employee_id, effective_from, contract_type,
          region, base_wage, pay_function, term_months, contract_end_on
        )
        SELECT org_id, legal_entity_id, employee_id, '2026-02-01'::date, 'fixed_term',
               region, base_wage, pay_function, 12, '2026-06-30'::date
-         FROM crove_hr.payroll_employment
+         FROM ludy_hr.payroll_employment
         WHERE org_id = $1 AND employee_id = $2
         LIMIT 1`,
       [o.orgId, malformed.employeeId],
@@ -615,7 +615,7 @@ suite('HR Home Today alerts (#4444)', () => {
       reason: 'Đơn tự nghỉ của trưởng phòng',
     });
     await adminPool.query(
-      `INSERT INTO crove_hr.leave_request (org_id, legal_entity_id, employee_id, department_id, month, start_on, end_on, kind, days, status, reason, created_by)
+      `INSERT INTO ludy_hr.leave_request (org_id, legal_entity_id, employee_id, department_id, month, start_on, end_on, kind, days, status, reason, created_by)
        VALUES ($1, $2, $3, $4, '2026-12', '2026-12-09', '2026-12-09', 'unpaid_leave', 1, 'pending_l1', 'Self pending_l1 edge', $5)`,
       [o.orgId, o.defaultEntityId, mgrEmpId, deptEng, o.mgrLinked],
     );
@@ -640,7 +640,7 @@ suite('HR Home Today alerts (#4444)', () => {
 
     // 6) deptArchived pending_l1 + deptBranch pending_l1 (out of le_scope for mgrLinked) + erased employee pending_l1
     await adminPool.query(
-      `INSERT INTO crove_hr.leave_request (org_id, legal_entity_id, employee_id, department_id, month, start_on, end_on, kind, days, status, reason)
+      `INSERT INTO ludy_hr.leave_request (org_id, legal_entity_id, employee_id, department_id, month, start_on, end_on, kind, days, status, reason)
        VALUES ($1, $2, $3, $4, '2026-12', '2026-12-12', '2026-12-12', 'unpaid_leave', 1, 'pending_l1', 'Archived dept request'),
               ($1, $5, $6, $7, '2026-12', '2026-12-13', '2026-12-13', 'unpaid_leave', 1, 'pending_l1', 'Branch dept request'),
               ($1, $2, $8, $9, '2026-12', '2026-12-14', '2026-12-14', 'unpaid_leave', 1, 'pending_l1', 'Erased employee request')`,
@@ -652,8 +652,8 @@ suite('HR Home Today alerts (#4444)', () => {
     // Check audit_event & DB counts before read calls.
     const countState = async () => {
       const audit = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1`, [o.orgId]);
-      const reqs = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_hr.leave_request WHERE org_id = $1`, [o.orgId]);
-      const emps = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_hr.payroll_employee WHERE org_id = $1`, [o.orgId]);
+      const reqs = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_hr.leave_request WHERE org_id = $1`, [o.orgId]);
+      const emps = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_hr.payroll_employee WHERE org_id = $1`, [o.orgId]);
       return { audit: audit.rows[0]!.n, reqs: reqs.rows[0]!.n, emps: emps.rows[0]!.n };
     };
     const before = await countState();

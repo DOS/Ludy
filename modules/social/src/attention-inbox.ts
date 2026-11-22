@@ -50,8 +50,8 @@ export const attentionInbox = defineQuery({
       .limit(ATTENTION_INBOX_MAX)
       .execute();
     const rows = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
       .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.status', 'v.error_code', 'v.updated_at', 'v.body as variant_body', 'p.body', 'c.display_name'])
       .where('v.org_id', '=', ctx.orgId)

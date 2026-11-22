@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The HR module's manifest (plan §5.2, #2530; payroll plan docs/plan/payroll.md §6.1 and §6.6): the tables it owns and the class of every column. A migration that adds or
-// drops a table or column of crove_hr changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the
+// drops a table or column of ludy_hr changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the
 // second argument of columns() classifies it. The identity number and the bank account number are stored sealed under the person's own key (ADR-0017), so their columns are
 // classified as what they hold (national_id, payment) and are registered in SEALED_COLUMNS (@ludy/kernel), not in the personal-data registry. The wage is sensitive: chosen to
 // restrict and audit, not as a legal conclusion (payroll plan 6.6).
@@ -10,7 +10,7 @@ export const hrManifest = defineModule({
   id: 'hr',
   dependsOn: ['kernel'],
   tables: {
-    crove_hr: {
+    ludy_hr: {
       // Lightweight recruiting candidates (#3425): readable by owners and admins only, with applicant PII and wage notes classified.
       candidate: columns(
         ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'erased_at', 'created_by', 'created_at', 'updated_at'],

@@ -74,7 +74,7 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
     .select(({ and, exists, not, selectFrom }) =>
       and([
         exists(
-          selectFrom('crove_finance.purchase_document as s')
+          selectFrom('ludy_finance.purchase_document as s')
             .select('s.id')
             .whereRef('s.org_id', '=', 'p.org_id')
             .whereRef('s.party_id', '=', 'p.id')
@@ -82,7 +82,7 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
         ),
         not(
           exists(
-            selectFrom('crove_finance.purchase_document as b')
+            selectFrom('ludy_finance.purchase_document as b')
               .select('b.id')
               .whereRef('b.org_id', '=', 'p.org_id')
               .whereRef('b.party_id', '=', 'p.id')
@@ -114,9 +114,9 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
 async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: string): Promise<SearchResult['documents']> {
   const base = () =>
     ctx.trx
-      .selectFrom('crove_finance.purchase_document as d')
+      .selectFrom('ludy_finance.purchase_document as d')
       .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-      .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+      .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
       .select([
         'd.id',
         'd.direction',
@@ -185,12 +185,12 @@ async function searchEntries(ctx: QueryContext, q: string, legalEntityId: string
   const amount = searchAmount(q);
   const base = () =>
     ctx.trx
-      .selectFrom('crove_finance.journal_entry as j')
+      .selectFrom('ludy_finance.journal_entry as j')
       .select(['j.id', sql<string>`pg_catalog.to_char(j.entry_date, 'YYYY-MM-DD')`.as('entry_date'), 'j.created_at', 'j.description'])
       // The entry's amount: the sum of its debits (it balances, so its credits sum the same).
       .select((eb) =>
         eb
-          .selectFrom('crove_finance.journal_line as l')
+          .selectFrom('ludy_finance.journal_line as l')
           .select(sql<string>`pg_catalog.sum(l.debit)`.as('s'))
           .whereRef('l.org_id', '=', 'j.org_id')
           .whereRef('l.entry_id', '=', 'j.id')
@@ -210,7 +210,7 @@ async function searchEntries(ctx: QueryContext, q: string, legalEntityId: string
       : await base()
           .where('j.id', 'in', (eb) =>
             eb
-              .selectFrom('crove_finance.journal_line as l')
+              .selectFrom('ludy_finance.journal_line as l')
               .select('l.entry_id')
               .where('l.org_id', '=', ctx.orgId)
               .where('l.legal_entity_id', '=', legalEntityId)

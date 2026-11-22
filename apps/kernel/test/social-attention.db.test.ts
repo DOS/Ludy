@@ -93,7 +93,7 @@ suite('social attention in the inbox on PostgreSQL (#771)', () => {
 
   type Attention = { channels: { connectionId: string; status: string }[]; posts: { postId: string; excerpt: string; channels: { variantId: string; status: string; errorCode: string | null }[] }[]; total: number };
   const attention = (o: Org, user: string) => rt.query<Attention>('social.attention.inbox', {}, { actor: asUser(user), orgId: o.orgId });
-  const setVariant = (postId: string, status: string, code: string | null = null) => admin((c) => c.query('UPDATE crove_social.post_variant SET status = $2, error_code = $3 WHERE post_id = $1', [postId, status, code]));
+  const setVariant = (postId: string, status: string, code: string | null = null) => admin((c) => c.query('UPDATE ludy_social.post_variant SET status = $2, error_code = $3 WHERE post_id = $1', [postId, status, code]));
 
   it('lists expired channels and posts that did not go out for owners and admins, nothing for others', async () => {
     const o = await org();

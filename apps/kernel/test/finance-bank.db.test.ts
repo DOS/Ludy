@@ -142,7 +142,7 @@ suite('bank statement import (#326)', () => {
         (
           await c.query<{ value_date: string; amount: string; running_balance: string | null; bank_ref: string | null; dedupe_key: string | null; ambiguous: boolean; position: number }>(
             `SELECT to_char(value_date, 'YYYY-MM-DD') AS value_date, amount::text, running_balance::text, bank_ref, dedupe_key, ambiguous, position
-             FROM crove_finance.bank_line WHERE org_id = $1 AND bank_account = $2 ORDER BY value_date, import_id, position`,
+             FROM ludy_finance.bank_line WHERE org_id = $1 AND bank_account = $2 ORDER BY value_date, import_id, position`,
             [orgId, account],
           )
         ).rows,
@@ -373,13 +373,13 @@ suite('bank statement import (#326)', () => {
     expect((await lines('2026-09', '1121', outsider)).status).toBe(403);
     const theirs = await rpc('bank/lines', await tokenFor(outsider), { bankAccount: '1121', period: '2026-09' }, otherSlug);
     expect(theirs).toMatchObject({ status: 200, body: { lines: [], moneyIn: '0', moneyOut: '0' } });
-    await expect(admin((c) => c.query(`UPDATE crove_finance.bank_line SET amount = 1 WHERE org_id = $1`, [orgId]))).rejects.toMatchObject({ code: '42501' });
-    await expect(admin((c) => c.query(`DELETE FROM crove_finance.bank_line WHERE org_id = $1`, [orgId]))).rejects.toMatchObject({ code: '42501' });
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.bank_line SET amount = 1 WHERE org_id = $1`, [orgId]))).rejects.toMatchObject({ code: '42501' });
+    await expect(admin((c) => c.query(`DELETE FROM ludy_finance.bank_line WHERE org_id = $1`, [orgId]))).rejects.toMatchObject({ code: '42501' });
     // The database refuses a line on an account that is not a bank account, whoever writes it.
     await expect(
       admin((c) =>
         c.query(
-          `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount) VALUES ($1, '331', $2, 1, '2026-09-01', 'x', 1)`,
+          `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount) VALUES ($1, '331', $2, 1, '2026-09-01', 'x', 1)`,
           [orgId, randomUUID()],
         ),
       ),
@@ -564,7 +564,7 @@ suite('bank statement import (#326)', () => {
     expect((await preview(early, '1121.CUT')).body.feed).toBeUndefined();
     expect((await preview(early, '1121.CUT')).body.counts).toMatchObject({ new: 2, duplicate: 0 });
     // Pulled once (the cursor is set; the sandbox's pull is not run here so the account holds only the file's lines): from the day on the feed supplies.
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-4)]));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-4)]));
     const rows = [row(dayOf(-6), '100000', '', '', 'CUT-A'), row(dayOf(-4), '200000', '', '', 'CUT-B'), row(cut, '300000', '', '', 'CUT-C'), row(dayOf(-1), '400000', '', '', 'CUT-D')];
     const shown = await preview(rows, '1121.CUT');
     expect(shown.status).toBe(200);
@@ -592,8 +592,8 @@ suite('bank statement import (#326)', () => {
     await setStatus('active');
     expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, leftOut: 2 });
     // A first pull that runs later than the day set (here: the day is set in SQL to before the pull's window, as a delay across midnight would leave it) moves the day up to where the pull really starts.
-    const feedFromOf = async () => (await admin((c) => c.query<{ feed_from: string }>(`SELECT to_char(feed_from, 'YYYY-MM-DD') AS feed_from FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2`, [orgId, mapped.body.feedAccountId]))).rows[0]?.feed_from;
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
+    const feedFromOf = async () => (await admin((c) => c.query<{ feed_from: string }>(`SELECT to_char(feed_from, 'YYYY-MM-DD') AS feed_from FROM ludy_finance.bank_feed_account WHERE org_id = $1 AND id = $2`, [orgId, mapped.body.feedAccountId]))).rows[0]?.feed_from;
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
     await sync(connectionId);
     expect(await feedFromOf()).toBe(dayOf(-7));
     // The move-up is on the trail, with the day it was and the day it became.
@@ -603,12 +603,12 @@ suite('bank statement import (#326)', () => {
     const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
     expect(fed.every((l) => l.value_date >= (dayOf(-7)))).toBe(true);
     // Once the account has synced, the day cannot move earlier (the lines the feed left out are not fetched again); later, or cleared, it can.
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
     expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
     expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
     expect((await map({ feedFrom: null })).status).toBe(200);
     // Clearing the day does not open a way round the rule: with none set, a new day may not be earlier than the day the cursor has reached.
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
     // The sandbox cursor is the last day pulled, so the first day still fetched is the next one: the cursor's day itself is refused.
     expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
     expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
@@ -616,18 +616,18 @@ suite('bank statement import (#326)', () => {
     expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
     expect((await map({ feedFrom: null })).status).toBe(200);
     // A cursor that cannot be read gives no day to vouch for: the day is refused and the view says so.
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, 'not-a-cursor']));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, 'not-a-cursor']));
     expect(await map({ feedFrom: dayOf(-1) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_UNKNOWN' } });
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBeNull();
     // A Tingee connection writes its cursor as yyyyMMddHHmmss: the floor is the day after, or the day itself at midnight.
     const stampOf = (day: string, time: string) => `${day.replaceAll('-', '')}${time}`;
     await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET provider = 'bank_tingee' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '083000')]));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '083000')]));
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
     expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
     expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
     expect((await map({ feedFrom: null })).status).toBe(200);
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '000000')]));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '000000')]));
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
     // Back to the sandbox provider: the connection is only a stand-in for Tingee's cursor here, and other tests count Tingee connections.
     await admin((c) => c.query(`UPDATE ludy_kernel.channel_connection SET provider = 'bank_sandbox' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
@@ -673,7 +673,7 @@ suite('bank statement import (#326)', () => {
     expect(account.lastSyncedAt).not.toBeNull();
     // Again: the cursor is at yesterday, so nothing new; and a pull from the start again stores nothing twice.
     expect((await sync(connectionId)).stored).toBe(0);
-    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId]));
+    await admin((c) => c.query('UPDATE ludy_finance.bank_feed_account SET cursor = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId]));
     expect((await sync(connectionId)).stored).toBe(0);
     expect((await stored('1121')).length).toBe(lines.length);
     // The pull takes the mapping's account and entity, never the job's: a page for an unknown mapping is refused.
@@ -681,11 +681,11 @@ suite('bank statement import (#326)', () => {
       worker.execute('finance.bank_feed.record_pull', { feedAccountId: randomUUID(), fromCursor: null, lines: [], cursor: '2026-11-01' }, { actor: SYSTEM, orgId }),
     ).rejects.toMatchObject({ code: 'BANK_FEED_ACCOUNT_NOT_FOUND' });
     // A late sync's page, pulled from a cursor the account has moved past, never moves it back.
-    const at = (await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor)) as string;
+    const at = (await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM ludy_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor)) as string;
     await expect(
       worker.execute('finance.bank_feed.record_pull', { feedAccountId: mapped.body.feedAccountId, fromCursor: '2026-01-01', lines: [], cursor: '2026-01-31' }, { actor: SYSTEM, orgId }),
     ).rejects.toMatchObject({ code: 'BANK_FEED_CURSOR_MOVED' });
-    expect((await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor))).toBe(at);
+    expect((await admin(async (c) => (await c.query<{ cursor: string }>('SELECT cursor FROM ludy_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId])).rows[0]?.cursor))).toBe(at);
   });
 
   // #4244: why the last pull stopped is a closed kind (and a line position for a page with a line it cannot store), kept
@@ -699,7 +699,7 @@ suite('bank statement import (#326)', () => {
     expect(second.status).toBe(200);
     const view = async (id: string) => (await feed('accounts', owner)).body.find((a: { id: string }) => a.id === id);
     const stored = async (id: string) =>
-      admin(async (c) => (await c.query<{ cursor: string | null }>('SELECT cursor FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, id])).rows[0]?.cursor ?? null);
+      admin(async (c) => (await c.query<{ cursor: string | null }>('SELECT cursor FROM ludy_finance.bank_feed_account WHERE org_id = $1 AND id = $2', [orgId, id])).rows[0]?.cursor ?? null);
     const system = { actor: SYSTEM, orgId };
     expect((await view(first.body.feedAccountId)).lastPull).toBeNull();
 
@@ -782,7 +782,7 @@ suite('bank statement import (#326)', () => {
     const seen: string[] = [];
     let after: [string | null, string | null] = [null, null];
     for (let i = 0; i < 50; i++) {
-      const rows = await workerAdmin(async (c) => (await c.query<{ org_id: string; connection_id: string }>('SELECT org_id, connection_id FROM crove_finance.bank_feeds_due($1::uuid, $2::uuid, 1)', after)).rows);
+      const rows = await workerAdmin(async (c) => (await c.query<{ org_id: string; connection_id: string }>('SELECT org_id, connection_id FROM ludy_finance.bank_feeds_due($1::uuid, $2::uuid, 1)', after)).rows);
       const row = rows[0];
       if (!row) break;
       expect(row.org_id).toBe(orgId);
@@ -797,7 +797,7 @@ suite('bank statement import (#326)', () => {
           await c.query<{ role: string }>(
             `SELECT r.rolname AS role FROM pg_catalog.pg_roles r
              WHERE r.rolname = ANY (ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant', 'ludy_prober'])
-               AND pg_catalog.has_function_privilege(r.oid, 'crove_finance.bank_feeds_due(uuid, uuid, integer)', 'EXECUTE')`,
+               AND pg_catalog.has_function_privilege(r.oid, 'ludy_finance.bank_feeds_due(uuid, uuid, integer)', 'EXECUTE')`,
           )
         ).rows,
     );
@@ -814,7 +814,7 @@ suite('bank statement import (#326)', () => {
       body,
     });
   };
-  const waiting = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_feed_notice_pending')).rows[0]?.n));
+  const waiting = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.bank_feed_notice_pending')).rows[0]?.n));
   const claim = async () => {
     const url = new URL(adminUrl);
     url.username = 'ludy_worker';
@@ -822,14 +822,14 @@ suite('bank statement import (#326)', () => {
     const c = new pg.Client({ connectionString: url.toString() });
     await c.connect();
     try {
-      return (await c.query<{ org_id: string | null; connection_id: string | null; provider: string | null }>('SELECT * FROM crove_finance.bank_feed_notice_claim(100)')).rows;
+      return (await c.query<{ org_id: string | null; connection_id: string | null; provider: string | null }>('SELECT * FROM ludy_finance.bank_feed_notice_claim(100)')).rows;
     } finally {
       await c.end();
     }
   };
 
   it("refuses a notice whose signature, timestamp or shape is wrong, and stores nothing of it", async () => {
-    await admin((c) => c.query('DELETE FROM crove_finance.bank_feed_notice_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_notice_pending'));
     const refused = async (response: Promise<Response> | Response) => ({ status: (await response).status });
     expect(await refused(notice(['SBX-001'], { secret: 'another-secret-0123456789-abcdefghijklmn' }))).toEqual({ status: 401 });
     expect(await refused(notice(['SBX-001'], { timestamp: Date.now() - 11 * 60_000 }))).toEqual({ status: 401 });
@@ -848,7 +848,7 @@ suite('bank statement import (#326)', () => {
   });
 
   it('turns a verified notice into one waiting row per account, and the worker into a sync of each connection that lists it', async () => {
-    await admin((c) => c.query('DELETE FROM crove_finance.bank_feed_notice_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_notice_pending'));
     const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng có thông báo' })).body.connectionId);
     await sync(connectionId);
     const first = await notice(['SBX-001', 'SBX-777']);
@@ -871,7 +871,7 @@ suite('bank statement import (#326)', () => {
   });
 
   it('takes the notice of an org whose Finance is off off the queue and syncs nothing, then syncs again once it is on (ADR-0053, C2)', async () => {
-    await admin((c) => c.query('DELETE FROM crove_finance.bank_feed_notice_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_notice_pending'));
     const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng khi tắt Tài chính' })).body.connectionId);
     await sync(connectionId);
     // The choice is written as staff do in a fixture: the audited command is not what this test is about.
@@ -900,27 +900,27 @@ suite('bank statement import (#326)', () => {
     for (let i = 0; i < 4; i++) statuses.push((await notice(['SBX-001'], {}, limitedApp)).status);
     expect(statuses.slice(0, 2).every((s) => s === 202)).toBe(true);
     expect(statuses.slice(2)).toEqual([429, 429]);
-    await admin((c) => c.query('DELETE FROM crove_finance.bank_feed_notice_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_notice_pending'));
   });
 
   it("answers 503 when too many accounts are already waiting, and keeps the queue and its definers to the API and the worker", async () => {
-    await admin((c) => c.query(`INSERT INTO crove_finance.bank_feed_notice_pending (provider, external_account_id) SELECT 'bank_sandbox', 'backlog-' || n FROM generate_series(1, 10001) n`));
+    await admin((c) => c.query(`INSERT INTO ludy_finance.bank_feed_notice_pending (provider, external_account_id) SELECT 'bank_sandbox', 'backlog-' || n FROM generate_series(1, 10001) n`));
     expect((await notice(['SBX-001'])).status).toBe(503);
-    await admin((c) => c.query('DELETE FROM crove_finance.bank_feed_notice_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_finance.bank_feed_notice_pending'));
     const privileges = await admin(
       async (c) =>
         (
           await c.query<{ fn: string; role: string }>(
             `SELECT f AS fn, r AS role
-             FROM unnest(ARRAY['crove_finance.bank_feed_notice_enqueue(text, text[])', 'crove_finance.bank_feed_notice_claim(integer)']) f
+             FROM unnest(ARRAY['ludy_finance.bank_feed_notice_enqueue(text, text[])', 'ludy_finance.bank_feed_notice_claim(integer)']) f
              CROSS JOIN unnest(ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant', 'ludy_prober']) r
              WHERE pg_catalog.has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
           )
         ).rows,
     );
     expect(privileges).toEqual([
-      { fn: 'crove_finance.bank_feed_notice_claim(integer)', role: 'ludy_worker' },
-      { fn: 'crove_finance.bank_feed_notice_enqueue(text, text[])', role: 'ludy_app' },
+      { fn: 'ludy_finance.bank_feed_notice_claim(integer)', role: 'ludy_worker' },
+      { fn: 'ludy_finance.bank_feed_notice_enqueue(text, text[])', role: 'ludy_app' },
     ]);
     // The queue table itself is read and written by no login role.
     const url = new URL(adminUrl);
@@ -929,8 +929,8 @@ suite('bank statement import (#326)', () => {
     const apiLogin = new pg.Client({ connectionString: url.toString() });
     await apiLogin.connect();
     try {
-      await expect(apiLogin.query('SELECT * FROM crove_finance.bank_feed_notice_pending')).rejects.toMatchObject({ code: '42501' });
-      await expect(apiLogin.query(`SELECT crove_finance.bank_feed_notice_enqueue('sandbox', ARRAY['x'])`)).rejects.toMatchObject({ code: '22P02' });
+      await expect(apiLogin.query('SELECT * FROM ludy_finance.bank_feed_notice_pending')).rejects.toMatchObject({ code: '42501' });
+      await expect(apiLogin.query(`SELECT ludy_finance.bank_feed_notice_enqueue('sandbox', ARRAY['x'])`)).rejects.toMatchObject({ code: '22P02' });
     } finally {
       await apiLogin.end();
     }
@@ -949,7 +949,7 @@ suite('bank statement import (#326)', () => {
     // restrictive SELECT policy stands in for the other entity's row security. It hides that one row by its id: the row an
     // insert proposes must pass a SELECT policy too (RETURNING), so a policy on `external_account_id` would refuse the
     // insert itself.
-    await admin((c) => c.query(`CREATE POLICY crove_test_hidden_2079 ON crove_finance.bank_feed_account AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (id <> '${mapped.body.feedAccountId}'::uuid)`));
+    await admin((c) => c.query(`CREATE POLICY crove_test_hidden_2079 ON ludy_finance.bank_feed_account AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (id <> '${mapped.body.feedAccountId}'::uuid)`));
     try {
       const refused = await feed('map', owner, at('SBX-001'));
       expect(refused).toMatchObject({ status: 409, body: { code: 'BANK_FEED_ACCOUNT_MAPPED' } });
@@ -958,7 +958,7 @@ suite('bank statement import (#326)', () => {
       // Another account of the connection maps as usual.
       expect((await feed('map', owner, at('SBX-002'))).status).toBe(200);
     } finally {
-      await admin((c) => c.query('DROP POLICY IF EXISTS crove_test_hidden_2079 ON crove_finance.bank_feed_account'));
+      await admin((c) => c.query('DROP POLICY IF EXISTS crove_test_hidden_2079 ON ludy_finance.bank_feed_account'));
     }
     // Both mappings stay, and the hidden one was left as it was.
     const accounts = (await feed('accounts', owner)).body.filter((a: { connectionId: string }) => a.connectionId === connectionId);
@@ -986,7 +986,7 @@ suite('bank statement import (#326)', () => {
       row('02/09/2026', '', '11000', '11989000', `FT-${tag}-2`),
       row('03/09/2026', '', '850000', '11139000', `FT-${tag}-3`),
     ];
-    const lineCount = async () => Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n)));
+    const lineCount = async () => Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n)));
     const status = async (fileId: string) =>
       ((await rpc('files/recent', await tokenFor(owner), {})).body as Array<{ id: string; status: string; error: string | null; statement: { decidedBy?: { name: string | null; at: string } | null } | null; canReextract: boolean }>).find((f) => f.id === fileId);
     // A file stored as a ZIP, as an emailed .xlsx is, and its read recorded the way the worker records it.
@@ -1016,7 +1016,7 @@ suite('bank statement import (#326)', () => {
       connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng sao kê tệp' })).body.connectionId);
       // The account is listed with the spaces a bank prints; the file's number is its digits.
       await admin((c) =>
-        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '1988 0001 234', 'TK thử']),
+        c.query('INSERT INTO ludy_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '1988 0001 234', 'TK thử']),
       );
       const mapped = await feed('map', owner, { connectionId, externalAccountId: '1988 0001 234', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
       expect(mapped.status).toBe(200);
@@ -1183,7 +1183,7 @@ suite('bank statement import (#326)', () => {
           (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh sao kê', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]?.id as string,
       );
       await admin((c) =>
-        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '5566 7788 9900', 'TK chi nhánh']),
+        c.query('INSERT INTO ludy_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '5566 7788 9900', 'TK chi nhánh']),
       );
       expect((await feed('map', owner, { connectionId, externalAccountId: '5566 7788 9900', bankAccount: '1121', legalEntityId: branch, idempotencyKey: randomUUID() })).status).toBe(200);
       const fileId = await ingestZip();
@@ -1445,7 +1445,7 @@ suite('bank statement import (#326)', () => {
       it('refuses to map a bank feed account whose number is recorded on another bank account, and maps it to the same one', async () => {
         expect((await setNumber('1121', '7770001111')).status).toBe(200);
         await admin((c) =>
-          c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '7770001111', 'TK đã ghi số']),
+          c.query('INSERT INTO ludy_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '7770001111', 'TK đã ghi số']),
         );
         // The feed account's digits are the recorded number: they may not put it on another bank account.
         expect(await feed('map', owner, { connectionId, externalAccountId: '7770001111', bankAccount: '1121.VCB', idempotencyKey: randomUUID() })).toMatchObject({ status: 409, body: { code: 'BANK_ACCOUNT_NUMBER_TAKEN' } });
@@ -1459,7 +1459,7 @@ suite('bank statement import (#326)', () => {
         // refused for another bank account than the one the number is on.
         expect((await setNumber('1121', '7770002222')).status).toBe(200);
         await admin((c) =>
-          c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, 'SBX-7770002222', 'TK có chữ']),
+          c.query('INSERT INTO ludy_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, 'SBX-7770002222', 'TK có chữ']),
         );
         expect(await feed('map', owner, { connectionId, externalAccountId: 'SBX-7770002222', bankAccount: '1121.VCB', idempotencyKey: randomUUID() })).toMatchObject({ status: 409, body: { code: 'BANK_ACCOUNT_NUMBER_TAKEN' } });
         expect((await feed('map', owner, { connectionId, externalAccountId: 'SBX-7770002222', bankAccount: '1121', idempotencyKey: randomUUID() })).status).toBe(200);
@@ -1475,9 +1475,9 @@ suite('bank statement import (#326)', () => {
         // Fill the org to 500 by SQL (it may already hold numbers of the tests above).
         await admin((c) =>
           c.query(
-            `INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number)
+            `INSERT INTO ludy_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number)
              SELECT $1::uuid, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', (900000000000 + g)::text
-             FROM generate_series(1, 500 - (SELECT count(*)::int FROM crove_finance.bank_account_number WHERE org_id = $1)) g`,
+             FROM generate_series(1, 500 - (SELECT count(*)::int FROM ludy_finance.bank_account_number WHERE org_id = $1)) g`,
             [secondOrgId],
           ),
         );
@@ -1490,24 +1490,24 @@ suite('bank statement import (#326)', () => {
           expect((await setNumber('1121', '8880002222', owner, org)).status).toBe(200);
           expect((await numbers(owner, org)).body).toHaveLength(500);
         } finally {
-          await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND (account_number::bigint BETWEEN 900000000001 AND 900000000500 OR account_number = '8880002222' OR account_number = '8880001111')`, [secondOrgId]));
+          await admin((c) => c.query(`DELETE FROM ludy_finance.bank_account_number WHERE org_id = $1 AND (account_number::bigint BETWEEN 900000000001 AND 900000000500 OR account_number = '8880002222' OR account_number = '8880001111')`, [secondOrgId]));
         }
       });
 
       it('answers ambiguous for a number a bank feed and a recording put on two different bank accounts, and stages nothing', async () => {
         // The set command refuses this; raw rows (a mapping made after the number, say) are what the statement path guards against.
-        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));
+        await admin((c) => c.query(`INSERT INTO ludy_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));
         try {
           expect(await stage(rowsOf('AMBIG'), '19880001234')).toEqual({ outcome: 'ambiguous', accountNumber: '19880001234' });
         } finally {
-          await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
+          await admin((c) => c.query(`DELETE FROM ludy_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
         }
         // The same account named by both is one place.
-        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121.VCB', '19880001234')`, [orgId]));
+        await admin((c) => c.query(`INSERT INTO ludy_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121.VCB', '19880001234')`, [orgId]));
         try {
           expect(await stage(rowsOf('SAME'), '19880001234')).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121.VCB' } });
         } finally {
-          await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
+          await admin((c) => c.query(`DELETE FROM ludy_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
         }
       });
 
@@ -1586,7 +1586,7 @@ suite('bank statement import (#326)', () => {
       expect(first.pages).toBeGreaterThanOrEqual(1);
       expect(first.stored).toBe(2);
       const lines = await admin(async (c) =>
-        (await c.query<{ amount: string; reference: string; description: string }>(`SELECT amount::text AS amount, bank_ref AS reference, description FROM crove_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'FT26%' ORDER BY bank_ref`, [orgId])).rows,
+        (await c.query<{ amount: string; reference: string; description: string }>(`SELECT amount::text AS amount, bank_ref AS reference, description FROM ludy_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'FT26%' ORDER BY bank_ref`, [orgId])).rows,
       );
       expect(lines.map((l) => [l.reference, Number(l.amount)])).toEqual([['FT26000001', 1_500_000], ['FT26000002', -250_000]]);
       // Pulled again (the last days are read again), nothing is stored twice.
@@ -1628,7 +1628,7 @@ suite('bank statement import (#326)', () => {
       expect(await lastPull()).toMatchObject({ outcome: 'credentials' });
 
       // Nothing the provider said, and no line, is kept: only the kind, a time and a position.
-      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_feed_account WHERE org_id = $1 AND row_to_json(bank_feed_account)::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_finance.bank_feed_account WHERE org_id = $1 AND row_to_json(bank_feed_account)::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
       expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, '%0123456789%'])).rows)).toEqual([]);
 
       // The next good pull clears it.

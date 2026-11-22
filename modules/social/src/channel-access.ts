@@ -82,7 +82,7 @@ export async function refuseChannels(ctx: ScopeContext, connectionIds: Iterable<
 export async function refusePostOutside(ctx: ScopeContext, postId: string): Promise<ChannelScope> {
   const scope = await channelScope(ctx);
   if (scope === null) return scope;
-  const rows = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   if (rows.length > 0 && !rows.some((r) => scope.has(r.channel_connection_id))) throw channelNotAllowed([...new Set(rows.map((r) => r.channel_connection_id))].sort());
   return scope;
 }
@@ -92,7 +92,7 @@ export async function refusePostOutside(ctx: ScopeContext, postId: string): Prom
 export async function refusePostWholly(ctx: ScopeContext, postId: string): Promise<ChannelScope> {
   const scope = await channelScope(ctx);
   if (scope === null) return scope;
-  const rows = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   refuseOutside(
     scope,
     rows.map((r) => r.channel_connection_id),
@@ -110,14 +110,14 @@ export function connectionInScope(scope: ChannelScope, column: string): RawBuild
 export function postInScope(scope: ChannelScope, idColumn = 'p.id', orgColumn = 'p.org_id'): RawBuilder<boolean> {
   return scope === null
     ? sql<boolean>`TRUE`
-    : sql<boolean>`EXISTS (SELECT 1 FROM crove_social.post_variant sv WHERE sv.org_id = ${sql.ref(orgColumn)} AND sv.post_id = ${sql.ref(idColumn)} AND sv.channel_connection_id = ANY(${[...scope]}::uuid[]))`;
+    : sql<boolean>`EXISTS (SELECT 1 FROM ludy_social.post_variant sv WHERE sv.org_id = ${sql.ref(orgColumn)} AND sv.post_id = ${sql.ref(idColumn)} AND sv.channel_connection_id = ANY(${[...scope]}::uuid[]))`;
 }
 
 // The posts among these the caller may see, in their order.
 export async function postsInScope(ctx: ScopeContext, scope: ChannelScope, postIds: readonly string[]): Promise<string[]> {
   if (scope === null || postIds.length === 0) return [...postIds];
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select('post_id')
     .distinct()
     .where('org_id', '=', ctx.orgId)
@@ -131,7 +131,7 @@ export async function postsInScope(ctx: ScopeContext, scope: ChannelScope, postI
 // The variants among these the caller may see.
 export async function variantsInScope(ctx: ScopeContext, scope: ChannelScope, variantIds: readonly string[]): Promise<Set<string>> {
   if (variantIds.length === 0) return new Set();
-  let q = ctx.trx.selectFrom('crove_social.post_variant').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(variantIds)]);
+  let q = ctx.trx.selectFrom('ludy_social.post_variant').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(variantIds)]);
   if (scope !== null) q = q.where('channel_connection_id', 'in', [...scope]);
   return new Set((await q.execute()).map((r) => r.id));
 }
@@ -148,7 +148,7 @@ export async function usersInScope(trx: Trx, orgId: string, userIds: readonly st
   const lists = new Map<string, Set<string>>();
   for (const r of rows) lists.set(r.user_id, (lists.get(r.user_id) ?? new Set<string>()).add(r.channel_connection_id));
   const postChannels = about.postId
-    ? (await trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', orgId).where('post_id', '=', about.postId).execute()).map((v) => v.channel_connection_id)
+    ? (await trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', orgId).where('post_id', '=', about.postId).execute()).map((v) => v.channel_connection_id)
     : [];
   return userIds.filter((u) => {
     const scope = lists.get(u);
@@ -168,7 +168,7 @@ export async function postsVisibleTo(trx: Trx, orgId: string, userId: string, po
   const list = member.role === 'owner' || member.role === 'admin' ? [] : await listOf(trx, orgId, userId);
   if (list.length === 0) return [...postIds];
   const rows = await trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select('post_id')
     .distinct()
     .where('org_id', '=', orgId)

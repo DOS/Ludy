@@ -243,7 +243,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     await withAdmin(async (client) => {
       await expect(
         client.query(
-          `INSERT INTO crove_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id)
+          `INSERT INTO ludy_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id)
            VALUES ($1, $2, $3, $4)`,
           [org.orgId, projectId, a, outside],
         ),
@@ -398,7 +398,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
           )
         ).rows[0]!.id;
         await c.query(
-          `INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by)
+          `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by)
            VALUES ($1, $2, $3, $4)`,
           [org.orgId, projectId, tId, owner.userId],
         );
@@ -497,7 +497,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
           [org.orgId, id, `Chain ${i}`, defaultEntityId],
         );
         await c.query(
-          `INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by)
+          `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by)
            VALUES ($1, $2, $3, $4)`,
           [org.orgId, capProjectId, id, owner.userId],
         );
@@ -505,7 +505,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
       const blockers = capTaskIds.slice(0, PROJECT_DEPENDENCIES_MAX);
       const blockeds = capTaskIds.slice(1, PROJECT_DEPENDENCIES_MAX + 1);
       await c.query(
-        `INSERT INTO crove_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id)
+        `INSERT INTO ludy_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id)
          SELECT $1, $2, b.blocker, b.blocked
            FROM unnest($3::uuid[], $4::uuid[]) AS b(blocker, blocked)`,
         [org.orgId, capProjectId, blockers, blockeds],
@@ -629,7 +629,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     const todayAfter = await query<Array<{ id: string }>>(owner.userId, org.orgId, 'projects.today', {});
     expect(todayAfter.some((i) => i.id === `bottleneck:${blocker}`)).toBe(false);
 
-    // Offboarding export & org_purge cover crove_projects.task_dependency.
+    // Offboarding export & org_purge cover ludy_projects.task_dependency.
     expect(EXPORT_TABLE_NAMES).toContain('projects.task_dependency');
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, org.orgId, {
@@ -663,7 +663,7 @@ suite('project task dependencies on PostgreSQL (#2601)', () => {
     expect(purged).toMatchObject({ kind: 'purged', orgId: org.orgId });
 
     const left = await withAdmin(async (c) =>
-      Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_projects.task_dependency WHERE org_id = $1`, [org.orgId])).rows[0]!.n),
+      Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_projects.task_dependency WHERE org_id = $1`, [org.orgId])).rows[0]!.n),
     );
     expect(left).toBe(0);
   });

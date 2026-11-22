@@ -51,7 +51,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
 
   type Delivery = { id: string; type: string; status: string; body: Record<string, unknown> | null; attempts: number; meeting_id: string | null };
   const deliveries = async (meetingId?: string) =>
-    (await sqlAdmin<Delivery>(`SELECT id, type, status, body, attempts, meeting_id FROM crove_meetings.hook_delivery WHERE org_id = $1 ${meetingId ? 'AND meeting_id = $2' : ''} ORDER BY created_at, id`, meetingId ? [orgId, meetingId] : [orgId])).rows;
+    (await sqlAdmin<Delivery>(`SELECT id, type, status, body, attempts, meeting_id FROM ludy_meetings.hook_delivery WHERE org_id = $1 ${meetingId ? 'AND meeting_id = $2' : ''} ORDER BY created_at, id`, meetingId ? [orgId, meetingId] : [orgId])).rows;
   const setSwitch = (on: boolean) => exec('owner', 'meetings.hooks.switch.set', { on });
   const setHook = (who: string, fields: string[], url = URL1, enabled = true) => exec<{ created: boolean }>(who, 'meetings.hook.set', { url, fields, enabled, credential: CREDENTIAL });
 
@@ -59,7 +59,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
   async function seedPublishable(recorder: string, title = 'Họp giao ban tuần'): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $4::text, 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3::uuid, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder], title],
     );
@@ -67,7 +67,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     await exec(recorder, 'meetings.summary.save', { meetingId, summary: 'Chốt kế hoạch tháng 12.', decisions: ['Tăng ngân sách quảng cáo 10%'] });
     for (const [title2, who, when, date] of [['Gửi báo giá cho khách', 'Lan', 'thứ sáu', '2026-11-13'], ['Kiểm kho', '', '', null]] as const) {
       await sqlAdmin(
-        `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, when_drafted, when_parsed, stage, status, tainted) VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', 'suggested', false)`,
+        `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, when_drafted, when_parsed, stage, status, tainted) VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', 'suggested', false)`,
         [orgId, randomUUID(), meetingId, title2, who, when, date],
       );
     }
@@ -144,7 +144,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     // Another member sees their own (none), not the recorder's; the owner neither.
     expect((await query<{ hook: unknown }>('attendee', 'meetings.hook.get', {})).hook).toBeNull();
     expect((await query<{ hook: unknown }>('owner', 'meetings.hook.get', {})).hook).toBeNull();
-    expect(await sqlAdmin(`SELECT count(*)::int AS n FROM crove_meetings.member_hook WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.n)).toBe(1);
+    expect(await sqlAdmin(`SELECT count(*)::int AS n FROM ludy_meetings.member_hook WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.n)).toBe(1);
     // The audit rows hold the host and the fields, never the address or the sealed envelope.
     const audits = await sqlAdmin<{ payload: unknown }>(`SELECT payload FROM ludy_kernel.audit_event WHERE org_id = $1 AND action IN ('meetings.hook.set')`, [orgId]).catch(() => ({ rows: [] as { payload: unknown }[] }));
     for (const row of audits.rows) {
@@ -171,7 +171,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     expect(body.data).toMatchObject({ meeting_id: meetingId, length_seconds: 1800, title: 'Họp giao ban tuần', summary: 'Chốt kế hoạch tháng 12.' });
     expect(JSON.stringify(d?.body)).not.toContain('BÍ MẬT');
     // The event id is the published result's id.
-    const result = await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
+    const result = await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
     expect(d?.id).toBe(result.rows[0]?.id);
 
     // All four fields: the decisions and the action items (text, owner as said, due date).
@@ -249,15 +249,15 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     await sweep();
     expect(mine()).toBe(1);
     // Handed over but no job ever took it up (attempts still 0) for three minutes: handed over again.
-    await sqlAdmin(`UPDATE crove_meetings.hook_delivery SET handed_at = now() - interval '4 minutes' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+    await sqlAdmin(`UPDATE ludy_meetings.hook_delivery SET handed_at = now() - interval '4 minutes' WHERE org_id = $1 AND id = $2`, [orgId, id]);
     await sweep();
     expect(mine()).toBe(2);
     // Once a job has tried it (a retry waits in the queue), the sweep leaves it alone until it is eight hours old.
     await sysExec('meetings.hook.record', { id, outcome: 'retry', code: 503 });
-    await sqlAdmin(`UPDATE crove_meetings.hook_delivery SET handed_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+    await sqlAdmin(`UPDATE ludy_meetings.hook_delivery SET handed_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2`, [orgId, id]);
     await sweep();
     expect(mine()).toBe(2);
-    await sqlAdmin(`UPDATE crove_meetings.hook_delivery SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+    await sqlAdmin(`UPDATE ludy_meetings.hook_delivery SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, id]);
     const done = await sweep();
     expect(done.expired).toBeGreaterThanOrEqual(1);
     expect((await deliveries(meetingId))[0]).toMatchObject({ status: 'failed', body: null });
@@ -266,12 +266,12 @@ suite("a member's minutes webhook (A6, #3164)", () => {
 
   it('refuses a body with a key that could carry a transcript, audio, video or attendee contact, whoever writes it', async () => {
     const meetingId = await seedPublishable('recorder', 'Họp thử CHECK');
-    const hook = await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.member_hook WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]);
+    const hook = await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.member_hook WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]);
     const hookId = hook.rows[0]?.id as string;
     const insert = (data: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
       const id = randomUUID();
       const body = { id, type: 'meeting.result_published', created_at: '2026-11-14T03:00:00.000Z', org: orgId, ...extra, data: { meeting_id: meetingId, published_at: '2026-11-14T03:00:00.000Z', started_at: '2026-11-10T03:00:00.000Z', length_seconds: 1800, ...data } };
-      return sqlAdmin(`INSERT INTO crove_meetings.hook_delivery (org_id, id, hook_id, meeting_id, type, body) VALUES ($1, $2, $3, $4, 'meeting.result_published', $5::jsonb)`, [orgId, id, hookId, meetingId, JSON.stringify(body)]).then(
+      return sqlAdmin(`INSERT INTO ludy_meetings.hook_delivery (org_id, id, hook_id, meeting_id, type, body) VALUES ($1, $2, $3, $4, 'meeting.result_published', $5::jsonb)`, [orgId, id, hookId, meetingId, JSON.stringify(body)]).then(
         () => null,
         (e: { code?: string }) => e.code ?? 'ERR',
       );
@@ -282,13 +282,13 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     expect(await insert({ summary: 'a'.repeat(8001) })).toBe('23514');
     expect(await insert({ action_items: [{ text: 'Việc', owner: null, due: null, email: 'a@b.c' }] })).toBe('23514');
     // A settled delivery holds no body, and a queued one must hold one.
-    expect(await sqlAdmin(`UPDATE crove_meetings.hook_delivery SET status = 'sent' WHERE org_id = $1 AND hook_id = $2 AND status = 'queued' AND body IS NOT NULL`, [orgId, hookId]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR')).toBe('23514');
-    await sqlAdmin(`DELETE FROM crove_meetings.hook_delivery WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+    expect(await sqlAdmin(`UPDATE ludy_meetings.hook_delivery SET status = 'sent' WHERE org_id = $1 AND hook_id = $2 AND status = 'queued' AND body IS NOT NULL`, [orgId, hookId]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR')).toBe('23514');
+    await sqlAdmin(`DELETE FROM ludy_meetings.hook_delivery WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
   });
 
   it('accepts exactly what the builder makes: the CHECK takes every shape the builder produces', async () => {
     const meetingId = await seedPublishable('recorder', 'Họp thử builder');
-    const hookId = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.member_hook WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder])).rows[0]?.id as string;
+    const hookId = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.member_hook WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder])).rows[0]?.id as string;
     const at = '2026-11-14T03:00:00.000Z';
     const data = { meeting_id: meetingId, published_at: at, started_at: '2026-11-10T03:00:00.000Z', length_seconds: 1800 };
     const shapes: Array<{ name: string; type: 'ping' | 'meeting.result_published'; data: Record<string, unknown> }> = [
@@ -309,13 +309,13 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     for (const shape of shapes) {
       const id = randomUUID();
       const text = meetingHookBody({ id, type: shape.type, created_at: at, org: orgId, data: shape.data });
-      const refused = await sqlAdmin(`INSERT INTO crove_meetings.hook_delivery (org_id, id, hook_id, meeting_id, type, body) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`, [orgId, id, hookId, shape.type === 'ping' ? null : meetingId, shape.type, text]).then(
+      const refused = await sqlAdmin(`INSERT INTO ludy_meetings.hook_delivery (org_id, id, hook_id, meeting_id, type, body) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`, [orgId, id, hookId, shape.type === 'ping' ? null : meetingId, shape.type, text]).then(
         () => null,
         (e: { code?: string; message?: string }) => `${e.code}: ${e.message}`,
       );
       expect(refused, `the CHECK takes what the builder made for ${shape.name}`).toBeNull();
     }
-    await sqlAdmin(`DELETE FROM crove_meetings.hook_delivery WHERE org_id = $1 AND hook_id = $2`, [orgId, hookId]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.hook_delivery WHERE org_id = $1 AND hook_id = $2`, [orgId, hookId]);
   });
 
   it('drops a queued event, and wipes its body, when the hook is turned off, the owner turns the feature off, or the text of its meeting changes', async () => {
@@ -341,13 +341,13 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     await setSwitch(true);
     // The text of the meeting changes (a personal-data erasure redacts a summary, an action item or a title): the queued event is dropped.
     const d = await queuedFor('Họp đổi nội dung');
-    await sqlAdmin(`UPDATE crove_meetings.meeting_result SET summary = 'đã xóa' WHERE org_id = $1 AND meeting_id = $2`, [orgId, d]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting_result SET summary = 'đã xóa' WHERE org_id = $1 AND meeting_id = $2`, [orgId, d]);
     expect(await state(d)).toMatchObject({ status: 'dropped', body: null });
     const e = await queuedFor('Họp đổi việc');
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET title = 'đã xóa' WHERE org_id = $1 AND meeting_id = $2`, [orgId, e]);
+    await sqlAdmin(`UPDATE ludy_meetings.action_item SET title = 'đã xóa' WHERE org_id = $1 AND meeting_id = $2`, [orgId, e]);
     expect(await state(e)).toMatchObject({ status: 'dropped', body: null });
     const f = await queuedFor('Họp đổi tên');
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET title = 'đã xóa' WHERE org_id = $1 AND id = $2`, [orgId, f]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET title = 'đã xóa' WHERE org_id = $1 AND id = $2`, [orgId, f]);
     expect(await state(f)).toMatchObject({ status: 'dropped', body: null });
   });
 
@@ -355,7 +355,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     await setHook('recorder', ['title', 'summary', 'decisions', 'action_items']);
     // A meeting longer than a day publishes, and its length goes out as null (the body carries at most a day).
     const long = await seedPublishable('recorder', 'Họp rất dài');
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET length_seconds = 200000 WHERE org_id = $1 AND id = $2`, [orgId, long]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET length_seconds = 200000 WHERE org_id = $1 AND id = $2`, [orgId, long]);
     await publish('recorder', long);
     const body = (await deliveries(long))[0]?.body as { data: { length_seconds: number | null } };
     expect(body.data.length_seconds).toBeNull();
@@ -363,10 +363,10 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     const keep = await seedPublishable('recorder', 'Họp giữ nguyên');
     await publish('recorder', keep);
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, when_drafted, stage, status, tainted) VALUES ($1, $2, $3, 'Việc nháp mới', '', '', 'draft', 'suggested', false)`,
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, when_drafted, stage, status, tainted) VALUES ($1, $2, $3, 'Việc nháp mới', '', '', 'draft', 'suggested', false)`,
       [orgId, randomUUID(), keep],
     );
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET title = 'Việc nháp đã sửa' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, keep]);
+    await sqlAdmin(`UPDATE ludy_meetings.action_item SET title = 'Việc nháp đã sửa' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, keep]);
     expect((await deliveries(keep))[0]).toMatchObject({ status: 'queued' });
     expect((await deliveries(keep))[0]?.body).not.toBeNull();
     // The same address and the same or more fields keep what waits; a new address or a field taken away drops it and wipes the body.
@@ -387,8 +387,8 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     await setHook('recorder', ['title', 'summary', 'decisions', 'action_items']);
     const meetingId = await seedPublishable('recorder', 'Họp emoji');
     // An action item of 299 characters and one emoji (300 code points, 301 UTF-16 units): the cut at 300 units would leave half the emoji.
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET title = $3 WHERE org_id = $1 AND meeting_id = $2 AND title = 'Kiểm kho'`, [orgId, meetingId, `${'a'.repeat(299)}\u{1F600}`]);
-    await sqlAdmin(`UPDATE crove_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId, `${'b'.repeat(7999)}\u{1F600}`]);
+    await sqlAdmin(`UPDATE ludy_meetings.action_item SET title = $3 WHERE org_id = $1 AND meeting_id = $2 AND title = 'Kiểm kho'`, [orgId, meetingId, `${'a'.repeat(299)}\u{1F600}`]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId, `${'b'.repeat(7999)}\u{1F600}`]);
     await publish('recorder', meetingId);
     const body = (await deliveries(meetingId))[0]?.body as { data: { summary: string; action_items: Array<{ text: string }> } };
     expect(body.data.summary).toBe('b'.repeat(7999));
@@ -402,7 +402,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     const m = await seedPublishable('recorder', 'Họp bị xóa');
     await publish('recorder', m);
     expect((await deliveries(m)).length).toBe(1);
-    await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, m]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, m]);
     expect(await deliveries(m)).toEqual([]);
     // A disabled member: the worker's read of the address answers nothing, so the next attempt drops the delivery.
     const k = await seedPublishable('recorder', 'Họp khi vô hiệu');
@@ -416,7 +416,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     expect(await sysQuery('meetings.hook.target', { hookId })).not.toBeNull();
     // A member who leaves the org takes the hook and its deliveries with them.
     await sqlAdmin(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]);
-    expect(await sqlAdmin(`SELECT count(*)::int AS n FROM crove_meetings.member_hook WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.n)).toBe(0);
+    expect(await sqlAdmin(`SELECT count(*)::int AS n FROM ludy_meetings.member_hook WHERE org_id = $1`, [orgId]).then((r) => r.rows[0]?.n)).toBe(0);
     expect(await deliveries(k)).toEqual([]);
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.recorder]);
   });
@@ -437,7 +437,7 @@ suite("a member's minutes webhook (A6, #3164)", () => {
   });
 
   it('is deleted with the org: the purge reaches both tables', async () => {
-    const tables = await sqlAdmin<{ n: number }>(`SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_meetings.hook_delivery' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_meetings.member_hook' AS n`);
+    const tables = await sqlAdmin<{ n: number }>(`SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_meetings.hook_delivery' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_meetings.member_hook' AS n`);
     expect(tables.rows[0]?.n).toBe(true);
   });
 });

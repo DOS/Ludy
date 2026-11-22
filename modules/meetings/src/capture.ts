@@ -2,7 +2,7 @@
 // One meeting, one live capture (ADR-0055 slice 1, issue #4123). When a client starts to record a call (the browser extension, or the app's recorder), meetings.meeting.create opens a capture here, in the same
 // transaction as the meeting, and a second open capture of the same call is refused: 409 CAPTURE_ALREADY_RUNNING, saying which kind of client holds the call and since when, never a person and never the other
 // meeting, and the refusal rolls the meeting back, so a refused start leaves nothing. "The same call" is the member's own calendar event or a meeting key (a hash of the org, the platform and the platform's
-// meeting id, read from a join address that is never stored); a capture that names neither is recorded and conflicts with nothing. The rule lives in the database (crove_meetings.capture_open and its unique indexes over open rows): code
+// meeting id, read from a join address that is never stored); a capture that names neither is recorded and conflicts with nothing. The rule lives in the database (ludy_meetings.capture_open and its unique indexes over open rows): code
 // here reads what the client says of its call, asks the definer, and turns its answer into the refusal.
 //
 // A capture is kept alive by the client's heartbeat (meetings.capture.heartbeat, every 30 seconds) and is over when it has not been heard from for 90 seconds, which the next start of the same call reads: no job
@@ -47,7 +47,7 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
   if (start?.agendaId !== undefined) {
     // The member's own event only (their row security shows no other); an id that is not theirs, or is gone, is left out rather than refused.
     const { rows } = await sql<{ id: string; join_url: string | null }>`
-      SELECT id, join_url FROM crove_meetings.calendar_agenda WHERE org_id = ${ctx.orgId}::uuid AND id = ${start.agendaId}::uuid`.execute(ctx.trx);
+      SELECT id, join_url FROM ludy_meetings.calendar_agenda WHERE org_id = ${ctx.orgId}::uuid AND id = ${start.agendaId}::uuid`.execute(ctx.trx);
     const event = rows[0];
     if (event) {
       agendaId = event.id;
@@ -57,7 +57,7 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
   }
   const key = joinUrl === null ? null : captureKeyOf(ctx.orgId, joinUrl);
   const { rows: held } = await sql<{ kind: CaptureKind; since: Date | string }>`
-    SELECT kind, since FROM crove_meetings.capture_open(${meetingId}::uuid, ${kind}::text, ${agendaId}::uuid, ${key}::text)`.execute(ctx.trx);
+    SELECT kind, since FROM ludy_meetings.capture_open(${meetingId}::uuid, ${kind}::text, ${agendaId}::uuid, ${key}::text)`.execute(ctx.trx);
   const holder = held[0];
   if (holder) {
     const details: CaptureRunning = { kind: holder.kind, since: new Date(holder.since).toISOString() };
@@ -72,7 +72,7 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
  */
 export async function endCapture(ctx: CommandContext, meetingId: string, reason: CaptureEndedReason): Promise<void> {
   await sql`
-    UPDATE crove_meetings.capture_session
+    UPDATE ludy_meetings.capture_session
        SET ended_at = COALESCE(ended_at, ${ctx.now}::timestamptz), ended_reason = ${reason}::text
      WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid AND (ended_at IS NULL OR ended_reason = 'lost')`.execute(ctx.trx);
 }
@@ -89,7 +89,7 @@ export const meetingCaptureHeartbeat = defineCommand({
   handler: async (ctx: CommandContext, input): Promise<CaptureHeartbeatDone> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['recorder_user_id', 'extension_token_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -103,7 +103,7 @@ export const meetingCaptureHeartbeat = defineCommand({
       ctx.audit({ meetingId: input.meetingId, ended: true });
       return zCaptureHeartbeatDone.parse({ open: false });
     }
-    const { rows } = await sql<{ open: boolean }>`SELECT crove_meetings.capture_beat(${input.meetingId}::uuid) AS open`.execute(ctx.trx);
+    const { rows } = await sql<{ open: boolean }>`SELECT ludy_meetings.capture_beat(${input.meetingId}::uuid) AS open`.execute(ctx.trx);
     const open = rows[0]?.open === true;
     ctx.audit({ meetingId: input.meetingId, open });
     return zCaptureHeartbeatDone.parse({ open });

@@ -37,12 +37,12 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     }
   };
   const lines = (...seconds: number[]) => seconds.map((s) => ({ startSeconds: s, endSeconds: s + 5, speakerLabel: 'Hà', text: `Dòng ${s}` }));
-  const seconds = async (meetingId: string) => (await sqlAdmin<{ s: number }>(`SELECT start_seconds::int AS s FROM crove_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds`, [meetingId])).rows.map((r) => r.s);
+  const seconds = async (meetingId: string) => (await sqlAdmin<{ s: number }>(`SELECT start_seconds::int AS s FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds`, [meetingId])).rows.map((r) => r.s);
 
   async function seedMeeting(): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T04:00:00Z', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users.recorder],
     );
@@ -90,7 +90,7 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     await holder.connect();
     try {
       await holder.query('BEGIN');
-      await holder.query(`SELECT id FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE`, [orgId, meetingId]);
+      await holder.query(`SELECT id FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE`, [orgId, meetingId]);
       let done = false;
       const store = exec('recorder', 'meetings.transcript.draft_store', { meetingId, segments: lines(0, 40) }).then((r) => {
         done = true;
@@ -115,12 +115,12 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     await holder.connect();
     try {
       await holder.query('BEGIN');
-      await holder.query(`SELECT id FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE`, [orgId, meetingId]);
+      await holder.query(`SELECT id FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE`, [orgId, meetingId]);
       const store = exec('recorder', 'meetings.transcript.draft_store', { meetingId, segments: lines(0, 40) }).then(() => 'stored', (error: unknown) => (error as { code?: string }).code ?? 'ERR');
       await new Promise((resolve) => setTimeout(resolve, 400));
       // The meeting goes while the replacement waits (its lines and rows with it).
-      await holder.query(`DELETE FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
-      await holder.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+      await holder.query(`DELETE FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+      await holder.query(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
       await holder.query('COMMIT');
       expect(await store).toBe('MEETING_NOT_FOUND');
     } finally {

@@ -26,13 +26,13 @@ const rowsQuery = defineQuery({
   name: 'test.agenda.rows',
   input: z.object({}),
   access: ['owner', 'admin', 'member', 'viewer'],
-  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('crove_meetings.calendar_agenda').select('id').where('org_id', '=', ctx.orgId).execute()).length,
+  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('ludy_meetings.calendar_agenda').select('id').where('org_id', '=', ctx.orgId).execute()).length,
 });
 const systemRowsQuery = defineQuery({
   name: 'test.agenda.system_rows',
   input: z.object({}),
   access: 'system',
-  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('crove_meetings.calendar_agenda').select('id').where('org_id', '=', ctx.orgId).execute()).length,
+  handler: async (ctx): Promise<number> => (await ctx.trx.selectFrom('ludy_meetings.calendar_agenda').select('id').where('org_id', '=', ctx.orgId).execute()).length,
 });
 
 suite("the member's own calendar meetings (B1, #3165)", () => {
@@ -91,17 +91,17 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     ...over,
   });
   const sweep = (connectionId: string, events: unknown[], fromMinutes = -24 * 60) => worker.execute<{ written: number }>('meetings.agenda.replace', { connectionId, from: iso(fromMinutes), events }, { actor: SYSTEM, orgId });
-  const cached = async (connectionId: string) => (await sqlAdmin<{ external_id: string; meeting_id: string | null }>('SELECT external_id, meeting_id FROM crove_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2 ORDER BY starts_at', [orgId, connectionId])).rows;
+  const cached = async (connectionId: string) => (await sqlAdmin<{ external_id: string; meeting_id: string | null }>('SELECT external_id, meeting_id FROM ludy_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2 ORDER BY starts_at', [orgId, connectionId])).rows;
   async function meeting(recorder: string, startMinutes: number, lengthMinutes = 60): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Cuộc họp đã ghi', 'vi', $4, $5, $6, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
       [orgId, id, users[recorder], iso(startMinutes), iso(startMinutes + lengthMinutes), lengthMinutes * 60],
     );
     return id;
   }
-  const meetingCount = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.meeting WHERE org_id = $1', [orgId])).rows[0]?.n);
+  const meetingCount = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.meeting WHERE org_id = $1', [orgId])).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -134,7 +134,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   beforeEach(async () => {
     await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE org_id = $1', [orgId]);
     // The card hides an event a meeting of the member covers, so meetings of earlier tests would hide this test's events.
-    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1', [orgId]);
   });
 
   afterAll(async () => {
@@ -181,7 +181,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await sweep(c, [event('e1', 30), event('e2', 120, 30, { joinUrl: 'https://meet.google.com/abc-defg-hij', invitees: 5 }), event('old', -200)])).toEqual({ connectionId: c, written: 3 });
     expect((await cached(c)).map((r) => r.external_id).sort()).toEqual(['e1', 'e2', 'old']);
     const m = await meeting('lan', 30);
-    const e1 = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'e1'", [c])).rows[0]?.id as string;
+    const e1 = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'e1'", [c])).rows[0]?.id as string;
     await exec('lan', 'meetings.agenda.link', { agendaId: e1, meetingId: m });
     // Next sweep: e2 moved, e1 is gone from the calendar (but linked, so kept), "old" ended before the window (unlinked, so dropped), a new one appears; a repeated id is written once.
     expect(await sweep(c, [event('e2', 150), event('e3', 300), event('e3', 300)])).toEqual({ connectionId: c, written: 2 });
@@ -220,12 +220,12 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   });
 
   it('keeps only what the table allows: no address, description or attachment column, a join address that is https, a bounded title', async () => {
-    const columns = (await sqlAdmin<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_meetings' AND table_name = 'calendar_agenda' ORDER BY column_name")).rows.map((r) => r.column_name);
+    const columns = (await sqlAdmin<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ludy_meetings' AND table_name = 'calendar_agenda' ORDER BY column_name")).rows.map((r) => r.column_name);
     expect(columns).toEqual(['connection_id', 'ends_at', 'external_id', 'id', 'invitee_count', 'join_url', 'meeting_id', 'org_id', 'series_id', 'starts_at', 'time_zone', 'title', 'updated_at', 'user_id']);
     const c = await connection('nam');
     await on('nam', c);
     await sweep(c, [event('long', 30, 60, { title: 'x'.repeat(200), joinUrl: 'http://zoom.us/j/1', invitees: 1000 }), event('mail', 90, 30, { title: 'khach@congty.example gọi 0912345678' })]);
-    const rows = (await sqlAdmin<{ external_id: string; join_url: string | null; invitee_count: number; title: string }>('SELECT external_id, join_url, invitee_count, title FROM crove_meetings.calendar_agenda WHERE connection_id = $1 ORDER BY external_id', [c])).rows;
+    const rows = (await sqlAdmin<{ external_id: string; join_url: string | null; invitee_count: number; title: string }>('SELECT external_id, join_url, invitee_count, title FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 ORDER BY external_id', [c])).rows;
     // A join address that is not https is dropped; the invitee count is bounded.
     expect(rows.find((r) => r.external_id === 'long')).toMatchObject({ join_url: null, invitee_count: 1000 });
     // The command's input refuses an absurd count and a title over the cap before the definer sees it.
@@ -249,7 +249,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await worker.query<number>('test.agenda.system_rows', {}, { actor: SYSTEM, orgId })).toBe(0);
     for (const who of ['nam', 'owner', 'admin']) expect((await query<AgendaList>(who, 'meetings.agenda.list')).events, who).toEqual([]);
     // Nobody else can switch it off, link it or clear it either.
-    const row = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE external_id = 'private-1'")).rows[0]?.id as string;
+    const row = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE external_id = 'private-1'")).rows[0]?.id as string;
     const m = await meeting('nam', 30);
     expect(await refuses(exec('nam', 'meetings.agenda.link', { agendaId: row, meetingId: m }))).toBe('AGENDA_NOT_FOUND');
     expect(await exec('nam', 'meetings.agenda.clear', { connectionId: c })).toMatchObject({ cleared: 0 });
@@ -261,7 +261,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     await on('lan', c);
     await sweep(c, [event('a', 30), event('b', 90)]);
     const m = await meeting('lan', 30);
-    const a = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'a'", [c])).rows[0]?.id as string;
+    const a = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'a'", [c])).rows[0]?.id as string;
     await exec('lan', 'meetings.agenda.link', { agendaId: a, meetingId: m });
     await off('lan', c);
     expect(await cached(c)).toEqual([]);
@@ -275,7 +275,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     await sweep(c, [event('d', 30)]);
     expect((await cached(c)).length).toBe(1);
     await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE id = $1', [c]);
-    expect(await sqlAdmin('SELECT 1 FROM crove_meetings.calendar_agenda WHERE connection_id = $1', [c]).then((r) => r.rowCount)).toBe(0);
+    expect(await sqlAdmin('SELECT 1 FROM ludy_meetings.calendar_agenda WHERE connection_id = $1', [c]).then((r) => r.rowCount)).toBe(0);
   });
 
   it('hides the rows of a connection on its way out or whose grant lost the switch, before anything deletes them', async () => {
@@ -345,7 +345,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     await sweep(c, [event('in', 104), event('far', 300)]);
     expect((await suggest(m)).suggestion).toMatchObject({ title: 'Họp in' });
     // Linked: the answer is the link, not a suggestion; another member's meeting is refused.
-    const row = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'in'", [c])).rows[0]?.id as string;
+    const row = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'in'", [c])).rows[0]?.id as string;
     expect(await exec('lan', 'meetings.agenda.link', { agendaId: row, meetingId: m })).toEqual({ agendaId: row, meetingId: m });
     expect(await suggest(m)).toMatchObject({ linked: { title: 'Họp in', meetingId: m }, suggestion: null });
     const other = await meeting('nam', 30);
@@ -356,7 +356,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     const c = await connection('nam');
     await on('nam', c);
     await sweep(c, [event('x', 30), event('y', 60)]);
-    const ids = (await sqlAdmin<{ id: string; external_id: string }>('SELECT id, external_id FROM crove_meetings.calendar_agenda WHERE connection_id = $1', [c])).rows;
+    const ids = (await sqlAdmin<{ id: string; external_id: string }>('SELECT id, external_id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1', [c])).rows;
     const x = ids.find((r) => r.external_id === 'x')?.id as string;
     const y = ids.find((r) => r.external_id === 'y')?.id as string;
     const m = await meeting('nam', 30);
@@ -371,7 +371,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await exec('nam', 'meetings.agenda.link', { agendaId: x, meetingId: null })).toEqual({ agendaId: x, meetingId: null });
     expect(await exec('nam', 'meetings.agenda.link', { agendaId: y, meetingId: m })).toMatchObject({ meetingId: m });
     // The row goes with the meeting.
-    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, m]);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, m]);
     expect((await cached(c)).map((r) => r.external_id).sort()).toEqual(['x']);
   });
 
@@ -386,7 +386,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     await query('lan', 'meetings.agenda.suggest', { meetingId: m });
     expect(await meetingCount()).toBe(during);
     expect(during).toBe(before + 1);
-    const recorded = (await sqlAdmin<{ n: string }>("SELECT count(*)::text AS n FROM crove_meetings.audio_segment WHERE org_id = $1", [orgId])).rows[0]?.n;
+    const recorded = (await sqlAdmin<{ n: string }>("SELECT count(*)::text AS n FROM ludy_meetings.audio_segment WHERE org_id = $1", [orgId])).rows[0]?.n;
     expect(Number(recorded)).toBe(0);
   });
 
@@ -403,7 +403,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         await client.query('BEGIN');
         if (context === 'system') await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
         if (context === 'user') await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [users.lan, 'aal1']).catch(() => undefined);
-        await client.query('SELECT crove_meetings.agenda_replace($1::uuid, now(), $2::jsonb)', [c, JSON.stringify(rows)]);
+        await client.query('SELECT ludy_meetings.agenda_replace($1::uuid, now(), $2::jsonb)', [c, JSON.stringify(rows)]);
         await client.query('COMMIT');
         return 'ok';
       } catch (error: unknown) {
@@ -453,7 +453,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         event('e', 9),
         event('recorded', 1),
       ]);
-      const recordedRow = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'recorded'", [c])).rows[0]?.id as string;
+      const recordedRow = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'recorded'", [c])).rows[0]?.id as string;
       // Linked to a meeting that ran far from every event here, so only the link (not the recording's time) hides it.
       await exec('lan', 'meetings.agenda.link', { agendaId: recordedRow, meetingId: await meeting('lan', 600) });
       const t = await token('lan', ['agenda']);

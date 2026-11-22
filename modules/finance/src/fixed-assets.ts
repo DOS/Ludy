@@ -65,7 +65,7 @@ interface AssetRow {
 // The register of one legal entity (#1280), or every entity the caller sees when none is named (a lookup by id).
 function assetRows(ctx: QueryContext, legalEntityId?: string) {
   const rows = ctx.trx
-    .selectFrom('crove_finance.fixed_asset')
+    .selectFrom('ludy_finance.fixed_asset')
     .select([
       'id',
       'kind',
@@ -114,15 +114,15 @@ export const createFixedAsset = defineCommand({
     if (source) {
       // A live purchase of the org and entity whose line was posted to this asset account, for this cost.
       const line = await ctx.trx
-        .selectFrom('crove_finance.purchase_line as l')
-        .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
+        .selectFrom('ludy_finance.purchase_line as l')
+        .innerJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
         .select(['l.amount', 'l.debit_account', 'd.direction'])
         .where('l.org_id', '=', ctx.orgId)
         .where('d.legal_entity_id', '=', legalEntityId)
         .where('l.document_id', '=', source.documentId)
         .where('l.line_no', '=', source.lineNo)
         .where(({ not, exists, selectFrom }) =>
-          not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+          not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
         )
         .executeTakeFirst();
       if (!line || line.direction !== 'purchase') throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy dòng hóa đơn mua vào này');
@@ -131,7 +131,7 @@ export const createFixedAsset = defineCommand({
       }
     }
     const row = await ctx.trx
-      .insertInto('crove_finance.fixed_asset')
+      .insertInto('ludy_finance.fixed_asset')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -177,7 +177,7 @@ export const endFixedAsset = defineCommand({
     }
     // A month already posted still counts: the schedule cannot end before it.
     const posted = await ctx.trx
-      .selectFrom('crove_finance.depreciation_line')
+      .selectFrom('ludy_finance.depreciation_line')
       .select(sql<string | null>`pg_catalog.to_char(pg_catalog.max(month), 'YYYY-MM-DD')`.as('last'))
       .where('org_id', '=', ctx.orgId)
       .where('asset_id', '=', asset.id)
@@ -186,7 +186,7 @@ export const endFixedAsset = defineCommand({
       throw new DomainError('ASSET_END_BEFORE_POSTED', 409, `Tài sản đã khấu hao đến tháng ${monthLabel(monthOf(posted.last))}; hãy chọn tháng dừng từ tháng đó`);
     }
     await ctx.trx
-      .updateTable('crove_finance.fixed_asset')
+      .updateTable('ludy_finance.fixed_asset')
       .set({ ended_month: ended, end_reason: input.reason, ended_by: ctx.actor.userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', asset.id)
@@ -207,7 +207,7 @@ export const fixedAssetsQuery = defineQuery({
     const assets = await assetRows(ctx, legalEntityId).orderBy('start_month').orderBy('created_at').orderBy('id').limit(5000).execute();
     if (assets.length === 0) return [];
     const posted = await ctx.trx
-      .selectFrom('crove_finance.depreciation_line')
+      .selectFrom('ludy_finance.depreciation_line')
       .select(['asset_id'])
       .select((eb) => [eb.fn.sum<string>('amount').as('posted'), eb.fn.countAll<string>().as('months'), sql<string>`pg_catalog.to_char(pg_catalog.max(month), 'YYYY-MM-DD')`.as('last')])
       .where('org_id', '=', ctx.orgId)
@@ -255,7 +255,7 @@ async function buildDepreciation(ctx: QueryContext, month: string, legalEntityId
   const due = assets.map((a) => ({ asset: a, amount: monthAmount(scheduled(a), firstDay(month)) })).filter((d) => !money(d.amount).isZero());
   if (due.length === 0) throw new DomainError('DEPRECIATION_EMPTY', 422, `Tháng ${monthLabel(month)} không có tài sản nào cần khấu hao hay phân bổ`);
   const done = await ctx.trx
-    .selectFrom('crove_finance.depreciation_line')
+    .selectFrom('ludy_finance.depreciation_line')
     .select('asset_id')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -327,7 +327,7 @@ export const recordDepreciation = defineCommand({
     const month = payload.depreciationMonth;
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
     // One depreciation of the org and entity at a time: a second approval waits here, then finds the month posted.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.depreciation:${ctx.orgId}:${legalEntityId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_finance.depreciation:${ctx.orgId}:${legalEntityId}`}, 0))`.execute(ctx.trx);
     // The month is built again from the register; an entry added, changed or ended since makes the proposal stale.
     const current = await buildDepreciation(ctx, month, legalEntityId);
     if (!sameProposal(current, payload)) {
@@ -335,7 +335,7 @@ export const recordDepreciation = defineCommand({
     }
     const result = await postJournalVoucher(ctx, { ...payload, legalEntityId });
     await ctx.trx
-      .insertInto('crove_finance.depreciation_line')
+      .insertInto('ludy_finance.depreciation_line')
       .values(payload.assets.map((a) => ({ org_id: ctx.orgId, asset_id: a.assetId, month: firstDay(month), amount: a.amount, entry_id: result.journalEntryId })))
       .execute();
     return result;

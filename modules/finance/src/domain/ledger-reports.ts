@@ -1,7 +1,7 @@
 // Ledger reports for a period (issue #321), as pure functions over posted journal lines:
 // - the trial balance (bảng cân đối số phát sinh, form F01-DNN of Circular 133/2016/TT-BTC): per account the opening
 //   balance, the period's debits and credits and the closing balance, each sub-account rolled up into its parent
-//   along the chart (crove_finance.account.parent_code);
+//   along the chart (ludy_finance.account.parent_code);
 // - the general ledger of an account (sổ cái, sổ chi tiết tài khoản): the opening balance, every line of the period on
 //   the account or its sub-accounts with the accounts on the other side of the entry, and the running balance;
 // - receivables and payables per party (sổ chi tiết thanh toán với người mua, người bán: 131 and 331): opening

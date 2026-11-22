@@ -36,7 +36,7 @@ const rowsQuery = defineQuery({
   input: z.object({ meetingId: z.string() }),
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx, input): Promise<number> => {
-    const rows = await ctx.trx.selectFrom('crove_meetings.translation').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('kind', '=', 'transcript').execute();
+    const rows = await ctx.trx.selectFrom('ludy_meetings.translation').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('kind', '=', 'transcript').execute();
     return rows.length;
   },
 });
@@ -122,11 +122,11 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     const recorder = opts.recorder ?? 'recorder';
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '60 minutes', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
     return meetingId;
   }
   async function seedLines(meetingId: string, stage: 'draft' | 'published', texts: string[]): Promise<string[]> {
@@ -135,7 +135,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
       const id = randomUUID();
       ids.push(id);
       await sqlAdmin(
-        `INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, $4, $5, 'Người nói 1', $6, $7)`,
+        `INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, $4, $5, 'Người nói 1', $6, $7)`,
         [orgId, id, meetingId, i * 25, i * 25 + 24, text, stage],
       );
     }
@@ -253,7 +253,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(mine.parts.every((p) => p.state === 'ok' && !p.stale && p.text.startsWith('English: '))).toBe(true);
     expect(await status('attendee', meetingId)).toMatchObject({ translated: 144, remaining: 0, chunksDone: chunksTotal, stale: 0 });
     // Private to the asker: one row, tainted, named after its last run; nobody else reads it (an owner, an admin, the recorder, a viewer included) and nothing became a task.
-    const row = await sqlAdmin<{ tainted: boolean; kind: string; member_user_id: string }>('SELECT tainted, kind, member_user_id FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]);
+    const row = await sqlAdmin<{ tainted: boolean; kind: string; member_user_id: string }>('SELECT tainted, kind, member_user_id FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]);
     expect(row.rows).toEqual([{ tainted: true, kind: 'transcript', member_user_id: users.attendee }]);
     const counts: Record<string, number> = {};
     for (const who of ['attendee', 'recorder', 'owner', 'admin', 'outsider', 'viewer']) counts[who] = await query<number>(who, 'test.translate_transcript.rows', { meetingId });
@@ -325,7 +325,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(seen).toEqual(['Biên bản đã chốt: giữ giá 1.250.000.']);
     // An org-wide meeting is read by a member of full scope without being listed (the same rule as the transcript's row security); one for attendees only is not read by one not listed.
     const orgWide = await seedMeeting();
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET visibility = 'org' WHERE org_id = $1 AND id = $2`, [orgId, orgWide]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET visibility = 'org' WHERE org_id = $1 AND id = $2`, [orgId, orgWide]);
     await seedLines(orgWide, 'published', ['Cuộc họp toàn công ty: ngân sách 5.000.000.']);
     expect(await batch('outsider', orgWide)).toMatchObject({ state: 'ready', translated: 1 });
     expect(await refuses(batch('outsider', meetingId))).toBe('MEETING_NOT_FOUND');
@@ -405,26 +405,26 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
       [false, 'English: Dòng ba: giá 300.000.'],
     ]);
     // The hash a part carries is the line's text, so a part of an old text can never read as current.
-    const row = await sqlAdmin<{ body: Array<{ k: string; h: string }> }>('SELECT body FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = $3', [orgId, meetingId, 'transcript']);
+    const row = await sqlAdmin<{ body: Array<{ k: string; h: string }> }>('SELECT body FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = $3', [orgId, meetingId, 'transcript']);
     expect(row.rows[0]?.body.find((p) => p.k === ids[1])?.h).toBe(lineHash('Dòng hai: giá 250.000.'));
     // A new draft (a transcription run copied, or the recorder's own store) replaces the lines: the translations of the draft are deleted with them.
     await exec('recorder', 'meetings.transcript.draft_store', { meetingId, segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: 'Người nói 1', text: 'Bản mới hoàn toàn.' }] });
-    expect(await sqlAdmin('SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]).then((r) => r.rowCount)).toBe(0);
+    expect(await sqlAdmin('SELECT 1 FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]).then((r) => r.rowCount)).toBe(0);
     // And with the meeting: a translation of a published transcript goes when its meeting does (the foreign key, the table's own cascade).
     const published = await seedMeeting();
     await seedLines(published, 'published', ['Dòng công khai: số 42.']);
     await batch('attendee', published);
-    expect(await sqlAdmin('SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, published]).then((r) => r.rowCount)).toBe(1);
-    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, published]);
-    expect(await sqlAdmin('SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, published]).then((r) => r.rowCount)).toBe(0);
+    expect(await sqlAdmin('SELECT 1 FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, published]).then((r) => r.rowCount)).toBe(1);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, published]);
+    expect(await sqlAdmin('SELECT 1 FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, published]).then((r) => r.rowCount)).toBe(0);
     // A summary translation's own triggers leave the transcript's parts alone: publishing a summary drops the summary translation of its stage, never a transcript one.
     const mixed = await seedMeeting();
     await seedLines(mixed, 'published', ['Dòng để dịch: số 5.']);
     await batch('attendee', mixed);
     await exec('recorder', 'meetings.summary.save', { meetingId: mixed, summary: 'Tóm tắt.', decisions: [] });
     await exec('recorder', 'meetings.result.publish', { meetingId: mixed, confirmed: true });
-    await sqlAdmin('DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, mixed]);
-    expect(await sqlAdmin("SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, mixed]).then((r) => r.rowCount)).toBe(1);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, mixed]);
+    expect(await sqlAdmin("SELECT 1 FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, mixed]).then((r) => r.rowCount)).toBe(1);
   }, 120_000);
 
   it('no member\'s context can edit a published line, so no other member\'s translation can hold a corrected one; a draft is read, translated and corrected by its recorder alone (#3485)', async () => {
@@ -432,7 +432,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     const [line] = await seedLines(meetingId, 'published', ['Dòng công khai: giá 100.000.']);
     await batch('attendee', meetingId);
     await batch('recorder', meetingId);
-    expect(await sqlAdmin("SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, meetingId]).then((r) => r.rowCount)).toBe(2);
+    expect(await sqlAdmin("SELECT 1 FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, meetingId]).then((r) => r.rowCount)).toBe(2);
     // Every member's own context, the recorder's included: the update policy is for the recorder's drafts, so a published line is not theirs to change (0 rows, not an error).
     const adminUrl2 = new URL(adminUrl);
     adminUrl2.username = 'ludy_app';
@@ -443,21 +443,21 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
       try {
         await c.query('BEGIN');
         await enterUser(c, users[who] as string, orgId);
-        const changed = await c.query('UPDATE crove_meetings.transcript_segment SET text = $1 WHERE org_id = $2 AND id = $3', ['Dòng đã sửa: giá 150.000.', orgId, line]);
+        const changed = await c.query('UPDATE ludy_meetings.transcript_segment SET text = $1 WHERE org_id = $2 AND id = $3', ['Dòng đã sửa: giá 150.000.', orgId, line]);
         expect(changed.rowCount, who).toBe(0);
       } finally {
         await c.query('ROLLBACK').catch(() => undefined);
         await c.end();
       }
     }
-    expect((await sqlAdmin<{ text: string }>('SELECT text FROM crove_meetings.transcript_segment WHERE id = $1', [line])).rows[0]?.text).toBe('Dòng công khai: giá 100.000.');
+    expect((await sqlAdmin<{ text: string }>('SELECT text FROM ludy_meetings.transcript_segment WHERE id = $1', [line])).rows[0]?.text).toBe('Dòng công khai: giá 100.000.');
     // And the draft's translation is the recorder's alone (the draft is read by nobody else), so a corrected draft line leaves no other member's translation holding its old words.
     const drafted = await seedMeeting();
     const [draftLine] = await seedLines(drafted, 'draft', ['Bản nháp: giá 200.000.']);
     await batch('recorder', drafted);
     expect(await refuses(batch('attendee', drafted))).not.toBeNull();
     await exec('recorder', 'meetings.transcript.correct', { segmentId: draftLine, text: 'Bản nháp: giá 250.000.' });
-    expect(await sqlAdmin('SELECT member_user_id FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, drafted]).then((r) => r.rows.map((x) => x.member_user_id))).toEqual([users.recorder]);
+    expect(await sqlAdmin('SELECT member_user_id FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, drafted]).then((r) => r.rows.map((x) => x.member_user_id))).toEqual([users.recorder]);
   }, 120_000);
 
   it('a member has one translation run at a time, can stop it, and the summary translation does not cut it off', async () => {
@@ -502,7 +502,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
 
   it('a member who leaves while the model works keeps nothing: the result is refused and the run ends', async () => {
     const meetingId = await seedMeeting();
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.leaver]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.leaver]);
     await seedLines(meetingId, 'published', ['Dòng một: số 1.', 'Dòng hai: số 2.']);
     const leaving: ModelPort = {
       generate: async (who, prompt) => {
@@ -512,7 +512,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
       },
     };
     expect(await batch('leaver', meetingId, leaving)).toMatchObject({ state: 'failed', translated: 0 });
-    const kept = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+    const kept = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
     expect(kept.rows[0]?.n).toBe('0');
     const row = await sqlAdmin<{ status: string; body: string | null }>(`SELECT v.status, v.body FROM ludy_kernel.member_vy_result v WHERE v.org_id = $1 AND v.subject_id = $2 AND v.member_user_id = $3`, [orgId, meetingId, users.leaver]);
     expect(row.rows[0]?.status).not.toBe('ready');

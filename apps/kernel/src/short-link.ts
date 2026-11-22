@@ -15,7 +15,7 @@ export const isAutomated = (userAgent: string | undefined) => !userAgent || AUTO
 export async function shortLinkTarget(runtime: Runtime, code: string, userAgent: string | undefined): Promise<string | null> {
   if (!CODE.test(code)) return null;
   const target = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ target: string | null }>`SELECT crove_social.short_link_hit(${code}, ${!isAutomated(userAgent)}) AS target`.execute(db);
+    const { rows } = await sql<{ target: string | null }>`SELECT ludy_social.short_link_hit(${code}, ${!isAutomated(userAgent)}) AS target`.execute(db);
     return rows[0]?.target ?? null;
   });
   // Only a web link leaves through the redirect, whatever the row holds (the table checks it too).

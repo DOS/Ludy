@@ -82,7 +82,7 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const app = new URL(adminUrl);
@@ -106,7 +106,7 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
   });
 
   const item = (o: Org, code: string, entity = o.household) =>
-    admin(async (a) => (await a.query<{ id: string }>("INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, $3, $3, 'kg', '156', 'goods') RETURNING id", [o.orgId, entity, code])).rows[0]?.id as string);
+    admin(async (a) => (await a.query<{ id: string }>("INSERT INTO ludy_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, $3, $3, 'kg', '156', 'goods') RETURNING id", [o.orgId, entity, code])).rows[0]?.id as string);
   // A purchase document of the entity with one line, the stock move it makes (quantity in, valued at the line's amount) and its journal entry, all in one transaction: a purchase document commits only together
   // with its own entry (check_purchase_document_entry).
   const purchase = (o: Org, itemId: string, date: string, quantity: number, amount: number, number: string, entity = o.household) =>
@@ -116,19 +116,19 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
         const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id", [o.orgId])).rows[0]?.id;
         const document = (
           await a.query<{ id: string }>(
-            "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', $3, $4, $5, 0, $5, 'purchase', $6) RETURNING id",
+            "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', $3, $4, $5, 0, $5, 'purchase', $6) RETURNING id",
             [o.orgId, party, number, date, amount, entity],
           )
         ).rows[0]?.id as string;
-        await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Hàng', $3, '156')", [o.orgId, document, amount]);
-        await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, $5, 'document_line', $6, 1, 1)", [o.orgId, entity, itemId, date, quantity, document]);
+        await a.query("INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Hàng', $3, '156')", [o.orgId, document, amount]);
+        await a.query("INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, $5, 'document_line', $6, 1, 1)", [o.orgId, entity, itemId, date, quantity, document]);
         const entry = (
           await a.query<{ id: string }>(
-            "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id",
+            "INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id",
             [o.orgId, date, document, entity],
           )
         ).rows[0]?.id;
-        await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', $3, 0), ($1, $2, 2, '331', 0, $3)", [o.orgId, entry, amount]);
+        await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', $3, 0), ($1, $2, 2, '331', 0, $3)", [o.orgId, entry, amount]);
         await a.query('COMMIT');
       } catch (error) {
         await a.query('ROLLBACK');
@@ -136,7 +136,7 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
       }
     });
   const manual = (o: Org, itemId: string, date: string, quantity: number, entity = o.household) =>
-    admin((a) => a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, $5, 'manual')", [o.orgId, entity, itemId, date, quantity]));
+    admin((a) => a.query("INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, $5, 'manual')", [o.orgId, entity, itemId, date, quantity]));
 
 
   it('gives each item its opening, moves, totals and closing, equal to the stock report, and leaves another entity out', async () => {
@@ -189,9 +189,9 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
     await manual(o, rice, '2026-09-10', -4);
     const entity = o.household;
     await admin(async (a) => {
-      const period = (await a.query<{ id: string }>('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, DATE \'2026-09-01\', 0) RETURNING id', [o.orgId, entity])).rows[0]?.id;
+      const period = (await a.query<{ id: string }>('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, DATE \'2026-09-01\', 0) RETURNING id', [o.orgId, entity])).rows[0]?.id;
       await a.query(
-        `INSERT INTO crove_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
+        `INSERT INTO ludy_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
          VALUES ($1, $2, $3, 0, 0, 10, 1000000, 4, 400000, 6, 600000, 100000)`,
         [o.orgId, period, rice],
       );
@@ -210,7 +210,7 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
     const empty = await s2d(o, '2026-09');
     expect(empty.items).toEqual([]);
     expect(empty.totals).toEqual({ openingValue: '0', inValue: '0', outValue: '0', closingValue: '0' });
-    await admin((a) => a.query("INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2d', '2026.2', DATE '2026-12-01', 'Sổ chi tiết hàng hóa (S2d-HKD)', ARRAY['income']::text[], 'test', 'confirmed')"));
+    await admin((a) => a.query("INSERT INTO ludy_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2d', '2026.2', DATE '2026-12-01', 'Sổ chi tiết hàng hóa (S2d-HKD)', ARRAY['income']::text[], 'test', 'confirmed')"));
     expect((await s2d(o, '2026-11')).commentary).toBe(true);
     const december = await s2d(o, '2026-12');
     expect(december.commentary).toBe(false);

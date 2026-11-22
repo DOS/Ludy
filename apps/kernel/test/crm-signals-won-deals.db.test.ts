@@ -54,7 +54,7 @@ suite('crm.signals.won_deals on PostgreSQL (#2967)', () => {
     const moveTo = async (deal: Deal, stage: string, lostReason?: string) =>
       exec<Deal>(owner, 'crm.deal.move', { dealId: deal.id, version: deal.version, stageId: (await stageNamed(stage)).id, ...(lostReason ? { lostReason } : {}) });
     // Sets the instant the deal was won (a superuser's statement: the command stamps now).
-    const wonAt = (dealId: string, at: string) => rows('UPDATE crove_crm.deal SET closed_at = $3::timestamptz WHERE org_id = $1 AND id = $2', [orgId, dealId, at]);
+    const wonAt = (dealId: string, at: string) => rows('UPDATE ludy_crm.deal SET closed_at = $3::timestamptz WHERE org_id = $1 AND id = $2', [orgId, dealId, at]);
     return { orgId, owner, member, viewer, exec, signals, party, stageNamed, newDeal, moveTo, wonAt };
   }
 
@@ -131,7 +131,7 @@ suite('crm.signals.won_deals on PostgreSQL (#2967)', () => {
     const p = await o.party('A');
     const stage = await o.stageNamed('Thắng');
     await rows(
-      `INSERT INTO crove_crm.deal (org_id, id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at)
+      `INSERT INTO ludy_crm.deal (org_id, id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at)
        SELECT $1, gen_random_uuid(), $2, 't', 1, $3, 'a' || lpad(g::text, 6, '0'), $4, $4, now() - make_interval(mins => g) FROM generate_series(1, 502) g`,
       [o.orgId, p, stage.id, o.owner],
     );

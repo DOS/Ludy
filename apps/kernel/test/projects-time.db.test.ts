@@ -275,7 +275,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     // Simulate a timer forgotten for 20 days -> clamp cleanly to 14,400 min on stop.
     await withAdmin(async (c) => {
       await c.query(
-        `UPDATE crove_projects.time_entry SET started_at = now() - interval '20 days' WHERE org_id = $1 AND id = $2`,
+        `UPDATE ludy_projects.time_entry SET started_at = now() - interval '20 days' WHERE org_id = $1 AND id = $2`,
         [org.orgId, switched.entry.id],
       );
     });
@@ -416,7 +416,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
         )
       ).rows[0]!.id;
       await c.query(
-        `INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by)
+        `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by)
          VALUES ($1, $2, $3, $4)`,
         [org.orgId, projB, taskLeB, owner.userId],
       );
@@ -457,7 +457,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_projects.time_entry (org_id, project_id, user_id, started_at, ended_at, duration_minutes)
+          `INSERT INTO ludy_projects.time_entry (org_id, project_id, user_id, started_at, ended_at, duration_minutes)
            VALUES ($1, $2, $3, now() - interval '30 minutes', now(), 30)`,
           [org.orgId, templateId, owner.userId],
         ),
@@ -590,7 +590,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
       projectId: legacyArchProj,
     });
     await withAdmin(async (c) => {
-      await c.query(`UPDATE crove_projects.project SET status = 'archived' WHERE org_id = $1 AND id = $2`, [org.orgId, legacyArchProj]);
+      await c.query(`UPDATE ludy_projects.project SET status = 'archived' WHERE org_id = $1 AND id = $2`, [org.orgId, legacyArchProj]);
     });
     const switchedOutOfArchived = await exec<ProjectTimeStartResult>(memberA.userId, org.orgId, 'projects.time.start', {
       projectId: projA,
@@ -612,7 +612,7 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
         )
       ).rows[0]!.id;
       await c.query(
-        `INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by)
+        `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by)
          VALUES ($1, $2, $3, $4)`,
         [org.orgId, projA, movableTaskId, owner.userId],
       );
@@ -647,33 +647,33 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
 
     // 9. Zero auto-posting: Accounting journals/invoices and HR payroll tables remain untouched.
     await withAdmin(async (c) => {
-      for (const tbl of ['crove_finance.journal_entry', 'crove_hr.payroll_run']) {
+      for (const tbl of ['ludy_finance.journal_entry', 'ludy_hr.payroll_run']) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);
         expect(rows[0]?.n, tbl).toBe('0');
       }
     });
 
-    // 10. PDPL personal-data find and erase on crove_projects.time_entry.note.
+    // 10. PDPL personal-data find and erase on ludy_projects.time_entry.note.
     const foundPd = await rt.execute<PersonalDataResult>(
       'kernel.personal_data.find',
       { value: '0901234567' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(foundPd.matches.some((m) => m.column === 'crove_projects.time_entry.note' && m.rowId === log20.entry.id)).toBe(true);
+    expect(foundPd.matches.some((m) => m.column === 'ludy_projects.time_entry.note' && m.rowId === log20.entry.id)).toBe(true);
 
     const erasedPd = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: '0901234567' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erasedPd.erased.find((e) => e.column === 'crove_projects.time_entry.note')?.rows).toBe(1);
+    expect(erasedPd.erased.find((e) => e.column === 'ludy_projects.time_entry.note')?.rows).toBe(1);
 
     const afterErase = await query<ProjectTimeSummaryResult>(owner.userId, org.orgId, 'projects.time.summary', {
       projectId: projA,
     });
     expect(afterErase.entries.find((e) => e.id === log20.entry.id)?.note).toContain('[đã xóa]');
 
-    // 11. Org export + org_purge deletes crove_projects.time_entry cleanly ahead of task & project.
+    // 11. Org export + org_purge deletes ludy_projects.time_entry cleanly ahead of task & project.
     expect(EXPORT_TABLE_NAMES).toContain('projects.time_entry');
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exp = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, org.orgId, { now: () => generatedAt });
@@ -704,10 +704,10 @@ suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
 
     await withAdmin(async (c) => {
       for (const tbl of [
-        'crove_projects.time_entry',
-        'crove_projects.project_task',
-        'crove_projects.project_member',
-        'crove_projects.project',
+        'ludy_projects.time_entry',
+        'ludy_projects.project_task',
+        'ludy_projects.project_member',
+        'ludy_projects.project',
         'ludy_kernel.task',
       ]) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);

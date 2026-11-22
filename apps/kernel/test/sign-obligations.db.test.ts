@@ -722,13 +722,13 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
       expect(home.items.some((i) => i.id.includes(hrEnvId))).toBe(false);
     }
 
-    // Direct tenant SQL as non-creator member sees 0 rows on crove_sign.envelope_obligation due to RESTRICTIVE hr_contract_envelope_access RLS!
+    // Direct tenant SQL as non-creator member sees 0 rows on ludy_sign.envelope_obligation due to RESTRICTIVE hr_contract_envelope_access RLS!
     const tenantClient = await pool.connect();
     try {
       await tenantClient.query('BEGIN');
       await tenantClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [otherMember.userId, org.orgId]);
       const rlsRows = await tenantClient.query(
-        'SELECT id FROM crove_sign.envelope_obligation WHERE org_id = $1 AND envelope_id = $2',
+        'SELECT id FROM ludy_sign.envelope_obligation WHERE org_id = $1 AND envelope_id = $2',
         [org.orgId, hrEnvId],
       );
       expect(rlsRows.rows).toEqual([]);
@@ -745,7 +745,7 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     }
   });
 
-  it('respects org_app_on MODULE_OFF gating and purges crove_sign.envelope_obligation cleanly on org_purge', async () => {
+  it('respects org_app_on MODULE_OFF gating and purges ludy_sign.envelope_obligation cleanly on org_purge', async () => {
     const purgeEnvId = await createEnvelopeFor(owner, {
       title: 'Purgeable Contract',
       completed: true,
@@ -784,7 +784,7 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     expect(homeOff.failed).toBe(0);
     expect(homeOff.items.filter((i) => i.app === 'sign')).toEqual([]);
 
-    // Re-enable sign and verify org_purge deletes crove_sign.envelope_obligation cleanly.
+    // Re-enable sign and verify org_purge deletes ludy_sign.envelope_obligation cleanly.
     await runtime.execute(
       'kernel.org.set_app',
       { module: 'sign', enabled: true },
@@ -821,7 +821,7 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     expect(purgeCode, purgeLogs.join('\n')).toBe(0);
 
     const leftRows = await admin(async (c) =>
-      (await c.query('SELECT id FROM crove_sign.envelope_obligation WHERE org_id = $1', [purgeOrg.orgId])).rows,
+      (await c.query('SELECT id FROM ludy_sign.envelope_obligation WHERE org_id = $1', [purgeOrg.orgId])).rows,
     );
     expect(leftRows).toEqual([]);
   });

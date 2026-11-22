@@ -13,11 +13,11 @@ import { sql, type RawBuilder, type SqlBool } from 'kysely';
 export function reversedSource(voucher: string, source: string): RawBuilder<SqlBool> {
   const col = (name: string) => sql.ref(`${voucher}.${name}`);
   return sql<SqlBool>`(
-    EXISTS (SELECT 1 FROM crove_finance.journal_entry o WHERE o.org_id = ${col('org_id')} AND o.source_type = ${source} AND o.source_id = ${col('id')} AND o.reverses_entry_id IS NULL)
+    EXISTS (SELECT 1 FROM ludy_finance.journal_entry o WHERE o.org_id = ${col('org_id')} AND o.source_type = ${source} AND o.source_id = ${col('id')} AND o.reverses_entry_id IS NULL)
     AND NOT EXISTS (
-      SELECT 1 FROM crove_finance.journal_entry o
+      SELECT 1 FROM ludy_finance.journal_entry o
       WHERE o.org_id = ${col('org_id')} AND o.source_type = ${source} AND o.source_id = ${col('id')} AND o.reverses_entry_id IS NULL
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)))`;
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)))`;
 }
 
 // True for the entry `alias` when its source has no later revision. The unique key (org_id, source_type, source_id,
@@ -25,7 +25,7 @@ export function reversedSource(voucher: string, source: string): RawBuilder<SqlB
 export function latestRevision(alias: string): RawBuilder<SqlBool> {
   const column = (name: string) => sql.ref(`${alias}.${name}`);
   return sql<SqlBool>`NOT EXISTS (
-    SELECT 1 FROM crove_finance.journal_entry AS later
+    SELECT 1 FROM ludy_finance.journal_entry AS later
      WHERE later.org_id = ${column('org_id')} AND later.source_type = ${column('source_type')}
        AND later.source_id = ${column('source_id')} AND later.source_revision > ${column('source_revision')})`;
 }

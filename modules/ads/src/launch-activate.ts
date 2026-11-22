@@ -2,12 +2,12 @@
 // Retry and activation of a launch (W2-4b, issue #2296, ADR-0043 points 4 and 5, plan docs/plan/ads-write.md sections 3.6 and 9). Three commands:
 //
 // - `ads.launch.retry` (an owner's or an admin's): a launch that needs attention runs again. The move itself is the system's, so this stamps the request through a definer
-//   (crove_ads.launch_request_retry) and writes `ads.launch.queued`; `ads.launch.begin` takes the request with the move and counts the attempt.
+//   (ludy_ads.launch_request_retry) and writes `ads.launch.queued`; `ads.launch.begin` takes the request with the move and counts the attempt.
 // - `ads.activate.begin` and `ads.activate.record` (the system's, the activation job's): the last steps of the approved launch, which switch on what the launch made, one
 //   object per platform call, each ad first, then the ad set, then the campaign LAST (nothing delivers until the campaign is on, so a failure half way spends nothing). The
 //   activation CONTINUES the launch's own `ads.campaign.launch` approval (ruling of 2026-11-04): there is no second approval, and the authority is the database, which refuses
 //   the move of the launch to live unless the stamped approved proposal, the recorded objects, the settled activations, the switches and the flight all hold
-//   (crove_ads.launch_guard). A resume of something stopped or paused is not this: it stays a separate approval (W4).
+//   (ludy_ads.launch_guard). A resume of something stopped or paused is not this: it stays a separate approval (W4).
 //
 // BEFORE EACH CALL, `begin` re-checks everything under the org's lock (the lock every stop and every approval takes, so a stop and this begin queue): the stop conditions (the
 // org's switch, the account's, launches blocked, the write connection active), the plan hash, that the flight has begun and not ended in the account's own zone, and the caps
@@ -60,7 +60,7 @@ export const adsLaunchRetry = defineCommand({
     await lockedSetting(ctx);
     const launch = await lockedLaunch(ctx, input.launchId.toLowerCase());
     if (launch.state !== 'needs_attention') throw new DomainError('ADS_LAUNCH_NOT_RETRYABLE', 409, 'Chỉ chạy lại được lần chạy đang chờ người xử lý');
-    const { rows } = await sql<{ requested: boolean }>`SELECT crove_ads.launch_request_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS requested`.execute(ctx.trx);
+    const { rows } = await sql<{ requested: boolean }>`SELECT ludy_ads.launch_request_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS requested`.execute(ctx.trx);
     const requested = rows[0]?.requested === true;
     await ctx.emit('ads.launch.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
     ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, draftId: launch.draft_id, attempt: launch.attempt, stopReason: launch.stop_reason, requested });
@@ -236,7 +236,7 @@ export const adsActivateBegin = defineCommand({
     }
 
     // Which object is next: each ad, then the ad set, then the campaign last; the first whose activation has not succeeded.
-    const objects = await ctx.trx.selectFrom('crove_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
+    const objects = await ctx.trx.selectFrom('ludy_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
     const idOf = new Map(objects.map((o) => [o.slot, o.external_id]));
     const done = doneSlots(rows);
     const slots = activationSlots(plan.variants.length);
@@ -250,7 +250,7 @@ export const adsActivateBegin = defineCommand({
     if (!next) {
       // Every object is on: the launch is live. The database holds the rule in this very statement (the approval, the objects, the settled activations, the switches and the
       // flight); asked first, so a launch it would refuse is stopped and paused here, never left half way with every object on.
-      const { rows: gap } = await sql<{ p: string | null }>`SELECT crove_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
+      const { rows: gap } = await sql<{ p: string | null }>`SELECT ludy_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
       if (gap[0]?.p != null) {
         const stopped = await stopRunningLaunch(ctx, 'activation_unconfirmed', launch.id);
         for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
@@ -364,7 +364,7 @@ export const adsActivateRecord = defineCommand({
       if (slots.length === 0 || !slots.every((s) => done.has(s))) return { recorded: true, state: 'launching', step: launch.step, next: 'continue' };
       const setting = await currentSetting(ctx);
       // The database's own rule, asked before the move (a refusal would throw and leave every object on): a launch it would refuse is left for the next begin, which stops and pauses it.
-      const { rows: gap } = await sql<{ p: string | null }>`SELECT crove_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
+      const { rows: gap } = await sql<{ p: string | null }>`SELECT ludy_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
       if (gap[0]?.p != null) return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };
       const today = found.account.time_zone && zoneKnown(found.account.time_zone) ? todayIn(found.account.time_zone, ctx.now) : null;
       if (stopConditionOf(setting, found.account, found.connection) || today === null || today < launch.start_text || today > launch.end_text) return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };

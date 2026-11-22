@@ -97,7 +97,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
       const channel = randomUUID();
       await admin(async (c) => {
         await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
-        await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
+        await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
     const o = { orgId, owner, admin: adminUser, entityId: entity, seriesId: '' };
@@ -120,7 +120,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
   const draftRow = async (o: Org, id: string) =>
     (
       await rows<DraftRow>(
-        'SELECT state, provider_ref, issued_number, authority_code, signed_file_id, pdf_file_id, error_code, idempotency_key, next_check_at, check_attempts, submitted_at FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2',
+        'SELECT state, provider_ref, issued_number, authority_code, signed_file_id, pdf_file_id, error_code, idempotency_key, next_check_at, check_attempts, submitted_at FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2',
         [o.orgId, id],
       )
     )[0] as DraftRow;
@@ -225,8 +225,8 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     (
       await rows<{ correction_kind: string | null; corrects_document_id: string | null; corrected_number: string | null; total: string; voided: boolean }>(
         `SELECT d.correction_kind, d.corrects_document_id, d.corrected_number, d.total::text AS total,
-                EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id) AS voided
-           FROM crove_finance.purchase_document d WHERE d.org_id = $1 AND d.id = $2`,
+                EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id) AS voided
+           FROM ludy_finance.purchase_document d WHERE d.org_id = $1 AND d.id = $2`,
         [o.orgId, id],
       )
     )[0];
@@ -248,7 +248,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     } finally {
       useCorrectionReasonCodes(REASONS);
     }
-    expect(await rows('SELECT 1 FROM crove_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id IS NOT NULL', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id IS NOT NULL', [o.orgId])).toHaveLength(0);
   });
 
   it('asks an individual buyer for no agreement, and a business buyer for the signed file linked to the correction', async () => {
@@ -353,7 +353,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(await document(o, original.documentId)).toMatchObject({ voided: false });
     expect((await draftRow(o, original.draftId)).state).toBe('issued');
     // Still a correction of the same invoice, and still the only one open.
-    const kept = await rows<{ correction_kind: string; original_draft_id: string }>('SELECT correction_kind, original_draft_id FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, copy.id]);
+    const kept = await rows<{ correction_kind: string; original_draft_id: string }>('SELECT correction_kind, original_draft_id FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, copy.id]);
     expect(kept).toEqual([{ correction_kind: 'replacement', original_draft_id: original.draftId }]);
     expect(await refusal(start(o, original.draftId, 'replacement', { agreementFileId: file }))).toBe('EINVOICE_CORRECTION_OPEN');
   });
@@ -365,13 +365,13 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const copy = await start(o, original.draftId, 'replacement', { agreementFileId: file });
     await approve(o, copy.id);
     // Once sent, the kind, the original, the reason and the agreement cannot move, even for the database owner's ordinary statement.
-    await expect(rows('UPDATE crove_finance.einvoice_draft SET reason_code = $3 WHERE org_id = $1 AND id = $2', [o.orgId, copy.id, '2'])).rejects.toThrow();
-    await expect(rows("UPDATE crove_finance.einvoice_draft SET correction_kind = NULL, original_draft_id = NULL, reason_code = NULL WHERE org_id = $1 AND id = $2", [o.orgId, copy.id])).rejects.toThrow();
+    await expect(rows('UPDATE ludy_finance.einvoice_draft SET reason_code = $3 WHERE org_id = $1 AND id = $2', [o.orgId, copy.id, '2'])).rejects.toThrow();
+    await expect(rows("UPDATE ludy_finance.einvoice_draft SET correction_kind = NULL, original_draft_id = NULL, reason_code = NULL WHERE org_id = $1 AND id = $2", [o.orgId, copy.id])).rejects.toThrow();
   });
   it('puts the correction and the buyer identity in the content hash only when set, so an ordinary draft keeps the hash it had', async () => {
     const o = await org();
     const p = sandbox();
-    const hash = async (id: string) => (await rows<{ h: string }>('SELECT crove_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, id]))[0]?.h;
+    const hash = async (id: string) => (await rows<{ h: string }>('SELECT ludy_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, id]))[0]?.h;
     // An ordinary draft with no sale date, no identity and no correction hashes as its base terms alone: the formula of 20261123050000, computed here from the stored rows.
     const ordinary = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
     const base = (
@@ -381,8 +381,8 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
             COALESCE(d.buyer_tax_code, ''), COALESCE(d.buyer_name, ''), COALESCE(d.buyer_address, ''), COALESCE(d.buyer_email, ''),
             d.subtotal::text, d.vat_amount::text, d.total::text,
             COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(l.line_no::text, l.description, COALESCE(l.unit, ''), l.quantity::text, l.unit_price::text, l.amount::text, l.vat_rate, l.vat_amount::text) ORDER BY l.line_no)
-                      FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb)))::text, 'UTF8')), 'hex') AS h
-           FROM crove_finance.einvoice_draft d WHERE d.org_id = $1 AND d.id = $2`,
+                      FROM ludy_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb)))::text, 'UTF8')), 'hex') AS h
+           FROM ludy_finance.einvoice_draft d WHERE d.org_id = $1 AND d.id = $2`,
         [o.orgId, ordinary.id],
       )
     )[0]?.h;
@@ -412,7 +412,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     await withIdentity(null);
     expect(await hash(corr.id)).toBe(none);
     // The confirmed rate basis joins the hash when set (#3709), and a correction made before the column existed (null) hashes as the formula of 20270110100000 did.
-    const setBasis = (basis: string | null) => rows('UPDATE crove_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, basis]);
+    const setBasis = (basis: string | null) => rows('UPDATE ludy_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, basis]);
     const legacy = async () =>
       (
         await rows<{ h: string }>(
@@ -421,12 +421,12 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
               COALESCE(d.buyer_tax_code, ''), COALESCE(d.buyer_name, ''), COALESCE(d.buyer_address, ''), COALESCE(d.buyer_email, ''),
               d.subtotal::text, d.vat_amount::text, d.total::text,
               COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(l.line_no::text, l.description, COALESCE(l.unit, ''), l.quantity::text, l.unit_price::text, l.amount::text, l.vat_rate, l.vat_amount::text) ORDER BY l.line_no)
-                        FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb))
+                        FROM ludy_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb))
              || CASE WHEN d.sale_date IS NULL THEN '[]'::pg_catalog.jsonb ELSE pg_catalog.jsonb_build_array(d.sale_date::text, COALESCE(d.late_reason, '')) END
              || CASE WHEN d.buyer_identity IS NULL THEN '[]'::pg_catalog.jsonb ELSE pg_catalog.jsonb_build_array(d.buyer_identity_kind, d.buyer_identity) END
              || CASE WHEN d.correction_kind IS NULL THEN '[]'::pg_catalog.jsonb
                      ELSE pg_catalog.jsonb_build_array(d.correction_kind, d.original_draft_id::text, d.reason_code, COALESCE(d.agreement_file_id::text, '')) END)::text, 'UTF8')), 'hex') AS h
-             FROM crove_finance.einvoice_draft d WHERE d.org_id = $1 AND d.id = $2`,
+             FROM ludy_finance.einvoice_draft d WHERE d.org_id = $1 AND d.id = $2`,
           [o.orgId, corr.id],
         )
       )[0]?.h;
@@ -440,10 +440,10 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(await hash(corr.id)).not.toBe(none);
     expect(await hash(corr.id)).not.toBe(legacyHash);
     // The database keeps the basis to a correction and to the two values.
-    await expect(rows('UPDATE crove_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, 'someday'])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows('UPDATE ludy_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, 'someday'])).rejects.toMatchObject({ code: '23514' });
     // A draft that is no correction cannot carry one (a draft row: an issued invoice would meet the state guard first).
     const plainDraft = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
-    await expect(rows("UPDATE crove_finance.einvoice_draft SET correction_rate_basis = 'original' WHERE org_id = $1 AND id = $2", [o.orgId, plainDraft.id])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows("UPDATE ludy_finance.einvoice_draft SET correction_rate_basis = 'original' WHERE org_id = $1 AND id = $2", [o.orgId, plainDraft.id])).rejects.toMatchObject({ code: '23514' });
     await setBasis('original');
     // The same draft made a replacement instead (another original) hashes differently from this adjustment.
     const other = await issued(o, p, 'individual');
@@ -539,12 +539,12 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(await refusal(start(o, original.draftId, 'adjustment', { rateNature: 'amount_change', rateBasis: 'original' }))).toBe('EINVOICE_RATE_BASIS_MISMATCH');
     expect(await refusal(start(o, original.draftId, 'adjustment', { rateNature: 'return', rateBasis: 'correction_date' }))).toBe('EINVOICE_RATE_BASIS_MISMATCH');
     expect(await refusal(start(o, original.draftId, 'adjustment', { rateNature: 'whatever', rateBasis: 'original' }))).not.toBe('accepted');
-    expect(await rows('SELECT 1 FROM crove_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id = $2', [o.orgId, original.draftId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id = $2', [o.orgId, original.draftId])).toHaveLength(0);
 
     // The confirmed basis is stored with the correction and returned with it, and the audit says the nature and the basis and nothing of the buyer.
     const adjusting = await start(o, original.draftId, 'adjustment', { rateNature: 'amount_change', rateBasis: 'correction_date' });
     expect(adjusting.correction).toMatchObject({ kind: 'adjustment', rateBasis: 'correction_date' });
-    expect((await rows<{ correction_rate_basis: string | null }>('SELECT correction_rate_basis FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, adjusting.id]))[0]?.correction_rate_basis).toBe('correction_date');
+    expect((await rows<{ correction_rate_basis: string | null }>('SELECT correction_rate_basis FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, adjusting.id]))[0]?.correction_rate_basis).toBe('correction_date');
     const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
     expect(audit[0]?.detail).toMatchObject({ rateNature: 'amount_change', rateBasis: 'correction_date' });
 

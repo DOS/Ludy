@@ -81,11 +81,11 @@ suite('social recurring posts on PostgreSQL (#979)', () => {
     exec<{ postId: string; recurrence: Recurrence }>(o, 'social.post.recurrence_set', { postId, recurrence: { everyWeeks: 1, weekdays: [1], time: '09:00', until: null, times: null, ...recurrence } }, user);
   const next = (o: Org, postId: string) => worker.execute<RecurringResult>('social.recurring.next', { postId }, { actor: { type: 'system', component: 'social-recurring-test' }, orgId: o.orgId });
   const sweep = () => sweepRecurring({ runtime: worker, workerDb });
-  const due = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM crove_social.recurring_due(500, ARRAY[]::uuid[])')).rows.map((r) => r.post_id));
+  const due = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM ludy_social.recurring_due(500, ARRAY[]::uuid[])')).rows.map((r) => r.post_id));
   const copies = (seriesId: string) =>
-    admin(async (c) => (await c.query<{ id: string; status: string; scheduled_at: Date | null; repost_of: string | null }>('SELECT id, status, scheduled_at, repost_of FROM crove_social.post WHERE recurrence_source_id = $1 ORDER BY created_at, id', [seriesId])).rows);
+    admin(async (c) => (await c.query<{ id: string; status: string; scheduled_at: Date | null; repost_of: string | null }>('SELECT id, status, scheduled_at, repost_of FROM ludy_social.post WHERE recurrence_source_id = $1 ORDER BY created_at, id', [seriesId])).rows);
   const series = (postId: string) =>
-    admin(async (c) => (await c.query<{ recurrence_count: number; recurrence_last_at: Date | null; recurrence_next_at: Date | null }>('SELECT recurrence_count, recurrence_last_at, recurrence_next_at FROM crove_social.post WHERE id = $1', [postId])).rows[0]);
+    admin(async (c) => (await c.query<{ recurrence_count: number; recurrence_last_at: Date | null; recurrence_next_at: Date | null }>('SELECT recurrence_count, recurrence_last_at, recurrence_next_at FROM ludy_social.post WHERE id = $1', [postId])).rows[0]);
 
   async function connect(o: Org) {
     const account = `acct-${randomUUID().slice(0, 8)}`;
@@ -106,7 +106,7 @@ suite('social recurring posts on PostgreSQL (#979)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', post.scheduledAt ? { postId } : { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     for (const v of post.variants) await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, v.id, 'sandbox');
     expect((await get(o, postId)).status).toBe('published');
   }
@@ -172,7 +172,7 @@ suite('social recurring posts on PostgreSQL (#979)', () => {
     const origin = mondayWeeksBefore(k);
     expect(offset(origin)).not.toBe(offset(monday));
     expect(localTime(origin, NY)).toMatchObject({ weekday: 1, hour: 9, minute: 0 });
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET published_at = $2 WHERE post_id = $1', [postId, new Date(origin)]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET published_at = $2 WHERE post_id = $1', [postId, new Date(origin)]));
 
     expect(await setRule(o, postId, { weekdays: [1], time: '09:00' })).toEqual({ postId, recurrence: weekly });
     expect(await due()).toContain(postId);
@@ -277,7 +277,7 @@ suite('social recurring posts on PostgreSQL (#979)', () => {
     await expect(setRule(o, postId, { time: '24:00' })).rejects.toBeDefined();
     await expect(setRule(o, postId, { until: '2027-02-30' })).rejects.toBeDefined();
     for (const bad of ['"weekly"', '[]', '{"everyWeeks":"x","weekdays":[1],"time":"09:00"}', '{"everyWeeks":1,"weekdays":"1","time":"09:00"}', '{"everyWeeks":1,"weekdays":[1],"time":"09:00","until":"2027-02-30"}', '{"everyWeeks":1,"weekdays":[1],"time":"09:00","times":1e9}', '{"everyWeeks":1,"weekdays":[1],"time":"09:00","extra":true}']) {
-      await expect(admin((c) => c.query('UPDATE crove_social.post SET recurrence = $2::jsonb WHERE id = $1', [postId, bad])), bad).rejects.toMatchObject({ code: '23514' });
+      await expect(admin((c) => c.query('UPDATE ludy_social.post SET recurrence = $2::jsonb WHERE id = $1', [postId, bad])), bad).rejects.toMatchObject({ code: '23514' });
     }
 
     // One kind of repeat per post.
@@ -297,11 +297,11 @@ suite('social recurring posts on PostgreSQL (#979)', () => {
 
     // The next copy is the worker's alone, and so is the scan.
     await expect(exec(o, 'social.recurring.next', { postId })).rejects.toBeDefined();
-    await expect(appPool.query('SELECT * FROM crove_social.recurring_due(10, ARRAY[]::uuid[])')).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query('SELECT * FROM ludy_social.recurring_due(10, ARRAY[]::uuid[])')).rejects.toMatchObject({ code: '42501' });
     const can = await admin(async (c) =>
       (
         await c.query<{ role: string }>(
-          `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'crove_social.recurring_due(int, uuid[])', 'EXECUTE') ORDER BY 1`,
+          `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'ludy_social.recurring_due(int, uuid[])', 'EXECUTE') ORDER BY 1`,
         )
       ).rows.map((r) => r.role),
     );

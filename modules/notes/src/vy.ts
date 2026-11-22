@@ -182,7 +182,7 @@ export const notesVyAccepted = defineQuery({
     let summaryAccepted = false;
     if (input.summaryRunId !== undefined) {
       const noteRow = await ctx.trx
-        .selectFrom('crove_notes.note')
+        .selectFrom('ludy_notes.note')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
@@ -195,7 +195,7 @@ export const notesVyAccepted = defineQuery({
     let todosAccepted = false;
     if (input.todoRunId !== undefined) {
       const todoRow = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
@@ -220,7 +220,7 @@ export const noteAcceptSummary = defineCommand({
     const before = await loadForChange(ctx, input.noteId, (row) => assertAuthor(row, userId));
     assertNotInTrash(before);
     const existingRun = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select('summary_run_ids')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -256,13 +256,13 @@ export const noteAcceptSummary = defineCommand({
     }
 
     const row = await ctx.trx
-      .updateTable('crove_notes.note')
+      .updateTable('ludy_notes.note')
       .set({
         body: nextBody,
         tainted: true,
         ...(input.runId !== undefined
           ? {
-              summary_run_ids: sql`CASE WHEN ${input.runId}::uuid = ANY(crove_notes.note.summary_run_ids) THEN crove_notes.note.summary_run_ids ELSE pg_catalog.array_append(crove_notes.note.summary_run_ids, ${input.runId}::uuid) END`,
+              summary_run_ids: sql`CASE WHEN ${input.runId}::uuid = ANY(ludy_notes.note.summary_run_ids) THEN ludy_notes.note.summary_run_ids ELSE pg_catalog.array_append(ludy_notes.note.summary_run_ids, ${input.runId}::uuid) END`,
             }
           : {}),
         revision: before.revision + 1,
@@ -298,7 +298,7 @@ export const todoAcceptSuggestions = defineCommand({
   handler: async (ctx, input): Promise<TodoAcceptSuggestionsResult> => {
     const userId = userOf(ctx.actor);
     const note = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select(['id', 'revision', 'deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -316,7 +316,7 @@ export const todoAcceptSuggestions = defineCommand({
     }
     if (input.runId !== undefined) {
       const prior = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
@@ -338,7 +338,7 @@ export const todoAcceptSuggestions = defineCommand({
       let inserted: { id: string };
       try {
         inserted = await ctx.trx
-          .insertInto('crove_notes.todo')
+          .insertInto('ludy_notes.todo')
           .values({
             org_id: ctx.orgId,
             owner_user_id: userId,
@@ -392,7 +392,7 @@ export const notesVyPlanInputs = defineQuery({
     const today = zonedDate(timeZone, now.getTime());
     const [todoRows, listRows] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select([...TODO_SUMMARY_COLUMNS, 'details'])
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
@@ -405,7 +405,7 @@ export const notesVyPlanInputs = defineQuery({
         .limit(120)
         .execute(),
       ctx.trx
-        .selectFrom('crove_notes.todo_list')
+        .selectFrom('ludy_notes.todo_list')
         .select(['id', 'name'])
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
@@ -453,7 +453,7 @@ export const notesVyOrganizeInputs = defineQuery({
     const userId = userOf(ctx.actor);
     const isManager = ctx.role === 'owner' || ctx.role === 'admin';
     let notesQ = ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select(['id', 'author_user_id', 'visibility', 'title', 'body', 'tags', 'revision', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)
@@ -466,7 +466,7 @@ export const notesVyOrganizeInputs = defineQuery({
     const [noteRows, notebookRows] = await Promise.all([
       notesQ.orderBy('updated_at', 'desc').orderBy('id', 'desc').limit(25).execute(),
       ctx.trx
-        .selectFrom('crove_notes.notebook')
+        .selectFrom('ludy_notes.notebook')
         .select(['id', 'name', 'visibility'])
         .where('org_id', '=', ctx.orgId)
         .where((eb) => eb.or([eb('author_user_id', '=', userId), eb('visibility', '=', 'org')]))

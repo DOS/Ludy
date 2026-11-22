@@ -64,9 +64,9 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     dealId = (await exec<Deal>('crm.deal.create', { partyId: party, title: 'Gói kế toán năm', amount: '15000000', expectedClose: '2026-12-31' })).id;
     connectionId = randomUUID();
     await h.q("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh thử', $4)", [h.orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, h.owner]);
-    await withoutGuard('crove_ads.ad_org_setting', 'switch_guard', async (c) => {
-      await c.query('INSERT INTO crove_ads.ad_org_setting (org_id, write_enabled, launches_blocked) VALUES ($1, true, false) ON CONFLICT DO NOTHING', [h.orgId]);
-      await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [h.orgId]);
+    await withoutGuard('ludy_ads.ad_org_setting', 'switch_guard', async (c) => {
+      await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id, write_enabled, launches_blocked) VALUES ($1, true, false) ON CONFLICT DO NOTHING', [h.orgId]);
+      await c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [h.orgId]);
     });
   }, 300_000);
   afterAll(async () => {
@@ -106,7 +106,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     guests += 1;
     const email = `khach${guests}@example.test`;
     await bookingRequest(h.runtime, slug, 'tu-van', { startsAt: at(day, minute), name: 'Nguyễn Văn Khách', email, phone: '0901234567', note: 'Hỏi về thuế', timeZone: VN });
-    const row = (await h.q<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 AND starts_at = $2', [h.orgId, at(day, minute)])).rows[0];
+    const row = (await h.q<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 AND starts_at = $2', [h.orgId, at(day, minute)])).rows[0];
     const bookingId = row?.id as string;
     await h.system('test.crm.booking', 'crm.booking.confirm', { bookingId });
     return { bookingId, email };
@@ -141,7 +141,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     expect(card.engage?.fields.find((f) => f.key === 'to')?.value).toBe('someone-else@example.test');
     // Sent, it has its number.
     await exec('crm.quote.send', { quoteId: quote.id, version: quote.version, via: 'link' });
-    const sentNumber = (await h.q<{ number: string }>('SELECT number FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [h.orgId, quote.id])).rows[0]?.number as string;
+    const sentNumber = (await h.q<{ number: string }>('SELECT number FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [h.orgId, quote.id])).rows[0]?.number as string;
     expect(sentNumber).toBeTruthy();
     const again = await cardOf('crm.quote.send_approved', { quoteId: quote.id, version: quote.version + 1, via: 'link' });
     expect(again.about?.slice(0, 2)).toEqual([
@@ -166,7 +166,7 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     const channels = all.about?.find((a) => a.label === 'channels')?.value.split(', ').sort();
     expect(channels).toEqual(['Kênh hai', 'Kênh thử']);
     // A title wins over the text.
-    await h.q("UPDATE crove_social.post SET title = 'Tiêu đề bài' WHERE org_id = $1 AND id = $2", [h.orgId, postId]);
+    await h.q("UPDATE ludy_social.post SET title = 'Tiêu đề bài' WHERE org_id = $1 AND id = $2", [h.orgId, postId]);
     const scheduled = await cardOf('social.variant.schedule_approved', { postId, at: new Date(Date.now() + 4 * 3_600_000).toISOString() });
     expect(scheduled.about?.[0]).toEqual({ label: 'post', value: 'Tiêu đề bài' });
   });
@@ -176,18 +176,18 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
     const connection = randomUUID();
     const account = randomUUID();
     await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
-    await h.q(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản Tiệm Bánh', '2025-10-01', 'VND', $5)`, [h.orgId, account, connection, `acct-${connection.slice(0, 8)}`, VN]);
+    await h.q(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản Tiệm Bánh', '2025-10-01', 'VND', $5)`, [h.orgId, account, connection, `acct-${connection.slice(0, 8)}`, VN]);
     const draft = randomUUID();
-    await h.q(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by) VALUES ($1, $2, $3, 'Khuyến mãi Tết', 'traffic', $4)`, [h.orgId, draft, account, h.owner]);
+    await h.q(`INSERT INTO ludy_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by) VALUES ($1, $2, $3, 'Khuyến mãi Tết', 'traffic', $4)`, [h.orgId, draft, account, h.owner]);
     const launch = randomUUID();
     await h.q(
-      `INSERT INTO crove_ads.ad_launch (org_id, id, ad_account_id, draft_id, proposal_id, plan_hash, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, state)
+      `INSERT INTO ludy_ads.ad_launch (org_id, id, ad_account_id, draft_id, proposal_id, plan_hash, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, state)
        VALUES ($1, $2, $3, $4, $5, $6, 'VND', '100000', $7, $8, '1400000', $8, $9, 'queued')`,
       [h.orgId, launch, account, draft, randomUUID(), HASH, D(-3), D(10), h.owner],
     );
-    await withoutGuard('crove_ads.ad_launch', 'launch_guard', async (c) => {
-      await c.query(`UPDATE crove_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [h.orgId, launch]);
-      await c.query(`UPDATE crove_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [h.orgId, launch]);
+    await withoutGuard('ludy_ads.ad_launch', 'launch_guard', async (c) => {
+      await c.query(`UPDATE ludy_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [h.orgId, launch]);
+      await c.query(`UPDATE ludy_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [h.orgId, launch]);
     });
     return launch;
   }
@@ -210,11 +210,11 @@ suite('what the card of an AI coworker\'s ask is about (#3863)', () => {
 
   // A change a person's approved proposal queued, as the table holds it: the insert guard asks the change's own approved proposal, so it is set aside for the one statement.
   async function queued(launch: string, columns: string, values: unknown[]): Promise<string> {
-    const account = (await h.q<{ ad_account_id: string }>('SELECT ad_account_id FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2', [h.orgId, launch])).rows[0]?.ad_account_id as string;
+    const account = (await h.q<{ ad_account_id: string }>('SELECT ad_account_id FROM ludy_ads.ad_launch WHERE org_id = $1 AND id = $2', [h.orgId, launch])).rows[0]?.ad_account_id as string;
     const id = randomUUID();
     const marks = values.map((_, i) => `$${i + 7}`).join(', ');
-    await withoutGuard('crove_ads.ad_manage_change', 'manage_change_guard', async (c) => {
-      await c.query(`INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, proposal_id, requested_by, ${columns}) VALUES ($1, $2, $3, $4, $5, $6, ${marks})`, [h.orgId, id, account, launch, randomUUID(), h.owner, ...values]);
+    await withoutGuard('ludy_ads.ad_manage_change', 'manage_change_guard', async (c) => {
+      await c.query(`INSERT INTO ludy_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, proposal_id, requested_by, ${columns}) VALUES ($1, $2, $3, $4, $5, $6, ${marks})`, [h.orgId, id, account, launch, randomUUID(), h.owner, ...values]);
     });
     return id;
   }

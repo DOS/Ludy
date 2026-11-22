@@ -39,7 +39,7 @@ const plain = (value: string): string => money(value).toFixed();
 
 export async function loadSeries(ctx: Ctx): Promise<EInvoiceSeries[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.einvoice_series')
+    .selectFrom('ludy_finance.einvoice_series')
     .select(['id', 'legal_entity_id', 'provider', 'template_no', 'symbol', 'description', 'is_default'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('legal_entity_id')
@@ -67,7 +67,7 @@ export async function addSeriesFrom(
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.einvoice_series:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
   // The default is the entity's, whatever provider holds it: only the first series an entity ever gets is made the default.
   const existing = await ctx.trx
-    .selectFrom('crove_finance.einvoice_series')
+    .selectFrom('ludy_finance.einvoice_series')
     .select(['provider', 'template_no', 'symbol', 'is_default'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -80,7 +80,7 @@ export async function addSeriesFrom(
     if (known.has(`${template.templateNo}/${template.symbol}`)) continue;
     known.add(`${template.templateNo}/${template.symbol}`);
     await ctx.trx
-      .insertInto('crove_finance.einvoice_series')
+      .insertInto('ludy_finance.einvoice_series')
       .values({ org_id: ctx.orgId, legal_entity_id: entity, provider, template_no: template.templateNo, symbol: template.symbol, description: template.description, is_default: !hasDefault, created_by: userId })
       .execute();
     hasDefault = true;
@@ -106,8 +106,8 @@ export const einvoiceSeriesSync = defineCommand({
   },
 });
 
-const selectDrafts = (ctx: Ctx) => ctx.trx.selectFrom('crove_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId);
-const selectLines = (ctx: Ctx) => ctx.trx.selectFrom('crove_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId);
+const selectDrafts = (ctx: Ctx) => ctx.trx.selectFrom('ludy_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId);
+const selectLines = (ctx: Ctx) => ctx.trx.selectFrom('ludy_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId);
 type DraftRow = Awaited<ReturnType<ReturnType<typeof selectDrafts>['execute']>>[number];
 type LineRow = Awaited<ReturnType<ReturnType<typeof selectLines>['execute']>>[number];
 
@@ -204,7 +204,7 @@ export const einvoiceDraftList = defineQuery({
       issuedIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_finance.einvoice_draft')
+            .selectFrom('ludy_finance.einvoice_draft')
             .select(['original_draft_id', 'correction_kind', 'created_at'])
             .where('org_id', '=', ctx.orgId)
             .where('state', '=', 'issued')
@@ -343,7 +343,7 @@ export const einvoiceDraftSave = defineCommand({
       entity = await resolveLegalEntity(ctx, input.legalEntityId);
     } else {
       const existing = await ctx.trx
-        .selectFrom('crove_finance.einvoice_draft')
+        .selectFrom('ludy_finance.einvoice_draft')
         .select(['legal_entity_id', 'state'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', draftId)
@@ -358,7 +358,7 @@ export const einvoiceDraftSave = defineCommand({
     // A series of another entity is refused, here with a message and by the database's composite key.
     if (draft.seriesId) {
       const series = await ctx.trx
-        .selectFrom('crove_finance.einvoice_series')
+        .selectFrom('ludy_finance.einvoice_series')
         .select('legal_entity_id')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', draft.seriesId)
@@ -391,12 +391,12 @@ export const einvoiceDraftSave = defineCommand({
       if (draftId === null) {
         draftId = randomUUID();
         await ctx.trx
-          .insertInto('crove_finance.einvoice_draft')
+          .insertInto('ludy_finance.einvoice_draft')
           .values({ org_id: ctx.orgId, id: draftId, legal_entity_id: entity, created_by: userId, ...values })
           .execute();
       } else {
         await ctx.trx
-          .updateTable('crove_finance.einvoice_draft')
+          .updateTable('ludy_finance.einvoice_draft')
           .set({ ...values, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', draftId)
@@ -404,7 +404,7 @@ export const einvoiceDraftSave = defineCommand({
         // A line made from an order line keeps its source (ADR-0050): the order line stays invoiced, so a second draft of it is refused. Its amount cannot change and it cannot go;
         // a description or unit fix is allowed. The person deletes the draft and drafts the order again for anything else.
         const kept = await ctx.trx
-          .selectFrom('crove_finance.einvoice_draft_line')
+          .selectFrom('ludy_finance.einvoice_draft_line')
           .select(['line_no', 'amount', 'source_kind', 'source_id', 'source_line_no'])
           .where('org_id', '=', ctx.orgId)
           .where('draft_id', '=', draftId)
@@ -417,11 +417,11 @@ export const einvoiceDraftSave = defineCommand({
           }
         }
         carried = new Map(kept.map((k) => [k.line_no, k]));
-        await ctx.trx.deleteFrom('crove_finance.einvoice_draft_line').where('org_id', '=', ctx.orgId).where('draft_id', '=', draftId).execute();
+        await ctx.trx.deleteFrom('ludy_finance.einvoice_draft_line').where('org_id', '=', ctx.orgId).where('draft_id', '=', draftId).execute();
       }
       for (const [index, line] of computed.lines.entries()) {
         await ctx.trx
-          .insertInto('crove_finance.einvoice_draft_line')
+          .insertInto('ludy_finance.einvoice_draft_line')
           .values({
             org_id: ctx.orgId,
             legal_entity_id: entity,
@@ -461,7 +461,7 @@ export const einvoiceDraftDelete = defineCommand({
   target: (input) => ({ type: 'finance.einvoice_draft', id: input.draftId }),
   handler: async (ctx, input): Promise<{ deleted: true }> => {
     const existing = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select('state')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.draftId)
@@ -469,7 +469,7 @@ export const einvoiceDraftDelete = defineCommand({
       .executeTakeFirst();
     if (!existing) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
     if (existing.state !== 'draft') throw new DomainError('EINVOICE_NOT_DRAFT', 409, 'Hóa đơn đã được gửi đi, không xóa được');
-    await ctx.trx.deleteFrom('crove_finance.einvoice_draft').where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
+    await ctx.trx.deleteFrom('ludy_finance.einvoice_draft').where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
     ctx.audit({ draftId: input.draftId });
     return { deleted: true };
   },

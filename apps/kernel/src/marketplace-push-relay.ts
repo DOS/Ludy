@@ -25,7 +25,7 @@ export interface MarketplaceHookNoticeRow {
   requestUrl: string | null;
 }
 
-// The claim (crove_finance.marketplace_hook_claim, the worker login's alone). The rows are deleted as they are claimed, and anything older than ten minutes is swept first.
+// The claim (ludy_finance.marketplace_hook_claim, the worker login's alone). The rows are deleted as they are claimed, and anything older than ten minutes is swept first.
 export async function claimMarketplaceHookNotices(trx: Transaction<Database>): Promise<MarketplaceHookNoticeRow[]> {
   const { rows } = await sql<{
     org_id: string;
@@ -37,7 +37,7 @@ export async function claimMarketplaceHookNotices(trx: Transaction<Database>): P
     authorization_header: string;
     body: Buffer;
     request_url: string | null;
-  }>`SELECT org_id, hook_id, marketplace_connection_id, channel_connection_id, adapter, platform, authorization_header, body, request_url FROM crove_finance.marketplace_hook_claim(${MARKETPLACE_HOOK_CLAIM}::int)`.execute(trx);
+  }>`SELECT org_id, hook_id, marketplace_connection_id, channel_connection_id, adapter, platform, authorization_header, body, request_url FROM ludy_finance.marketplace_hook_claim(${MARKETPLACE_HOOK_CLAIM}::int)`.execute(trx);
   return rows.map((r) => ({
     orgId: r.org_id,
     hookId: r.hook_id,
@@ -51,16 +51,16 @@ export async function claimMarketplaceHookNotices(trx: Transaction<Database>): P
   }));
 }
 
-// The sweep of pushes older than ten minutes (crove_finance.marketplace_hook_sweep), for a worker that was away: how many went.
+// The sweep of pushes older than ten minutes (ludy_finance.marketplace_hook_sweep), for a worker that was away: how many went.
 export async function sweepMarketplaceHookNotices(workerDb: Db): Promise<number> {
-  const { rows } = await sql<{ swept: number }>`SELECT crove_finance.marketplace_hook_sweep() AS swept`.execute(workerDb);
+  const { rows } = await sql<{ swept: number }>`SELECT ludy_finance.marketplace_hook_sweep() AS swept`.execute(workerDb);
   return Number(rows[0]?.swept ?? 0);
 }
 
 // Counts a refused push on its hook; true when the hook is now stopped (ten within an hour). Called AFTER the claim's transaction has committed, never inside it: the claim holds the deleted pushes' row locks, and an API
 // retry that holds the hook's lock would otherwise wait on the claim while the claim waits on the hook.
 export async function rejectMarketplaceHook(db: Db | Transaction<Database>, hookId: string): Promise<boolean> {
-  const { rows } = await sql<{ stopped: boolean }>`SELECT crove_finance.marketplace_hook_reject(${hookId}::uuid) AS stopped`.execute(db);
+  const { rows } = await sql<{ stopped: boolean }>`SELECT ludy_finance.marketplace_hook_reject(${hookId}::uuid) AS stopped`.execute(db);
   return rows[0]?.stopped === true;
 }
 

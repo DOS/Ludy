@@ -87,11 +87,11 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     const book = async (day: string, minute: number, over: Record<string, unknown> = {}): Promise<string> => {
       const request = await bookingRequest(app, slug, 'tu-van', { startsAt: at(day, minute), name: 'Nguyễn Văn Khách', email: 'khach@example.test', phone: '0901234567', note: null, timeZone: VN, ...over });
       if (!request) throw new Error('no request');
-      const id = (await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_crm.booking WHERE org_id = $1 AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1", [orgId]))).rows[0]!.id;
+      const id = (await admin((c) => c.query<{ id: string }>("SELECT id FROM ludy_crm.booking WHERE org_id = $1 AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1", [orgId]))).rows[0]!.id;
       expect(await worker.execute<{ status: string }>('crm.booking.confirm', { bookingId: id }, { actor: SYSTEM, orgId })).toMatchObject({ status: 'confirmed' });
       return id;
     };
-    const dealOf = async (bookingId: string) => (await admin((c) => c.query<{ deal_id: string | null }>('SELECT deal_id FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [orgId, bookingId]))).rows[0]!.deal_id;
+    const dealOf = async (bookingId: string) => (await admin((c) => c.query<{ deal_id: string | null }>('SELECT deal_id FROM ludy_crm.booking WHERE org_id = $1 AND id = $2', [orgId, bookingId]))).rows[0]!.deal_id;
     const audits = async (command: string, bookingId: string) =>
       (await admin((c) => c.query<{ outcome: string; target_type: string; detail: Record<string, unknown> }>('SELECT outcome, target_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND target_id = $3 ORDER BY occurred_at, id', [orgId, command, bookingId]))).rows;
     const item = async (user: string, bookingId: string) => (await query<BookingItem>(user, 'crm.booking.get', { id: bookingId }));
@@ -193,7 +193,7 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     // A request nobody decided yet is not a booking.
     const request = await bookingRequest(app, o.slug, 'tu-van', { startsAt: at(day, 600), name: 'Khách', email: 'moi@example.test', phone: null, note: null, timeZone: VN });
     expect(request).not.toBeNull();
-    const pending = (await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_crm.booking WHERE org_id = $1 AND status = 'pending'", [o.orgId]))).rows[0]!.id;
+    const pending = (await admin((c) => c.query<{ id: string }>("SELECT id FROM ludy_crm.booking WHERE org_id = $1 AND status = 'pending'", [o.orgId]))).rows[0]!.id;
     await expect(o.exec(o.owner, 'crm.booking.link_deal', { bookingId: pending, dealId: mine.id })).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' });
   });
 
@@ -218,7 +218,7 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
         [o.orgId, event, o.host, start.toISOString(), new Date(start.getTime() + 1_800_000).toISOString(), VN],
       );
       await c.query(
-        "INSERT INTO crove_crm.booking (org_id, id, event_type_id, starts_at, ends_at, status, calendar_event_id, party_id, visitor_name, email, time_zone, deal_id) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7, 'Nguyễn Văn Khách', 'khach@example.test', $8, $9)",
+        "INSERT INTO ludy_crm.booking (org_id, id, event_type_id, starts_at, ends_at, status, calendar_event_id, party_id, visitor_name, email, time_zone, deal_id) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7, 'Nguyễn Văn Khách', 'khach@example.test', $8, $9)",
         [o.orgId, past, o.type.id, start.toISOString(), new Date(start.getTime() + 1_800_000).toISOString(), event, guest, VN, deal.id],
       );
     });
@@ -244,7 +244,7 @@ suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
     expect((await o.item(o.host, booking)).dealSuggestions).toEqual([]);
 
     // The booking's own contact (matched by email when the worker confirmed it), another contact with the same email in other letters, and one with the same phone.
-    const [contact] = (await admin((c) => c.query<{ party_id: string }>('SELECT party_id FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, booking]))).rows;
+    const [contact] = (await admin((c) => c.query<{ party_id: string }>('SELECT party_id FROM ludy_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, booking]))).rows;
     const byContact = await o.deal(contact!.party_id, 'Báo giá thuế');
     const byEmail = await o.deal(await o.party('Khách khác', { email: 'KHACH@example.TEST' }), 'Dịch vụ kế toán');
     const byPhone = await o.deal(await o.party('Khách ba', { phone: '0901 234 567' }), 'Hóa đơn điện tử');

@@ -272,11 +272,11 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
     // The voucher triggers number on main (#1401); a series numbered through ctx.numbering.allocate has no trigger, and
     // its first command extends this check.
     expect(numbering.map((n) => `${n.table} ${n.docType} ${n.targetType}`)).toEqual([
-      'crove_finance.cash_voucher finance.cash_voucher.<voucher_type> finance.cash_voucher',
-      'crove_finance.journal_voucher finance.journal_voucher finance.journal_voucher',
+      'ludy_finance.cash_voucher finance.cash_voucher.<voucher_type> finance.cash_voucher',
+      'ludy_finance.journal_voucher finance.journal_voucher finance.journal_voucher',
     ]);
     expect(allocators).toEqual(['ludy_kernel.allocate_number']);
-    expect(appendOnly.has('crove_finance.journal_entry')).toBe(true);
+    expect(appendOnly.has('ludy_finance.journal_entry')).toBe(true);
     const cols = new Map<string, Set<string>>();
     for (const r of columnRows) cols.set(`${r.schema}.${r.table}`, (cols.get(`${r.schema}.${r.table}`) ?? new Set()).add(r.column));
     const targets = commandTargetTypes();

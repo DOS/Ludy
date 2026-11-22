@@ -43,15 +43,15 @@ export const digestFacts = defineQuery({
     // The meetings the caller reads (row security), not yet past their text date, that have something published (a result or an action item), newest first. A meeting with only a draft, or still being recorded, takes no
     // place: the limit counts the meetings that can show something. One more than the limit is read, to know whether the limit cut.
     const readable = await ctx.trx
-      .selectFrom('crove_meetings.meeting as m')
+      .selectFrom('ludy_meetings.meeting as m')
       .select(['m.id', 'm.title', 'm.started_at'])
       .where('m.org_id', '=', ctx.orgId)
       .where('m.started_at', '>=', since)
       .where((eb) => eb.or([eb('m.text_retention_date', 'is', null), eb('m.text_retention_date', '>', vnDay(new Date()))]))
       .where((eb) =>
         eb.or([
-          eb.exists(eb.selectFrom('crove_meetings.meeting_result as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.meeting_id', '=', 'm.id').where('r.stage', '=', 'published')),
-          eb.exists(eb.selectFrom('crove_meetings.action_item as a').select('a.id').whereRef('a.org_id', '=', 'm.org_id').whereRef('a.meeting_id', '=', 'm.id').where('a.stage', '=', 'published')),
+          eb.exists(eb.selectFrom('ludy_meetings.meeting_result as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.meeting_id', '=', 'm.id').where('r.stage', '=', 'published')),
+          eb.exists(eb.selectFrom('ludy_meetings.action_item as a').select('a.id').whereRef('a.org_id', '=', 'm.org_id').whereRef('a.meeting_id', '=', 'm.id').where('a.stage', '=', 'published')),
         ]),
       )
       .orderBy('m.started_at', 'desc')
@@ -63,7 +63,7 @@ export const digestFacts = defineQuery({
     const ids = meetings.map((m) => m.id);
     // Published decisions only, read under the caller's own row security (a published result is read by the readers of its meeting).
     const results = await ctx.trx
-      .selectFrom('crove_meetings.meeting_result')
+      .selectFrom('ludy_meetings.meeting_result')
       .select(['meeting_id', 'decisions'])
       .where('org_id', '=', ctx.orgId)
       .where('stage', '=', 'published')
@@ -74,7 +74,7 @@ export const digestFacts = defineQuery({
     );
     // Only the meetings that have a published item are asked for their open items (one read each).
     const withItems = new Set(
-      (await ctx.trx.selectFrom('crove_meetings.action_item').select('meeting_id').distinct().where('org_id', '=', ctx.orgId).where('stage', '=', 'published').where('meeting_id', 'in', ids).execute()).map((r) => r.meeting_id),
+      (await ctx.trx.selectFrom('ludy_meetings.action_item').select('meeting_id').distinct().where('org_id', '=', ctx.orgId).where('stage', '=', 'published').where('meeting_id', 'in', ids).execute()).map((r) => r.meeting_id),
     );
     const out: DigestMeeting[] = [];
     let decisionsLeft = DIGEST_DECISIONS_MAX;

@@ -141,7 +141,7 @@ suite('stock from document lines (#2512)', () => {
       { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
     );
   }
-  const journal = (entryId: string) => rows<{ account_code: string; debit: string; credit: string }>('SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [entryId]);
+  const journal = (entryId: string) => rows<{ account_code: string; debit: string; credit: string }>('SELECT account_code, debit::text, credit::text FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [entryId]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -341,7 +341,7 @@ suite('stock from document lines (#2512)', () => {
     // Its line cannot be assigned any more, and the database refuses a move of a line of a voided document whatever writes it.
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 1, itemId: item })).rejects.toMatchObject({ code: 'STOCK_LINE_VOIDED' });
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 2)", [o.orgId, item, posted.documentId]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 2)", [o.orgId, item, posted.documentId]),
     ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_LINE_VOIDED') });
   });
 
@@ -374,7 +374,7 @@ suite('stock from document lines (#2512)', () => {
     const month = String((await moves(o, item))[0]?.date).slice(0, 7);
     // The month of the document is closed after the document moved its stock (the rows a close leaves are written by the database owner).
     const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
-    await rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, `${month}-01`]);
+    await rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, `${month}-01`]);
     const request = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: `${month}-28`, reason: 'Nhập nhầm' } }, o.admin);
     await rt.execute('kernel.proposal.approve', { id: request.proposalId, revision: 1 }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     const [today] = await rows<{ today: string }>("SELECT (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today");
@@ -399,18 +399,18 @@ suite('stock from document lines (#2512)', () => {
     const second = await execute<{ moveId: string }>(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: right, teach: false });
     expect(await onHand(o, right)).toBe('2');
     expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1]);
-    expect((await rows<{ id: string; line_attempt: number | null }>("SELECT id, line_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line' ORDER BY line_attempt", [o.orgId])).map((r) => [r.id, r.line_attempt])).toEqual([
+    expect((await rows<{ id: string; line_attempt: number | null }>("SELECT id, line_attempt FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line' ORDER BY line_attempt", [o.orgId])).map((r) => [r.id, r.line_attempt])).toEqual([
       [first.moveId, 1],
       [second.moveId, 2],
     ]);
     // A third assignment while the second stands is refused; the database also refuses a try that skips the reversal of the one before.
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: wrong, teach: false })).rejects.toMatchObject({ code: 'STOCK_LINE_ASSIGNED' });
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 3)", [o.orgId, right, posted.documentId]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 3)", [o.orgId, right, posted.documentId]),
     ).rejects.toMatchObject({ message: expect.stringContaining('STOCK_LINE_ATTEMPT') });
     // The member made a move; removing them does not touch the append-only row it left.
     await expect(execute(o, 'kernel.member.remove', { userId: o.member })).resolves.toBeDefined();
-    expect((await rows<{ created_by: string | null }>('SELECT created_by FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, first.moveId]))[0]?.created_by).toBe(o.member);
+    expect((await rows<{ created_by: string | null }>('SELECT created_by FROM ludy_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, first.moveId]))[0]?.created_by).toBe(o.member);
   });
 
   it('serializes an assignment with the void of its document: a voided document never keeps a move nothing reverses', async () => {
@@ -432,7 +432,7 @@ suite('stock from document lines (#2512)', () => {
     const made = await moves(o, item);
     const month = String(made[0]?.date).slice(0, 7);
     // A manual stock-out of five, later in the month.
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, -5, 'manual')", [o.orgId, item, `${month}-28`]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, -5, 'manual')", [o.orgId, item, `${month}-28`]);
     const report = (m: string, user = o.owner) => rt.query<Array<Record<string, unknown>>>('finance.stock.report', { month: m }, { actor: asUser(user), orgId: o.orgId });
     // The line's amount (2 packages at 500,000) comes in with its twenty units: 50,000 each, and five leave at that.
     expect(await report(month)).toEqual([

@@ -112,7 +112,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       const deal = await exec<Deal>(owner, 'crm.deal.create', { partyId: await party(), title: DEAL_TITLE, amount: '15000000', expectedClose: null });
       const draft = await exec<{ id: string }>(owner, 'crm.quote.save', { dealId: deal.id, lines: [{ kind: 'item', description: 'Dòng bí mật 777', unit: 'cái', quantity: '2', unitPrice: '123456', vatRate: '10%' }] });
       await rows(
-        "UPDATE crove_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 30 WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 30 WHERE org_id = $1 AND id = $2",
         [orgId, draft.id, `BG-2026-${Math.floor(Math.random() * 9000) + 1000}`, sentDaysAgo],
       );
       return deal.id;
@@ -125,10 +125,10 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       const ends = new Date(starts.getTime() + 1_800_000);
       const type = randomUUID();
       const event = randomUUID();
-      await rows('INSERT INTO crove_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [orgId, type, `t-${type.slice(0, 8)}`, `Tư vấn ${CANARY}`, owner]);
+      await rows('INSERT INTO ludy_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [orgId, type, `t-${type.slice(0, 8)}`, `Tư vấn ${CANARY}`, owner]);
       await rows("INSERT INTO ludy_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [orgId, event, owner, starts, ends]);
       const id = randomUUID();
-      await rows("INSERT INTO crove_crm.booking (org_id, id, event_type_id, calendar_event_id, starts_at, ends_at, status, visitor_name, email, note, time_zone) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7, 'khach@canary.test', $7, 'Asia/Ho_Chi_Minh')", [orgId, id, type, event, starts, ends, CANARY]);
+      await rows("INSERT INTO ludy_crm.booking (org_id, id, event_type_id, calendar_event_id, starts_at, ends_at, status, visitor_name, email, note, time_zone) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7, 'khach@canary.test', $7, 'Asia/Ho_Chi_Minh')", [orgId, id, type, event, starts, ends, CANARY]);
       return { id, on: tomorrow };
     };
     // A company grant with a wake-up (the real setup command); the receiver is only stored.

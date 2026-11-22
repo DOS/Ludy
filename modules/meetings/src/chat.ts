@@ -10,7 +10,7 @@
 //   meetings.chat.status    (the recorder) how their newest post to a channel stands, for the dialog to poll: a state and a fixed code.
 // The worker's side, all of the system actor (apps/kernel meeting-chat-job.ts, meeting-chat-sweep.ts, credential-reseal.ts): meetings.chat.delivery reads a queued post (the message), meetings.chat.target the
 // sealed address of its channel (only while the channel stands), meetings.chat.queued notes a hand-over, meetings.chat.record records an outcome and DELETES the message, meetings.chat.reseal reseals an
-// address after a credential key rotation. The log (crove_meetings.chat_post) holds ids, a state, the status, a code, an attempt count and hashes, never the text. No model is involved.
+// address after a credential key rotation. The log (ludy_meetings.chat_post) holds ids, a state, the status, a code, an attempt count and hashes, never the text. No model is involved.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import {
@@ -61,7 +61,7 @@ type Trx = QueryContext['trx'];
 async function messageOf(trx: Trx, orgId: string, meetingId: string): Promise<{ message: ChatMessage; key: string }> {
   const published = await publishedFacts(trx, orgId, meetingId);
   const { lang, day } = await meetingFacts(trx, orgId, meetingId);
-  const row = await trx.selectFrom('crove_meetings.meeting').select('title').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
+  const row = await trx.selectFrom('ludy_meetings.meeting').select('title').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
   const message = buildChatMessage({ lang, title: row.title, day, facts: published.facts });
   return { message, key: sha256Hex(JSON.stringify([published.key, message.title, message.lang, message.day])) };
 }
@@ -87,7 +87,7 @@ export const chatChannels = defineQuery({
   access: EDITORS,
   handler: async (ctx): Promise<ChatChannelList> => {
     const rows = await ctx.trx
-      .selectFrom('crove_meetings.chat_channel')
+      .selectFrom('ludy_meetings.chat_channel')
       .select(['id', 'kind', 'label', 'host', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at')
@@ -106,22 +106,22 @@ export const chatChannelSave = defineCommand({
   access: ADMINS,
   handler: async (ctx, input): Promise<ChatChannelSaved> => {
     const userId = userOf(ctx.actor);
-    const existing = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(['id', 'kind']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
+    const existing = await ctx.trx.selectFrom('ludy_meetings.chat_channel').select(['id', 'kind']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
     if (existing && existing.kind !== input.kind) throw new DomainError('CHAT_KIND_FIXED', 409, 'Không đổi được loại kênh; hãy thêm một kênh mới');
     if (!existing) {
-      const count = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(sql<string>`count(*)`.as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+      const count = await ctx.trx.selectFrom('ludy_meetings.chat_channel').select(sql<string>`count(*)`.as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
       if (Number(count.n) >= CHAT_CHANNELS_MAX) throw new DomainError('CHAT_CHANNELS_LIMIT', 422, `Tối đa ${CHAT_CHANNELS_MAX} kênh nhận biên bản`);
-      await ctx.trx.insertInto('crove_meetings.chat_channel').values({ org_id: ctx.orgId, id: input.id, kind: input.kind, label: input.label, host: input.host, created_by: userId }).execute();
+      await ctx.trx.insertInto('ludy_meetings.chat_channel').values({ org_id: ctx.orgId, id: input.id, kind: input.kind, label: input.label, host: input.host, created_by: userId }).execute();
     } else {
       await ctx.trx
-        .updateTable('crove_meetings.chat_channel')
+        .updateTable('ludy_meetings.chat_channel')
         .set({ label: input.label, host: input.host, created_by: userId, updated_at: sql<Date>`pg_catalog.now()` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.id)
         .execute();
     }
     try {
-      await sql`SELECT crove_meetings.chat_target_put(${input.id}::uuid, ${input.keyId}, pg_catalog.decode(${input.envelope}, 'base64'))`.execute(ctx.trx);
+      await sql`SELECT ludy_meetings.chat_target_put(${input.id}::uuid, ${input.keyId}, pg_catalog.decode(${input.envelope}, 'base64'))`.execute(ctx.trx);
     } catch (error) {
       if (error instanceof Error && /CREDENTIAL_FORBIDDEN/.test(error.message)) throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới thêm được kênh nhận biên bản');
       throw error;
@@ -141,7 +141,7 @@ export const chatChannelRemove = defineCommand({
   sideEffect: 'internal',
   access: ADMINS,
   handler: async (ctx, input) => {
-    const removed = await ctx.trx.deleteFrom('crove_meetings.chat_channel').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
+    const removed = await ctx.trx.deleteFrom('ludy_meetings.chat_channel').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
     if (removed.length === 0) throw new DomainError('CHAT_CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     ctx.audit({ channelId: input.id });
     return zChatChannelRemoved.parse({ id: input.id });
@@ -171,7 +171,7 @@ function lastOf(posts: readonly PostRow[], channelId: string): { last: ChatPrevi
 // Posts of the caller's own for this meeting, newest first (row security shows the recorder their own and nobody else's).
 async function postsOf(trx: Trx, orgId: string, meetingId: string): Promise<PostRow[]> {
   return trx
-    .selectFrom('crove_meetings.chat_post')
+    .selectFrom('ludy_meetings.chat_post')
     .select(['channel_id', 'state', 'created_at'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
@@ -182,7 +182,7 @@ async function postsOf(trx: Trx, orgId: string, meetingId: string): Promise<Post
 
 async function postsLast24h(trx: Trx, orgId: string, meetingId: string): Promise<number> {
   const row = await trx
-    .selectFrom('crove_meetings.chat_post')
+    .selectFrom('ludy_meetings.chat_post')
     .select(sql<string>`count(*)`.as('n'))
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
@@ -204,7 +204,7 @@ export const chatPreview = defineQuery({
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can post its minutes');
     const { message, key } = await messageOf(ctx.trx, ctx.orgId, input.meetingId);
-    const channels = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(['id', 'kind', 'label', 'host']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
+    const channels = await ctx.trx.selectFrom('ludy_meetings.chat_channel').select(['id', 'kind', 'label', 'host']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
     const posts = await postsOf(ctx.trx, ctx.orgId, input.meetingId);
     return zChatPreview.parse({
       meetingId: input.meetingId,
@@ -238,7 +238,7 @@ export const chatPost = defineCommand({
     const { message, key } = await messageOf(ctx.trx, ctx.orgId, input.meetingId);
     if (key !== input.factsKey) throw staleChat();
     if (chatMessageTooLong(message)) throw new DomainError('CHAT_MESSAGE_TOO_LONG', 422, 'Biên bản quá dài để gửi vào kênh; hãy rút gọn tóm tắt rồi chia sẻ lại');
-    const channel = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(['kind', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.channelId).executeTakeFirst();
+    const channel = await ctx.trx.selectFrom('ludy_meetings.chat_channel').select(['kind', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.channelId).executeTakeFirst();
     if (!channel) throw new DomainError('CHAT_CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     // The address belongs to the member who saved it: while they are not an owner or admin any more, nothing is posted to it (the database checks again, and also that they are not disabled).
     const saver = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', channel.created_by).executeTakeFirst();
@@ -256,14 +256,14 @@ export const chatPost = defineCommand({
       throw new DomainError('CHAT_ALREADY_POSTED', 409, 'Biên bản này đã được gửi (hoặc có thể đã được gửi) vào kênh này; gửi lại cần xác nhận', { audit: { repeats: reachedChannel.length } });
     }
     const inserted = await ctx.trx
-      .insertInto('crove_meetings.chat_post')
+      .insertInto('ludy_meetings.chat_post')
       .values({ org_id: ctx.orgId, meeting_id: input.meetingId, channel_id: input.channelId, user_id: userId, facts_key: key, text_hash: chatTextHash(message) })
       .returning('id')
       .executeTakeFirstOrThrow();
     // The message, kept only while the post is queued (the database deletes it when the post settles). The database refuses a body that does not fit, and a channel that no longer stands.
     const body: ChatBody = { ...message, link: input.link };
     try {
-      await sql`SELECT crove_meetings.chat_post_enqueue(${inserted.id}::uuid, ${JSON.stringify(body)}::jsonb)`.execute(ctx.trx);
+      await sql`SELECT ludy_meetings.chat_post_enqueue(${inserted.id}::uuid, ${JSON.stringify(body)}::jsonb)`.execute(ctx.trx);
     } catch (error) {
       if (error instanceof Error && /CHAT_POST_NOT_FOUND/.test(error.message)) throw new DomainError('CHAT_CHANNEL_OWNER_LEFT', 409, 'Người đã thêm kênh này không còn là chủ sở hữu hoặc quản trị viên; hãy nhờ chủ sở hữu hoặc quản trị viên dán lại địa chỉ');
       throw error;
@@ -282,7 +282,7 @@ export const chatStatus = defineQuery({
   handler: async (ctx, input): Promise<ChatStatus> => {
     userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_meetings.chat_post')
+      .selectFrom('ludy_meetings.chat_post')
       .select(['state', 'code', 'http_status', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -306,7 +306,7 @@ export const chatDelivery = defineQuery({
   handler: async (ctx, input): Promise<ChatDeliveryRow | null> => {
     systemOnly(ctx, 'read a queued post');
     const { rows } = await sql<{ id: string; channel_id: string; kind: ChatDeliveryRow['kind']; status: ChatDeliveryRow['status']; body: ChatBody | null; attempts: number }>`
-      SELECT id, channel_id, kind, status, body, attempts FROM crove_meetings.chat_post_get(${ctx.orgId}::uuid, ${input.id}::uuid)`.execute(ctx.trx);
+      SELECT id, channel_id, kind, status, body, attempts FROM ludy_meetings.chat_post_get(${ctx.orgId}::uuid, ${input.id}::uuid)`.execute(ctx.trx);
     const r = rows[0];
     return r ? { id: r.id, channelId: r.channel_id, kind: r.kind, status: r.status, body: r.body, attempts: r.attempts } : null;
   },
@@ -320,7 +320,7 @@ export const chatTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<ChatTarget | null> => {
     systemOnly(ctx, 'read the address of a channel');
-    const { rows } = await sql<{ key_id: string; envelope: Buffer }>`SELECT key_id, envelope FROM crove_meetings.chat_target_get(${input.channelId}::uuid)`.execute(ctx.trx);
+    const { rows } = await sql<{ key_id: string; envelope: Buffer }>`SELECT key_id, envelope FROM ludy_meetings.chat_target_get(${input.channelId}::uuid)`.execute(ctx.trx);
     const r = rows[0];
     return r ? zChatTarget.parse({ keyId: r.key_id, envelope: Buffer.from(r.envelope).toString('base64') }) : null;
   },
@@ -335,7 +335,7 @@ export const chatQueued = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     systemOnly(ctx, 'note a hand-over');
-    const { rows } = await sql<{ ok: boolean }>`SELECT crove_meetings.chat_touch(${input.id}::uuid) AS ok`.execute(ctx.trx);
+    const { rows } = await sql<{ ok: boolean }>`SELECT ludy_meetings.chat_touch(${input.id}::uuid) AS ok`.execute(ctx.trx);
     return { id: input.id, queued: rows[0]?.ok === true };
   },
 });
@@ -349,7 +349,7 @@ export const chatRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     systemOnly(ctx, 'record the outcome of a post');
-    const { rows } = await sql<{ ok: boolean }>`SELECT crove_meetings.chat_record(${input.id}::uuid, ${input.outcome}, ${input.httpStatus}::int, ${input.code}) AS ok`.execute(ctx.trx);
+    const { rows } = await sql<{ ok: boolean }>`SELECT ludy_meetings.chat_record(${input.id}::uuid, ${input.outcome}, ${input.httpStatus}::int, ${input.code}) AS ok`.execute(ctx.trx);
     // Ids, the outcome and a fixed code: no address, no word of the message.
     ctx.audit({ postId: input.id, outcome: input.outcome, status: input.httpStatus, code: input.code });
     return { id: input.id, recorded: rows[0]?.ok === true };
@@ -367,7 +367,7 @@ export const chatReseal = defineCommand({
   handler: async (ctx, input) => {
     systemOnly(ctx, 'reseal the address of a channel');
     const { rows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.chat_target_reseal(${input.channelId}::uuid, ${input.fromKeyId}, ${input.fromSha256}, ${input.keyId}, pg_catalog.decode(${input.envelope}, 'base64')) AS ok`.execute(ctx.trx);
+      SELECT ludy_meetings.chat_target_reseal(${input.channelId}::uuid, ${input.fromKeyId}, ${input.fromSha256}, ${input.keyId}, pg_catalog.decode(${input.envelope}, 'base64')) AS ok`.execute(ctx.trx);
     ctx.audit({ channelId: input.channelId, keyId: input.keyId });
     return { channelId: input.channelId, resealed: rows[0]?.ok === true };
   },

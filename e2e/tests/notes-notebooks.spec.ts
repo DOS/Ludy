@@ -70,7 +70,7 @@ test('notebooks and 2-level stacks, interactive preview checkboxes, and RLS-safe
     await expect(page.getByTestId('note-task-checkbox').first()).toBeChecked();
 
     const stored = sql<{ body: string }>(
-      `SELECT n.body FROM crove_notes.note n
+      `SELECT n.body FROM ludy_notes.note n
        JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
        WHERE t.slug = :'slug' AND n.title = 'Kế hoạch quý 4'`,
       { slug },

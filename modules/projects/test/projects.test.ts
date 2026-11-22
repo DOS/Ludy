@@ -10,7 +10,7 @@ describe('@ludy/mod-projects (#2591)', () => {
   it('registers manifest tables, column classes, entity metadata and screen definitions', () => {
     expect(projectsManifest.id).toBe('projects');
     expect(projectsManifest.dependsOn).toEqual(['kernel']);
-    expect(Object.keys(projectsManifest.tables.crove_projects).sort()).toEqual([
+    expect(Object.keys(projectsManifest.tables.ludy_projects).sort()).toEqual([
       'project',
       'project_column',
       'project_cycle',
@@ -24,42 +24,42 @@ describe('@ludy/mod-projects (#2591)', () => {
       'task_dependency',
       'time_entry',
     ]);
-    expect(projectsManifest.tables.crove_projects.project_column.name).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.project_column.task_status).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_task.column_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.roadmap_board.title).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.roadmap_board.description).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.roadmap_item.public_title).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.roadmap_item.public_summary).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.roadmap_item.submitter_display_name).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.roadmap_otp.email).toBe('contact');
-    expect(projectsManifest.tables.crove_projects.roadmap_otp.otp_sha256).toBe('sensitive');
-    expect(projectsManifest.tables.crove_projects.roadmap_otp.claim_sha256).toBe('sensitive');
-    expect(projectsManifest.tables.crove_projects.roadmap_subscriber.email_sealed).toBe('contact');
-    expect(projectsManifest.tables.crove_projects.roadmap_subscriber.unsubscribe_token_sha256).toBe('sensitive');
-    expect(projectsManifest.tables.crove_projects.project.name).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.project.template_tasks).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.project.is_template).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project.visibility).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project.cycles_enabled).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project.cycle_duration_weeks).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project.points_enabled).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project.owner_user_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_cycle.name).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.project_cycle.goal).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.project_cycle.status).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_member.user_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_task.task_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_task.start_on).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_task.cycle_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_task.story_points).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.project_task.recurrence).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.task_dependency.blocker_task_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.task_dependency.blocked_task_id).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.time_entry.note).toBe('pii');
-    expect(projectsManifest.tables.crove_projects.time_entry.hourly_rate).toBe('internal');
-    expect(projectsManifest.tables.crove_projects.time_entry.billable).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_column.name).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.project_column.task_status).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_task.column_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.roadmap_board.title).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_board.description).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_item.public_title).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_item.public_summary).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_item.submitter_display_name).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_otp.email).toBe('contact');
+    expect(projectsManifest.tables.ludy_projects.roadmap_otp.otp_sha256).toBe('sensitive');
+    expect(projectsManifest.tables.ludy_projects.roadmap_otp.claim_sha256).toBe('sensitive');
+    expect(projectsManifest.tables.ludy_projects.roadmap_subscriber.email_sealed).toBe('contact');
+    expect(projectsManifest.tables.ludy_projects.roadmap_subscriber.unsubscribe_token_sha256).toBe('sensitive');
+    expect(projectsManifest.tables.ludy_projects.project.name).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.project.description).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.project.template_tasks).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.project.is_template).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project.visibility).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project.cycles_enabled).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project.cycle_duration_weeks).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project.points_enabled).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project.owner_user_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_cycle.name).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.project_cycle.goal).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.project_cycle.status).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_member.user_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_task.task_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_task.start_on).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_task.cycle_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_task.story_points).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_task.recurrence).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.task_dependency.blocker_task_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.task_dependency.blocked_task_id).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.time_entry.note).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.time_entry.hourly_rate).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.time_entry.billable).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },

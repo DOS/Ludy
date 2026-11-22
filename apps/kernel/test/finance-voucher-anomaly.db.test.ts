@@ -275,7 +275,7 @@ suite('unusual payment amounts (#2419)', () => {
     expect(await flagsOf(await ask(pay(often, '3200000')))).toHaveLength(1);
     const [big] = await admin(
       async (c) =>
-        (await c.query(`SELECT j.id FROM crove_finance.journal_entry j JOIN crove_finance.cash_voucher v ON v.id = j.source_id AND v.org_id = j.org_id WHERE v.amount = 90000000 AND j.reverses_entry_id IS NULL`)).rows,
+        (await c.query(`SELECT j.id FROM ludy_finance.journal_entry j JOIN ludy_finance.cash_voucher v ON v.id = j.source_id AND v.org_id = j.org_id WHERE v.amount = 90000000 AND j.reverses_entry_id IS NULL`)).rows,
     );
     const reversal = await rpc('inbox/request', await tokenFor(member), { command: 'finance.journal.reverse', input: { entryId: big.id, entryDate: '2026-09-30', reason: 'Chi nhầm' }, idempotencyKey: randomUUID() });
     expect(reversal.status).toBe(200);

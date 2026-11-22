@@ -39,7 +39,7 @@ export interface CustomerCollection {
 const DAY_MS = 86_400_000;
 
 export async function readCollectionSetting(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<CollectionSetting> {
-  const row = await ctx.trx.selectFrom('crove_finance.collection_setting').select(['terms_days', 'weekly_item']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_finance.collection_setting').select(['terms_days', 'weekly_item']).where('org_id', '=', ctx.orgId).executeTakeFirst();
   return { termsDays: row?.terms_days ?? DEFAULT_TERMS_DAYS, weeklyItem: row?.weekly_item ?? false };
 }
 
@@ -78,7 +78,7 @@ async function lockedKeptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId
 // group is read: the kept party's row wins, else the row whose pause runs longest, so a pause or terms set before a merge are not hidden by it.
 async function groupRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, kept: string): Promise<{ terms_days: number | null; paused_until: string | null } | undefined> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.customer_collection as c')
+    .selectFrom('ludy_finance.customer_collection as c')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
     .select(['c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
@@ -129,7 +129,7 @@ export const collectionSettingSet = defineCommand({
     const before = await readCollectionSetting(ctx);
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     await ctx.trx
-      .insertInto('crove_finance.collection_setting')
+      .insertInto('ludy_finance.collection_setting')
       .values({ org_id: ctx.orgId, terms_days: input.termsDays, weekly_item: input.weeklyItem, set_by: userId })
       .onConflict((oc) => oc.column('org_id').doUpdateSet({ terms_days: input.termsDays, weekly_item: input.weeklyItem, set_by: userId, updated_at: ctx.now }))
       .execute();
@@ -174,14 +174,14 @@ export const customerCollectionSet = defineCommand({
       return before;
     }
     await ctx.trx
-      .insertInto('crove_finance.customer_collection')
+      .insertInto('ludy_finance.customer_collection')
       .values({ org_id: ctx.orgId, party_id: kept, terms_days: termsDays, paused_until: pausedUntil, set_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: termsDays, paused_until: pausedUntil, set_by: userId, updated_at: ctx.now }))
       .execute();
     // The kept party's row now holds the group's merged settings (what `before` read, with this change), so the rows of its duplicates are cleared: otherwise the
     // latest pause anywhere in the group could not be lifted, nor old terms of a duplicate shown again once the kept party's terms are cleared.
     await sql`
-      UPDATE crove_finance.customer_collection c
+      UPDATE ludy_finance.customer_collection c
       SET terms_days = NULL, paused_until = NULL, set_by = ${userId}, updated_at = ${ctx.now}
       FROM ludy_kernel.party x
       WHERE c.org_id = ${ctx.orgId} AND x.org_id = c.org_id AND x.id = c.party_id AND x.duplicate_of = ${kept} AND c.party_id <> ${kept}

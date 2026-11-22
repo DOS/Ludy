@@ -66,7 +66,7 @@ suite('the series nudge (#3542)', () => {
     const connectionId = over.connectionId ?? (await connection(who));
     const startsAt = over.startsAt ?? iso(startMinutes);
     await sqlAdmin(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
        VALUES ($1, $2, $3, $4, 'Họp giao ban', $5, $6, 'Asia/Ho_Chi_Minh', $7)`,
       [orgId, connectionId, users[who], randomUUID(), startsAt, new Date(new Date(startsAt).getTime() + 3_600_000).toISOString(), series],
     );
@@ -76,11 +76,11 @@ suite('the series nudge (#3542)', () => {
   async function meeting(startMinutes: number, readers: string[], series: string | null, title = 'Giao ban tuần trước'): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
        VALUES ($1, $2, $6, 'vi', $4, $5, 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365, $7)`,
       [orgId, id, users.rec, iso(startMinutes), iso(startMinutes + 60), title, series],
     );
-    for (const who of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
+    for (const who of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
     return id;
   }
   async function seat(title: string, holder: string): Promise<string> {
@@ -97,7 +97,7 @@ suite('the series nudge (#3542)', () => {
       await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status, assignee_position_id) VALUES ($1, $2, $3, 'human', 'system', $4, $5)`, [orgId, taskId, title, over.task, over.seat ?? null]);
     }
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
        VALUES ($1, $2, $3, $4, 'Lan', $5, 'thứ sáu', $6, $7, $8, false, 10)`,
       [orgId, id, meetingId, title, users[over.parsed ?? 'lan'], over.stage ?? 'published', taskId === null ? 'suggested' : 'accepted', taskId],
     );
@@ -140,7 +140,7 @@ suite('the series nudge (#3542)', () => {
 
   beforeEach(async () => {
     await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE org_id = $1', [orgId]);
-    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.task WHERE org_id = $1', [orgId]);
     await sqlAdmin(`DELETE FROM ludy_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.notification WHERE org_id = $1', [orgId]);
@@ -256,7 +256,7 @@ suite('the series nudge (#3542)', () => {
     await calendarEvent('lan', 15, series, { connectionId: shared, startsAt });
     expect(await sweep()).toMatchObject({ found: 1, sent: 1 });
     // The occurrence moves by 10 minutes and the cache follows: the same notice, not a second.
-    await sqlAdmin(`UPDATE crove_meetings.calendar_agenda SET starts_at = starts_at + interval '10 minutes', ends_at = ends_at + interval '10 minutes' WHERE org_id = $1`, [orgId]);
+    await sqlAdmin(`UPDATE ludy_meetings.calendar_agenda SET starts_at = starts_at + interval '10 minutes', ends_at = ends_at + interval '10 minutes' WHERE org_id = $1`, [orgId]);
     expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
     expect(await notices('lan')).toHaveLength(1);
   });
@@ -290,7 +290,7 @@ suite('the series nudge (#3542)', () => {
     await item(earlier, 'Việc sắp xong', { task: 'todo' });
     const startsAt = iso(15);
     await sqlAdmin(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
        VALUES ($1, $2, $3, $4, 'Họp', $5, $6, 'Asia/Ho_Chi_Minh', $7)`,
       [orgId, await connection('lan'), users.lan, randomUUID(), startsAt, iso(75), series],
     );
@@ -300,6 +300,6 @@ suite('the series nudge (#3542)', () => {
     expect(await worker.execute('meetings.series.nudge', args, { actor: SYSTEM, orgId })).toEqual({ sent: 0 });
     // A person cannot run it, nor read what the sweep reads.
     expect(await refuses(appRuntime.execute('meetings.series.nudge', args, { actor: { type: 'user', userId: users.lan as string, aal: 'aal1' }, orgId }))).toMatch(/FORBIDDEN|ACCESS|NOT_ALLOWED/);
-    await expect((pools[0] as pg.Pool).query('SELECT * FROM crove_meetings.series_nudges_due(10)')).rejects.toThrow(/permission denied/);
+    await expect((pools[0] as pg.Pool).query('SELECT * FROM ludy_meetings.series_nudges_due(10)')).rejects.toThrow(/permission denied/);
   });
 });

@@ -1,6 +1,6 @@
 // Per-currency amount scale and the fx_rate domain (issue #1282, ADR-0021 decision 1) on a real PostgreSQL 17: the
-// currency reference table, read by every runtime role and written by none; exchange rates typed crove_finance.fx_rate;
-// and crove_finance.post_journal_entry() refusing an amount with more decimals than the org's book currency uses
+// currency reference table, read by every runtime role and written by none; exchange rates typed ludy_finance.fx_rate;
+// and ludy_finance.post_journal_entry() refusing an amount with more decimals than the org's book currency uses
 // (AMOUNT_SCALE, 22023), where numeric(20,4) would have kept or rounded it silently. Also the read-only query that
 // lists rows posted before the rule which break it (the migration's header carries the same query).
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
@@ -25,18 +25,18 @@ const ROLES = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant'];
 // checks"), which stops a deploy when it lists anything.
 const BREAKING_ROWS = `
   SELECT 'journal_line' AS source, l.org_id, l.entry_id AS id, l.line_no, t.base_currency AS currency, l.debit, l.credit
-  FROM crove_finance.journal_line l
+  FROM ludy_finance.journal_line l
   JOIN ludy_kernel.tenant t ON t.org_id = l.org_id
   LEFT JOIN ludy_kernel.currency c ON c.code = t.base_currency
   WHERE c.code IS NULL OR l.debit <> pg_catalog.round(l.debit, c.minor_units) OR l.credit <> pg_catalog.round(l.credit, c.minor_units)
   UNION ALL
   SELECT 'purchase_document', d.org_id, d.id, NULL, 'VND', d.subtotal, d.total
-  FROM crove_finance.purchase_document d
+  FROM ludy_finance.purchase_document d
   WHERE d.subtotal <> pg_catalog.round(d.subtotal, 0) OR d.vat_amount <> pg_catalog.round(d.vat_amount, 0)
      OR d.total <> pg_catalog.round(d.total, 0)
   UNION ALL
   SELECT 'purchase_line', p.org_id, p.document_id, p.line_no, 'VND', p.amount, p.vat_amount
-  FROM crove_finance.purchase_line p
+  FROM ludy_finance.purchase_line p
   WHERE p.amount <> pg_catalog.round(p.amount, 0) OR p.vat_amount <> pg_catalog.round(p.vat_amount, 0)`;
 
 type Line = { line_no: number; account_code: string; debit: string; credit: string };
@@ -73,7 +73,7 @@ suite('currency amount scale (#1282)', () => {
       try {
         await app.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
         const { rows } = await app.query<{ id: string }>(
-          `SELECT crove_finance.post_journal_entry('2026-10-01', 'scale', 'test', $1::uuid, $2::jsonb) AS id`,
+          `SELECT ludy_finance.post_journal_entry('2026-10-01', 'scale', 'test', $1::uuid, $2::jsonb) AS id`,
           [randomUUID(), JSON.stringify(lines)],
         );
         await app.query('COMMIT');
@@ -86,7 +86,7 @@ suite('currency amount scale (#1282)', () => {
   }
 
   const linesOf = (orgId: string) =>
-    withAdmin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.journal_line WHERE org_id = $1', [orgId])).rows[0]?.n);
+    withAdmin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_finance.journal_line WHERE org_id = $1', [orgId])).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -164,21 +164,21 @@ suite('currency amount scale (#1282)', () => {
     await withAdmin(async (c) => {
       const { rows } = await c.query<{ type: string }>(
         `SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type FROM pg_catalog.pg_attribute a
-         WHERE a.attrelid = 'crove_finance.purchase_document'::regclass AND a.attname = 'exchange_rate'`,
+         WHERE a.attrelid = 'ludy_finance.purchase_document'::regclass AND a.attname = 'exchange_rate'`,
       );
-      expect(rows[0]?.type).toBe('crove_finance.fx_rate');
+      expect(rows[0]?.type).toBe('ludy_finance.fx_rate');
       const domain = await c.query<{ base: string; checks: string[] }>(
         `SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) AS base,
                 ARRAY(SELECT pg_catalog.pg_get_constraintdef(k.oid) FROM pg_catalog.pg_constraint k WHERE k.contypid = t.oid) AS checks
-         FROM pg_catalog.pg_type t WHERE t.oid = 'crove_finance.fx_rate'::regtype`,
+         FROM pg_catalog.pg_type t WHERE t.oid = 'ludy_finance.fx_rate'::regtype`,
       );
       expect(domain.rows[0]).toEqual({ base: 'numeric(24,10)', checks: ['CHECK ((VALUE > (0)::numeric))'] });
-      expect((await c.query(`SELECT '25432.5'::crove_finance.fx_rate::text AS v`)).rows[0]).toEqual({ v: '25432.5000000000' });
-      await expect(c.query(`SELECT 0::crove_finance.fx_rate`)).rejects.toMatchObject({ code: '23514' });
-      await expect(c.query(`SELECT (-1)::crove_finance.fx_rate`)).rejects.toMatchObject({ code: '23514' });
+      expect((await c.query(`SELECT '25432.5'::ludy_finance.fx_rate::text AS v`)).rows[0]).toEqual({ v: '25432.5000000000' });
+      await expect(c.query(`SELECT 0::ludy_finance.fx_rate`)).rejects.toMatchObject({ code: '23514' });
+      await expect(c.query(`SELECT (-1)::ludy_finance.fx_rate`)).rejects.toMatchObject({ code: '23514' });
       // A rate too small for 10 decimals rounds to 0 and is refused, not stored as 0.
-      await expect(c.query(`SELECT 0.00000000001::crove_finance.fx_rate`)).rejects.toMatchObject({ code: '23514' });
-      await expect(c.query(`SELECT 1e14::crove_finance.fx_rate`)).rejects.toMatchObject({ code: '22003' });
+      await expect(c.query(`SELECT 0.00000000001::ludy_finance.fx_rate`)).rejects.toMatchObject({ code: '23514' });
+      await expect(c.query(`SELECT 1e14::ludy_finance.fx_rate`)).rejects.toMatchObject({ code: '22003' });
     });
   });
 
@@ -240,13 +240,13 @@ suite('currency amount scale (#1282)', () => {
     const entryId = await withAdmin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id)
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id)
          VALUES ($1, '2026-10-02', 'before #1282', 'test', $2) RETURNING id`,
         [orgs.vnd, randomUUID()],
       );
       const id = rows[0]?.id ?? '';
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
          VALUES ($1, $2, 1, '6422', 100.5, 0), ($1, $2, 2, '331', 0, 100.5)`,
         [orgs.vnd, id],
       );

@@ -70,7 +70,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
   }
 
   const versionRows = (orgId: string, noteId: string) =>
-    admin(async (c) => (await c.query<{ revision: number; title: string }>('SELECT revision, title FROM crove_notes.note_version WHERE org_id = $1 AND note_id = $2 ORDER BY revision', [orgId, noteId])).rows);
+    admin(async (c) => (await c.query<{ revision: number; title: string }>('SELECT revision, title FROM ludy_notes.note_version WHERE org_id = $1 AND note_id = $2 ORDER BY revision', [orgId, noteId])).rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -181,7 +181,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query('UPDATE crove_notes.note SET tainted = true WHERE org_id = $1 AND id = $2', [o.orgId, noteId]);
+      await c.query('UPDATE ludy_notes.note SET tainted = true WHERE org_id = $1 AND id = $2', [o.orgId, noteId]);
       await c.query('COMMIT');
     });
     // The author edits the text: taint clears, and the tainted state before is the snapshot.
@@ -242,7 +242,7 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     const { noteId } = await o.exec<NoteWritten>(o.author, 'notes.note.create', { title: 'Sắp xóa' });
     await o.edit(o.author, noteId, 1, 'Sắp xóa hẳn');
     await o.exec(o.author, 'notes.note.delete', { noteId });
-    await admin((c) => c.query(`UPDATE crove_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, noteId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, noteId]));
     await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId });
     expect(await versionRows(o.orgId, noteId)).toEqual([]);
   });
@@ -280,13 +280,13 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     });
 
     const erased = await app.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
-    const notesErased = Object.fromEntries(erased.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]));
-    expect(notesErased).toMatchObject({ 'crove_notes.note_version.body': 1, 'crove_notes.note_template.body': 1 });
+    const notesErased = Object.fromEntries(erased.erased.filter((e) => e.column.startsWith('ludy_notes.')).map((e) => [e.column, e.rows]));
+    expect(notesErased).toMatchObject({ 'ludy_notes.note_version.body': 1, 'ludy_notes.note_template.body': 1 });
 
     const leftovers = await admin(async (c) => {
-      const versions = await c.query<{ body: string }>('SELECT body FROM crove_notes.note_version WHERE org_id = $1', [o.orgId]);
-      const templates = await c.query<{ body: string }>('SELECT body FROM crove_notes.note_template WHERE org_id = $1 AND id = $2', [o.orgId, tpl.templateId]);
-      const notes = await c.query<{ id: string; body: string }>('SELECT id, body FROM crove_notes.note WHERE org_id = $1 ORDER BY id', [o.orgId]);
+      const versions = await c.query<{ body: string }>('SELECT body FROM ludy_notes.note_version WHERE org_id = $1', [o.orgId]);
+      const templates = await c.query<{ body: string }>('SELECT body FROM ludy_notes.note_template WHERE org_id = $1 AND id = $2', [o.orgId, tpl.templateId]);
+      const notes = await c.query<{ id: string; body: string }>('SELECT id, body FROM ludy_notes.note WHERE org_id = $1 ORDER BY id', [o.orgId]);
       return { versions: versions.rows, templates: templates.rows, notes: notes.rows };
     });
     expect(JSON.stringify(leftovers)).not.toContain(value);
@@ -306,19 +306,19 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     await restore.connect();
     try {
       await restore.query('BEGIN');
-      await restore.query('SELECT id FROM crove_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, shared.noteId]);
+      await restore.query('SELECT id FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, shared.noteId]);
       const erasing = app.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
       // The erasure waits on the lock while the restore writes the old text back and commits.
       await new Promise((resolve) => setTimeout(resolve, 500));
-      await restore.query(`UPDATE crove_notes.note SET body = $3, revision = revision + 1 WHERE org_id = $1 AND id = $2`, [o.orgId, shared.noteId, `Gọi ${value}`]);
+      await restore.query(`UPDATE ludy_notes.note SET body = $3, revision = revision + 1 WHERE org_id = $1 AND id = $2`, [o.orgId, shared.noteId, `Gọi ${value}`]);
       await restore.query('COMMIT');
       await erasing;
     } finally {
       await restore.end();
     }
     const left = await admin(async (c) => ({
-      note: (await c.query<{ body: string }>('SELECT body FROM crove_notes.note WHERE org_id = $1 AND id = $2', [o.orgId, shared.noteId])).rows,
-      versions: (await c.query<{ body: string }>('SELECT body FROM crove_notes.note_version WHERE org_id = $1 AND note_id = $2', [o.orgId, shared.noteId])).rows,
+      note: (await c.query<{ body: string }>('SELECT body FROM ludy_notes.note WHERE org_id = $1 AND id = $2', [o.orgId, shared.noteId])).rows,
+      versions: (await c.query<{ body: string }>('SELECT body FROM ludy_notes.note_version WHERE org_id = $1 AND note_id = $2', [o.orgId, shared.noteId])).rows,
     }));
     expect(left.note).toHaveLength(1);
     expect(JSON.stringify(left)).not.toContain(value);

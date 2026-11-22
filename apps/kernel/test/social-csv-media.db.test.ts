@@ -287,17 +287,17 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
   });
 
   it("refuses a limited member's import that attaches another channel's file, writing nothing", async () => {
-    const posts = await count('crove_social.post');
+    const posts = await count('ludy_social.post');
     const refused = await rpc('social/posts/import', limited, { idempotencyKey: randomUUID(), posts: [{ body: 'Bài có ảnh', connectionIds: [channels.mine], media: [{ fileId: files.mineOwn }, { fileId: files.hiddenOwn }] }] });
     expect(refused).toMatchObject({ status: 403, body: { code: 'MEDIA_NOT_ALLOWED', data: { fileId: files.hiddenOwn } } });
-    expect(await count('crove_social.post')).toBe(posts);
+    expect(await count('ludy_social.post')).toBe(posts);
     const allowed = await rpc('social/posts/import', limited, { idempotencyKey: randomUUID(), posts: [{ body: 'Bài có ảnh', connectionIds: [channels.mine], media: [{ fileId: files.mineOwn }, { fileId: files.menu }] }] });
     expect(allowed.status).toBe(200);
   });
 
   it('makes 30 drafts from 30 rows with their media, alt texts, labels and first comment, creating the missing label', async () => {
     expect((await rpc('social/labels/create', owner, { name: 'Khai trương' })).status).toBe(200);
-    const labelsBefore = await count('crove_social.label');
+    const labelsBefore = await count('ludy_social.label');
     const rows = Array.from({ length: 30 }, (_, i) => ({
       body: `Bài số ${i + 1}`,
       connectionIds: [channels.mine],
@@ -310,7 +310,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     const postIds: string[] = done.body.posts.map((p: { postId: string }) => p.postId);
     expect(postIds).toHaveLength(30);
     const media = await admin((c) =>
-      c.query<{ post_id: string; file_id: string; position: number; alt_text: string | null }>('SELECT post_id, file_id, position, alt_text FROM crove_social.post_media WHERE org_id = $1 AND post_id = ANY($2::uuid[]) ORDER BY position', [org.orgId, postIds]),
+      c.query<{ post_id: string; file_id: string; position: number; alt_text: string | null }>('SELECT post_id, file_id, position, alt_text FROM ludy_social.post_media WHERE org_id = $1 AND post_id = ANY($2::uuid[]) ORDER BY position', [org.orgId, postIds]),
     );
     expect(media.rows.filter((m) => m.post_id === postIds[0])).toEqual([
       { post_id: postIds[0], file_id: files.menu, position: 1, alt_text: 'Thực đơn tuần 1' },
@@ -320,7 +320,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     expect(new Set(media.rows.map((m) => m.post_id)).size).toBe(30);
     const labels = await admin((c) =>
       c.query<{ name: string; n: string; created_by: string }>(
-        'SELECT l.name, count(pl.post_id) AS n, l.created_by FROM crove_social.label l JOIN crove_social.post_label pl ON pl.org_id = l.org_id AND pl.label_id = l.id WHERE l.org_id = $1 AND pl.post_id = ANY($2::uuid[]) GROUP BY l.name, l.created_by ORDER BY l.name',
+        'SELECT l.name, count(pl.post_id) AS n, l.created_by FROM ludy_social.label l JOIN ludy_social.post_label pl ON pl.org_id = l.org_id AND pl.label_id = l.id WHERE l.org_id = $1 AND pl.post_id = ANY($2::uuid[]) GROUP BY l.name, l.created_by ORDER BY l.name',
         [org.orgId, postIds],
       ),
     );
@@ -328,8 +328,8 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
       { name: 'Khai trương', n: '10', created_by: owner.userId },
       { name: 'Tháng 11', n: '30', created_by: member.userId },
     ]);
-    expect(await count('crove_social.label')).toBe(labelsBefore + 1);
-    const variants = await admin((c) => c.query<{ post_id: string; status: string; settings: Record<string, unknown> }>('SELECT post_id, status, settings FROM crove_social.post_variant WHERE org_id = $1 AND post_id = ANY($2::uuid[])', [org.orgId, postIds]));
+    expect(await count('ludy_social.label')).toBe(labelsBefore + 1);
+    const variants = await admin((c) => c.query<{ post_id: string; status: string; settings: Record<string, unknown> }>('SELECT post_id, status, settings FROM ludy_social.post_variant WHERE org_id = $1 AND post_id = ANY($2::uuid[])', [org.orgId, postIds]));
     expect(variants.rows.every((v) => v.status === 'draft')).toBe(true);
     expect(variants.rows.find((v) => v.post_id === postIds[0])?.settings.firstComment).toBe('Xem thực đơn đầy đủ ở trang của quán');
     expect(variants.rows.filter((v) => 'firstComment' in v.settings)).toHaveLength(1);

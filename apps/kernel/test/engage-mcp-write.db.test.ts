@@ -132,7 +132,7 @@ suite('the Engage R1 write tools (#3861)', () => {
     const connection = randomUUID();
     await sqlAdmin(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
     adAccount = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [orgA, adAccount, connection]);
+    await sqlAdmin(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [orgA, adAccount, connection]);
   }, 300_000);
 
   afterAll(async () => {
@@ -204,7 +204,7 @@ suite('the Engage R1 write tools (#3861)', () => {
     const g = await dy();
     const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'organization', name: 'Khách có cơ hội' }, g);
     const deal = await run<Deal>('crm.mcp.deal_create', { partyId: party.partyId, title: 'Gói quảng cáo tháng 12', amount: '12000000', expectedClose: null, ownerUserId: users.member }, g);
-    expect(await one(`SELECT created_by, updated_by, owner_user_id, title FROM crove_crm.deal WHERE id = $1`, [deal.id])).toMatchObject({ created_by: users.owner, updated_by: users.owner, owner_user_id: users.member, title: 'Gói quảng cáo tháng 12' });
+    expect(await one(`SELECT created_by, updated_by, owner_user_id, title FROM ludy_crm.deal WHERE id = $1`, [deal.id])).toMatchObject({ created_by: users.owner, updated_by: users.owner, owner_user_id: users.member, title: 'Gói quảng cáo tháng 12' });
     const stages = await runtime.query<PipelineStage[]>('crm.stage.list', {}, { actor: browser('owner'), orgId: orgA });
     const second = stages.find((s) => s.kind === 'open' && s.id !== deal.stageId) as PipelineStage;
     const moved = await run<Deal>('crm.mcp.deal_move', { dealId: deal.id, version: deal.version, stageId: second.id }, g);
@@ -213,7 +213,7 @@ suite('the Engage R1 write tools (#3861)', () => {
     expect(quote.status).toBe('draft');
     const saved = await run<Quote>('crm.mcp.quote_save', { quoteId: quote.id, version: quote.version, lines: [{ kind: 'item', description: 'Chạy quảng cáo', quantity: '1', unitPrice: '12000000', vatRate: '10' }] }, g);
     expect(saved.lines).toHaveLength(1);
-    expect(await one(`SELECT count(*)::int AS n FROM crove_crm.quote_line WHERE quote_id = $1`, [quote.id])).toMatchObject({ n: 1 });
+    expect(await one(`SELECT count(*)::int AS n FROM ludy_crm.quote_line WHERE quote_id = $1`, [quote.id])).toMatchObject({ n: 1 });
     // A quote a person sent is revised into a new draft by the agent; sending it stays a person's.
     const sent = (await runtime.execute<QuoteSent>('crm.quote.send', { quoteId: saved.id, version: saved.version, via: 'link' }, { actor: browser('owner'), orgId: orgA })).quote;
     const revised = await run<Quote>('crm.mcp.quote_revise', { quoteId: sent.id }, g);
@@ -226,12 +226,12 @@ suite('the Engage R1 write tools (#3861)', () => {
     const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách bước tiếp' }, g);
     const d1 = await run<Deal>('crm.mcp.deal_create', { partyId: party.partyId, title: 'Cơ hội 1', amount: '1000000', expectedClose: null }, g);
     const d2 = await run<Deal>('crm.mcp.deal_create', { partyId: party.partyId, title: 'Cơ hội 2', amount: '2000000', expectedClose: null }, g);
-    const step = async (deal: string) => (await one<{ id: string }>(`INSERT INTO crove_crm.deal_next_step (org_id, deal_id, reason, since_on) VALUES ($1, $2, 'no_activity', '2026-10-01') RETURNING id`, [orgA, deal])).id;
+    const step = async (deal: string) => (await one<{ id: string }>(`INSERT INTO ludy_crm.deal_next_step (org_id, deal_id, reason, since_on) VALUES ($1, $2, 'no_activity', '2026-10-01') RETURNING id`, [orgA, deal])).id;
     const [s1, s2] = [await step(d1.id), await step(d2.id)];
     expect(await run('crm.mcp.next_step_done', { nextStepIds: [s1] }, g)).toMatchObject({ changed: [s1] });
-    expect(await one(`SELECT status, resolved_by FROM crove_crm.deal_next_step WHERE id = $1`, [s1])).toMatchObject({ status: 'done', resolved_by: users.owner });
+    expect(await one(`SELECT status, resolved_by FROM ludy_crm.deal_next_step WHERE id = $1`, [s1])).toMatchObject({ status: 'done', resolved_by: users.owner });
     expect(await run('crm.mcp.next_step_snooze', { nextStepIds: [s2], days: 7 }, g)).toMatchObject({ changed: [s2] });
-    expect((await one<{ snoozed_until: Date }>(`SELECT snoozed_until FROM crove_crm.deal_next_step WHERE id = $1`, [s2])).snoozed_until).toBeTruthy();
+    expect((await one<{ snoozed_until: Date }>(`SELECT snoozed_until FROM ludy_crm.deal_next_step WHERE id = $1`, [s2])).snoozed_until).toBeTruthy();
   });
 
   it('saves an ads draft for a person to read, marked as the AI app\'s, and nothing launches', async () => {
@@ -239,7 +239,7 @@ suite('the Engage R1 write tools (#3861)', () => {
     const view = await run<{ id: string; origin: string; aiFields: string[]; status: string }>('ads.mcp.campaign_draft_save', { adAccountId: adAccount, plan: { name: 'Khuyến mãi 12', objective: 'traffic', dailyBudget: '200000' } }, g);
     expect(view).toMatchObject({ origin: 'ai', status: 'draft' });
     expect(view.aiFields.sort()).toEqual(['dailyBudget', 'name', 'objective']);
-    expect(await one(`SELECT origin, created_by, status FROM crove_ads.ad_campaign_draft WHERE id = $1`, [view.id])).toMatchObject({ origin: 'ai', created_by: users.owner, status: 'draft' });
+    expect(await one(`SELECT origin, created_by, status FROM ludy_ads.ad_campaign_draft WHERE id = $1`, [view.id])).toMatchObject({ origin: 'ai', created_by: users.owner, status: 'draft' });
     // The engage scope does not open it, and the ads scope does not open the engage commands.
     expect((await refusal(run('ads.mcp.campaign_draft_save', { adAccountId: adAccount, plan: { name: 'x', objective: 'traffic' } }))).details).toMatchObject({ rule: 'mcp_scope' });
     expect((await refusal(run('kernel.mcp.conversation_resolve', { conversationId: thread }, g))).details).toMatchObject({ rule: 'mcp_scope' });

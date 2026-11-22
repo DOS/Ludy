@@ -51,10 +51,10 @@ test('enter a general journal voucher, approve it and find it numbered in the jo
     const rows = sql<{ number: number; lines: string }>(
       `SELECT v.number,
               (SELECT string_agg(l.account_code || ':' || l.debit::text || ':' || l.credit::text, ',' ORDER BY l.line_no)
-                 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines
-         FROM crove_finance.journal_voucher v
+                 FROM ludy_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines
+         FROM ludy_finance.journal_voucher v
          JOIN ludy_kernel.tenant t ON t.org_id = v.org_id
-         JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
+         JOIN ludy_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
         WHERE t.slug = :'slug'`,
       { slug },
     );

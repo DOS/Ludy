@@ -189,7 +189,7 @@ describe('sign.envelope.by_source (#3512)', () => {
 
   it('executes query with org/source filters, excludes cc signers from counts, and validates output contract', async () => {
     const { trx, queries } = createFakeTrx((compiled) => {
-      if (compiled.sql.includes('"crove_sign"."envelope"')) {
+      if (compiled.sql.includes('"ludy_sign"."envelope"')) {
         return {
           rows: [
             {
@@ -229,7 +229,7 @@ describe('sign.envelope.by_source (#3512)', () => {
           ],
         };
       }
-      if (compiled.sql.includes('"crove_sign"."signer"')) {
+      if (compiled.sql.includes('"ludy_sign"."signer"')) {
         return {
           rows: [
             { envelope_id: ENV_1, status: 'signed' },
@@ -321,7 +321,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
 
     const { trx } = createFakeTrx((compiled) => {
       const sqlLower = compiled.sql.toLowerCase();
-      if (sqlLower.includes('select * from "crove_sign"."envelope"') && sqlLower.includes('for update')) {
+      if (sqlLower.includes('select * from "ludy_sign"."envelope"') && sqlLower.includes('for update')) {
         return {
           rows: [
             {
@@ -368,13 +368,13 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
           ],
         };
       }
-      if (sqlLower.includes('from "crove_sign"."envelope"')) {
+      if (sqlLower.includes('from "ludy_sign"."envelope"')) {
         return { rows: [{ id: ENV_1 }] };
       }
-      if (sqlLower.includes('from "crove_sign"."signing_event"')) {
+      if (sqlLower.includes('from "ludy_sign"."signing_event"')) {
         return { rows: [{ seq: 3, event_hash: 'd'.repeat(64) }] };
       }
-      if (sqlLower.includes('insert into "crove_sign"."signing_event"')) {
+      if (sqlLower.includes('insert into "ludy_sign"."signing_event"')) {
         return {
           rows: [
             {
@@ -387,7 +387,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
           ],
         };
       }
-      if (sqlLower.includes('from "crove_sign"."signer"')) {
+      if (sqlLower.includes('from "ludy_sign"."signer"')) {
         return { rows: [{ signer_role: 'signer', email: 'buyer@example.com' }] };
       }
       if (sqlLower.includes('member_emails')) {
@@ -463,7 +463,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
     const emittedFailed: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const { trx: failTrx } = createFakeTrx((compiled) => {
       const sqlLower = compiled.sql.toLowerCase();
-      if (sqlLower.includes('select * from "crove_sign"."envelope"') && sqlLower.includes('for update')) {
+      if (sqlLower.includes('select * from "ludy_sign"."envelope"') && sqlLower.includes('for update')) {
         return {
           rows: [
             {
@@ -477,13 +477,13 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
           ],
         };
       }
-      if (sqlLower.includes('from "crove_sign"."envelope"')) {
+      if (sqlLower.includes('from "ludy_sign"."envelope"')) {
         return { rows: [{ id: ENV_1 }] };
       }
-      if (sqlLower.includes('from "crove_sign"."signing_event"')) {
+      if (sqlLower.includes('from "ludy_sign"."signing_event"')) {
         return { rows: [] };
       }
-      if (sqlLower.includes('insert into "crove_sign"."signing_event"')) {
+      if (sqlLower.includes('insert into "ludy_sign"."signing_event"')) {
         return {
           rows: [
             {
@@ -519,7 +519,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
       const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
       const { trx } = createFakeTrx((compiled) => {
         const sqlLower = compiled.sql.toLowerCase();
-        if (sqlLower.includes('select * from "crove_sign"."envelope"') && sqlLower.includes('for update')) {
+        if (sqlLower.includes('select * from "ludy_sign"."envelope"') && sqlLower.includes('for update')) {
           return {
             rows: [
               {
@@ -550,16 +550,16 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
             ],
           };
         }
-        if (sqlLower.includes('from "crove_sign"."envelope"')) {
+        if (sqlLower.includes('from "ludy_sign"."envelope"')) {
           return { rows: [{ id: ENV_1 }] };
         }
-        if (sqlLower.includes('select "actor_label" from "crove_sign"."signing_event"')) {
+        if (sqlLower.includes('select "actor_label" from "ludy_sign"."signing_event"')) {
           return { rows: [{ actor_label: opts.originActorLabel }] };
         }
-        if (sqlLower.includes('from "crove_sign"."signing_event"')) {
+        if (sqlLower.includes('from "ludy_sign"."signing_event"')) {
           return { rows: [{ seq: 3, event_hash: 'd'.repeat(64) }] };
         }
-        if (sqlLower.includes('insert into "crove_sign"."signing_event"')) {
+        if (sqlLower.includes('insert into "ludy_sign"."signing_event"')) {
           return {
             rows: [
               {
@@ -572,7 +572,7 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
             ],
           };
         }
-        if (sqlLower.includes('from "crove_sign"."signer"')) {
+        if (sqlLower.includes('from "ludy_sign"."signer"')) {
           return { rows: opts.recipients };
         }
         if (sqlLower.includes('member_emails')) {

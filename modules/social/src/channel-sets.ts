@@ -42,9 +42,9 @@ export const channelSetSave = defineCommand({
     if (live.length !== ids.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Có kênh không tồn tại hoặc đã ngắt kết nối');
     const name = input.name.replace(/\s+/g, ' ');
     // One save at a time per org, so the name check and the count below hold against saves at the same moment.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.channel_set:${ctx.orgId}`}))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.channel_set:${ctx.orgId}`}))`.execute(ctx.trx);
     const clash = await ctx.trx
-      .selectFrom('crove_social.channel_set')
+      .selectFrom('ludy_social.channel_set')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       // lower() on both sides, so the check agrees with the unique index whatever the collation.
@@ -53,15 +53,15 @@ export const channelSetSave = defineCommand({
     if (clash && clash.id !== input.setId) throw new DomainError('CHANNEL_SET_NAME_TAKEN', 409, 'Đã có bộ kênh tên này');
     const values = { name, connection_ids: ids, updated_by: userId, updated_at: ctx.now };
     if (input.setId) {
-      const done = await ctx.trx.updateTable('crove_social.channel_set').set(values).where('org_id', '=', ctx.orgId).where('id', '=', input.setId).executeTakeFirst();
+      const done = await ctx.trx.updateTable('ludy_social.channel_set').set(values).where('org_id', '=', ctx.orgId).where('id', '=', input.setId).executeTakeFirst();
       if (Number(done.numUpdatedRows) === 0) throw new DomainError('CHANNEL_SET_NOT_FOUND', 404, 'Không tìm thấy bộ kênh này');
       ctx.audit({ set_id: input.setId, channels: ids.length });
       return { setId: input.setId };
     }
-    const count = await ctx.trx.selectFrom('crove_social.channel_set').select((e) => e.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const count = await ctx.trx.selectFrom('ludy_social.channel_set').select((e) => e.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (Number(count?.n ?? 0) >= CHANNEL_SETS_MAX) throw new DomainError('CHANNEL_SETS_FULL', 409, `Mỗi tổ chức lưu tối đa ${CHANNEL_SETS_MAX} bộ kênh`);
     const row = await ctx.trx
-      .insertInto('crove_social.channel_set')
+      .insertInto('ludy_social.channel_set')
       .values({ org_id: ctx.orgId, ...values, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -78,7 +78,7 @@ export const channelSetRemove = defineCommand({
   access: ADMINS,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    const done = await ctx.trx.deleteFrom('crove_social.channel_set').where('org_id', '=', ctx.orgId).where('id', '=', input.setId).executeTakeFirst();
+    const done = await ctx.trx.deleteFrom('ludy_social.channel_set').where('org_id', '=', ctx.orgId).where('id', '=', input.setId).executeTakeFirst();
     ctx.audit({ set_id: input.setId });
     return { setId: input.setId, removed: Number(done.numDeletedRows) > 0 };
   },
@@ -98,7 +98,7 @@ export const channelSetList = defineQuery({
   input: z.object({}),
   access: ALL,
   handler: async (ctx): Promise<ChannelSet[]> => {
-    const rows = await ctx.trx.selectFrom('crove_social.channel_set').select(['id', 'name', 'connection_ids', 'updated_at']).where('org_id', '=', ctx.orgId).orderBy('name').limit(CHANNEL_SETS_MAX).execute();
+    const rows = await ctx.trx.selectFrom('ludy_social.channel_set').select(['id', 'name', 'connection_ids', 'updated_at']).where('org_id', '=', ctx.orgId).orderBy('name').limit(CHANNEL_SETS_MAX).execute();
     const all = [...new Set(rows.flatMap((r) => r.connection_ids))];
     const live = new Set(
       all.length === 0

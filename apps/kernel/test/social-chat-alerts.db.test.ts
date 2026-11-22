@@ -179,7 +179,7 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
       expect(JSON.stringify(view)).not.toContain(BOT_TOKEN.split(':')[1]);
     }
     // The target is in the definer-only table, as ciphertext; the audit row holds only the kind and the kinds.
-    const rows = await admin(async (c) => (await c.query<{ envelope: Buffer; key_id: string }>('SELECT envelope, key_id FROM crove_social.chat_alert_target WHERE org_id = $1', [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ envelope: Buffer; key_id: string }>('SELECT envelope, key_id FROM ludy_social.chat_alert_target WHERE org_id = $1', [o.orgId])).rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.envelope.includes(Buffer.from(BOT_TOKEN.split(':')[1] as string))).toBe(false);
     expect(rows[0]?.envelope.includes(Buffer.from(CHAT_ID))).toBe(false);
@@ -206,8 +206,8 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
     await expect(save(o, o.owner, telegramInput(), refused.fetchImpl)).rejects.toMatchObject({ code: 'TELEGRAM_CHAT_NOT_FOUND' });
     await expect(save(o, o.owner, { kind: 'telegram', botToken: 'nope', chatId: CHAT_ID, events: ['failed'] }, refused.fetchImpl)).rejects.toMatchObject({ code: 'TELEGRAM_TOKEN_INVALID' });
     expect(await get(o, o.viewer)).toMatchObject({ kind: 'discord' });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.chat_alert WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.chat_alert_target WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_social.chat_alert WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_social.chat_alert_target WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
 
     // Another org sees none of it.
     const other = await org();
@@ -215,13 +215,13 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
 
     expect(await exec(o, o.admin, 'social.chat_alert.remove', {})).toEqual({ removed: true });
     expect(await get(o, o.owner)).toBeNull();
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.chat_alert_target WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_social.chat_alert_target WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
     expect(await exec(o, o.admin, 'social.chat_alert.remove', {})).toEqual({ removed: false });
   });
 
   it('keeps the sealed target from the API: no column of chat_alert, no read and no read-out for ludy_app', async () => {
     const columns = await admin(
-      async (c) => (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_social' AND table_name = 'chat_alert' ORDER BY ordinal_position")).rows,
+      async (c) => (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ludy_social' AND table_name = 'chat_alert' ORDER BY ordinal_position")).rows,
     );
     expect(columns.map((r) => r.column_name)).not.toContain('envelope');
     expect(columns.map((r) => r.column_name)).not.toContain('key_id');
@@ -229,9 +229,9 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
       async (c) =>
         (
           await c.query<{ role: string; select: boolean; get: boolean; put: boolean }>(
-            `SELECT r AS role, has_table_privilege(r, 'crove_social.chat_alert_target', 'SELECT') AS select,
-                    has_function_privilege(r, 'crove_social.chat_alert_target_get(uuid)', 'EXECUTE') AS get,
-                    has_function_privilege(r, 'crove_social.chat_alert_target_put(uuid, text, bytea)', 'EXECUTE') AS put
+            `SELECT r AS role, has_table_privilege(r, 'ludy_social.chat_alert_target', 'SELECT') AS select,
+                    has_function_privilege(r, 'ludy_social.chat_alert_target_get(uuid)', 'EXECUTE') AS get,
+                    has_function_privilege(r, 'ludy_social.chat_alert_target_put(uuid, text, bytea)', 'EXECUTE') AS put
                FROM unnest(ARRAY['ludy_app', 'ludy_tenant', 'ludy_worker']) r ORDER BY r`,
           )
         ).rows,
@@ -244,7 +244,7 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
     // As the API's own login, in an owner's context of an org with a saved chat.
     const o = await org();
     await save(o, o.owner, telegramInput(), platforms().fetchImpl);
-    const alertId = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.chat_alert WHERE org_id = $1', [o.orgId])).rows[0]?.id as string);
+    const alertId = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_social.chat_alert WHERE org_id = $1', [o.orgId])).rows[0]?.id as string);
     const api = new pg.Client({ connectionString: appUrl });
     await api.connect();
     try {
@@ -257,8 +257,8 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
           await api.query('ROLLBACK');
         }
       };
-      await expect(attempt('SELECT * FROM crove_social.chat_alert_target')).rejects.toThrow(/permission denied/);
-      await expect(attempt('SELECT * FROM crove_social.chat_alert_target_get($1::uuid)', [alertId])).rejects.toThrow(/permission denied/);
+      await expect(attempt('SELECT * FROM ludy_social.chat_alert_target')).rejects.toThrow(/permission denied/);
+      await expect(attempt('SELECT * FROM ludy_social.chat_alert_target_get($1::uuid)', [alertId])).rejects.toThrow(/permission denied/);
     } finally {
       await api.end();
     }
@@ -372,8 +372,8 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
       const id = randomUUID();
       const link = randomUUID();
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_social.review_link (org_id, id, post_id, token_sha256, content_key, created_by, expires_at) VALUES ($1, $2, $3, $4, 'k', $5, now() + interval '1 day')", [d.orgId, link, answered.postId, randomUUID().replaceAll('-', '').padEnd(64, '0'), d.owner]);
-        await c.query('INSERT INTO crove_social.review_feedback (org_id, id, link_id, post_id, reviewer_name, verdict, body) VALUES ($1, $2, $3, $4, $5, $6, $7)', [d.orgId, id, link, answered.postId, name, verdict, verdict === 'comment' ? 'Đẹp' : null]);
+        await c.query("INSERT INTO ludy_social.review_link (org_id, id, post_id, token_sha256, content_key, created_by, expires_at) VALUES ($1, $2, $3, $4, 'k', $5, now() + interval '1 day')", [d.orgId, link, answered.postId, randomUUID().replaceAll('-', '').padEnd(64, '0'), d.owner]);
+        await c.query('INSERT INTO ludy_social.review_feedback (org_id, id, link_id, post_id, reviewer_name, verdict, body) VALUES ($1, $2, $3, $4, $5, $6, $7)', [d.orgId, id, link, answered.postId, name, verdict, verdict === 'comment' ? 'Đẹp' : null]);
       });
       return event(d, 'social.review.answered', { post_id: answered.postId, feedback_id: id });
     };
@@ -415,7 +415,7 @@ suite('social team chat alerts on PostgreSQL (#863)', () => {
     await save(b, b.owner, telegramInput(['published']), api.fetchImpl);
     const other = await submitted(b);
     await admin((c) =>
-      c.query('UPDATE crove_social.chat_alert_target t SET envelope = a.envelope, key_id = a.key_id FROM crove_social.chat_alert_target a WHERE t.org_id = $2 AND a.org_id = $1', [o.orgId, b.orgId]),
+      c.query('UPDATE ludy_social.chat_alert_target t SET envelope = a.envelope, key_id = a.key_id FROM ludy_social.chat_alert_target a WHERE t.org_id = $2 AND a.org_id = $1', [o.orgId, b.orgId]),
     );
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await event(b, 'social.variant.published', { post_id: other.postId, variant_id: other.variantId });

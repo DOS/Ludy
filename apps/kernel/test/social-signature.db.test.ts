@@ -123,8 +123,8 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     expect(await refusal(sign(o, o.owner, conn, 'x'.repeat(501)))).toBe('VALIDATION');
     expect(await sign(o, o.owner, conn, 'ầ'.repeat(500))).toMatchObject({ signature: 'ầ'.repeat(500) });
     // The table refuses one over the cap whoever writes it.
-    await expect(admin((c) => c.query('UPDATE crove_social.channel_policy SET signature = $1 WHERE org_id = $2', ['x'.repeat(501), o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
-    await expect(admin((c) => c.query("UPDATE crove_social.channel_policy SET signature = '' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.channel_policy SET signature = $1 WHERE org_id = $2', ['x'.repeat(501), o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
+    await expect(admin((c) => c.query("UPDATE ludy_social.channel_policy SET signature = '' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
     // Null or empty clears it.
     expect((await sign(o, o.owner, conn, '  ')).signature).toBeNull();
     expect(await policy(o, conn)).toBeNull();
@@ -277,7 +277,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
   type ReviewChannel = { channel: string; body: string; signature: string | null };
   // A plan sends each post's body once (#930): a channel's body is null when it shows the post's.
   type ReviewPage = { kind?: 'plan'; channels?: ReviewChannel[]; posts?: { id: string; body?: string | null; channels?: (Omit<ReviewChannel, 'body'> & { body: string | null })[] }[] };
-  const review = async (token: string) => (await pool.query<{ page: ReviewPage | null }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+  const review = async (token: string) => (await pool.query<{ page: ReviewPage | null }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   // A post on a signed channel, a channel without one and a signed channel left off, with an answer.
   async function reviewed(o: Org) {
     const signed = await connection(o.orgId, o.owner);
@@ -292,7 +292,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     });
     const single = await exec<{ token: string }>(o, o.owner, 'social.review_link.create', { postId });
     const plan = await exec<{ token: string }>(o, o.owner, 'social.review_link.create_plan', { postIds: [postId] });
-    await pool.query("SELECT crove_social.review_feedback_add($1, 'Khách', 'comment', 'Xem giúp')", [single.token]);
+    await pool.query("SELECT ludy_social.review_feedback_add($1, 'Khách', 'comment', 'Xem giúp')", [single.token]);
     return { postId, single: single.token, plan: plan.token };
   }
 
@@ -312,7 +312,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
       expect(channels?.map((c) => withSignature(c.body, { signature: c.signature }))).toEqual(sent);
     }
     // A signature that is not a text (a hand-written setting) shows as none, as it is never appended.
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = '{"signature": 7}' WHERE org_id = $1 AND post_id = $2 AND settings->>'signature' = $3`, [o.orgId, postId, SIGNATURE]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = '{"signature": 7}' WHERE org_id = $1 AND post_id = $2 AND settings->>'signature' = $3`, [o.orgId, postId, SIGNATURE]));
     expect((await review(single))?.channels?.[0]?.signature).toBeNull();
   });
 
@@ -330,14 +330,14 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
       expect(end).toBeGreaterThan(start);
       return rewriteHistoricalCoreSql(text.slice(start, end + 3));
     };
-    const planPage = previous('20261023233000_crove_social_plan_review_link.sql', 'crove_social.review_plan_page');
-    const linkView = previous('20261028150000_crove_social_report_branding.sql', 'crove_social.review_link_view');
+    const planPage = previous('20261023233000_crove_social_plan_review_link.sql', 'ludy_social.review_plan_page');
+    const linkView = previous('20261028150000_crove_social_report_branding.sql', 'ludy_social.review_link_view');
     const pages = await admin(async (c) => {
-      const read = async (token: string) => (await c.query<{ page: string }>('SELECT crove_social.review_link_view($1)::text AS page', [token])).rows[0]?.page as string;
+      const read = async (token: string) => (await c.query<{ page: string }>('SELECT ludy_social.review_link_view($1)::text AS page', [token])).rows[0]?.page as string;
       await c.query('BEGIN');
       try {
-        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'crove_social.review_plan_page'));
-        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'crove_social.review_link_view'));
+        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'ludy_social.review_plan_page'));
+        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'ludy_social.review_link_view'));
         const now = [await read(single), await read(plan)];
         await c.query(planPage);
         await c.query(linkView);

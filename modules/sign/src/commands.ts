@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Runtime.execute() command handlers for eSign Slice 1a (#3323, docs/plan/esign.md).
-// Every state change on crove_sign tables runs inside a command transaction here and appends to the hash-chained
-// crove_sign.signing_event ledger. Raw signing tokens are returned once by send / create_link and never stored.
+// Every state change on ludy_sign tables runs inside a command transaction here and appends to the hash-chained
+// ludy_sign.signing_event ledger. Raw signing tokens are returned once by send / create_link and never stored.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
@@ -124,7 +124,7 @@ function actorLabelOf(ctx: CommandContext): string {
 
 async function lockEnvelope(ctx: CommandContext, envelopeId: string) {
   const row = await ctx.trx
-    .selectFrom('crove_sign.envelope')
+    .selectFrom('ludy_sign.envelope')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', envelopeId)
@@ -162,7 +162,7 @@ export const envelopeCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'org_id',
       'title',
       'subject',
@@ -203,7 +203,7 @@ export const envelopeCreate = defineCommand({
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
     if (input.sourceKind === 'hr_contract' || input.sourceKind === 'meeting_minutes') {
       const { rows: attachCheck } = await sql<{ allowed: boolean }>`
-        SELECT crove_sign.can_attach_confidential_source_file(
+        SELECT ludy_sign.can_attach_confidential_source_file(
           ${ctx.orgId}::uuid,
           ${file.id}::uuid,
           ${input.sourceKind},
@@ -223,13 +223,13 @@ export const envelopeCreate = defineCommand({
       const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
         SELECT (
           EXISTS (
-            SELECT 1 FROM crove_sign.envelope e
+            SELECT 1 FROM ludy_sign.envelope e
             WHERE e.org_id = ${ctx.orgId}::uuid
               AND e.source_file_id = ${file.id}::uuid
               AND e.source_kind IN ('hr_contract', 'meeting_minutes')
           )
           AND NOT EXISTS (
-            SELECT 1 FROM crove_sign.template t
+            SELECT 1 FROM ludy_sign.template t
             WHERE t.org_id = ${ctx.orgId}::uuid
               AND t.source_file_id = ${file.id}::uuid
           )
@@ -246,7 +246,7 @@ export const envelopeCreate = defineCommand({
 
     const row = await insertEnvelopeGuardingProjectAcceptance(input.sourceKind, () =>
       ctx.trx
-        .insertInto('crove_sign.envelope')
+        .insertInto('ludy_sign.envelope')
         .values({
           org_id: ctx.orgId,
           title: input.title,
@@ -330,7 +330,7 @@ export const envelopeInspectComplete = defineCommand({
   access: 'system',
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'inspect_status',
       'inspect_error',
       'page_count',
@@ -369,7 +369,7 @@ export const envelopeInspectComplete = defineCommand({
       }
       const nextVersion = row.version + 1;
       await ctx.trx
-        .updateTable('crove_sign.envelope')
+        .updateTable('ludy_sign.envelope')
         .set({
           inspect_status: 'passed',
           inspect_error: null,
@@ -402,7 +402,7 @@ export const envelopeInspectComplete = defineCommand({
     }
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({
         inspect_status: 'failed',
         inspect_error: input.error,
@@ -448,7 +448,7 @@ export const envelopeUpdate = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'title',
       'subject',
       'message',
@@ -497,7 +497,7 @@ export const envelopeUpdate = defineCommand({
     }
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({
         title: nextTitle,
         subject: nextSubject,
@@ -549,7 +549,7 @@ export const signerAdd = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', [
       'org_id',
       'envelope_id',
       'routing_order',
@@ -579,7 +579,7 @@ export const signerAdd = defineCommand({
       throw new DomainError('SIGN_INVALID_SIGNER', 422, 'CC recipients cannot require email OTP');
     }
     const existing = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'routing_order'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -597,7 +597,7 @@ export const signerAdd = defineCommand({
     const roleLabel = input.roleLabel ?? defaultRoleLabel;
 
     const signer = await ctx.trx
-      .insertInto('crove_sign.signer')
+      .insertInto('ludy_sign.signer')
       .values({
         org_id: ctx.orgId,
         envelope_id: row.id,
@@ -617,7 +617,7 @@ export const signerAdd = defineCommand({
       .executeTakeFirstOrThrow();
 
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({ version: row.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -659,8 +659,8 @@ export const signerRemove = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'field', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'field', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['id']),
     ENVELOPE_VERSION_WRITE,
     SIGNING_EVENT_WRITE,
   ],
@@ -669,7 +669,7 @@ export const signerRemove = defineCommand({
     const row = await lockEnvelope(ctx, input.envelopeId);
     assertDraft(row.status);
     const existing = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -679,21 +679,21 @@ export const signerRemove = defineCommand({
     if (!existing) throw new DomainError('SIGN_SIGNER_NOT_FOUND', 404, 'Signer not found on envelope');
 
     await ctx.trx
-      .deleteFrom('crove_sign.field')
+      .deleteFrom('ludy_sign.field')
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .where('signer_id', '=', input.signerId)
       .execute();
 
     await ctx.trx
-      .deleteFrom('crove_sign.signer')
+      .deleteFrom('ludy_sign.signer')
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .where('id', '=', input.signerId)
       .execute();
 
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({ version: row.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -732,7 +732,7 @@ export const signerReorder = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['routing_order', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['routing_order', 'updated_at']),
     ENVELOPE_VERSION_WRITE,
     SIGNING_EVENT_WRITE,
   ],
@@ -749,7 +749,7 @@ export const signerReorder = defineCommand({
       seenIds.add(item.signerId);
     }
     const existing = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -763,7 +763,7 @@ export const signerReorder = defineCommand({
     }
     for (const item of input.orders) {
       await ctx.trx
-        .updateTable('crove_sign.signer')
+        .updateTable('ludy_sign.signer')
         .set({ routing_order: item.routingOrder, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', row.id)
@@ -771,7 +771,7 @@ export const signerReorder = defineCommand({
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({ version: row.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -854,7 +854,7 @@ export const fieldSet = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'field', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'field', [
       'org_id',
       'envelope_id',
       'signer_id',
@@ -884,7 +884,7 @@ export const fieldSet = defineCommand({
     }
 
     const signers = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'signer_role'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -910,7 +910,7 @@ export const fieldSet = defineCommand({
     }
 
     await ctx.trx
-      .deleteFrom('crove_sign.field')
+      .deleteFrom('ludy_sign.field')
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .execute();
@@ -918,7 +918,7 @@ export const fieldSet = defineCommand({
     const fieldIds: string[] = [];
     if (input.fields.length > 0) {
       const inserted = await ctx.trx
-        .insertInto('crove_sign.field')
+        .insertInto('ludy_sign.field')
         .values(
           input.fields.map((f) => ({
             org_id: ctx.orgId,
@@ -945,7 +945,7 @@ export const fieldSet = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({ version: row.version + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -977,8 +977,8 @@ export const envelopeSend = defineCommand({
   noIdempotency: true,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['status', 'sent_at', 'version', 'updated_at']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['status', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', ['status', 'sent_at', 'version', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['status', 'updated_at']),
     SIGNING_TOKEN_WRITE,
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
@@ -990,7 +990,7 @@ export const envelopeSend = defineCommand({
     assertDraft(row.status);
 
     const signers = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'routing_order', 'signer_role', 'role_label', 'email', 'delivery_mode', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -998,7 +998,7 @@ export const envelopeSend = defineCommand({
       .execute();
 
     const fields = await ctx.trx
-      .selectFrom('crove_sign.field')
+      .selectFrom('ludy_sign.field')
       .select(['id', 'signer_id', 'field_type', 'page_number'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -1046,7 +1046,7 @@ export const signerCreateLink = defineCommand({
     }
 
     const signer = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'signer_role', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -1071,7 +1071,7 @@ export const signerCreateLink = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows: minted } = await sql<{ id: string }>`
-      SELECT crove_sign.mint_signing_token(
+      SELECT ludy_sign.mint_signing_token(
         ${row.id}::uuid,
         ${signer.id}::uuid,
         ${tokenHash},
@@ -1149,7 +1149,7 @@ export const signerCorrectRecipient = defineCommand({
   noIdempotency: true,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', [
       'name',
       'email',
       'phone',
@@ -1173,7 +1173,7 @@ export const signerCorrectRecipient = defineCommand({
     const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
     const normalizedPhone = input.phone ? input.phone.trim() : null;
     const { rows: sqlRows } = await sql<{ res: CorrectRecipientSqlRow }>`
-      SELECT crove_sign.correct_signer_recipient(
+      SELECT ludy_sign.correct_signer_recipient(
         ${input.envelopeId}::uuid,
         ${input.signerId}::uuid,
         ${input.name},
@@ -1233,7 +1233,7 @@ export const signerCorrectRecipient = defineCommand({
         const rawToken = generateRawSigningToken();
         const tokenHash = hashSigningToken(rawToken);
         const { rows: minted } = await sql<{ id: string }>`
-          SELECT crove_sign.mint_signing_token(
+          SELECT ludy_sign.mint_signing_token(
             ${res.envelopeId}::uuid,
             ${res.signerId}::uuid,
             ${tokenHash},
@@ -1308,7 +1308,7 @@ export const envelopeRemind = defineCommand({
   sideEffect: 'external',
   access: WRITERS,
   target,
-  writes: [tableWrite(signManifest.tables, 'crove_sign', 'signer', ['token_last_reminded_at', 'updated_at']), SIGNING_EVENT_WRITE, MAIL_MESSAGE_WRITE],
+  writes: [tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['token_last_reminded_at', 'updated_at']), SIGNING_EVENT_WRITE, MAIL_MESSAGE_WRITE],
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
@@ -1320,7 +1320,7 @@ export const envelopeRemind = defineCommand({
     }
 
     let query = ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'status', 'signer_role', 'role_label', 'email', 'delivery_mode', 'token_last_reminded_at'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -1347,7 +1347,7 @@ export const envelopeRemind = defineCommand({
 
     const remindedSignerIds = eligible.map((s) => s.id);
     await ctx.trx
-      .updateTable('crove_sign.signer')
+      .updateTable('ludy_sign.signer')
       .set({ token_last_reminded_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -1410,7 +1410,7 @@ export const envelopeVoid = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'status',
       'voided_at',
       'voided_by',
@@ -1418,8 +1418,8 @@ export const envelopeVoid = defineCommand({
       'version',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['status', 'updated_at']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['revoked_at', 'revoked_by']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['status', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signing_token', ['revoked_at', 'revoked_by']),
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
   ],
@@ -1435,7 +1435,7 @@ export const envelopeVoid = defineCommand({
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({
         status: 'voided',
         voided_at: ctx.now,
@@ -1449,7 +1449,7 @@ export const envelopeVoid = defineCommand({
       .execute();
 
     await ctx.trx
-      .updateTable('crove_sign.signer')
+      .updateTable('ludy_sign.signer')
       .set({ status: 'voided', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -1457,7 +1457,7 @@ export const envelopeVoid = defineCommand({
       .execute();
 
     const { rows: revokedRows } = await sql<{ count: number }>`
-      SELECT crove_sign.revoke_envelope_tokens(${row.id}::uuid) AS count
+      SELECT ludy_sign.revoke_envelope_tokens(${row.id}::uuid) AS count
     `.execute(ctx.trx);
     const revokedTokens = Number(revokedRows[0]?.count ?? 0);
 
@@ -1487,7 +1487,7 @@ export const envelopeAcknowledgeDecline = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'decline_acknowledged_at',
       'decline_acknowledged_by',
       'version',
@@ -1512,7 +1512,7 @@ export const envelopeAcknowledgeDecline = defineCommand({
     }
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({
         decline_acknowledged_at: ctx.now,
         decline_acknowledged_by: userId,
@@ -1566,7 +1566,7 @@ export const envelopeSealComplete = defineCommand({
   access: 'system',
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'sealed_file_id',
       'sealed_storage_key',
       'sealed_generation',
@@ -1610,7 +1610,7 @@ export const envelopeSealComplete = defineCommand({
     if (input.outcome === 'failed') {
       const nextVersion = row.version + 1;
       await ctx.trx
-        .updateTable('crove_sign.envelope')
+        .updateTable('ludy_sign.envelope')
         .set({ seal_status: 'failed', version: nextVersion, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.id)
@@ -1658,7 +1658,7 @@ export const envelopeSealComplete = defineCommand({
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({
         sealed_file_id: sealedFile.id,
         sealed_storage_key: sealedFile.storage_key,
@@ -1693,7 +1693,7 @@ export const envelopeSealComplete = defineCommand({
     });
 
     const recipientRows = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['signer_role', 'email', 'delivery_mode'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -1703,7 +1703,7 @@ export const envelopeSealComplete = defineCommand({
       // Defense in depth: if a revoked template_direct_link row was pruned after retention
       // (ON DELETE SET NULL on direct_link_id), the immutable genesis event still identifies it.
       const originEvent = await ctx.trx
-        .selectFrom('crove_sign.signing_event')
+        .selectFrom('ludy_sign.signing_event')
         .select(['actor_label'])
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', row.id)
@@ -1782,16 +1782,16 @@ export const envelopeExpireSweep = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['status', 'expired_at', 'version', 'updated_at']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['status', 'updated_at']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['revoked_at', 'revoked_by']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', ['status', 'expired_at', 'version', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['status', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signing_token', ['revoked_at', 'revoked_by']),
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
   ],
   handler: async (ctx) => {
     assertSystem(ctx);
     const due = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_sha256', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('status', 'in', ['sent', 'in_progress'])
@@ -1806,7 +1806,7 @@ export const envelopeExpireSweep = defineCommand({
 
     for (const env of due) {
       await ctx.trx
-        .updateTable('crove_sign.envelope')
+        .updateTable('ludy_sign.envelope')
         .set({
           status: 'expired',
           expired_at: ctx.now,
@@ -1818,14 +1818,14 @@ export const envelopeExpireSweep = defineCommand({
         .execute();
 
       await ctx.trx
-        .updateTable('crove_sign.signer')
+        .updateTable('ludy_sign.signer')
         .set({ status: 'expired', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', env.id)
         .where('status', 'in', ['waiting', 'pending', 'viewed'])
         .execute();
 
-      await sql`SELECT crove_sign.revoke_envelope_tokens(${env.id}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_sign.revoke_envelope_tokens(${env.id}::uuid)`.execute(ctx.trx);
 
       await appendSigningEvent(ctx.trx, {
         orgId: ctx.orgId,
@@ -1855,11 +1855,11 @@ export const orgCleanup = defineCommand({
   sideEffect: 'irreversible',
   access: 'system',
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'template_direct_link', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signing_otp', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signing_token', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'template_direct_link', ['id']),
     // Pruning a revoked template_direct_link clears envelope.direct_link_id via ON DELETE SET NULL.
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['direct_link_id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', ['direct_link_id']),
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
@@ -1868,7 +1868,7 @@ export const orgCleanup = defineCommand({
     const { rows } = await sql<{
       counts: { otps: number; tokens: number; directLinks?: number; drafts: number; draftEvents: number };
     }>`
-      SELECT crove_sign.cleanup_org_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz) AS counts
+      SELECT ludy_sign.cleanup_org_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz) AS counts
     `.execute(ctx.trx);
     const counts = rows[0]?.counts ?? { otps: 0, tokens: 0, drafts: 0, draftEvents: 0 };
     ctx.audit({
@@ -1897,7 +1897,7 @@ export const envelopeSharedSummarySet = defineCommand({
   access: WRITERS,
   target,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'share_summary_with_signers',
       'shared_summary_json',
       'version',
@@ -1929,7 +1929,7 @@ export const envelopeSharedSummarySet = defineCommand({
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.envelope')
+      .updateTable('ludy_sign.envelope')
       .set({
         share_summary_with_signers: input.shareSummaryWithSigners,
         shared_summary_json: cleanSummary ? JSON.stringify(cleanSummary) : null,

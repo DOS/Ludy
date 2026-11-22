@@ -35,7 +35,7 @@ const dayOf = (value: string | Date): string => (typeof value === 'string' ? val
 
 // The proposal for an original and a nature, worked out on the day of the database (#3709): the distinct VAT rates of the original's lines, the basis, the rates that move.
 async function proposalFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, originalId: string, originalDate: string, nature: EInvoiceRateNature, today: string): Promise<{ proposal: CorrectionRateProposal; has8: boolean }> {
-  const rows = await ctx.trx.selectFrom('crove_finance.einvoice_draft_line').select('vat_rate').where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).orderBy('line_no').execute();
+  const rows = await ctx.trx.selectFrom('ludy_finance.einvoice_draft_line').select('vat_rate').where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).orderBy('line_no').execute();
   const rates = rows.map((r) => r.vat_rate);
   return { proposal: proposeCorrectionRates({ nature, rates, originalDate, correctionDate: today }), has8: rates.some((r) => (normalizeVatRate(r) ?? r) === '8%') };
 }
@@ -52,7 +52,7 @@ export const einvoiceStartCorrection = defineCommand({
     const originalId = input.originalDraftId.toLowerCase();
     // The original is locked: two corrections of one invoice start one after the other.
     const original = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', originalId)
@@ -65,7 +65,7 @@ export const einvoiceStartCorrection = defineCommand({
     }
 
     const others = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select(['id', 'state', 'correction_kind'])
       .where('org_id', '=', ctx.orgId)
       .where('original_draft_id', '=', originalId)
@@ -111,7 +111,7 @@ export const einvoiceStartCorrection = defineCommand({
     // A replacement starts as a copy to edit; an adjustment starts empty, the difference per line is typed with its sign. The order links of a line are not carried: the order line stays
     // invoiced by the original.
     const copied = replacement
-      ? await ctx.trx.selectFrom('crove_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).orderBy('line_no').execute()
+      ? await ctx.trx.selectFrom('ludy_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).orderBy('line_no').execute()
       : [];
     // A replacement that follows the correction's own date carries the rate that date gives each line, its amounts worked again by code (8% becomes 10% after 2026-12-31); on the original basis the
     // lines are copied as they are.
@@ -123,7 +123,7 @@ export const einvoiceStartCorrection = defineCommand({
     });
     const totals = replacement ? sumLineTotals(lines.map((l) => ({ amount: plain(l.amount), vatAmount: plain(l.vat_amount) }))) : null;
     await ctx.trx
-      .insertInto('crove_finance.einvoice_draft')
+      .insertInto('ludy_finance.einvoice_draft')
       .values({
         org_id: ctx.orgId,
         id: draftId,
@@ -150,7 +150,7 @@ export const einvoiceStartCorrection = defineCommand({
       .execute();
     for (const line of lines) {
       await ctx.trx
-        .insertInto('crove_finance.einvoice_draft_line')
+        .insertInto('ludy_finance.einvoice_draft_line')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: original.legal_entity_id,
@@ -188,7 +188,7 @@ export const einvoiceCorrectionRate = defineQuery({
   access: EDITORS,
   handler: async (ctx, input): Promise<EInvoiceCorrectionRate> => {
     const original = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select(['invoice_date', 'state', 'issued_number'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.originalDraftId.toLowerCase())
@@ -223,7 +223,7 @@ export const einvoiceReasonSource = defineQuery({
   handler: async (ctx, input): Promise<EInvoiceReasonSource> => {
     const originalId = input.originalDraftId.toLowerCase();
     const original = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select(['invoice_date', 'state', 'issued_number', 'buyer_kind'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', originalId)
@@ -231,7 +231,7 @@ export const einvoiceReasonSource = defineQuery({
     if (!original) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy hóa đơn gốc');
     if (original.state !== 'issued' || original.issued_number === null) throw new DomainError('EINVOICE_ORIGINAL_NOT_ISSUED', 409, 'Chỉ điều chỉnh hoặc thay thế được hóa đơn đã phát hành');
     const lines = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft_line')
+      .selectFrom('ludy_finance.einvoice_draft_line')
       .select(['description', 'unit', 'quantity', 'vat_rate'])
       .where('org_id', '=', ctx.orgId)
       .where('draft_id', '=', originalId)

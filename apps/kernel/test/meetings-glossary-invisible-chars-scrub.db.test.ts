@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Widening crove_meetings.glossary_term_ok and enforcing NFKC address checks (#4137 points 2b and 3) on PostgreSQL 17:
+// Widening ludy_meetings.glossary_term_ok and enforcing NFKC address checks (#4137 points 2b and 3) on PostgreSQL 17:
 // builds the database as it stood right before 20270201180000, inserts rows that the old CHECK allowed (including the four widened invisible ranges, colliding cleaned terms, lone U+FFA0,
 // address smuggling via U+FFA0, and NFKC look-alikes), runs the migration (twice for idempotency), and verifies scrubbing, constraint validation, rejection of every widened edge and look-alike,
 // and acceptance of adjacent non-invisible characters and valid dotted terms. Set CROVE_TEST_ADMIN_URL to a superuser URL.
@@ -65,8 +65,8 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
   }
   const sql = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const insertTerm = async (term: string) =>
-    (await sql<{ id: string }>(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3) RETURNING id`, [orgId, term, userId])).rows[0]!.id;
-  const termOf = async (id: string) => (await sql<{ term: string }>(`SELECT term FROM crove_meetings.glossary_term WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.term;
+    (await sql<{ id: string }>(`INSERT INTO ludy_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3) RETURNING id`, [orgId, term, userId])).rows[0]!.id;
+  const termOf = async (id: string) => (await sql<{ term: string }>(`SELECT term FROM ludy_meetings.glossary_term WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.term;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -153,10 +153,10 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
            FROM pg_catalog.pg_constraint con
            JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = 'crove_meetings' AND c.relname = 'glossary_term' AND con.conname = 'glossary_term_term_check'`,
+          WHERE n.nspname = 'ludy_meetings' AND c.relname = 'glossary_term' AND con.conname = 'glossary_term_term_check'`,
       )
     ).rows[0];
-    expect(con).toEqual({ convalidated: true, def: 'CHECK (crove_meetings.glossary_term_ok(term))' });
+    expect(con).toEqual({ convalidated: true, def: 'CHECK (ludy_meetings.glossary_term_ok(term))' });
     // Running the migration SQL directly a second time in one transaction is idempotent, and migrate skips applied files.
     const migrationSql = readFileSync(join(MIGRATIONS, `${VERSION}_crove_meetings_glossary_invisible_chars.sql`), 'utf8');
     await admin(async (c) => {

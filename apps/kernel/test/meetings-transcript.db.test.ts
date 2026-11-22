@@ -254,7 +254,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     return String(created.body.meetingId);
   }
   const rows = (meetingId: string) =>
-    admin(async (c) => (await c.query('SELECT id, stage, text, speaker_label, corrected FROM crove_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id', [meetingId])).rows as Array<{ id: string; stage: string; text: string; speaker_label: string; corrected: boolean }>);
+    admin(async (c) => (await c.query('SELECT id, stage, text, speaker_label, corrected FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id', [meetingId])).rows as Array<{ id: string; stage: string; text: string; speaker_label: string; corrected: boolean }>);
   const auditOf = (command: string) =>
     admin(async (c) => (await c.query('SELECT detail, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command])).rows as Array<{ detail: Record<string, unknown>; target_id: string | null }>);
   const get = (name: string, meetingId: string) => rpc('meetings/transcript/get', name, { meetingId });
@@ -350,7 +350,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     const meetingId = await newMeeting('Họp công bố');
     await storeDraft('recorder', meetingId, [segment(0, 10, 'nháp một')]);
     await admin((c) =>
-      c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 100, 110, 'Người nói 1', 'đã công bố', 'published')`, [orgId, meetingId]),
+      c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 100, 110, 'Người nói 1', 'đã công bố', 'published')`, [orgId, meetingId]),
     );
     const attendee = (await get('attendee', meetingId)).body as { stage: string; segments: Array<{ text: string; stage: string }> };
     expect(attendee.stage).toBe('published');
@@ -393,7 +393,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
   it('goes with its meeting when the recorder deletes it', async () => {
     const meetingId = await newMeeting('Họp bị xóa');
     await storeDraft('recorder', meetingId, [segment(0, 10, 'sẽ biến mất'), segment(10, 20, 'cùng cuộc họp')]);
-    await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, stage) VALUES ($1, $2, 30, 40, 'đã công bố', 'published')`, [orgId, meetingId]));
+    await admin((c) => c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, stage) VALUES ($1, $2, 30, 40, 'đã công bố', 'published')`, [orgId, meetingId]));
     expect(await rows(meetingId)).toHaveLength(3);
     const gone = await rpc('meetings/delete', 'recorder', { meetingId });
     expect(gone.status).toBe(200);

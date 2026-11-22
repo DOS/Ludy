@@ -61,13 +61,13 @@ suite('the stock month close command (#2513)', () => {
   const makeItem = (o: Org, code: string) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods' }).then((r) => r.id);
   const move = (o: Org, item: string, date: string, quantity: string) =>
-    rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
+    rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
   const entityOf = async (o: Org) => (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))[0]?.id ?? '';
   // What an earlier close left: a closed month holding `item` with five on hand worth 500, nothing out (the rows are written by the database owner).
   async function seedClosed(o: Org, month: string, item: string, closing: [string, string] = ['5', '500']) {
-    const [period] = await rows<{ id: string }>('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0) RETURNING id', [o.orgId, await entityOf(o), `${month}-01`]);
+    const [period] = await rows<{ id: string }>('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0) RETURNING id', [o.orgId, await entityOf(o), `${month}-01`]);
     await rows(
-      `INSERT INTO crove_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
+      `INSERT INTO ludy_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
        VALUES ($1, $2, $3, 0, 0, $4, $5, 0, 0, $4, $5, 100)`,
       [o.orgId, period?.id, item, ...closing],
     );
@@ -125,16 +125,16 @@ suite('the stock month close command (#2513)', () => {
     const posted = await approve(o, proposalId);
     expect(posted).toMatchObject({ voucherId: expect.any(String), journalEntryId: expect.any(String), periodId: expect.any(String) });
     const lines = await rows<{ account_code: string; debit: string; credit: string }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code',
       [o.orgId, posted.journalEntryId],
     );
     expect(lines).toEqual([
       { account_code: '156', debit: '0', credit: '200' },
       { account_code: '632', debit: '200', credit: '0' },
     ]);
-    const [entry] = await rows<{ entry_date: string }>('SELECT entry_date::text AS entry_date FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, posted.journalEntryId]);
+    const [entry] = await rows<{ entry_date: string }>('SELECT entry_date::text AS entry_date FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, posted.journalEntryId]);
     expect(entry?.entry_date).toBe('2026-09-30');
-    const [voucher] = await rows<{ stock_closing_month: string; proposal_id: string }>('SELECT stock_closing_month::text AS stock_closing_month, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
+    const [voucher] = await rows<{ stock_closing_month: string; proposal_id: string }>('SELECT stock_closing_month::text AS stock_closing_month, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
     expect(voucher).toEqual({ stock_closing_month: '2026-09-01', proposal_id: proposalId });
     // The month is stored with its voucher and its cost; every role reads it.
     expect(await query<Array<{ month: string; totalCost: string; voucherId: string | null }>>(o, 'finance.stock.periods', {}, o.viewer)).toEqual([
@@ -152,15 +152,15 @@ suite('the stock month close command (#2513)', () => {
 
     // The database keeps a move of any source out of a closed month, and before one.
     const entity = await entityOf(o);
-    const insert = (columns: string, values: string) => rows(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, ${columns}) VALUES ($1, $2, '2026-09-20', ${values})`, [o.orgId, item]);
+    const insert = (columns: string, values: string) => rows(`INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, ${columns}) VALUES ($1, $2, '2026-09-20', ${values})`, [o.orgId, item]);
     await expect(insert('quantity, source_type', "1, 'manual'")).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
     await expect(insert('quantity, source_type, reverses_move_id', `2, 'reversal', '${outMove}'`)).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
     await expect(insert('quantity, source_type, document_id, line_no, line_attempt', `-1, 'document_line', '${randomUUID()}', 1, 1`)).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
     await expect(insert('quantity, source_type, order_line_id, order_move', `-1, 'order_line', '${randomUUID()}', 'ship'`)).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
-    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-07-01', 1, 'manual')", [o.orgId, item])).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
+    await expect(rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-07-01', 1, 'manual')", [o.orgId, item])).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
     // The command that corrects a move writes the reversal today, in the open month, never back in the closed one.
     const reversed = await execute<{ id: string }>(o, 'finance.stock_move.reverse', { moveId: outMove }, o.member);
-    const [reversal] = await rows<{ move_date: string; today: string }>("SELECT move_date::text AS move_date, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2", [o.orgId, reversed.id]);
+    const [reversal] = await rows<{ move_date: string; today: string }>("SELECT move_date::text AS move_date, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today FROM ludy_finance.stock_move WHERE org_id = $1 AND id = $2", [o.orgId, reversed.id]);
     expect(reversal?.move_date).toBe(reversal?.today);
 
     // A month never exists without the voucher that posted its cost (checked at commit): the month of another voucher, a cost with none, and what went out with none.
@@ -169,7 +169,7 @@ suite('the stock month close command (#2513)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        const period = await c.query<{ id: string }>('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, voucher_id, total_cost) VALUES ($1, $2, $3, $4, $5) RETURNING id', [
+        const period = await c.query<{ id: string }>('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, voucher_id, total_cost) VALUES ($1, $2, $3, $4, $5) RETURNING id', [
           o.orgId,
           entity,
           '2026-10-01',
@@ -187,7 +187,7 @@ suite('the stock month close command (#2513)', () => {
     await expect(
       closeMonthOf(
         async (c, periodId) => {
-          await c.query('INSERT INTO crove_finance.stock_period_item (org_id, period_id, item_id, out_quantity, out_value) VALUES ($1, $2, $3, 1, 10)', [o.orgId, periodId, item]);
+          await c.query('INSERT INTO ludy_finance.stock_period_item (org_id, period_id, item_id, out_quantity, out_value) VALUES ($1, $2, $3, 1, 10)', [o.orgId, periodId, item]);
         },
         null,
         '0.0000',
@@ -254,7 +254,7 @@ suite('the stock month close command (#2513)', () => {
     // A fresh proposal for the same month is made from the moves as they read now and goes through; the cost is three at the average.
     const fresh = await ask(o, '2026-09');
     const posted = await approve(o, fresh.proposalId);
-    const [total] = await rows<{ cost: string }>('SELECT total_cost::bigint::text AS cost FROM crove_finance.stock_period WHERE org_id = $1 AND voucher_id = $2', [o.orgId, posted.voucherId]);
+    const [total] = await rows<{ cost: string }>('SELECT total_cost::bigint::text AS cost FROM ludy_finance.stock_period WHERE org_id = $1 AND voucher_id = $2', [o.orgId, posted.voucherId]);
     expect(total?.cost).toBe('300');
   });
 });

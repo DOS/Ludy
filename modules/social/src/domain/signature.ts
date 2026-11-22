@@ -1,5 +1,5 @@
 // A channel's signature (#1190): the block a business ends its posts with (hotline, address, shop link, brand hashtags).
-// The channel keeps one (crove_social.channel_policy.signature); a channel added to a post copies it into the variant's
+// The channel keeps one (ludy_social.channel_policy.signature); a channel added to a post copies it into the variant's
 // settings.signature, so a later change of the channel's never alters a post already written or approved. The one
 // content resolver (effectiveContent) appends it to the text, so the hash, the checks, the previews and the publish all
 // see the text that is sent. settings.signature false: left off this post on purpose (the composer's "Bỏ chữ ký").

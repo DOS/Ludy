@@ -113,12 +113,12 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     posts?: { id: string; gone: boolean; body?: string | null; answers?: number; channels?: { channel: string; body: string | null }[]; feedback?: Answer[] }[];
   } | null;
   // The public side runs as the API login role, with no org context, as the HTTP edge does.
-  const view = async (token: string) => (await pool.query<{ page: Page }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+  const view = async (token: string) => (await pool.query<{ page: Page }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   const clientAnswer = (token: string, verdict: 'approved' | 'changes_requested' | 'comment', body: string | null) =>
-    pool.query('SELECT crove_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', verdict, body]);
+    pool.query('SELECT ludy_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', verdict, body]);
   const planAnswer = (token: string, postId: string, verdict: 'approved' | 'changes_requested' | 'comment', body: string | null) =>
-    pool.query('SELECT crove_social.review_plan_feedback_add($1, $2::uuid, $3, $4, $5)', [token, postId, 'Chị Lan (khách)', verdict, body]);
-  const rowsOf = (o: Org) => admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.review_feedback WHERE org_id = $1', [o.orgId])).rows[0]?.n);
+    pool.query('SELECT ludy_social.review_plan_feedback_add($1, $2::uuid, $3, $4, $5)', [token, postId, 'Chị Lan (khách)', verdict, body]);
+  const rowsOf = (o: Org) => admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.review_feedback WHERE org_id = $1', [o.orgId])).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -196,7 +196,7 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     expect((await view(token))?.feedback?.[0]?.reply).toBeNull();
     await reply(o, o.member, feedbackId, 'Lần nữa');
     expect((await reply(o, o.owner, feedbackId, null)).reply).toBeNull();
-    const stored = await admin(async (c) => (await c.query('SELECT reply_body, replied_by, replied_at FROM crove_social.review_feedback WHERE id = $1', [feedbackId])).rows[0]);
+    const stored = await admin(async (c) => (await c.query('SELECT reply_body, replied_by, replied_at FROM ludy_social.review_feedback WHERE id = $1', [feedbackId])).rows[0]);
     expect(stored).toEqual({ reply_body: null, replied_by: null, replied_at: null });
 
     // Every reply, edit and clear is audited, with the answer, the post and the link.
@@ -293,44 +293,44 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
 
     // The client's own fields: no column privilege.
     for (const set of ["verdict = 'approved'", "body = 'Đã sửa'", "reviewer_name = 'Ai đó'", 'changed = true', 'created_at = now()', 'post_id = post_id']) {
-      expect(await raw(o, o.owner, `UPDATE crove_social.review_feedback SET ${set} WHERE id = $1`, [id])).toEqual(denied);
+      expect(await raw(o, o.owner, `UPDATE ludy_social.review_feedback SET ${set} WHERE id = $1`, [id])).toEqual(denied);
     }
     // No new answers and no deletions from a member's context either.
-    expect(await raw(o, o.owner, "INSERT INTO crove_social.review_feedback (org_id, link_id, post_id, reviewer_name, verdict) VALUES ($1, $2, $3, 'Giả', 'approved')", [o.orgId, linkId, postId])).toEqual(denied);
-    expect(await raw(o, o.owner, 'DELETE FROM crove_social.review_feedback WHERE id = $1', [id])).toEqual(denied);
+    expect(await raw(o, o.owner, "INSERT INTO ludy_social.review_feedback (org_id, link_id, post_id, reviewer_name, verdict) VALUES ($1, $2, $3, 'Giả', 'approved')", [o.orgId, linkId, postId])).toEqual(denied);
+    expect(await raw(o, o.owner, 'DELETE FROM ludy_social.review_feedback WHERE id = $1', [id])).toEqual(denied);
     // The reply columns: only in the context's own member name, all three or none.
-    expect(await raw(o, o.member, 'UPDATE crove_social.review_feedback SET reply_body = $2, replied_by = $3, replied_at = now() WHERE id = $1', [id, 'Giả danh', o.owner])).toEqual(
+    expect(await raw(o, o.member, 'UPDATE ludy_social.review_feedback SET reply_body = $2, replied_by = $3, replied_at = now() WHERE id = $1', [id, 'Giả danh', o.owner])).toEqual(
       expect.objectContaining({ ok: false, code: '42501', message: 'REVIEW_REPLY_AUTHOR' }),
     );
-    expect(await raw(o, o.member, 'UPDATE crove_social.review_feedback SET reply_body = $2 WHERE id = $1', [id, 'Thiếu người viết'])).toEqual(expect.objectContaining({ ok: false, message: 'REVIEW_REPLY_AUTHOR' }));
+    expect(await raw(o, o.member, 'UPDATE ludy_social.review_feedback SET reply_body = $2 WHERE id = $1', [id, 'Thiếu người viết'])).toEqual(expect.objectContaining({ ok: false, message: 'REVIEW_REPLY_AUTHOR' }));
     // A reply without a time takes the database's; a reply cleared but for its author breaks all-or-none.
-    expect(await raw(o, o.member, 'UPDATE crove_social.review_feedback SET reply_body = $2, replied_by = $3 WHERE id = $1', [id, 'Thiếu giờ', o.member])).toEqual({ ok: true, rows: 1 });
-    expect(await raw(o, o.member, 'UPDATE crove_social.review_feedback SET reply_body = NULL, replied_at = NULL WHERE id = $1', [id])).toEqual(expect.objectContaining({ ok: false, code: '23514' }));
-    expect(await raw(o, o.member, 'UPDATE crove_social.review_feedback SET reply_body = $2, replied_by = $3, replied_at = now() WHERE id = $1', [id, 'x'.repeat(2001), o.member])).toEqual(
+    expect(await raw(o, o.member, 'UPDATE ludy_social.review_feedback SET reply_body = $2, replied_by = $3 WHERE id = $1', [id, 'Thiếu giờ', o.member])).toEqual({ ok: true, rows: 1 });
+    expect(await raw(o, o.member, 'UPDATE ludy_social.review_feedback SET reply_body = NULL, replied_at = NULL WHERE id = $1', [id])).toEqual(expect.objectContaining({ ok: false, code: '23514' }));
+    expect(await raw(o, o.member, 'UPDATE ludy_social.review_feedback SET reply_body = $2, replied_by = $3, replied_at = now() WHERE id = $1', [id, 'x'.repeat(2001), o.member])).toEqual(
       expect.objectContaining({ ok: false, code: '23514' }),
     );
-    expect(await raw(o, o.member, 'UPDATE crove_social.review_feedback SET reply_body = $2, replied_by = $3, replied_at = now() WHERE id = $1', [id, 'Dạ', o.member])).toEqual({ ok: true, rows: 1 });
+    expect(await raw(o, o.member, 'UPDATE ludy_social.review_feedback SET reply_body = $2, replied_by = $3, replied_at = now() WHERE id = $1', [id, 'Dạ', o.member])).toEqual({ ok: true, rows: 1 });
     // The caller never chooses the reply's time: the guard stamps the database's now(), on a new text or a new time alike.
-    const stamped = async () => (await admin(async (c) => (await c.query<{ at: Date }>('SELECT replied_at AS at FROM crove_social.review_feedback WHERE id = $1', [id])).rows[0]?.at)) as Date;
+    const stamped = async () => (await admin(async (c) => (await c.query<{ at: Date }>('SELECT replied_at AS at FROM ludy_social.review_feedback WHERE id = $1', [id])).rows[0]?.at)) as Date;
     const first = await stamped();
     expect(Math.abs(first.getTime() - Date.now())).toBeLessThan(60_000);
-    expect(await raw(o, o.member, "UPDATE crove_social.review_feedback SET replied_at = '2020-01-01T00:00:00Z' WHERE id = $1", [id])).toEqual({ ok: true, rows: 1 });
+    expect(await raw(o, o.member, "UPDATE ludy_social.review_feedback SET replied_at = '2020-01-01T00:00:00Z' WHERE id = $1", [id])).toEqual({ ok: true, rows: 1 });
     expect((await stamped()).getTime()).toBeGreaterThanOrEqual(first.getTime());
-    expect(await raw(o, o.member, "UPDATE crove_social.review_feedback SET reply_body = 'Dạ ạ', replied_by = $2, replied_at = '2099-01-01T00:00:00Z' WHERE id = $1", [id, o.member])).toEqual({ ok: true, rows: 1 });
+    expect(await raw(o, o.member, "UPDATE ludy_social.review_feedback SET reply_body = 'Dạ ạ', replied_by = $2, replied_at = '2099-01-01T00:00:00Z' WHERE id = $1", [id, o.member])).toEqual({ ok: true, rows: 1 });
     expect(Math.abs((await stamped()).getTime() - Date.now())).toBeLessThan(60_000);
-    expect(await raw(o, o.member, "UPDATE crove_social.review_feedback SET reply_body = 'Dạ', replied_at = '2099-01-01T00:00:00Z' WHERE id = $1", [id])).toEqual({ ok: true, rows: 1 });
+    expect(await raw(o, o.member, "UPDATE ludy_social.review_feedback SET reply_body = 'Dạ', replied_at = '2099-01-01T00:00:00Z' WHERE id = $1", [id])).toEqual({ ok: true, rows: 1 });
     // Another org's answer is out of reach (RLS): nothing updated.
     const other = await org();
-    expect(await raw(other, other.member, 'UPDATE crove_social.review_feedback SET reply_body = NULL, replied_by = NULL, replied_at = NULL WHERE id = $1', [id])).toEqual({ ok: true, rows: 0 });
+    expect(await raw(other, other.member, 'UPDATE ludy_social.review_feedback SET reply_body = NULL, replied_by = NULL, replied_at = NULL WHERE id = $1', [id])).toEqual({ ok: true, rows: 0 });
 
     // The guard holds for the database owner too: the client's answer is what the client said.
-    await expect(admin((c) => c.query("UPDATE crove_social.review_feedback SET verdict = 'approved' WHERE id = $1", [id]))).rejects.toMatchObject({ code: '42501', message: 'REVIEW_FEEDBACK_CLIENT_FIELDS' });
-    const row = await admin(async (c) => (await c.query('SELECT verdict, body, reply_body FROM crove_social.review_feedback WHERE id = $1', [id])).rows[0]);
+    await expect(admin((c) => c.query("UPDATE ludy_social.review_feedback SET verdict = 'approved' WHERE id = $1", [id]))).rejects.toMatchObject({ code: '42501', message: 'REVIEW_FEEDBACK_CLIENT_FIELDS' });
+    const row = await admin(async (c) => (await c.query('SELECT verdict, body, reply_body FROM ludy_social.review_feedback WHERE id = $1', [id])).rows[0]);
     expect(row).toEqual({ verdict: 'changes_requested', body: 'Sửa giúp', reply_body: 'Dạ' });
 
     const privileges = await admin(async (c) => {
       const { rows } = await c.query<{ col: string; can: boolean }>(
-        "SELECT a.attname AS col, has_column_privilege('ludy_tenant', 'crove_social.review_feedback', a.attname, 'UPDATE') AS can FROM pg_attribute a WHERE a.attrelid = 'crove_social.review_feedback'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+        "SELECT a.attname AS col, has_column_privilege('ludy_tenant', 'ludy_social.review_feedback', a.attname, 'UPDATE') AS can FROM pg_attribute a WHERE a.attrelid = 'ludy_social.review_feedback'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
       );
       return rows.filter((r) => r.can).map((r) => r.col);
     });
@@ -345,23 +345,23 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     const { linkId } = await exec<{ linkId: string }>(o, o.admin, 'social.review_link.create_plan', { postIds: [first] });
     const denied = expect.objectContaining({ ok: false, code: '42501' });
     // No INSERT for ludy_tenant, whoever the member.
-    expect(await raw(o, o.owner, 'INSERT INTO crove_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, 1)', [o.orgId, linkId, late])).toEqual(denied);
+    expect(await raw(o, o.owner, 'INSERT INTO ludy_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, 1)', [o.orgId, linkId, late])).toEqual(denied);
     // The definer refuses a plan that has its posts, and anyone but an owner or admin who made the link.
-    expect(await raw(o, o.admin, 'SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [linkId, [late]])).toEqual(expect.objectContaining({ ok: false, code: '55000', message: 'REVIEW_PLAN_FROZEN' }));
-    expect(await raw(o, o.member, 'SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [linkId, [late]])).toEqual(expect.objectContaining({ ok: false, code: '42501', message: 'REVIEW_PLAN_FORBIDDEN' }));
+    expect(await raw(o, o.admin, 'SELECT ludy_social.review_plan_posts_add($1::uuid, $2::uuid[])', [linkId, [late]])).toEqual(expect.objectContaining({ ok: false, code: '55000', message: 'REVIEW_PLAN_FROZEN' }));
+    expect(await raw(o, o.member, 'SELECT ludy_social.review_plan_posts_add($1::uuid, $2::uuid[])', [linkId, [late]])).toEqual(expect.objectContaining({ ok: false, code: '42501', message: 'REVIEW_PLAN_FORBIDDEN' }));
 
     // A plan link with no posts yet (as the create command makes it): only its maker fills it, once, with live posts of
     // the org, at most 50 and each once.
     const empty = randomUUID();
     expect(
-      await raw(o, o.admin, "INSERT INTO crove_social.review_link (org_id, id, kind, token_sha256, created_by, expires_at) VALUES ($1, $2, 'plan', $3, $4, now() + interval '1 day')", [
+      await raw(o, o.admin, "INSERT INTO ludy_social.review_link (org_id, id, kind, token_sha256, created_by, expires_at) VALUES ($1, $2, 'plan', $3, $4, now() + interval '1 day')", [
         o.orgId,
         empty,
         randomBytes(32).toString('hex'),
         o.admin,
       ]),
     ).toEqual({ ok: true, rows: 1 });
-    const add = (user: string, posts: string[]) => raw(o, user, 'SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, posts]);
+    const add = (user: string, posts: string[]) => raw(o, user, 'SELECT ludy_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, posts]);
     expect(await add(o.owner, [late])).toEqual(expect.objectContaining({ ok: false, message: 'REVIEW_PLAN_FORBIDDEN' }));
     expect(await add(o.admin, [late, late])).toEqual(expect.objectContaining({ ok: false, code: '22023' }));
     expect(await add(o.admin, [])).toEqual(expect.objectContaining({ ok: false, code: '22023' }));
@@ -372,17 +372,17 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     expect(await add(o.admin, [cancelled])).toEqual(expect.objectContaining({ ok: false, code: '22023' }));
     expect(await add(o.admin, [late, first])).toEqual({ ok: true, rows: 1 });
     expect(await add(o.admin, [cancelled])).toEqual(expect.objectContaining({ ok: false, code: '55000' }));
-    const rows = await admin(async (c) => (await c.query('SELECT post_id, position, content_key FROM crove_social.review_link_post WHERE link_id = $1 ORDER BY position', [empty])).rows);
+    const rows = await admin(async (c) => (await c.query('SELECT post_id, position, content_key FROM ludy_social.review_link_post WHERE link_id = $1 ORDER BY position', [empty])).rows);
     expect(rows.map((r: { post_id: string; position: number }) => [r.post_id, r.position])).toEqual([
       [late, 0],
       [first, 1],
     ]);
     expect(rows.every((r: { content_key: string }) => /^[0-9a-f]{64}$/.test(r.content_key))).toBe(true);
     // Another org's context never reaches the link.
-    expect(await raw(stranger, stranger.owner, 'SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, [late]])).toEqual(expect.objectContaining({ ok: false, code: '22023' }));
+    expect(await raw(stranger, stranger.owner, 'SELECT ludy_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, [late]])).toEqual(expect.objectContaining({ ok: false, code: '22023' }));
 
     const matrix = await admin(async (c) => {
-      const fns = ['crove_social.review_plan_posts_add(uuid,uuid[])', 'crove_social.review_feedback_reply_guard()'];
+      const fns = ['ludy_social.review_plan_posts_add(uuid,uuid[])', 'ludy_social.review_feedback_reply_guard()'];
       const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'public'];
       const { rows: can } = await c.query<{ fn: string; role: string; can: boolean }>(
         `SELECT f AS fn, r AS role, has_function_privilege(r, f, 'EXECUTE') AS can FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r`,
@@ -391,8 +391,8 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
       return Object.fromEntries(fns.map((f) => [f, roles.filter((r) => can.some((row) => row.fn === f && row.role === r && row.can))]));
     });
     // ludy_tenant's grant, which its member roles inherit (outside a member context the definer refuses), and nobody calls the guard.
-    expect(matrix).toEqual({ 'crove_social.review_plan_posts_add(uuid,uuid[])': ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant'], 'crove_social.review_feedback_reply_guard()': [] });
-    await expect(pool.query('SELECT crove_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, [late]])).rejects.toMatchObject({ code: '42501', message: 'NO_CONTEXT' });
+    expect(matrix).toEqual({ 'ludy_social.review_plan_posts_add(uuid,uuid[])': ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant'], 'ludy_social.review_feedback_reply_guard()': [] });
+    await expect(pool.query('SELECT ludy_social.review_plan_posts_add($1::uuid, $2::uuid[])', [empty, [late]])).rejects.toMatchObject({ code: '42501', message: 'NO_CONTEXT' });
   });
 
   it('holds the live link caps against links made at the same time (#930)', async () => {
@@ -402,10 +402,10 @@ suite('social review replies on PostgreSQL (#1301, #930)', () => {
     // 49 live plan links and 9 live links of the post: one more each is allowed, and only one.
     await admin(async (c) => {
       for (let i = 0; i < 49; i++) {
-        await c.query("INSERT INTO crove_social.review_link (org_id, kind, token_sha256, created_by, expires_at) VALUES ($1, 'plan', $2, $3, now() + interval '1 day')", [o.orgId, randomBytes(32).toString('hex'), o.owner]);
+        await c.query("INSERT INTO ludy_social.review_link (org_id, kind, token_sha256, created_by, expires_at) VALUES ($1, 'plan', $2, $3, now() + interval '1 day')", [o.orgId, randomBytes(32).toString('hex'), o.owner]);
       }
       for (let i = 0; i < 9; i++) {
-        await c.query("INSERT INTO crove_social.review_link (org_id, post_id, token_sha256, created_by, expires_at) VALUES ($1, $2, $3, $4, now() + interval '1 day')", [o.orgId, postId, randomBytes(32).toString('hex'), o.owner]);
+        await c.query("INSERT INTO ludy_social.review_link (org_id, post_id, token_sha256, created_by, expires_at) VALUES ($1, $2, $3, $4, now() + interval '1 day')", [o.orgId, postId, randomBytes(32).toString('hex'), o.owner]);
       }
     });
     const plans = await Promise.all([0, 1, 2].map(() => refusal(exec(o, o.owner, 'social.review_link.create_plan', { postIds: [postId] }))));

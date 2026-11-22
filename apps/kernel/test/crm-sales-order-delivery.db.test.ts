@@ -81,7 +81,7 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     };
     const accept = (user: string, quote: Quote, extra: Record<string, unknown> = {}) => exec<QuoteDecided>(user, 'crm.quote.accept', { quoteId: quote.id, version: quote.version, ...extra });
     const orderCount = (quoteId?: string) =>
-      admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_crm.sales_order WHERE org_id = $1${quoteId ? ' AND quote_id = $2' : ''}`, quoteId ? [orgId, quoteId] : [orgId]).then((r) => Number(r.rows[0]!.n)));
+      admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_crm.sales_order WHERE org_id = $1${quoteId ? ' AND quote_id = $2' : ''}`, quoteId ? [orgId, quoteId] : [orgId]).then((r) => Number(r.rows[0]!.n)));
     return { orgId, owner, member, viewer, party, exec, query, newDeal, sentQuote, accept, orderCount };
   }
 
@@ -135,7 +135,7 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     o.exec<SalesOrderDeliveryChanged>(user, 'crm.sales_order.deliver', { orderId, lineNo, ...extra });
   const undeliver = (o: Awaited<ReturnType<typeof org>>, user: string, orderId: string, lineNo: number) => o.exec<SalesOrderDeliveryChanged>(user, 'crm.sales_order.undeliver', { orderId, lineNo });
   const rows = (orgId: string, orderId: string) =>
-    admin((c) => c.query<{ kind: string; line_no: number; reverses_id: string | null }>('SELECT kind, line_no, reverses_id FROM crove_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 ORDER BY created_at, kind', [orgId, orderId]).then((r) => r.rows));
+    admin((c) => c.query<{ kind: string; line_no: number; reverses_id: string | null }>('SELECT kind, line_no, reverses_id FROM ludy_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 ORDER BY created_at, kind', [orgId, orderId]).then((r) => r.rows));
 
   it('marks a goods line delivered once, shows it on the order, and a second mark makes no second row', async () => {
     const o = await org();
@@ -189,7 +189,7 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     // A member going around the command meets the guard.
     await expect(
       as(o.orgId, o.member, (c) =>
-        c.query("UPDATE crove_crm.sales_order SET status = 'cancelled', cancelled_at = now(), cancel_reason = $3, version = version + 1 WHERE org_id = $1 AND id = $2", [o.orgId, order.id, REASON]),
+        c.query("UPDATE ludy_crm.sales_order SET status = 'cancelled', cancelled_at = now(), cancel_reason = $3, version = version + 1 WHERE org_id = $1 AND id = $2", [o.orgId, order.id, REASON]),
       ),
     ).rejects.toThrow(/ORDER_DELIVERED/);
     // Taken back, the order may be cancelled; then it takes no delivery.
@@ -206,12 +206,12 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     const delivery = (await rows(o.orgId, order.id))[0]!;
     expect(delivery.kind).toBe('delivery');
     // Nothing updates or deletes a delivery.
-    for (const sql of ["UPDATE crove_crm.sales_order_delivery SET delivered_on = '2020-01-01' WHERE org_id = $1 AND order_id = $2", 'DELETE FROM crove_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2']) {
+    for (const sql of ["UPDATE ludy_crm.sales_order_delivery SET delivered_on = '2020-01-01' WHERE org_id = $1 AND order_id = $2", 'DELETE FROM ludy_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2']) {
       await expect(as(o.orgId, o.member, (c) => c.query(sql, [o.orgId, order.id]))).rejects.toMatchObject({ code: '42501' });
     }
     const insert = (user: string, kind: string, lineNo: number, reverses: string | null, on: string | null) =>
       as(o.orgId, user, (c) =>
-        c.query('INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, reverses_id, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, order.id, lineNo, kind, on, reverses, user]),
+        c.query('INSERT INTO ludy_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, reverses_id, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, order.id, lineNo, kind, on, reverses, user]),
       );
     const today = vietnamToday();
     // A second delivery of the same line is a unique violation (it passes the policy: today, a confirmed order, an item line); a delivery of a note line, or by a viewer, or for another
@@ -220,7 +220,7 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     await expect(insert(o.member, 'delivery', 3, null, today)).rejects.toMatchObject({ code: '42501' });
     await expect(insert(o.viewer, 'delivery', 1, null, today)).rejects.toMatchObject({ code: '42501' });
     await expect(
-      as(o.orgId, o.member, (c) => c.query("INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by) VALUES ($1, $2, 1, 'delivery', $4, $3)", [o.orgId, order.id, o.owner, today])),
+      as(o.orgId, o.member, (c) => c.query("INSERT INTO ludy_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by) VALUES ($1, $2, 1, 'delivery', $4, $3)", [o.orgId, order.id, o.owner, today])),
     ).rejects.toMatchObject({ code: '42501' });
     // The day (F2): not after today in Vietnam's calendar, not before the order's day, and one is needed. Line 2 is free, so only the policy can refuse these.
     const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
@@ -231,26 +231,26 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     for (const when of ["now() - interval '1 day'", "now() + interval '1 day'"]) {
       await expect(
         as(o.orgId, o.member, (c) =>
-          c.query(`INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by, created_at) VALUES ($1, $2, 2, 'delivery', $4, $3, ${when})`, [o.orgId, order.id, o.member, today]),
+          c.query(`INSERT INTO ludy_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by, created_at) VALUES ($1, $2, 2, 'delivery', $4, $3, ${when})`, [o.orgId, order.id, o.member, today]),
         ),
       ).rejects.toMatchObject({ code: '42501' });
     }
     // The shape (the table's own check, which the policy hides from a tenant role): a delivery has a day and no reversed row, a reversal the opposite, never itself.
-    const raw = (values: string) => admin((c) => c.query(`INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, reverses_id, created_by, id) VALUES ${values}`));
+    const raw = (values: string) => admin((c) => c.query(`INSERT INTO ludy_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, reverses_id, created_by, id) VALUES ${values}`));
     const me = randomUUID();
     await expect(raw(`('${o.orgId}', '${order.id}', 2, 'delivery', NULL, NULL, '${o.member}', '${randomUUID()}')`)).rejects.toMatchObject({ code: '23514' });
     await expect(raw(`('${o.orgId}', '${order.id}', 2, 'reversal', NULL, '${me}', '${o.member}', '${me}')`)).rejects.toMatchObject({ code: '23514' });
-    const id = (await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 AND kind = 'delivery'", [o.orgId, order.id]))).rows[0]!.id;
+    const id = (await admin((c) => c.query<{ id: string }>("SELECT id FROM ludy_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 AND kind = 'delivery'", [o.orgId, order.id]))).rows[0]!.id;
     // A reversal names a delivery of its own line (F1): none at all and a delivery of another line are foreign key violations, itself a check violation.
     await expect(insert(o.member, 'reversal', 1, randomUUID(), null)).rejects.toMatchObject({ code: '23503' });
     await expect(insert(o.member, 'reversal', 2, id, null)).rejects.toMatchObject({ code: '23503' });
     await expect(
-      as(o.orgId, o.member, (c) => c.query("INSERT INTO crove_crm.sales_order_delivery (org_id, id, order_id, line_no, kind, reverses_id, created_by) VALUES ($1, $2, $3, 1, 'reversal', $2, $4)", [o.orgId, me, order.id, o.member])),
+      as(o.orgId, o.member, (c) => c.query("INSERT INTO ludy_crm.sales_order_delivery (org_id, id, order_id, line_no, kind, reverses_id, created_by) VALUES ($1, $2, $3, 1, 'reversal', $2, $4)", [o.orgId, me, order.id, o.member])),
     ).rejects.toMatchObject({ code: '23514' });
     // One reversal per delivery; and a reversal is not reversed in its turn (F1: it names a delivery, never a reversal).
     await undeliver(o, o.member, order.id, 1);
     await expect(insert(o.member, 'reversal', 1, id, null)).rejects.toMatchObject({ code: '23505' });
-    const reversal = (await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 AND kind = 'reversal'", [o.orgId, order.id]))).rows[0]!.id;
+    const reversal = (await admin((c) => c.query<{ id: string }>("SELECT id FROM ludy_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 AND kind = 'reversal'", [o.orgId, order.id]))).rows[0]!.id;
     await expect(insert(o.member, 'reversal', 1, reversal, null)).rejects.toMatchObject({ code: '23503' });
   });
 
@@ -262,7 +262,7 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
     await expect(deliver(b, b.owner, order.id, 1)).rejects.toMatchObject({ code: 'ORDER_NOT_FOUND', status: 404 });
     await expect(undeliver(b, b.owner, order.id, 1)).rejects.toMatchObject({ code: 'ORDER_NOT_FOUND', status: 404 });
     await expect(b.query(b.member, 'crm.sales_order.get', { orderId: order.id })).rejects.toMatchObject({ code: 'ORDER_NOT_FOUND', status: 404 });
-    expect(await as(b.orgId, b.member, async (c) => (await c.query('SELECT 1 FROM crove_crm.sales_order_delivery')).rowCount)).toBe(0);
+    expect(await as(b.orgId, b.member, async (c) => (await c.query('SELECT 1 FROM ludy_crm.sales_order_delivery')).rowCount)).toBe(0);
   });
 
   it('writes audit rows with ids only', async () => {

@@ -39,9 +39,9 @@ export function shiftMonth(month: string, by: 1 | -1): string {
   return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
 }
 
-// An owner, or a holder of finance.period.unlock org-wide or for this entity (crove_finance.may_unlock_period, #1507).
+// An owner, or a holder of finance.period.unlock org-wide or for this entity (ludy_finance.may_unlock_period, #1507).
 async function mayUnlock(ctx: QueryContext, entity: string): Promise<boolean> {
-  const { rows } = await sql<{ may: boolean }>`SELECT crove_finance.may_unlock_period(${entity}::uuid) AS may`.execute(ctx.trx);
+  const { rows } = await sql<{ may: boolean }>`SELECT ludy_finance.may_unlock_period(${entity}::uuid) AS may`.execute(ctx.trx);
   return rows[0]?.may === true;
 }
 
@@ -50,7 +50,7 @@ async function mayUnlock(ctx: QueryContext, entity: string): Promise<boolean> {
 export async function periodLockedThrough(ctx: QueryContext, legalEntityId?: string): Promise<string | null> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const row = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select('locked_through')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -62,7 +62,7 @@ export async function periodLockedThrough(ctx: QueryContext, legalEntityId?: str
 export async function periodLockState(ctx: QueryContext, legalEntityId?: string): Promise<PeriodLockState> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const row = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select(['locked_from', 'locked_through', 'updated_by', 'updated_at'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -165,7 +165,7 @@ export const periodLock = defineCommand({
     // the database clock (databaseToday above says why that clock), after the order, so a month out of order says which
     // month comes first.
     try {
-      await sql`SELECT crove_finance.lock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.lock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
     } catch (error) {
       lockRefusal(error, input.month);
     }
@@ -194,7 +194,7 @@ export const periodUnlock = defineCommand({
     ctx.permissionEntity(entity);
     ctx.audit({ month: input.month, reason: input.reason, legalEntityId: entity });
     try {
-      await sql`SELECT crove_finance.unlock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.unlock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
     } catch (error) {
       lockRefusal(error, input.month);
     }
@@ -308,8 +308,8 @@ export async function liveOpeningDate(ctx: QueryContext, legalEntityId?: string)
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const { rows } = await sql<{ opening: string | null }>`
     SELECT pg_catalog.max(o.entry_date)::text AS opening
-    FROM crove_finance.journal_entry o
+    FROM ludy_finance.journal_entry o
     WHERE o.org_id = ${ctx.orgId}::uuid AND o.legal_entity_id = ${entity}::uuid AND o.source_type = 'finance.opening_balance'
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)`.execute(ctx.trx);
+      AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)`.execute(ctx.trx);
   return rows[0]?.opening ?? null;
 }

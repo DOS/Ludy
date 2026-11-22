@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Vietnam CA provider connection management, #62 legal gate, and reconcile_only PAdES signing request commands/queries (#3554).
 // Credentials are sealed at the HTTP RPC edge with CredentialBroker and never read or returned here; only the worker opens
-// stored ciphertext via crove_sign.ca_connection_secret_get.
+// stored ciphertext via ludy_sign.ca_connection_secret_get.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -190,7 +190,7 @@ const pollCallKey = (idempotencyKey: string, attempt: number) => `sign:ca:poll:$
 
 async function readOrgConnections(trx: QueryContext['trx']): Promise<SignCaConnectionRecord[]> {
   const { rows } = await sql<{ items: RawCaConnectionJson[] | null }>`
-    SELECT crove_sign.ca_connection_list() AS items
+    SELECT ludy_sign.ca_connection_list() AS items
   `.execute(trx);
   const rawItems = Array.isArray(rows[0]?.items) ? rows[0].items : [];
   return rawItems.map(normalizeConnectionRecord);
@@ -218,7 +218,7 @@ export const caConnectionLookupId = defineQuery({
   handler: async (ctx, input): Promise<{ id: string | null }> => {
     assertUser(ctx);
     const { rows } = await sql<{ id: string | null }>`
-      SELECT crove_sign.ca_connection_lookup_id(${input.provider}::text) AS id
+      SELECT ludy_sign.ca_connection_lookup_id(${input.provider}::text) AS id
     `.execute(ctx.trx);
     return { id: rows[0]?.id ?? null };
   },
@@ -231,7 +231,7 @@ export const caRequestsByEnvelope = defineQuery({
   handler: async (ctx, input): Promise<{ items: SignCaSigningRequestRecord[] }> => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -242,7 +242,7 @@ export const caRequestsByEnvelope = defineQuery({
     assertCanAccessEnvelopeRow(ctx, env);
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
     const rows = await ctx.trx
-      .selectFrom('crove_sign.ca_signing_request')
+      .selectFrom('ludy_sign.ca_signing_request')
       .select([
         'id',
         'envelope_id',
@@ -277,7 +277,7 @@ export const caRequestsByEnvelope = defineQuery({
 });
 
 const CA_CONNECTION_SAVE_WRITES = [
-  tableWrite(signManifest.tables, 'crove_sign', 'ca_connection', [
+  tableWrite(signManifest.tables, 'ludy_sign', 'ca_connection', [
     'org_id',
     'id',
     'provider',
@@ -314,7 +314,7 @@ export const caConnectionSave = defineCommand({
     assertSignCaProviderAllowed(input.provider);
 
     const { rows } = await sql<{ row: RawCaConnectionJson }>`
-      SELECT crove_sign.ca_connection_upsert(
+      SELECT ludy_sign.ca_connection_upsert(
         ${input.id ?? null}::uuid,
         ${input.provider}::text,
         ${input.label}::text,
@@ -343,7 +343,7 @@ export const caConnectionDisable = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'sign.ca_connection', id: input.connectionId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'ca_connection', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'ca_connection', [
       'status',
       'key_id',
       'secret_envelope',
@@ -356,7 +356,7 @@ export const caConnectionDisable = defineCommand({
     assertHumanManager(ctx);
     try {
       const { rows } = await sql<{ row: RawCaConnectionJson }>`
-        SELECT crove_sign.ca_connection_disable(${input.connectionId}::uuid) AS row
+        SELECT ludy_sign.ca_connection_disable(${input.connectionId}::uuid) AS row
       `.execute(ctx.trx);
       const record = normalizeConnectionRecord(rows[0]!.row);
       ctx.audit({
@@ -385,7 +385,7 @@ export const caConnectionRecordTest = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'sign.ca_connection', id: input.connectionId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'ca_connection', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'ca_connection', [
       'last_test_state',
       'last_tested_at',
       'updated_at',
@@ -401,7 +401,7 @@ export const caConnectionRecordTest = defineCommand({
     assertSignCaProviderAllowed(existing.provider);
 
     const { rows } = await sql<{ row: RawCaConnectionJson }>`
-      SELECT crove_sign.ca_connection_record_test(
+      SELECT ludy_sign.ca_connection_record_test(
         ${input.connectionId}::uuid,
         ${input.state}::text
       ) AS row
@@ -428,7 +428,7 @@ export const caRequestInitiate = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'sign.envelope', id: input.envelopeId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'ca_signing_request', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'ca_signing_request', [
       'org_id',
       'envelope_id',
       'signer_id',
@@ -448,7 +448,7 @@ export const caRequestInitiate = defineCommand({
   handler: async (ctx, input): Promise<SignCaSigningRequestRecord> => {
     const userId = assertHumanManager(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'title',
@@ -479,7 +479,7 @@ export const caRequestInitiate = defineCommand({
 
     if (input.signerId) {
       const signer = await ctx.trx
-        .selectFrom('crove_sign.signer')
+        .selectFrom('ludy_sign.signer')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', env.id)
@@ -507,7 +507,7 @@ export const caRequestInitiate = defineCommand({
     assertSignCaProviderAllowed(chosen.provider);
 
     const existing = await ctx.trx
-      .selectFrom('crove_sign.ca_signing_request')
+      .selectFrom('ludy_sign.ca_signing_request')
       .select([
         'id',
         'envelope_id',
@@ -552,7 +552,7 @@ export const caRequestInitiate = defineCommand({
     }
 
     const inserted = await ctx.trx
-      .insertInto('crove_sign.ca_signing_request')
+      .insertInto('ludy_sign.ca_signing_request')
       .values({
         org_id: ctx.orgId,
         envelope_id: env.id,
@@ -654,7 +654,7 @@ export const caRequestJobBegin = defineCommand({
   access: 'system',
   target: (input) => ({ type: 'sign.ca_signing_request', id: input.requestId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'ca_signing_request', ['digest_sha256', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'ca_signing_request', ['digest_sha256', 'updated_at']),
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'external_call', [
       'org_id',
       'key',
@@ -672,7 +672,7 @@ export const caRequestJobBegin = defineCommand({
   handler: async (ctx, input): Promise<SignCaJobBeginResult> => {
     assertSystem(ctx);
     const req = await ctx.trx
-      .selectFrom('crove_sign.ca_signing_request')
+      .selectFrom('ludy_sign.ca_signing_request')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -701,7 +701,7 @@ export const caRequestJobBegin = defineCommand({
     }
 
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'title',
@@ -793,7 +793,7 @@ export const caRequestJobBegin = defineCommand({
       if (input.byteRangeDigestSha256 && input.byteRangeDigestSha256 !== req.digest_sha256) {
         effectiveDigest = input.byteRangeDigestSha256;
         await ctx.trx
-          .updateTable('crove_sign.ca_signing_request')
+          .updateTable('ludy_sign.ca_signing_request')
           .set({
             digest_sha256: effectiveDigest,
             updated_at: ctx.now,
@@ -883,7 +883,7 @@ export const caRequestJobRecord = defineCommand({
   access: 'system',
   target: (input) => ({ type: 'sign.ca_signing_request', id: input.requestId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'ca_signing_request', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'ca_signing_request', [
       'external_tx_id',
       'status',
       'challenge_code',
@@ -906,7 +906,7 @@ export const caRequestJobRecord = defineCommand({
   handler: async (ctx, input): Promise<SignCaJobRecordResult> => {
     assertSystem(ctx);
     const req = await ctx.trx
-      .selectFrom('crove_sign.ca_signing_request')
+      .selectFrom('ludy_sign.ca_signing_request')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -924,7 +924,7 @@ export const caRequestJobRecord = defineCommand({
       const nextAttempts = req.poll_attempts + 1;
       if (nextAttempts >= MAX_CA_POLL_ATTEMPTS) {
         await ctx.trx
-          .updateTable('crove_sign.ca_signing_request')
+          .updateTable('ludy_sign.ca_signing_request')
           .set({
             external_tx_id: input.externalTxId,
             status: 'expired',
@@ -967,7 +967,7 @@ export const caRequestJobRecord = defineCommand({
 
       const nextPoll = nextPollDate(ctx.now, nextAttempts);
       await ctx.trx
-        .updateTable('crove_sign.ca_signing_request')
+        .updateTable('ludy_sign.ca_signing_request')
         .set({
           external_tx_id: input.externalTxId,
           challenge_code: input.challengeCode ?? req.challenge_code,
@@ -998,7 +998,7 @@ export const caRequestJobRecord = defineCommand({
       const signedAt = input.signedAtIso ? new Date(input.signedAtIso) : ctx.now;
       const embedRetryDue = new Date(ctx.now.getTime() + 30_000);
       await ctx.trx
-        .updateTable('crove_sign.ca_signing_request')
+        .updateTable('ludy_sign.ca_signing_request')
         .set({
           external_tx_id: input.externalTxId,
           status: 'pending',
@@ -1031,7 +1031,7 @@ export const caRequestJobRecord = defineCommand({
       if (input.outcome === 'transient_retry' && nextAttempts >= MAX_CA_POLL_ATTEMPTS) {
         const failCode = input.errorCode || 'CA_MAX_RETRIES_EXCEEDED';
         await ctx.trx
-          .updateTable('crove_sign.ca_signing_request')
+          .updateTable('ludy_sign.ca_signing_request')
           .set({
             status: 'failed',
             error_code: failCode,
@@ -1077,7 +1077,7 @@ export const caRequestJobRecord = defineCommand({
 
       const nextPoll = nextPollDate(ctx.now, Math.min(nextAttempts, MAX_CA_POLL_ATTEMPTS));
       await ctx.trx
-        .updateTable('crove_sign.ca_signing_request')
+        .updateTable('ludy_sign.ca_signing_request')
         .set({
           error_code: input.errorCode,
           poll_attempts: nextAttempts,
@@ -1105,7 +1105,7 @@ export const caRequestJobRecord = defineCommand({
 
     // terminal_failure
     await ctx.trx
-      .updateTable('crove_sign.ca_signing_request')
+      .updateTable('ludy_sign.ca_signing_request')
       .set({
         ...(input.externalTxId ? { external_tx_id: input.externalTxId } : {}),
         status: input.status,
@@ -1168,7 +1168,7 @@ export const caRequestJobComplete = defineCommand({
   access: 'system',
   target: (input) => ({ type: 'sign.ca_signing_request', id: input.requestId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'ca_signing_request', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'ca_signing_request', [
       'external_tx_id',
       'status',
       'error_code',
@@ -1186,7 +1186,7 @@ export const caRequestJobComplete = defineCommand({
   handler: async (ctx, input): Promise<SignCaSigningRequestRecord> => {
     assertSystem(ctx);
     const req = await ctx.trx
-      .selectFrom('crove_sign.ca_signing_request')
+      .selectFrom('ludy_sign.ca_signing_request')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -1223,7 +1223,7 @@ export const caRequestJobComplete = defineCommand({
 
     const signedAt = input.signedAtIso ? new Date(input.signedAtIso) : (req.signed_at ?? ctx.now);
     const updated = await ctx.trx
-      .updateTable('crove_sign.ca_signing_request')
+      .updateTable('ludy_sign.ca_signing_request')
       .set({
         external_tx_id: input.externalTxId,
         status: 'signed',
@@ -1316,7 +1316,7 @@ export const caConnectionSecretGet = defineQuery({
         secret_envelope: string;
       }>`
         SELECT id, provider, cert_ref, key_id, secret_envelope
-        FROM crove_sign.ca_connection_secret_get(${input.connectionId}::uuid)
+        FROM ludy_sign.ca_connection_secret_get(${input.connectionId}::uuid)
       `.execute(ctx.trx);
       const row = rows[0];
       if (!row) {

@@ -24,7 +24,7 @@ async function keyOf(id: string): Promise<unknown> {
 describe('the bank line lock', () => {
   it('takes the same key for an id in upper case and in lower case', async () => {
     const lower = await keyOf(LINE);
-    expect(lower).toBe(`crove_finance.bank_line:${ORG}:${LINE}`);
+    expect(lower).toBe(`ludy_finance.bank_line:${ORG}:${LINE}`);
     expect(await keyOf(LINE.toUpperCase())).toBe(lower);
   });
 });

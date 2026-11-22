@@ -41,7 +41,7 @@ export const householdS2e = defineQuery({
 
     // What the answer rests on and the accountant has not confirmed: the S2e layout in force on the last day.
     const unconfirmed: HouseholdS2e['unconfirmed'] = [];
-    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2e').where('effective_from', '<=', w.to).execute();
+    const formRows = await ctx.trx.selectFrom('ludy_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2e').where('effective_from', '<=', w.to).execute();
     const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
     const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
     if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2e ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });

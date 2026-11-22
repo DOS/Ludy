@@ -48,7 +48,7 @@ export const notificationDispatch = defineCommand({
         const e = z.object({ listId: zId }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const list = await ctx.trx
-          .selectFrom('crove_finance.portal_invoice_list')
+          .selectFrom('ludy_finance.portal_invoice_list')
           .select(['id', 'period', 'status', 'created_by', 'removed_at', 'legal_entity_id', 'direction'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', e.data.listId)
@@ -124,7 +124,7 @@ export const periodClosingRemind = defineCommand({
     // Each legal entity locks its own months (#1280): the period is still open while any entity's books are, so the
     // earliest lock counts (none at all while an entity has never locked).
     const locks = await ctx.trx
-      .selectFrom('crove_finance.period_lock')
+      .selectFrom('ludy_finance.period_lock')
       .select(sql<string | null>`pg_catalog.to_char(locked_through, 'YYYY-MM-DD')`.as('through'))
       .where('org_id', '=', ctx.orgId)
       .execute();
@@ -143,7 +143,7 @@ export const periodClosingRemind = defineCommand({
 
 const ACTOR = { type: 'system' as const, component: 'finance.period_closing' };
 
-// Pages through the active orgs (crove_finance.period_close_due, worker only) and reminds those whose period is
+// Pages through the active orgs (ludy_finance.period_close_due, worker only) and reminds those whose period is
 // closing. Returns how many notifications it wrote.
 export async function sweepPeriodClosing(deps: { runtime: Runtime; workerDb: Db; today: string }): Promise<number> {
   let after: string | null = null;
@@ -154,7 +154,7 @@ export async function sweepPeriodClosing(deps: { runtime: Runtime; workerDb: Db;
       vat_filing_period: string | null;
       locked_through: string | null;
     }>`SELECT org_id, vat_filing_period, pg_catalog.to_char(locked_through, 'YYYY-MM-DD') AS locked_through
-       FROM crove_finance.period_close_due(${after}::uuid, ${PERIOD_CLOSING_PAGE}::int)`.execute(deps.workerDb);
+       FROM ludy_finance.period_close_due(${after}::uuid, ${PERIOD_CLOSING_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       if (!closingPeriod((row.vat_filing_period as VatFilingPeriod | null) ?? null, row.locked_through, deps.today)) continue;
       try {

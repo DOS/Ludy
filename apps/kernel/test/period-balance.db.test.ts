@@ -54,7 +54,7 @@ suite('period balance reconciliation (#1284)', () => {
         { line_no: 2, account_code: '331', debit: '0', credit: debit },
       ];
       const { rows } = await c.query<{ id: string }>(
-        `SELECT crove_finance.post_journal_entry($1::date, 'reconcile', 'test.reconcile', $2::uuid, $3::jsonb, NULL::uuid, 1) AS id`,
+        `SELECT ludy_finance.post_journal_entry($1::date, 'reconcile', 'test.reconcile', $2::uuid, $3::jsonb, NULL::uuid, 1) AS id`,
         [date, randomUUID(), JSON.stringify(lines)],
       );
       await c.query('COMMIT');
@@ -69,10 +69,10 @@ suite('period balance reconciliation (#1284)', () => {
     withAdmin(async (a) => {
       await a.query('BEGIN');
       const { rows } = await a.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'legacy', 'test.legacy', $3) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'legacy', 'test.legacy', $3) RETURNING id`,
         [orgId, date, randomUUID()],
       );
-      await a.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', $3, 0), ($1, $2, 2, '5111', 0, $3)`, [
+      await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', $3, 0), ($1, $2, 2, '5111', 0, $3)`, [
         orgId,
         rows[0]?.id,
         amount,
@@ -82,7 +82,7 @@ suite('period balance reconciliation (#1284)', () => {
     });
 
   const deltaCount = () =>
-    withAdmin(async (a) => Number((await a.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.period_balance_delta WHERE org_id = $1`, [orgId])).rows[0]?.n));
+    withAdmin(async (a) => Number((await a.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.period_balance_delta WHERE org_id = $1`, [orgId])).rows[0]?.n));
 
   const runBackfill = () =>
     withAdmin(async (a) => {
@@ -147,7 +147,7 @@ suite('period balance reconciliation (#1284)', () => {
       (
         await a.query<{ entry: string; month: string; account: string; debit: string }>(
           `SELECT entry_id AS entry, period_month::text AS month, account_code AS account, debit::numeric(30,4)::text AS debit
-           FROM crove_finance.period_balance_delta WHERE org_id = $1 AND entry_id = ANY($2::uuid[]) ORDER BY month, account`,
+           FROM ludy_finance.period_balance_delta WHERE org_id = $1 AND entry_id = ANY($2::uuid[]) ORDER BY month, account`,
           [orgId, legacy],
         )
       ).rows,
@@ -167,7 +167,7 @@ suite('period balance reconciliation (#1284)', () => {
     await withAdmin(async (a) => {
       await a.query('BEGIN');
       await a.query('SET LOCAL session_replication_role = replica');
-      await a.query(`UPDATE crove_finance.period_balance_delta SET credit = credit + 1 WHERE org_id = $1 AND entry_id = $2 AND account_code = '331'`, [orgId, entry]);
+      await a.query(`UPDATE ludy_finance.period_balance_delta SET credit = credit + 1 WHERE org_id = $1 AND entry_id = $2 AND account_code = '331'`, [orgId, entry]);
       await a.query('COMMIT');
     });
     const error = await runPeriodBalanceReconciliation(workerDb).then(

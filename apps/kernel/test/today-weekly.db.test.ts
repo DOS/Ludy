@@ -58,16 +58,16 @@ suite('"Tuần này" figures, end to end (#3257)', () => {
     async function wonDeal(partyId: string, days: number, amount: string): Promise<void> {
       const deal = await newDeal(partyId, amount);
       await exec<Deal>(owner, 'crm.deal.move', { dealId: deal.id, version: deal.version, stageId: (await stage('Thắng')).id });
-      await rows("UPDATE crove_crm.deal SET closed_at = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' - make_interval(days => $3) + interval '9 hours' WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
+      await rows("UPDATE ludy_crm.deal SET closed_at = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' - make_interval(days => $3) + interval '9 hours' WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
     }
     // One balanced entry of the books: `debit` account against `credit` account, on a day, in an entity.
     async function entry(date: string, debit: string, credit: string, amount: string, legalEntity: string = entity, partyId: string | null = null): Promise<void> {
       await admin(async (c) => {
         const id = randomUUID();
         await c.query('BEGIN');
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'weekly test', 'finance.purchase_document', $4, $5)`, [orgId, id, date, randomUUID(), legalEntity]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'weekly test', 'finance.purchase_document', $4, $5)`, [orgId, id, date, randomUUID(), legalEntity]);
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, $3, $5, 0, CASE WHEN $3 = '131' THEN $6::uuid END, $7), ($1, $2, 2, $4, 0, $5, CASE WHEN $4 = '131' THEN $6::uuid END, $7)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, $3, $5, 0, CASE WHEN $3 = '131' THEN $6::uuid END, $7), ($1, $2, 2, $4, 0, $5, CASE WHEN $4 = '131' THEN $6::uuid END, $7)`,
           [orgId, id, debit, credit, amount, partyId, legalEntity],
         );
         await c.query('COMMIT');

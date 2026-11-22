@@ -44,7 +44,7 @@ const MAX_INVOICES = 30;
 async function adjustableOf(ctx: QueryContext, settlementId: string, household: boolean, withOther: boolean): Promise<MarketplaceWorklist['payouts'][number]['adjustable'] | null> {
   const rows = (
     await sql<{ id: string; other: string; tax_withheld: string }>`
-      SELECT id, other::text, tax_withheld::text FROM crove_finance.channel_settlement_line
+      SELECT id, other::text, tax_withheld::text FROM ludy_finance.channel_settlement_line
       WHERE org_id = ${ctx.orgId}::uuid AND settlement_id = ${settlementId}::uuid
         AND ((${withOther} AND other > 0) OR (NOT ${household} AND tax_withheld > 0))
       ORDER BY id LIMIT ${MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX + 1}`.execute(ctx.trx)
@@ -95,7 +95,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
     access: ALL,
     handler: async (ctx, input): Promise<MarketplaceWorklist> => {
       const entity = input.legalEntityId === undefined ? sql`TRUE` : sql`s.legal_entity_id = ${input.legalEntityId}::uuid`;
-      const standing = sql`s.reversal_of IS NULL AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
+      const standing = sql`s.reversal_of IS NULL AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
       const feesAccount = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388';
 
       // Settlements that stand and have no posting voucher: the platform paid for them and the books do not say so yet. A settlement posts as one voucher per month of delivery, all by ONE proposal
@@ -104,9 +104,9 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       const standingRows = (
         await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string }>`
           SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text
-          FROM crove_finance.channel_settlement s
+          FROM ludy_finance.channel_settlement s
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
-            AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
+            AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
           ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS}`.execute(ctx.trx)
       ).rows;
       const monthsOf = await settlementMonthsFor(ctx, standingRows.map((s) => ({ id: s.id, periodEnd: s.period_end })));
@@ -141,11 +141,11 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string; receivable: string; received: string; other: string; min_other: string }>`
           SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text,
                  coalesce(sum(l.sales - l.seller_discount - l.refund), 0)::text AS receivable, coalesce(sum(l.net), 0)::text AS received, coalesce(sum(l.other), 0)::text AS other, coalesce(min(l.other), 0)::text AS min_other
-          FROM crove_finance.channel_settlement s
-          JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
+          FROM ludy_finance.channel_settlement s
+          JOIN ludy_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
-            AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
-            AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
+            AND EXISTS (SELECT 1 FROM ludy_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
+            AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
           GROUP BY s.id, s.legal_entity_id, s.platform, s.period_start, s.period_end
           ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS * 4}`.execute(ctx.trx)
       ).rows;
@@ -164,7 +164,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         if (adjustable === null) continue;
         const lines = (
           await sql<{ id: string; value_date: string; amount: string; bank_ref: string | null }>`
-            SELECT id, value_date::text, amount::text, bank_ref FROM crove_finance.bank_line
+            SELECT id, value_date::text, amount::text, bank_ref FROM ludy_finance.bank_line
             WHERE org_id = ${ctx.orgId}::uuid AND legal_entity_id = ${p.legal_entity_id}::uuid AND amount = ${money(p.received).toFixed()}::numeric AND value_date >= ${p.period_start}::date
             ORDER BY value_date, id LIMIT ${MAX_CANDIDATES * 3}`.execute(ctx.trx)
         ).rows;
@@ -192,7 +192,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
 
       // The platforms' fee invoices that still have something to clear while fees wait on 1388.
       let links = ctx.trx
-        .selectFrom('crove_finance.marketplace_party as m')
+        .selectFrom('ludy_finance.marketplace_party as m')
         .select(['m.legal_entity_id', 'm.platform', 'm.party_id'])
         .where('m.org_id', '=', ctx.orgId);
       if (input.legalEntityId !== undefined) links = links.where('m.legal_entity_id', '=', input.legalEntityId);
@@ -201,7 +201,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         const waiting = money((await balanceOf(ctx, link.legal_entity_id, link.party_id, feesAccount)).balance);
         if (!waiting.greaterThan(0)) continue;
         const docs = await ctx.trx
-          .selectFrom('crove_finance.purchase_document')
+          .selectFrom('ludy_finance.purchase_document')
           .select(['id', 'invoice_series', 'invoice_number', 'invoice_date'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', link.legal_entity_id)

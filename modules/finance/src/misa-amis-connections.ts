@@ -63,7 +63,7 @@ export const misaAmisConnectionConnect = defineCommand({
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     try {
       const row = await ctx.trx
-        .insertInto('crove_finance.misa_amis_connection')
+        .insertInto('ludy_finance.misa_amis_connection')
         .values({ org_id: ctx.orgId, legal_entity_id: entityId, product: input.product, channel_connection_id: channel.connectionId, created_by: userId })
         // Two connects of one entity at once: the channel connection's own lock serialises them, and the second finds the first's row and answers with it.
         .onConflict((conflict) => conflict.columns(['org_id', 'channel_connection_id']).doNothing())
@@ -71,7 +71,7 @@ export const misaAmisConnectionConnect = defineCommand({
         .executeTakeFirst();
       const id =
         row?.id ??
-        (await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
+        (await ctx.trx.selectFrom('ludy_finance.misa_amis_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
       ctx.audit({ connectionId: channel.connectionId, legalEntityId: entityId, product: input.product, reconnected: channel.reconnected });
       return { id, existing: !row };
     } catch (error) {
@@ -85,7 +85,7 @@ export const misaAmisConnectionConnect = defineCommand({
 // The API asks this (`can_disconnect`) before it revokes the channel, so a refused disconnect leaves the access code and the channel as they were; the unlink asks again as the last guard.
 async function refuseWhilePending(ctx: Pick<CommandContext, 'trx' | 'orgId'>, connectionId: string): Promise<void> {
   const pending = await ctx.trx
-    .selectFrom('crove_finance.misa_amis_push')
+    .selectFrom('ludy_finance.misa_amis_push')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('connection_id', '=', connectionId)
@@ -116,7 +116,7 @@ export const misaAmisConnectionUnlink = defineCommand({
   handler: async (ctx, input): Promise<{ removed: boolean }> => {
     // Only a connection that is no longer live: the credential goes first (the API revokes the channel connection before this), so no live credential is left without its row.
     const live = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('c.id')
       .where('c.org_id', '=', ctx.orgId)
@@ -125,7 +125,7 @@ export const misaAmisConnectionUnlink = defineCommand({
       .executeTakeFirst();
     if (live) throw new DomainError('MISA_AMIS_CONNECTION_LIVE', 409, 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này');
     await refuseWhilePending(ctx, input.id);
-    const gone = await ctx.trx.deleteFrom('crove_finance.misa_amis_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const gone = await ctx.trx.deleteFrom('ludy_finance.misa_amis_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     const removed = Number(gone.numDeletedRows) > 0;
     ctx.audit({ removed });
     return { removed };
@@ -147,7 +147,7 @@ export const misaAmisConnectionRequestTest = defineCommand({
   target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('ch.status')
       .where('c.org_id', '=', ctx.orgId)
@@ -171,7 +171,7 @@ export const misaAmisConnectionTestTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<MisaAmisTestTarget> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -192,11 +192,11 @@ export const misaAmisConnectionRecordTest = defineCommand({
   access: 'system',
   target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ recorded: boolean; state: MisaAmisTestState }> => {
-    const found = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_finance.misa_amis_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
     // A connection closed while its test ran: nothing to record.
     if (!found) return { recorded: false, state: input.state };
     await ctx.trx
-      .updateTable('crove_finance.misa_amis_connection')
+      .updateTable('ludy_finance.misa_amis_connection')
       .set({ last_test_state: input.state, last_tested_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -212,7 +212,7 @@ export const misaAmisConnectionList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<MisaAmisConnection[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'c.default_sales_stock_code', 'c.unit_aliases', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -249,12 +249,12 @@ export const misaAmisConnectionSetDefaultItem = defineCommand({
   handler: async (ctx, input): Promise<{ saved: boolean }> => {
     // A stock is MISA ASP's (a sales line of AMIS leaves none): refused for an AMIS connection, and the table's own check says the same.
     if (input.role === 'sales_stock') {
-      const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['product']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+      const connection = await ctx.trx.selectFrom('ludy_finance.misa_amis_connection').select(['product']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
       if (!connection) throw notFound();
       if (connection.product !== 'asp' && input.code !== null) throw new DomainError('MISA_AMIS_STOCK_NOT_ASP', 422, 'Chỉ kết nối MISA ASP mới có kho mặc định cho dòng bán hàng');
     }
     const updated = await ctx.trx
-      .updateTable('crove_finance.misa_amis_connection')
+      .updateTable('ludy_finance.misa_amis_connection')
       .set(input.role === 'service' ? { default_service_item_code: input.code } : input.role === 'sales' ? { default_sales_item_code: input.code } : { default_sales_stock_code: input.code })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -288,7 +288,7 @@ export const misaAmisConnectionSetUnitAlias = defineCommand({
     const key = normalizeUnitName(input.unit);
     if (key === null) throw new DomainError('MISA_AMIS_UNIT_INVALID', 422, 'Tên đơn vị tính không hợp lệ');
     const connection = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection')
+      .selectFrom('ludy_finance.misa_amis_connection')
       .select(['product', 'unit_aliases'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -301,7 +301,7 @@ export const misaAmisConnectionSetUnitAlias = defineCommand({
     else Object.defineProperty(aliases, key, { value: input.misaName, enumerable: true, writable: true, configurable: true });
     if (Object.keys(aliases).length > MISA_AMIS_UNIT_ALIASES_MAX) throw new DomainError('MISA_AMIS_UNIT_ALIASES_FULL', 422, `Mỗi kết nối chỉ giữ tối đa ${MISA_AMIS_UNIT_ALIASES_MAX} tên đơn vị tính`);
     await ctx.trx
-      .updateTable('crove_finance.misa_amis_connection')
+      .updateTable('ludy_finance.misa_amis_connection')
       .set({ unit_aliases: JSON.stringify(aliases) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)

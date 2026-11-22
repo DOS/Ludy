@@ -23,7 +23,7 @@ export async function changesOfMany(ctx: Db, launchIds: readonly string[], kinds
   const out = new Map<string, ChangeRecord[]>(launchIds.map((id) => [id, []]));
   if (launchIds.length === 0) return out;
   const rows = await ctx.trx
-    .selectFrom('crove_ads.ad_manage_change')
+    .selectFrom('ludy_ads.ad_manage_change')
     .select([
       'id',
       'launch_id',
@@ -89,7 +89,7 @@ export async function objectsOfMany(ctx: Db, launchIds: readonly string[]): Prom
   const out = new Map<string, ManagedObject[]>(launchIds.map((id) => [id, []]));
   if (launchIds.length === 0) return out;
   const rows = await ctx.trx
-    .selectFrom('crove_ads.ad_object')
+    .selectFrom('ludy_ads.ad_object')
     .select(['launch_id', 'slot', 'level', 'external_id', 'name'])
     .where('org_id', '=', ctx.orgId)
     .where('launch_id', 'in', [...launchIds])
@@ -117,7 +117,7 @@ export async function manageStatesOf(ctx: Db, launches: readonly StateLaunch[]):
     objectsOfMany(ctx, ids),
     changesOfMany(ctx, ids),
     currentSetting(ctx),
-    ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'write_enabled', 'write_connection_id']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(launches.map((l) => l.ad_account_id))]).execute(),
+    ctx.trx.selectFrom('ludy_ads.ad_account').select(['id', 'write_enabled', 'write_connection_id']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(launches.map((l) => l.ad_account_id))]).execute(),
   ]);
   const accountOf = new Map(accounts.map((a) => [a.id, a]));
   for (const launch of launches) {

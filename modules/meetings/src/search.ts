@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Search across the transcript lines the caller reads (#2589, ADR-0047 point 2, meetings plan L2). A plain text search: no model call, no AI meter, and it works with
 // AI off. The typed words are folded in SQL the way every line was folded when it was stored (ludy_kernel.search_fold: lower case, Vietnamese marks and đ removed), so
-// "chiet khau" finds "chiết khấu". Which lines are found is decided twice. First by crove_meetings.search_segment_ids (migration 20261226000000), a definer that finds the
+// "chiet khau" finds "chiết khấu". Which lines are found is decided twice. First by ludy_meetings.search_segment_ids (migration 20261226000000), a definer that finds the
 // hits by the index and keeps the ones the caller reads (the recorder: every stage of their own meeting; any other reader: published lines of a meeting they read; an owner
 // or admin who is no reader finds nothing; a meeting past its text date is left out) and answers ids only. Then this query reads those ids under row security, which decides
 // again for every row it returns. The audit row of a sensitive read hashes the typed words, so no query text lands in the audit log.
@@ -25,12 +25,12 @@ type Trx = QueryContext['trx'];
  * see exactly the same lines and no other door to a meeting's text exists.
  */
 export async function findSearchHits(trx: Trx, orgId: string, q: string, size: number, offset: number): Promise<{ hits: MeetingSearchHit[]; hasMore: boolean }> {
-  const found = await sql<{ id: string }>`SELECT id FROM crove_meetings.search_segment_ids(${q}, ${size + 1}, ${offset})`.execute(trx);
+  const found = await sql<{ id: string }>`SELECT id FROM ludy_meetings.search_segment_ids(${q}, ${size + 1}, ${offset})`.execute(trx);
   const ids = found.rows.map((r) => r.id);
   if (ids.length === 0) return { hits: [], hasMore: false };
   const rows = await trx
-    .selectFrom('crove_meetings.transcript_segment as s')
-    .innerJoin('crove_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 's.org_id').onRef('m.id', '=', 's.meeting_id'))
+    .selectFrom('ludy_meetings.transcript_segment as s')
+    .innerJoin('ludy_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 's.org_id').onRef('m.id', '=', 's.meeting_id'))
     .select([
       's.id as segment_id',
       's.meeting_id',

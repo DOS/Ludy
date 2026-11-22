@@ -3,7 +3,7 @@
 //   - Member-private saved signature & initials (author-only RLS: even org owner cannot read/modify another member's row)
 //   - Automatic cascade deletion of member_signature when a member is removed from tenant_member
 //   - Org stamp RBAC (owner/admin create & archive, plain member read-only, viewer denied)
-//   - Stamp-only signer envelope send, crove_sign.public_submit PNG magic validation, and buildPdfSealFields payload
+//   - Stamp-only signer envelope send, ludy_sign.public_submit PNG magic validation, and buildPdfSealFields payload
 //   - Direct signing link start on a stamp-only template
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -196,7 +196,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     await rootPool.end();
   });
 
-  it('enforces author-only RLS on crove_sign.member_signature and cascades on member removal', async () => {
+  it('enforces author-only RLS on ludy_sign.member_signature and cascades on member removal', async () => {
     const savedSig = await runtime.execute<{ id: string; kind: string; widthPx: number; heightPx: number }>(
       'sign.member_signature.upsert',
       {
@@ -247,7 +247,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
           mfaAt: null,
         }),
       ]);
-      const directRead = await client.query('SELECT id FROM crove_sign.member_signature WHERE org_id = $1::uuid', [orgA]);
+      const directRead = await client.query('SELECT id FROM ludy_sign.member_signature WHERE org_id = $1::uuid', [orgA]);
       expect(directRead.rows).toEqual([]);
       await client.query('ROLLBACK');
     } finally {
@@ -267,7 +267,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
       ),
     ).rejects.toMatchObject({ code: 'SIGN_INVALID_SIGNATURE_PNG', status: 422 });
 
-    // Removing tempMemberA from tenant_member cascades their saved signature out of crove_sign.member_signature.
+    // Removing tempMemberA from tenant_member cascades their saved signature out of ludy_sign.member_signature.
     await runtime.execute(
       'sign.member_signature.upsert',
       { kind: 'signature', signatureKind: 'draw', signaturePngBase64: VALID_SIG_PNG },
@@ -278,7 +278,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
       tempMemberA,
     ]);
     const remainingForTemp = await adminPool!.query(
-      'SELECT count(*)::int AS cnt FROM crove_sign.member_signature WHERE org_id = $1::uuid AND user_id = $2::uuid',
+      'SELECT count(*)::int AS cnt FROM ludy_sign.member_signature WHERE org_id = $1::uuid AND user_id = $2::uuid',
       [orgA, tempMemberA],
     );
     expect(remainingForTemp.rows[0]?.cnt).toBe(0);
@@ -291,7 +291,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     expect(delRes.deleted).toBe(true);
   });
 
-  it('enforces owner/admin write and SIGN_WRITERS read RBAC on crove_sign.org_stamp', async () => {
+  it('enforces owner/admin write and SIGN_WRITERS read RBAC on ludy_sign.org_stamp', async () => {
     const created = await runtime.execute<{ id: string; name: string; stampKind: string; status: string }>(
       'sign.stamp.create',
       {
@@ -453,7 +453,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     // Submitting without PNG on a required stamp field is rejected with SIGN_FIELD_REQUIRED.
     const missingRes = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: { status: string; code?: string } }>`
-        SELECT crove_sign.public_submit(
+        SELECT ludy_sign.public_submit(
           ${tokenHash},
           true,
           null,
@@ -471,7 +471,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
     // Submitting a valid PNG stamp completes the envelope and produces a type: 'stamp' seal field.
     const okRes = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: { status: string; completed?: boolean; envelopeStatus?: string } }>`
-        SELECT crove_sign.public_submit(
+        SELECT ludy_sign.public_submit(
           ${tokenHash},
           true,
           null,
@@ -565,7 +565,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
 
     const startRes = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: { status: string; envelopeId?: string } }>`
-        SELECT crove_sign.public_direct_start(
+        SELECT ludy_sign.public_direct_start(
           ${hashSigningToken(directLink.token!)},
           'Nguyen Van Thu',
           null,

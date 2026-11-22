@@ -82,7 +82,7 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const app = new URL(adminUrl);
@@ -107,7 +107,7 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
 
   // A stock item of the household with a trade, written by the database owner.
   async function item(o: Org, code: string, trade: string): Promise<string> {
-    return admin(async (a) => (await a.query<{ id: string }>("INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, $3, $3, 'cái', '156', $4) RETURNING id", [o.orgId, o.household, code, trade])).rows[0]?.id as string);
+    return admin(async (a) => (await a.query<{ id: string }>("INSERT INTO ludy_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, $3, $3, 'cái', '156', $4) RETURNING id", [o.orgId, o.household, code, trade])).rows[0]?.id as string);
   }
   // An entry of the household's ledger written by the database owner (the triggers fire as for any writer). A reversal mirrors its original line by line (same line number and account, debit and credit swapped). With `sale`, the entry is the posting of a sale document of the entity whose lines (net amount, stock item
   // or none) each make a live stock move; `reverses` makes it the reversal of another entry.
@@ -128,17 +128,17 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
           const total = over.sale.reduce((acc, l) => acc + l.amount, 0);
           document = (
             await a.query<{ id: string }>(
-              "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, '1C26TAA', $3, $4, $5, 0, $5, 'sale', $6) RETURNING id",
+              "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, '1C26TAA', $3, $4, $5, 0, $5, 'sale', $6) RETURNING id",
               [o.orgId, party, `S${randomUUID().slice(0, 8)}`, date, total, entity],
             )
           ).rows[0]?.id as string;
           // A sale line names its credit account alone (purchase_line_one_account).
           let no = 1;
           for (const l of over.sale) {
-            await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, credit_account) VALUES ($1, $2, $3, $4, $5, '511')", [o.orgId, document, no, `Dòng ${no}`, l.amount]);
+            await a.query("INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, credit_account) VALUES ($1, $2, $3, $4, $5, '511')", [o.orgId, document, no, `Dòng ${no}`, l.amount]);
             if (l.item) {
               await a.query(
-                "INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, -1, 'document_line', $5, $6, 1)",
+                "INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, -1, 'document_line', $5, $6, 1)",
                 [o.orgId, entity, l.item, date, document, no],
               );
             }
@@ -147,22 +147,22 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
         }
         const id = (
           await a.query<{ id: string }>(
-            'INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+            'INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
             [o.orgId, date, description, document ? 'finance.purchase_document' : 'finance.journal_voucher', document ?? randomUUID(), entity, over.reverses ?? null],
           )
         ).rows[0]?.id as string;
         let no = 1;
-        for (const [account, debit, credit] of lines) await a.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, no++, account, debit, credit]);
+        for (const [account, debit, credit] of lines) await a.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, no++, account, debit, credit]);
         // The only way to reverse the entry of a sale document is a void, written in the same transaction (a deferred trigger demands it), and a void takes the stock of every line back: the
         // document's stock moves are reversed, as finance.journal.reverse does. The reversed moves stay, so the book still sees which item each line was sold as.
         if (over.reverses) {
-          const original = (await a.query<{ source_type: string; source_id: string }>('SELECT source_type, source_id FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, over.reverses])).rows[0];
+          const original = (await a.query<{ source_type: string; source_id: string }>('SELECT source_type, source_id FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, over.reverses])).rows[0];
           if (original?.source_type === 'finance.purchase_document') {
-            const moves = await a.query<{ id: string; item_id: string; quantity: string }>("SELECT id, item_id, quantity FROM crove_finance.stock_move WHERE org_id = $1 AND document_id = $2 AND source_type = 'document_line'", [o.orgId, original.source_id]);
+            const moves = await a.query<{ id: string; item_id: string; quantity: string }>("SELECT id, item_id, quantity FROM ludy_finance.stock_move WHERE org_id = $1 AND document_id = $2 AND source_type = 'document_line'", [o.orgId, original.source_id]);
             for (const m of moves.rows) {
-              await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, $3, $4, $5, 'reversal', $6)", [o.orgId, entity, m.item_id, date, -Number(m.quantity), m.id]);
+              await a.query("INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, $3, $4, $5, 'reversal', $6)", [o.orgId, entity, m.item_id, date, -Number(m.quantity), m.id]);
             }
-            await a.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'Hủy hóa đơn')", [o.orgId, original.source_id, id]);
+            await a.query("INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'Hủy hóa đơn')", [o.orgId, original.source_id, id]);
           }
         }
         await a.query('COMMIT');
@@ -303,7 +303,7 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     await setProfile(o, { trades: ['goods'] });
     await entry(o, '2026-12-05', 'Bán tháng 12', [['111', 1000000, 0], ['511', 0, 1000000]]);
     // December, so the global layout row this adds leaves the other tests' months (August to October) as they were.
-    await admin((a) => a.query("INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2b', '2026.9', DATE '2026-12-15', 'Sổ S2b mới', ARRAY['income'], 'test', 'confirmed') ON CONFLICT DO NOTHING"));
+    await admin((a) => a.query("INSERT INTO ludy_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2b', '2026.9', DATE '2026-12-15', 'Sổ S2b mới', ARRAY['income'], 'test', 'confirmed') ON CONFLICT DO NOTHING"));
     const december = await s2b(o, '2026-12');
     expect(december.form).toMatchObject({ book: 'S2b', version: '2026.9', name: 'Sổ S2b mới', status: 'confirmed' });
     expect(december.unconfirmed.map((u) => u.kind)).toEqual(['rate']);
@@ -325,7 +325,7 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     await setProfile(o, { trades: ['goods'] });
     await entry(o, '2026-09-12', 'Bán tháng 9', [['111', 1000000, 0], ['511', 0, 1000000]]);
     await entry(o, '2026-10-12', 'Bán tháng 10', [['111', 1000000, 0], ['511', 0, 1000000]]);
-    await admin((a) => a.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 2, 1, 'test', 'confirmed')"));
+    await admin((a) => a.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 2, 1, 'test', 'confirmed')"));
     const september = await s2b(o, '2026-09');
     const october = await s2b(o, '2026-10');
     expect(september.lines[0]).toMatchObject({ vatPercent: '1', vat: '10000' });

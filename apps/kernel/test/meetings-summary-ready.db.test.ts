@@ -73,13 +73,13 @@ suite('the "minutes draft ready" notice (#3730)', () => {
   async function seedMeeting(recorder: string, segments: Array<[number, number, string]> = [[0, 10, SECRET_LINE], [10, 20, 'Hà sẽ gửi báo giá trước thứ sáu']], org = orgId): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [org, meetingId, users[recorder]],
     );
     if (segments.length > 0 && recorder === 'viewer') {
       // A viewer cannot store a transcript through the command: a segment is put there directly (the case is a recorder who then lost vy.use).
-      await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', 'Một dòng', 'draft')`, [org, randomUUID(), meetingId]);
+      await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', 'Một dòng', 'draft')`, [org, randomUUID(), meetingId]);
     } else if (segments.length > 0) {
       await exec(recorder, 'meetings.transcript.draft_store', { meetingId, segments: segments.map(([startSeconds, endSeconds, text]) => ({ startSeconds, endSeconds, speakerLabel: 'Hà', text })) }, org);
     }
@@ -172,7 +172,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
   it('tells the recorder once, in-app and by email, with the link and no word of the draft or the title', async () => {
     const meetingId = await seedMeeting('recorder');
     // Another reader of the meeting: a member added as a reader, who must get nothing.
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
     const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
     expect(out).toMatchObject({ state: 'ready', errorCode: null });
     // The run wrote one event with ids and the language only; nothing is told until the worker dispatches it.
@@ -279,7 +279,7 @@ suite('the "minutes draft ready" notice (#3730)', () => {
     const meetingId = await seedMeeting('recorder');
     const ref = { meetingId, runId: randomUUID() };
     // A member who is not the recorder (even one who reads the meeting), a viewer and the owner of another org are refused, and nothing is queued.
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
     expect(await refuses(exec('attendee', 'meetings.summary.ready', ref))).toBe('FORBIDDEN');
     expect(await refuses(exec('viewer', 'meetings.summary.ready', ref))).not.toBeNull();
     expect(await refuses(exec('foreign', 'meetings.summary.ready', ref, otherOrgId))).not.toBeNull();

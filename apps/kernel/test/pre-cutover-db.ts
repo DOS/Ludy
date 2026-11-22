@@ -4,7 +4,7 @@
 import pg from 'pg';
 import { createPool, type PoolOptions } from '@ludy/db';
 
-const CORE_SCHEMAS = 'kernel|meta|jobs';
+const CORE_SCHEMAS = 'kernel|meta|jobs|finance|hr|crm|social|ads|notes|projects|meetings|sign';
 const CORE_ROLES = 'app|worker|tenant|prober|reporter|auth_reader_select|auth_reader|definer_tenant|definer_einvoice|definer_system';
 const CORE_GUCS = 'ctx|ctx_seal|org_id|user_id|org_purge|org_purge_hold|outbox_purge|inbound_rotate_limit_per_day|inbound_rotate_limit_total';
 
@@ -34,7 +34,7 @@ const ROLE_SET = new Set([
   'definer_einvoice',
   'definer_system',
 ]);
-const SCHEMA_SET = new Set(['kernel', 'meta', 'jobs']);
+const SCHEMA_SET = new Set(['kernel', 'meta', 'jobs', 'finance', 'hr', 'crm', 'social', 'ads', 'notes', 'projects', 'meetings', 'sign']);
 const GUC_SET = new Set([
   'ctx',
   'ctx_seal',

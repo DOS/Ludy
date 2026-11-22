@@ -43,7 +43,7 @@ describe('module manifests declare their screens (#1652)', () => {
         manifest: defineModule({
           id: 'finance',
           dependsOn: ['kernel'],
-          tables: { crove_finance: { t: columns(['id']) } },
+          tables: { ludy_finance: { t: columns(['id']) } },
           permissions: [{ key: 'finance.period.unlock', risk: 'R3', defaultRoles: ['finance.chief_accountant'] }],
           routes: [{ path: 'periods', permission: 'finance.period.unlock' }, { path: 'payroll', permission: 'finance.payroll.read' }],
           nav: [],

@@ -110,21 +110,21 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     }
   }
   const settlementSql = (id: string, extra: { platform?: string; start: string; end: string; net: string; reversalOf?: string | null }): [string, unknown[]] => [
-    'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    'INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7)',
     [orgId, id, extra.platform ?? 'shopee', extra.start, extra.end, extra.net, extra.reversalOf ?? null],
   ];
   const lineSql = (settlement: string, orderId: string, columns: Record<string, string> = {}, key = 'L1'): [string, unknown[]] => {
     const values: Record<string, string> = { sales: '100000', commission: '5000', net: '95000', ...columns };
     const names = Object.keys(values);
     return [
-      `INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, ${names.join(', ')}) VALUES ($1, $2, $3, $4, $5, ${names.map((_, i) => `$${i + 6}`).join(', ')})`,
+      `INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, ${names.join(', ')}) VALUES ($1, $2, $3, $4, $5, ${names.map((_, i) => `$${i + 6}`).join(', ')})`,
       [orgId, randomUUID(), settlement, orderId, key, ...names.map((n) => values[n])],
     ];
   };
   const order = (org: string, platform = 'shopee') =>
     admin(async (c) => {
       const id = randomUUID();
-      await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, platform, `ST${randomUUID().slice(0, 12)}`]);
+      await c.query('INSERT INTO ludy_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, platform, `ST${randomUUID().slice(0, 12)}`]);
       return id;
     });
   const insertSettlement = (user: string, id: string, extra: { platform?: string; start?: string; end?: string; net?: string; ref?: string | null; reversalOf?: string | null } = {}) => {
@@ -132,7 +132,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     return asTenant(
       user,
       orgId,
-      'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, payout_ref, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      'INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, payout_ref, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
       [orgId, id, extra.platform ?? 'shopee', extra.start ?? d, extra.end ?? d, extra.ref ?? null, extra.net ?? '95000', extra.reversalOf ?? null],
     );
   };
@@ -142,7 +142,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     return asTenant(
       user,
       org,
-      `INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, ${names.join(', ')}) VALUES ($1, $2, $3, $4, $5, ${names.map((_, i) => `$${i + 6}`).join(', ')})`,
+      `INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, ${names.join(', ')}) VALUES ($1, $2, $3, $4, $5, ${names.map((_, i) => `$${i + 6}`).join(', ')})`,
       [org, randomUUID(), settlement, orderId, key, ...names.map((n) => values[n])],
     );
   };
@@ -150,7 +150,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const id = randomUUID();
     const d = periodDay();
     await admin((c) =>
-      c.query('INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $4, $5)', [orgId, id, 'shopee', d, '95000']),
+      c.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $4, $5)', [orgId, id, 'shopee', d, '95000']),
     );
     return id;
   };
@@ -193,7 +193,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   });
 
   const columnsOf = (table: string) =>
-    admin(async (c) => (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_finance' AND table_name = $1 ORDER BY column_name", [table])).rows.map((r) => r.column_name));
+    admin(async (c) => (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ludy_finance' AND table_name = $1 ORDER BY column_name", [table])).rows.map((r) => r.column_name));
 
   it('holds no buyer column: the two tables have exactly the columns of the allow-list', async () => {
     const settlement = await columnsOf('channel_settlement');
@@ -207,7 +207,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const { rows } = await admin((c) =>
       c.query<{ table_name: string; column_name: string; data_type: string; len: number | null }>(
         `SELECT table_name::text, column_name::text, data_type::text, character_maximum_length AS len FROM information_schema.columns
-         WHERE table_schema = 'crove_finance' AND table_name IN ('channel_settlement', 'channel_settlement_line') AND data_type IN ('text', 'character varying') ORDER BY 1, 2`,
+         WHERE table_schema = 'ludy_finance' AND table_name IN ('channel_settlement', 'channel_settlement_line') AND data_type IN ('text', 'character varying') ORDER BY 1, 2`,
       ),
     );
     // Text columns: the platform (a union), the payout reference, the hash of the file and the line key; the last three are capped by a CHECK on their length or form.
@@ -219,7 +219,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     ]);
     const { rows: caps } = await admin((c) =>
       c.query<{ def: string }>(
-        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid IN ('crove_finance.channel_settlement'::regclass, 'crove_finance.channel_settlement_line'::regclass) AND contype = 'c'`,
+        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid IN ('ludy_finance.channel_settlement'::regclass, 'ludy_finance.channel_settlement_line'::regclass) AND contype = 'c'`,
       ),
     );
     const text = caps.map((r) => r.def).join('\n');
@@ -235,7 +235,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
         c.query<{ name: string; enabled: string; fn: string; type: number }>(
           `SELECT t.tgname::text AS name, t.tgenabled::text AS enabled, p.proname::text AS fn, t.tgtype::int AS type
            FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid WHERE t.tgrelid = $1::regclass AND t.tgname IN ('append_only_row', 'append_only_truncate') ORDER BY t.tgname`,
-          [`crove_finance.${table}`],
+          [`ludy_finance.${table}`],
         ),
       );
       expect(rows.map((r) => r.name), `${table}: triggers`).toEqual(['append_only_row', 'append_only_truncate']);
@@ -245,10 +245,10 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const settlement = await seedSettlement();
     const orderId = await order(orgId);
     await admin((c) =>
-      c.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, net) VALUES ($1, $2, $3, $4, $5, 1, 1)', [orgId, randomUUID(), settlement, orderId, 'L-own']),
+      c.query('INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, net) VALUES ($1, $2, $3, $4, $5, 1, 1)', [orgId, randomUUID(), settlement, orderId, 'L-own']),
     );
     for (const table of ['channel_settlement', 'channel_settlement_line']) {
-      for (const statement of [`UPDATE crove_finance.${table} SET org_id = org_id`, `DELETE FROM crove_finance.${table}`, `TRUNCATE crove_finance.${table} CASCADE`]) {
+      for (const statement of [`UPDATE ludy_finance.${table} SET org_id = org_id`, `DELETE FROM ludy_finance.${table}`, `TRUNCATE ludy_finance.${table} CASCADE`]) {
         await expect(admin((c) => c.query(statement)), `${statement} as the table's owner`).rejects.toMatchObject({ message: expect.stringMatching(/append-only/i) });
       }
     }
@@ -258,7 +258,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const { rows } = await admin((c) =>
       c.query<{ role: string; table: string; op: string }>(
         `SELECT r::text AS role, t::text AS "table", p::text AS op
-         FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant']) r, unnest(ARRAY['crove_finance.channel_settlement', 'crove_finance.channel_settlement_line']) t,
+         FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant']) r, unnest(ARRAY['ludy_finance.channel_settlement', 'ludy_finance.channel_settlement_line']) t,
               unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) p WHERE has_table_privilege(r, t, p)`,
       ),
     );
@@ -266,17 +266,17 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const { rows: columns } = await admin((c) =>
       c.query<{ role: string; col: string }>(
         `SELECT r::text AS role, a.attname::text AS col FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant']) r, pg_attribute a
-         WHERE a.attrelid IN ('crove_finance.channel_settlement'::regclass, 'crove_finance.channel_settlement_line'::regclass) AND a.attnum > 0 AND NOT a.attisdropped
+         WHERE a.attrelid IN ('ludy_finance.channel_settlement'::regclass, 'ludy_finance.channel_settlement_line'::regclass) AND a.attnum > 0 AND NOT a.attisdropped
            AND has_column_privilege(r, a.attrelid, a.attname, 'UPDATE')`,
       ),
     );
     expect(columns).toEqual([]);
     const settlement = await seedSettlement();
-    expect((await asTenant(owner, orgId, 'UPDATE crove_finance.channel_settlement SET report_net = 0 WHERE id = $1', [settlement])).code).toBe('42501');
-    expect((await asTenant(owner, orgId, 'DELETE FROM crove_finance.channel_settlement WHERE id = $1', [settlement])).code).toBe('42501');
-    expect((await asTenant(owner, orgId, 'TRUNCATE crove_finance.channel_settlement CASCADE')).code).toBe('42501');
-    expect((await asTenant(owner, orgId, 'UPDATE crove_finance.channel_settlement_line SET net = 0')).code).toBe('42501');
-    expect((await asTenant(owner, orgId, 'DELETE FROM crove_finance.channel_settlement_line')).code).toBe('42501');
+    expect((await asTenant(owner, orgId, 'UPDATE ludy_finance.channel_settlement SET report_net = 0 WHERE id = $1', [settlement])).code).toBe('42501');
+    expect((await asTenant(owner, orgId, 'DELETE FROM ludy_finance.channel_settlement WHERE id = $1', [settlement])).code).toBe('42501');
+    expect((await asTenant(owner, orgId, 'TRUNCATE ludy_finance.channel_settlement CASCADE')).code).toBe('42501');
+    expect((await asTenant(owner, orgId, 'UPDATE ludy_finance.channel_settlement_line SET net = 0')).code).toBe('42501');
+    expect((await asTenant(owner, orgId, 'DELETE FROM ludy_finance.channel_settlement_line')).code).toBe('42501');
   });
 
   it('is inserted by an owner and a member of the org and refused to a viewer, and what is stored is the entity of the org', async () => {
@@ -291,7 +291,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
       const { rows } = await admin((c) =>
         c.query<{ entity: string; same: boolean; net: string }>(
           `SELECT l.legal_entity_id::text AS entity, l.legal_entity_id = s.legal_entity_id AS same, l.net::text AS net
-           FROM crove_finance.channel_settlement_line l JOIN crove_finance.channel_settlement s ON s.org_id = l.org_id AND s.id = l.settlement_id WHERE l.settlement_id = $1`,
+           FROM ludy_finance.channel_settlement_line l JOIN ludy_finance.channel_settlement s ON s.org_id = l.org_id AND s.id = l.settlement_id WHERE l.settlement_id = $1`,
           [settlement],
         ),
       );
@@ -307,18 +307,18 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   it('reads only the rows of the org, and stores nothing in another org', async () => {
     const mine = await seedSettlement();
     const theirs = randomUUID();
-    await admin((c) => c.query('INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $4, 0)', [otherOrgId, theirs, 'lazada', periodDay()]));
+    await admin((c) => c.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $4, 0)', [otherOrgId, theirs, 'lazada', periodDay()]));
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await enterUser(client, owner, orgId);
-      const { rows } = await client.query<{ id: string }>('SELECT id FROM crove_finance.channel_settlement WHERE id = ANY($1::uuid[])', [[mine, theirs]]);
+      const { rows } = await client.query<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement WHERE id = ANY($1::uuid[])', [[mine, theirs]]);
       await client.query('ROLLBACK');
       expect(rows.map((r) => r.id)).toEqual([mine]);
     } finally {
       client.release();
     }
-    expect((await asTenant(owner, orgId, 'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $4, 0)', [otherOrgId, randomUUID(), 'shopee', periodDay()])).code).toBe('42501');
+    expect((await asTenant(owner, orgId, 'INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $4, 0)', [otherOrgId, randomUUID(), 'shopee', periodDay()])).code).toBe('42501');
   });
 
   it('refuses a negative deduction, a net that is not what the columns say, and a period that ends before it starts', async () => {

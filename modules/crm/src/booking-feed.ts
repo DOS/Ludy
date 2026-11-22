@@ -26,7 +26,7 @@ function requireUser(ctx: CommandContext): string {
 // Revokes the member's live feed, if any; true when there was one.
 async function revokeLive(ctx: CommandContext, userId: string): Promise<boolean> {
   const done = await ctx.trx
-    .updateTable('crove_crm.booking_feed')
+    .updateTable('ludy_crm.booking_feed')
     .set({ revoked_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
@@ -46,12 +46,12 @@ export const bookingFeedCreate = defineCommand({
   handler: async (ctx) => {
     const userId = requireUser(ctx);
     // One create at a time per member, so the revoke below always frees the one live slot.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_crm.booking_feed:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_crm.booking_feed:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
     await revokeLive(ctx, userId);
     const token = newFeedToken();
     // created_at takes the column's default, the transaction's now(): revoke_for_member compares it with the member
     // event's created_at, which the outbox stamps the same way, so the API's clock (ctx.now) cannot move a feed across it.
-    await ctx.trx.insertInto('crove_crm.booking_feed').values({ org_id: ctx.orgId, user_id: userId, token_sha256: feedTokenHash(token) }).execute();
+    await ctx.trx.insertInto('ludy_crm.booking_feed').values({ org_id: ctx.orgId, user_id: userId, token_sha256: feedTokenHash(token) }).execute();
     // The token leaves only in this answer: the audit keeps the input, never the output.
     return { token };
   },
@@ -94,7 +94,7 @@ export const bookingFeedRevokeForMember = defineCommand({
     if (!stops) return { revoked: 0 };
     const userId = data.data.userId;
     const done = await ctx.trx
-      .updateTable('crove_crm.booking_feed')
+      .updateTable('ludy_crm.booking_feed')
       .set({ revoked_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -119,7 +119,7 @@ export const bookingFeedGet = defineQuery({
   handler: async (ctx): Promise<BookingFeedView | null> => {
     if (ctx.actor.type !== 'user') return null;
     const row = await ctx.trx
-      .selectFrom('crove_crm.booking_feed')
+      .selectFrom('ludy_crm.booking_feed')
       .select('created_at')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', ctx.actor.userId)

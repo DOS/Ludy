@@ -5,7 +5,7 @@ export const meetingsManifest = defineModule({
   id: 'meetings',
   dependsOn: ['kernel'],
   tables: {
-    crove_meetings: {
+    ludy_meetings: {
       // What the recorder keeps of a meeting beyond the transcript (#2580): the summary with its decisions, and the action items. Free text, personal data.
       action_item: columns(
         ['org_id', 'id', 'meeting_id', 'who_parsed', 'when_parsed', 'transcript_seconds', 'stage', 'status', 'flags', 'tainted', 'task_id', 'accepted_by', 'accepted_at', 'source_run_id', 'created_at', 'updated_at'],
@@ -149,7 +149,7 @@ export const meetingsManifest = defineModule({
   ...MODULE_SCREENS.meetings,
 });
 
-export const MEETING = meetingsManifest.tables.crove_meetings.meeting;
+export const MEETING = meetingsManifest.tables.ludy_meetings.meeting;
 
 export const AUDIO_RETENTION_DAYS = 30;
 export const TEXT_RETENTION_DAYS = 365;

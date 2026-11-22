@@ -461,7 +461,7 @@ describe.skipIf(!ADMIN)('Projects #2608: Vy proposes tasks from a meeting or con
       decisions: [],
     });
     await sqlAdmin(
-      `UPDATE crove_meetings.meeting SET text_retention_date = '2020-01-01' WHERE org_id = $1 AND id = $2`,
+      `UPDATE ludy_meetings.meeting SET text_retention_date = '2020-01-01' WHERE org_id = $1 AND id = $2`,
       [org.orgId, expiredMeeting],
     );
     await expect(

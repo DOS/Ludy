@@ -60,7 +60,7 @@ async function build(ctx: QueryContext, month: string, legalEntityId: string): P
   const today = await databaseToday(ctx.trx);
   if (`${nextMonth(month)}-01` > today) throw new DomainError('STOCK_CLOSE_NOT_ENDED', 422, `Tháng ${label(month)} chưa kết thúc nên chưa đóng sổ kho được`);
   const { rows: later } = await sql<{ month: string }>`
-    SELECT pg_catalog.to_char(p.period_month, 'YYYY-MM') AS month FROM crove_finance.stock_period p
+    SELECT pg_catalog.to_char(p.period_month, 'YYYY-MM') AS month FROM ludy_finance.stock_period p
     WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${legalEntityId}::uuid AND p.period_month >= ${`${month}-01`}::date
     ORDER BY p.period_month LIMIT 1`.execute(ctx.trx);
   if (later[0]) {
@@ -78,7 +78,7 @@ async function build(ctx: QueryContext, month: string, legalEntityId: string): P
     throw new DomainError('STOCK_CLOSE_ORDER', 409, `Tháng ${label(earlier)} còn phát sinh kho chưa đóng sổ; hãy đóng tháng đó trước`, { month: earlier });
   }
   const items = await ctx.trx
-    .selectFrom('crove_finance.stock_item')
+    .selectFrom('ludy_finance.stock_item')
     .select(['id', 'code', 'name', 'unit', 'stock_account'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -181,7 +181,7 @@ async function lockEntityMoves(ctx: CommandContext, legalEntityId: string) {
 // Stores the month and what it held of each item. `voucherId` is the voucher that posted the cost, null for a month with none.
 async function storePeriod(ctx: CommandContext, built: Built, voucherId: string | null): Promise<string> {
   const period = await ctx.trx
-    .insertInto('crove_finance.stock_period')
+    .insertInto('ludy_finance.stock_period')
     .values({
       org_id: ctx.orgId,
       legal_entity_id: built.legalEntityId,
@@ -194,7 +194,7 @@ async function storePeriod(ctx: CommandContext, built: Built, voucherId: string 
     .executeTakeFirstOrThrow();
   for (const batch of chunks(built.worked.items, 500)) {
     await ctx.trx
-      .insertInto('crove_finance.stock_period_item')
+      .insertInto('ludy_finance.stock_period_item')
       .values(
         batch.map((f) => ({
           org_id: ctx.orgId,

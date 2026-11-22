@@ -100,7 +100,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
   async function seedMeeting(who: string, opts: { liveNotes?: boolean; pieces?: number; first?: number } = {}): Promise<string> {
     const meetingId = randomUUID();
     await sql(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, live_notes)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, live_notes)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365, $4)`,
       [orgId, meetingId, users[who], opts.liveNotes ?? true],
     );
@@ -118,7 +118,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       await store.put(storageKey, ciphertext);
       const fileId = randomUUID();
       await admin(async (c) => {
-        await c.query(`INSERT INTO crove_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key) VALUES ($1, $2, $3, 'k1-live-notes-test', $4, $5)`, [
+        await c.query(`INSERT INTO ludy_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key) VALUES ($1, $2, $3, 'k1-live-notes-test', $4, $5)`, [
           orgId,
           randomUUID(),
           meetingId,
@@ -129,7 +129,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
           `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, $5, 'application/octet-stream', $6, 'meeting_audio')`,
           [orgId, fileId, sha, storageKey, `meeting-${meetingId}-live-${seq}.bin`, ciphertext.length],
         );
-        await c.query(`INSERT INTO crove_meetings.live_chunk (org_id, id, meeting_id, seq, file_id, size_bytes, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 15)`, [orgId, randomUUID(), meetingId, seq, fileId, ciphertext.length]);
+        await c.query(`INSERT INTO ludy_meetings.live_chunk (org_id, id, meeting_id, seq, file_id, size_bytes, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 15)`, [orgId, randomUUID(), meetingId, seq, fileId, ciphertext.length]);
       });
     }
   }
@@ -202,7 +202,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect(await status('recorder', live)).toMatchObject({ optedIn: true, enabled: false, state: 'off', lines: [] });
       // AI off: the meeting itself is untouched, and the pieces are still there for the batch path.
       expect(await app.query('meetings.meeting.get', { meetingId: live }, { actor: asUser('recorder'), orgId })).toMatchObject({ id: live });
-      expect(await count('SELECT 1 FROM crove_meetings.live_chunk WHERE meeting_id = $1', [live])).toBe(3);
+      expect(await count('SELECT 1 FROM ludy_meetings.live_chunk WHERE meeting_id = $1', [live])).toBe(3);
     } finally {
       setLiveNotesEnabled(true);
     }
@@ -248,7 +248,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     // The same window is not copied twice, and a tick with nothing new starts nothing.
     expect((await tick('recorder', meetingId)).copiedRunId).toBeNull();
     expect((await tick('recorder', meetingId)).runId).toBeNull();
-    expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(3);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(3);
 
     // Two more pieces arrive: the next tick starts a window that reads only what follows the preview.
     await addPieces(meetingId, 3, 2);
@@ -278,7 +278,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     const afterSilence = await tick('recorder', meetingId);
     expect(afterSilence).toMatchObject({ copiedRunId: runId, lines: 0, state: 'running' });
     expect((await status('recorder', meetingId)).lines).toEqual([]);
-    expect(await sql<{ seq: number }>('SELECT seq FROM crove_meetings.live_line WHERE meeting_id = $1 ORDER BY seq', [meetingId]).then((r) => r.rows.map((x) => x.seq))).toEqual([0, 1]);
+    expect(await sql<{ seq: number }>('SELECT seq FROM ludy_meetings.live_line WHERE meeting_id = $1 ORDER BY seq', [meetingId]).then((r) => r.rows.map((x) => x.seq))).toEqual([0, 1]);
     const calls = providerCalls;
     expect(await runWindow('recorder', meetingId, afterSilence.runId as string, 1)).toBe('succeeded');
     expect(providerCalls - calls).toBe(2);
@@ -320,7 +320,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     }
     // The system context of the worker reads and writes no line.
     expect(await refuses(worker.query('meetings.live.status', { meetingId }, { actor: { type: 'system', component: 'test' }, orgId }))).not.toBeNull();
-    expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(2);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(2);
   });
 
   it('a spent budget or a kill switch stops the notes with its code and leaves the recording and its pieces alone', async () => {
@@ -352,7 +352,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     await sql(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
     // The recording is untouched all along: the meeting reads, and every piece is still stored.
     expect(await app.query('meetings.meeting.get', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ id: meetingId });
-    expect(await count('SELECT 1 FROM crove_meetings.live_chunk WHERE meeting_id = $1', [meetingId])).toBe(3);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_chunk WHERE meeting_id = $1', [meetingId])).toBe(3);
   });
 
   it('pieces that disappear (the final recording landed) end the live notes cleanly instead of failing them', async () => {
@@ -360,10 +360,10 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     const { runId } = await start('recorder', meetingId);
     // The final recording is recorded between the start and the worker's read: the pieces and their keys are gone, the audio segment exists.
     const file = randomUUID();
-    await sql(`DELETE FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'`, [meetingId]);
-    await sql(`DELETE FROM crove_meetings.live_chunk WHERE meeting_id = $1`, [meetingId]);
+    await sql(`DELETE FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'`, [meetingId]);
+    await sql(`DELETE FROM ludy_meetings.live_chunk WHERE meeting_id = $1`, [meetingId]);
     await sql(`INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.webm', 'audio/webm', 10, 'meeting_audio')`, [orgId, file, 'e'.repeat(64), `org/${orgId}/${'e'.repeat(64)}`]);
-    await sql(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 45)`, [orgId, randomUUID(), meetingId, file]);
+    await sql(`INSERT INTO ludy_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 45)`, [orgId, randomUUID(), meetingId, file]);
     const calls = providerCalls;
     expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
     expect(providerCalls).toBe(calls);
@@ -378,19 +378,19 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     const { runId } = await start('recorder', meetingId);
     await runWindow('recorder', meetingId, runId);
     await tick('recorder', meetingId);
-    expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(2);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(2);
     // The recorder stores a real transcript (what copy_result of the batch run does too): the preview lines are erased with it.
     await app.execute('meetings.transcript.draft_store', { meetingId, segments: [{ startSeconds: 0, endSeconds: 10, speakerLabel: 'Người nói 1', text: 'Bản chép đầy đủ' }] }, { actor: asUser('recorder'), orgId });
-    expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(0);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(0);
 
     // A meeting the recorder deletes takes its preview with it, at the same time.
     const gone = await seedMeeting('recorder', { pieces: 1 });
     const run = (await start('recorder', gone)).runId;
     await runWindow('recorder', gone, run);
     await tick('recorder', gone);
-    expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [gone])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [gone])).toBe(1);
     await app.execute('meetings.meeting.delete', { meetingId: gone }, { actor: asUser('recorder'), orgId });
-    expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [gone])).toBe(0);
+    expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [gone])).toBe(0);
   });
 
   describe('the running notes', () => {
@@ -410,7 +410,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
 
     async function seedLines(meetingId: string, lines: Array<[number, number, string]>, created = 'now()') {
       for (const [seq, start, text] of lines) {
-        await sql(`INSERT INTO crove_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, ${created})`, [orgId, randomUUID(), meetingId, seq, start, start + 10, text]);
+        await sql(`INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, ${created})`, [orgId, randomUUID(), meetingId, seq, start, start + 10, text]);
       }
     }
 
@@ -424,9 +424,9 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect(prompts[0]).toContain(NEW_LINE);
 
       // The notes are draft rows of the recorder, the model's words: tainted, tied to the run, in the live feature, "Đề xuất" until the recorder acts.
-      const result = await sql<{ feature: string; stage: string; tainted: boolean; source_run_id: string }>(`SELECT feature, stage, tainted, source_run_id FROM crove_meetings.meeting_result WHERE meeting_id = $1`, [meetingId]);
+      const result = await sql<{ feature: string; stage: string; tainted: boolean; source_run_id: string }>(`SELECT feature, stage, tainted, source_run_id FROM ludy_meetings.meeting_result WHERE meeting_id = $1`, [meetingId]);
       expect(result.rows).toEqual([{ feature: 'meetings.live_notes', stage: 'draft', tainted: true, source_run_id: done.runId }]);
-      const items = await sql<{ title: string; stage: string; status: string; tainted: boolean; source_run_id: string; task_id: string | null }>(`SELECT title, stage, status, tainted, source_run_id, task_id FROM crove_meetings.action_item WHERE meeting_id = $1`, [meetingId]);
+      const items = await sql<{ title: string; stage: string; status: string; tainted: boolean; source_run_id: string; task_id: string | null }>(`SELECT title, stage, status, tainted, source_run_id, task_id FROM ludy_meetings.action_item WHERE meeting_id = $1`, [meetingId]);
       expect(items.rows).toEqual([{ title: 'Gửi báo giá', stage: 'draft', status: 'suggested', tainted: true, source_run_id: done.runId, task_id: null }]);
       // Nothing becomes a task without the recorder's click.
       expect(await count('SELECT 1 FROM ludy_kernel.task WHERE org_id = $1 AND source_ref IS NOT NULL', [orgId])).toBe(0);
@@ -440,8 +440,8 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect((await route('recorder', meetingId)).state).toBe('ready');
       expect(prompts).toHaveLength(2);
       // The earlier suggestions are replaced by the new ones, not piled up next to them.
-      expect(await count(`SELECT 1 FROM crove_meetings.action_item WHERE meeting_id = $1`, [meetingId])).toBe(1);
-      expect(await count(`SELECT 1 FROM crove_meetings.meeting_result WHERE meeting_id = $1`, [meetingId])).toBe(1);
+      expect(await count(`SELECT 1 FROM ludy_meetings.action_item WHERE meeting_id = $1`, [meetingId])).toBe(1);
+      expect(await count(`SELECT 1 FROM ludy_meetings.meeting_result WHERE meeting_id = $1`, [meetingId])).toBe(1);
       expect(prompts[1]).toContain('Khách đồng ý');
       expect(prompts[1]).toContain('Hà gửi báo giá.');
       expect(prompts[1]).not.toContain(OLD_LINE);
@@ -465,7 +465,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       const invented = JSON.stringify({ summary: 'Hà gửi báo giá 500 triệu.', decisions: ['Giảm giá 20%'], items: [{ title: 'Gửi báo giá', who: 'Hà', when: '', seconds: 5 }] });
       const done = await route('recorder', meetingId, model(invented));
       expect(done.state).toBe('ready');
-      const row = await sql<{ summary: string; decisions: string }>(`SELECT summary, decisions::text FROM crove_meetings.meeting_result WHERE meeting_id = $1`, [meetingId]);
+      const row = await sql<{ summary: string; decisions: string }>(`SELECT summary, decisions::text FROM ludy_meetings.meeting_result WHERE meeting_id = $1`, [meetingId]);
       expect(JSON.stringify(row.rows)).not.toContain('500');
       expect(JSON.stringify(row.rows)).not.toContain('20%');
 
@@ -481,8 +481,8 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       await sql(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]);
       expect(await refuses(route('recorder', meetingId))).toBe('AI_BUDGET_EXHAUSTED');
       await sql(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]);
-      expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(1);
-      expect(await count('SELECT 1 FROM crove_meetings.meeting_result WHERE meeting_id = $1', [meetingId])).toBe(0);
+      expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(1);
+      expect(await count('SELECT 1 FROM ludy_meetings.meeting_result WHERE meeting_id = $1', [meetingId])).toBe(0);
     });
   });
 });

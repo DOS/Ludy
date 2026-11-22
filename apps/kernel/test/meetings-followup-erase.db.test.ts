@@ -48,11 +48,11 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     const recorder = opts.recorder ?? 'recorder';
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
     await exec(recorder, 'meetings.summary.save', { meetingId, summary: opts.summary ?? 'Chốt báo giá tuần này.', decisions: ['Giữ giá cũ'] });
     await exec(recorder, 'meetings.result.publish', { meetingId, confirmed: true });
     const draft = await query<FollowupDraft>(recorder, 'meetings.followup.draft', { meetingId });
@@ -137,7 +137,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     // Not due yet: nothing is purged and the mails keep their payload.
     expect(await worker.execute('meetings.retention.shred', { meetingId: early, kind: 'text' }, { actor: SYSTEM, orgId })).toMatchObject({ applied: false });
     expect((await mail(early))[0]?.payload).not.toBeNull();
-    await sqlAdmin('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, due]);
+    await sqlAdmin('UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, due]);
     expect(await worker.execute('meetings.retention.shred', { meetingId: due, kind: 'text' }, { actor: SYSTEM, orgId })).toMatchObject({ applied: true });
     expect((await mail(due))[0]).toMatchObject({ payload: null, subject: null });
     expect((await audit('meetings.retention.shred', due))[0]?.detail).toMatchObject({ applied: true, mailPayloads: 1 });
@@ -195,7 +195,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       expect(before?.subject).not.toBeNull();
 
       const result = await erase();
-      expect(result.erased.find((e) => e.column === 'crove_meetings.meeting_result.summary')?.rows).toBe(1);
+      expect(result.erased.find((e) => e.column === 'ludy_meetings.meeting_result.summary')?.rows).toBe(1);
 
       const after = await mail(touched);
       expect(after).toHaveLength(1);
@@ -216,7 +216,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       // A meeting the owner cannot read (another recorder's, the owner is no reader): the mention stays there, counted, and so does the mail.
       const hidden = await seedSent({ recorder: 'recorder', summary: `Nhắc ${OTHER} ký hợp đồng.`, subject: 'Tóm tắt' });
       const result = await erase(OTHER);
-      expect(result.erased.find((e) => e.column === 'crove_meetings.meeting_result.summary')).toBeUndefined();
+      expect(result.erased.find((e) => e.column === 'ludy_meetings.meeting_result.summary')).toBeUndefined();
       const kept = (await mail(hidden))[0];
       expect(kept?.payload).not.toBeNull();
       expect(kept?.subject).toBe('Tóm tắt');
@@ -237,7 +237,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await holder.end();
       }
       // The whole erasure rolled back: the summary still holds the value and the mail its copy.
-      expect((await sqlAdmin<{ summary: string }>('SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, busy])).rows[0]?.summary).toContain(BUSY);
+      expect((await sqlAdmin<{ summary: string }>('SELECT summary FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, busy])).rows[0]?.summary).toContain(BUSY);
       expect((await mail(busy))[0]?.payload).not.toBeNull();
       // Asked again once the lock is free, it goes through.
       await erase(BUSY);
@@ -263,10 +263,10 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       it('drops the mail when the recorder edited the value out of the meeting after the send, so the meeting has no hit', async () => {
         const value = 'da.sua@erase.test';
         const edited = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.`, subject: 'Tóm tắt tuần' });
-        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Gửi bản chốt.' WHERE org_id = $1 AND meeting_id = $2", [orgId, edited]);
+        await sqlAdmin("UPDATE ludy_meetings.meeting_result SET summary = 'Gửi bản chốt.' WHERE org_id = $1 AND meeting_id = $2", [orgId, edited]);
         expect((await mail(edited))[0]?.payload).not.toBeNull();
         const out = await erase(value);
-        expect(out.erased.find((e) => e.column === 'crove_meetings.meeting_result.summary')).toBeUndefined();
+        expect(out.erased.find((e) => e.column === 'ludy_meetings.meeting_result.summary')).toBeUndefined();
         expect((await mail(edited))[0]).toMatchObject({ payload: null, subject: null, status: 'queued', to_address: 'attendee@erase.test' });
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 1 });
       });
@@ -279,7 +279,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const phone = '0912345678';
         const phoned = await seedSent({ recorder: 'owner', summary: 'Gọi khách theo số 091 234 5678 hoặc 0912.345.678 sau 3 giờ chiều.' });
         // The meetings no longer mention either (the recorders edited them out), so only the mail's own text holds the value.
-        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = ANY ($2::uuid[])", [orgId, [quoted, phoned]]);
+        await sqlAdmin("UPDATE ludy_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = ANY ($2::uuid[])", [orgId, [quoted, phoned]]);
         expect(JSON.stringify((await mail(quoted))[0]?.payload)).toContain(value);
         // The text form the database matches really holds the escapes.
         const escaped = await sqlAdmin<{ q: boolean; b: boolean }>("SELECT position(E'\\\\\"' in payload::text) > 0 AS q, position(E'\\\\\\\\' in payload::text) > 0 AS b FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, quoted]);
@@ -296,7 +296,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const subjectOnly = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(subjectOnly, `Gửi ${value}`);
         const out = await erase(value);
-        expect(out.erased.filter((e) => e.column.startsWith('crove_meetings.'))).toEqual([]);
+        expect(out.erased.filter((e) => e.column.startsWith('ludy_meetings.'))).toEqual([]);
         expect((await mail(subjectOnly))[0]).toMatchObject({ payload: null, subject: null });
       });
 
@@ -329,13 +329,13 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await setSubject(hidden, `Gửi ${value}`);
         const out = await erase(value);
         expect((await mail(hidden))[0]?.subject).toBe(`Gửi ${value}`);
-        expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('cannot read') });
+        expect(out.kept.find((k) => k.column === 'ludy_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('cannot read') });
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
         // The recorder's own delete takes both copies of the text at once (payload and subject, #3063).
         await exec('recorder', 'meetings.meeting.delete', { meetingId: hidden });
         expect((await mail(hidden))[0]).toMatchObject({ payload: null, subject: null });
         const again = await erase(value);
-        expect(again.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toBeUndefined();
+        expect(again.kept.find((k) => k.column === 'ludy_meetings.followup_mail')).toBeUndefined();
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
         // A mail from before the delete paths cleared the subject (the subject left behind, payload gone) is still cleared by erasing the value again.
         await setSubject(hidden, `Gửi ${value}`);
@@ -350,7 +350,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await setSubject(purged, `Gửi ${value}`);
         await sqlAdmin("UPDATE ludy_kernel.mail_message SET payload = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, purged]);
         const noSubject = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
-        await sqlAdmin('UPDATE crove_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2', [orgId, noSubject, 'Đã sửa.']);
+        await sqlAdmin('UPDATE ludy_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2', [orgId, noSubject, 'Đã sửa.']);
         await admin(async (c) => {
           await c.query('BEGIN');
           await c.query('SET LOCAL session_replication_role = replica');
@@ -397,27 +397,27 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       // #3063: a number of fewer than 10 digits may be a date or a figure; the mail pass leaves such mails and counts them.
       it('leaves a mail alone for a number of fewer than 10 digits, counts it, and still drops one for a 10-digit number', async () => {
         const dated = await seedSent({ recorder: 'owner', summary: 'Hẹn ngày 2026-11-12 hoặc 20261112 gửi báo giá 12345678 đồng.' });
-        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, dated]);
+        await sqlAdmin("UPDATE ludy_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, dated]);
         const short = await erase('20261112');
         expect((await mail(dated))[0]?.payload).not.toBeNull();
-        expect(short.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('fewer than 10 digits') });
+        expect(short.kept.find((k) => k.column === 'ludy_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('fewer than 10 digits') });
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
         const long = await seedSent({ recorder: 'owner', summary: 'Gọi 0912345678 sau 3 giờ.' });
-        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, long]);
+        await sqlAdmin("UPDATE ludy_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, long]);
         const out = await erase('0912345678');
         expect((await mail(long))[0]).toMatchObject({ payload: null, subject: null });
-        expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toBeUndefined();
+        expect(out.kept.find((k) => k.column === 'ludy_meetings.followup_mail')).toBeUndefined();
       });
 
       // #3064: the meeting rows of a short number are not redacted either, so the per-meeting pass finds no changed row and drops nothing: the mail keeps its payload and subject.
       it('keeps the follow-up mail of a meeting whose rows hold a number of fewer than 10 digits, as the rows themselves are kept', async () => {
         const dated = await seedSent({ recorder: 'owner', summary: 'Hẹn ngày 2026-11-12 gửi báo giá.', subject: 'Báo giá hạn 2026-11-12' });
         const out = await erase('20261112');
-        expect(await sqlAdmin<{ summary: string }>('SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, dated]).then((r) => r.rows[0]?.summary)).toBe('Hẹn ngày 2026-11-12 gửi báo giá.');
+        expect(await sqlAdmin<{ summary: string }>('SELECT summary FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, dated]).then((r) => r.rows[0]?.summary)).toBe('Hẹn ngày 2026-11-12 gửi báo giá.');
         expect((await mail(dated))[0]).toMatchObject({ subject: 'Báo giá hạn 2026-11-12' });
         expect((await mail(dated))[0]?.payload).not.toBeNull();
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
-        expect(out.erased.filter((r) => r.column.startsWith('crove_meetings.'))).toEqual([]);
+        expect(out.erased.filter((r) => r.column.startsWith('ludy_meetings.'))).toEqual([]);
       });
 
       // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to bite
@@ -428,7 +428,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const value = 'cham.qua@erase.test';
         const small = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
         const leftover = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản hai.` });
-        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, leftover]);
+        await sqlAdmin("UPDATE ludy_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, leftover]);
         const slow = randomUUID();
         const SLOW_MARKER = 'slow-scan-marker-3073';
         await admin(async (c) => {
@@ -461,7 +461,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
           const out = await quick.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
           // The first pass (the meeting whose rows changed) was done; the by-text pass was skipped and said so; the leftover mail stays.
           expect((await mail(small))[0]).toMatchObject({ payload: null, subject: null });
-          expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 0, reason: expect.stringContaining('too many to search in time') });
+          expect(out.kept.find((k) => k.column === 'ludy_meetings.followup_mail')).toMatchObject({ rows: 0, reason: expect.stringContaining('too many to search in time') });
           expect((await mail(leftover))[0]?.payload).not.toBeNull();
           expect(await lastAudit()).toMatchObject({ follow_up_mails: 1 });
         } finally {
@@ -482,7 +482,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       it('finds the leftover when the same erasure is run again, and answers a retry while a send holds the lock', async () => {
         const value = 'chay.lai@erase.test';
         const again = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
-        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Gửi bản chốt.' WHERE org_id = $1 AND meeting_id = $2", [orgId, again]);
+        await sqlAdmin("UPDATE ludy_meetings.meeting_result SET summary = 'Gửi bản chốt.' WHERE org_id = $1 AND meeting_id = $2", [orgId, again]);
         const holder = new pg.Client({ connectionString: adminUrl });
         await holder.connect();
         try {

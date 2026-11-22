@@ -78,7 +78,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
   const spend = (a: { entity: string; date: string; account: string; amount: string; party?: string; description?: string; sourceType?: string }) =>
     asApp(owner, (c) =>
       c
-        .query<{ id: string }>(`SELECT crove_finance.post_journal_entry($1::date, $2, $3, $4::uuid, $5::jsonb, NULL, 1, $6::uuid) AS id`, [
+        .query<{ id: string }>(`SELECT ludy_finance.post_journal_entry($1::date, $2, $3, $4::uuid, $5::jsonb, NULL, 1, $6::uuid) AS id`, [
           a.date,
           a.description ?? 'Chi phí thử',
           a.sourceType ?? 'test.variance',
@@ -95,7 +95,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
   const reverse = (a: { entity: string; original: string; date: string; account: string; amount: string; party?: string }) =>
     asApp(owner, (c) =>
       c
-        .query<{ id: string }>(`SELECT crove_finance.post_journal_entry($1::date, 'Đảo chi phí thử', 'test.variance', $2::uuid, $3::jsonb, $4::uuid, 1, $5::uuid) AS id`, [
+        .query<{ id: string }>(`SELECT ludy_finance.post_journal_entry($1::date, 'Đảo chi phí thử', 'test.variance', $2::uuid, $3::jsonb, $4::uuid, 1, $5::uuid) AS id`, [
           a.date,
           randomUUID(),
           JSON.stringify([
@@ -110,7 +110,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
   // Revenue, and a year-end style closing entry (a line on 911).
   const sale = (entity: string, date: string, amount: string) =>
     asApp(owner, (c) =>
-      c.query(`SELECT crove_finance.post_journal_entry($1::date, 'Doanh thu thử', 'test.variance', $2::uuid, $3::jsonb, NULL, 1, $4::uuid)`, [
+      c.query(`SELECT ludy_finance.post_journal_entry($1::date, 'Doanh thu thử', 'test.variance', $2::uuid, $3::jsonb, NULL, 1, $4::uuid)`, [
         date,
         randomUUID(),
         JSON.stringify([
@@ -122,7 +122,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
     );
   const closing = (entity: string, date: string, account: string, amount: string) =>
     asApp(owner, (c) =>
-      c.query(`SELECT crove_finance.post_journal_entry($1::date, 'Kết chuyển thử', 'test.variance', $2::uuid, $3::jsonb, NULL, 1, $4::uuid)`, [
+      c.query(`SELECT ludy_finance.post_journal_entry($1::date, 'Kết chuyển thử', 'test.variance', $2::uuid, $3::jsonb, NULL, 1, $4::uuid)`, [
         date,
         randomUUID(),
         JSON.stringify([
@@ -138,8 +138,8 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
   const refusal = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e as { code?: string; status?: number });
   const counts = () =>
     admin(async (a) => ({
-      entries: (await a.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.journal_entry')).rows[0]?.n,
-      lines: (await a.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.journal_line')).rows[0]?.n,
+      entries: (await a.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.journal_entry')).rows[0]?.n,
+      lines: (await a.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.journal_line')).rows[0]?.n,
       audit: (await a.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.audit_event')).rows[0]?.n,
     }));
 
@@ -177,7 +177,7 @@ suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
       supplierA = await party('Công ty A', '0101234564');
       supplierB = await party('Công ty B', '0301234567');
       // The branch keeps TT99 books for all of 2026, set before it has any entry.
-      await a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, branch]);
+      await a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2026-01-01')`, [orgId, branch]);
     });
 
     // The main entity (TT133, no books row: its chart has 6421 selling, 6422 administration and 635, 632, 811, 821, and no 641 or 6411 to 6418). 6422: 10,000,000 a month from supplier A; in July supplier B adds

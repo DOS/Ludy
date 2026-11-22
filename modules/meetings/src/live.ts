@@ -35,7 +35,7 @@ export const meetingLiveChunk = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
     const userId = ctx.actor.userId;
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select([
         'id',
         'recorder_user_id',
@@ -67,8 +67,8 @@ export const meetingLiveChunk = defineCommand({
     // commit after the recording discarded the pieces and stay beside it.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
     const ended = await sql<{ done: boolean }>`
-      SELECT (EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
-           OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)) AS done`.execute(ctx.trx);
+      SELECT (EXISTS (SELECT 1 FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
+           OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)) AS done`.execute(ctx.trx);
     // The recording has ended once its final audio or video is recorded, and a meeting takes pieces only for the longest run the kernel allows.
     if (ended.rows[0]?.done === true || (startedAt !== null && ctx.now.getTime() > startedAt + LIVE_CHUNK_WINDOW_SECONDS * 1000)) {
       throw new DomainError('LIVE_CLOSED', 409, 'The recording of this meeting has ended');
@@ -77,7 +77,7 @@ export const meetingLiveChunk = defineCommand({
 
     // A piece of this number is already kept: a retry after a lost answer. The first one stands and the caller drops the object it just stored.
     const existing = await ctx.trx
-      .selectFrom('crove_meetings.live_chunk')
+      .selectFrom('ludy_meetings.live_chunk')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -88,7 +88,7 @@ export const meetingLiveChunk = defineCommand({
     // The first piece carries the container header: without it the later ones cannot be read, so they are not kept.
     if (input.seq > 0) {
       const first = await ctx.trx
-        .selectFrom('crove_meetings.live_chunk')
+        .selectFrom('ludy_meetings.live_chunk')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('meeting_id', '=', input.meetingId)
@@ -98,12 +98,12 @@ export const meetingLiveChunk = defineCommand({
     }
 
     const { rows: total } = await sql<{ bytes: string }>`
-      SELECT COALESCE(SUM(size_bytes), 0)::text AS bytes FROM crove_meetings.live_chunk WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid`.execute(ctx.trx);
+      SELECT COALESCE(SUM(size_bytes), 0)::text AS bytes FROM ludy_meetings.live_chunk WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid`.execute(ctx.trx);
     if (Number(total[0]?.bytes ?? '0') + input.sizeBytes > LIVE_CHUNK_MAX_TOTAL_BYTES) {
       throw new DomainError('FILE_TOO_LARGE', 413, 'The live notes audio of this meeting is at its size limit');
     }
 
-    await sql`SELECT crove_meetings.media_key_seal(
+    await sql`SELECT ludy_meetings.media_key_seal(
       ${ctx.orgId}::uuid,
       ${input.meetingId}::uuid,
       ${input.keyId}::text,
@@ -128,7 +128,7 @@ export const meetingLiveChunk = defineCommand({
       })
       .execute();
     await ctx.trx
-      .insertInto('crove_meetings.live_chunk')
+      .insertInto('ludy_meetings.live_chunk')
       .values({
         org_id: ctx.orgId,
         id: randomUUID(),

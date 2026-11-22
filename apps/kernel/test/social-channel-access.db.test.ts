@@ -228,7 +228,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     expect(ids(await list(o, o.owner, { search: 'riêng của kênh B' }))).toEqual([both]);
     // The calendar: posts planned in the range, by the member's variants' times.
     const at = new Date(Date.now() + 3 * HOUR);
-    await admin((c) => c.query('UPDATE crove_social.post SET scheduled_at = $2 WHERE org_id = $1', [o.orgId, at]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET scheduled_at = $2 WHERE org_id = $1', [o.orgId, at]));
     const range = { from: new Date(at.getTime() - HOUR).toISOString(), to: new Date(at.getTime() + HOUR).toISOString() };
     expect(ids(await list(o, o.owner, range))).toEqual([onA, onB, both].sort());
     expect(ids(await list(o, o.member, range))).toEqual([onA, both].sort());
@@ -241,8 +241,8 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     await limit(o, o.member, [o.a]);
     const both = await post(o, o.owner, [o.a, o.b], 'Bài đã đăng');
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - interval '1 day' WHERE post_id = $1 RETURNING id", [both]);
-      for (const r of rows) await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', '{\"reach\": 10, \"reactions\": 2}')", [o.orgId, r.id]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - interval '1 day' WHERE post_id = $1 RETURNING id", [both]);
+      for (const r of rows) await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', '{\"reach\": 10, \"reactions\": 2}')", [o.orgId, r.id]);
     });
     const summary = (user: string) => query<MetricsRow[]>(o, user, 'social.metrics.summary', { days: 7 });
     expect((await summary(o.owner)).map((r) => r.connectionId).sort()).toEqual([o.a, o.b].sort());
@@ -286,7 +286,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     await exec(o, o.member, 'social.post.update', { postId: onA, revision: own.revision, scheduledAt: at });
     expect(await undated(o.member)).toEqual([]);
     // Once channel B is cancelled, the draft is the member's to plan.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3", [o.orgId, both, o.b]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3", [o.orgId, both, o.b]));
     expect(await undated(o.member)).toEqual([both]);
   });
 
@@ -404,7 +404,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     // A comment on a post tells its author: the member wrote on A, the owner's other post is on B.
     const mine = await post(o, o.member, [o.a]);
     const onB = await post(o, o.owner, [o.b]);
-    await admin((c) => c.query('UPDATE crove_social.post SET author_user_id = $2 WHERE org_id = $1 AND id = $3', [o.orgId, o.member, onB]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET author_user_id = $2 WHERE org_id = $1 AND id = $3', [o.orgId, o.member, onB]));
     await exec(o, o.owner, 'social.post_comment.add', { postId: mine, body: 'Góp ý' });
     await exec(o, o.owner, 'social.post_comment.add', { postId: onB, body: 'Góp ý' });
     const events = await admin((c) => c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.commented' ORDER BY id", [o.orgId]));

@@ -398,7 +398,7 @@ const SOURCE_ACTIVITY_NOUN: Record<ProjectTaskSourceType, string> = {
 };
 
 // Batch-confirms edited tasks into the target project atomically: re-verifies writer role, caller source access,
-// active project seats, creates tainted kernel tasks with source_ref, and attaches them to crove_projects.project_task.
+// active project seats, creates tainted kernel tasks with source_ref, and attaches them to ludy_projects.project_task.
 export const tasksFromSourceConfirm = defineCommand({
   name: 'projects.tasks_from_source.confirm',
   input: zProjectTasksFromSourceConfirmInput,

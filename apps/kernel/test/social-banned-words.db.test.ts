@@ -263,7 +263,7 @@ suite('social banned words on PostgreSQL (#1055)', () => {
     await add(o, 'chữa khỏi', 'block');
     // The client answers on a review link, as the HTTP edge calls the public definer with the link's token.
     const { token } = await exec<{ token: string }>(o, o.owner, 'social.review_link.create', { postId: viaClient });
-    await appPool.query('SELECT crove_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', 'approved', null]);
+    await appPool.query('SELECT ludy_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', 'approved', null]);
     const event = await admin(
       async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id,
     );
@@ -340,8 +340,8 @@ suite('social banned words on PostgreSQL (#1055)', () => {
     const b = await connection(o);
     const source = await post(o, 'Liệu trình chữa khỏi mụn', [a, b]);
     // Published long ago and evergreen, as the publisher and the evergreen setting leave it.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - interval '40 days', external_post_id = id::text WHERE post_id = $1", [source]));
-    await admin((c) => c.query("UPDATE crove_social.post SET status = 'published', evergreen_days = 30 WHERE id = $1", [source]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - interval '40 days', external_post_id = id::text WHERE post_id = $1", [source]));
+    await admin((c) => c.query("UPDATE ludy_social.post SET status = 'published', evergreen_days = 30 WHERE id = $1", [source]));
     await add(o, 'chua khoi', 'block', { connectionIds: [a] });
     const copy = await worker.execute<{ postId: string | null }>('social.post.repost_evergreen', { postId: source }, { actor: { type: 'system', component: 'social-banned-words-test' }, orgId: o.orgId });
     expect(copy.postId).not.toBeNull();

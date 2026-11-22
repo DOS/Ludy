@@ -55,16 +55,16 @@ suite('the scan caps of the Meetings MCP reads (#4087)', () => {
   // carries `needle` in it.
   async function seedMeetings(org: string, from: number, to: number, needle: string | null, needleAt: number | null): Promise<void> {
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        SELECT $1::uuid, gen_random_uuid(), CASE WHEN n = $4 THEN 'Họp ' || $3::text || ' ' || n ELSE 'Họp ' || n END, 'vi', now() - (n || ' minutes')::interval, now() - (n || ' minutes')::interval + interval '30 minutes', 1800, $2::uuid, 'org', 'ready', 'told_at_start', $2::uuid, now(), '1.0', current_date + 30, current_date + 365
          FROM generate_series($5::int, $6::int) n`,
       [org, ownerId, needle ?? '', needleAt ?? -1, from, to],
     );
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage)
+      `INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage)
        SELECT m.org_id, m.id, 'Tóm tắt', jsonb_build_array('Quyết định của ' || m.title), 'manual', 'published'
-         FROM crove_meetings.meeting m
-        WHERE m.org_id = $1 AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_result r WHERE r.org_id = m.org_id AND r.meeting_id = m.id)`,
+         FROM ludy_meetings.meeting m
+        WHERE m.org_id = $1 AND NOT EXISTS (SELECT 1 FROM ludy_meetings.meeting_result r WHERE r.org_id = m.org_id AND r.meeting_id = m.id)`,
       [org],
     );
   }

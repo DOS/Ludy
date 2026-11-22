@@ -309,7 +309,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       }),
     ).rejects.toMatchObject({ code: 'HR_CONTRACT_INVALID', status: 422 });
     const empCountBeforeTerm = await withAdmin(async (c) =>
-      Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_hr.payroll_employee WHERE org_id = $1`, [o.orgId])).rows[0]?.n ?? 0),
+      Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_hr.payroll_employee WHERE org_id = $1`, [o.orgId])).rows[0]?.n ?? 0),
     );
     expect(empCountBeforeTerm).toBe(0);
 
@@ -448,8 +448,8 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const found = await o.exec<{ matches: Array<{ column: string; rows: number }> }>(o.owner, 'kernel.personal_data.find', {
       value: '0987654321',
     });
-    expect(found.matches.some((m) => m.column === 'crove_hr.candidate.phone')).toBe(true);
-    expect(found.matches.some((m) => m.column === 'crove_hr.candidate.notes')).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_hr.candidate.phone')).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_hr.candidate.notes')).toBe(true);
 
     await o.exec(o.owner, 'kernel.personal_data.erase', { value: '0987654321' }, asMfa(o.owner));
     const secondAfter = await o.query<HrCandidateView>(o.owner, 'hr.recruiting.candidate.get', { candidateId: second.candidateId });
@@ -615,12 +615,12 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     // so the test completes in milliseconds while stressing keyset cursor tie-breaking on `(updated_at, id)`.
     const insertedIds = await withAdmin(async (c) => {
       const entityRow = await c.query<{ legal_entity_id: string }>(
-        `SELECT legal_entity_id FROM crove_hr.job_opening WHERE org_id = $1 AND id = $2`,
+        `SELECT legal_entity_id FROM ludy_hr.job_opening WHERE org_id = $1 AND id = $2`,
         [o.orgId, opening.openingId],
       );
       const legalEntityId = entityRow.rows[0]!.legal_entity_id;
       const res = await c.query<{ id: string }>(
-        `INSERT INTO crove_hr.candidate (
+        `INSERT INTO ludy_hr.candidate (
            org_id, legal_entity_id, opening_id, display_name, stage, created_by, created_at, updated_at
          )
          SELECT
@@ -814,8 +814,8 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
 
     // Case D (Item 4): Shared `acquireAdvisoryXactLock` serializes two concurrent transactions on the same key while allowing distinct keys concurrently.
     const db = createDb(pool);
-    const sameKey = advisoryLockKey('crove_hr.interview', o.orgId, o.owner);
-    const otherKey = advisoryLockKey('crove_hr.interview', o.orgId, o.admin);
+    const sameKey = advisoryLockKey('ludy_hr.interview', o.orgId, o.owner);
+    const otherKey = advisoryLockKey('ludy_hr.interview', o.orgId, o.admin);
     const order: string[] = [];
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
@@ -997,7 +997,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
           erased_at: Date | null;
         }>(
           `SELECT id, display_name, email, phone, notes, interview_event_id, interview_starts_at, interview_ends_at, erased_at
-           FROM crove_hr.candidate
+           FROM ludy_hr.candidate
            WHERE org_id = $1 AND id = ANY($2::uuid[])`,
           [o.orgId, [hiredWithInterview.candidateId, rejectedCand.candidateId]],
         )

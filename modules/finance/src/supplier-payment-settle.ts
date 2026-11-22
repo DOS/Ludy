@@ -63,11 +63,11 @@ async function loadPayment(ctx: QueryContext, paymentId: string): Promise<Paymen
     SELECT p.id, p.party_id, pa.name AS party_name, pa.tax_code, p.legal_entity_id, p.amount::text AS amount, p.currency, p.status,
            (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now()) AS ready, p.export_count, p.first_exported_at,
            (a.id IS NOT NULL AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id AND a.party_id = p.party_id) AS account_ok,
-           EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id) AS voided,
+           EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id) AS voided,
            p.number_hash, p.hash_key_id, d.invoice_number
-      FROM crove_finance.supplier_payment p
-      LEFT JOIN crove_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
-      LEFT JOIN crove_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
+      FROM ludy_finance.supplier_payment p
+      LEFT JOIN ludy_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
+      LEFT JOIN ludy_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
       LEFT JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
      WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${paymentId}::uuid`.execute(ctx.trx);
   const row = rows[0];
@@ -199,7 +199,7 @@ export const supplierPaymentSettleRecord = defineCommand({
     const recorded = await recordVoucherPayload(ctx, payload, null, paymentId);
     // The payment is paid by this voucher; the guard checks the hold, the account, the invoice, the file and the voucher once more, and a payment that moved since is refused, not forced.
     const moved = await ctx.trx
-      .updateTable('crove_finance.supplier_payment')
+      .updateTable('ludy_finance.supplier_payment')
       .set({ status: 'paid' })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', paymentId)
@@ -227,16 +227,16 @@ export const bankSupplierMatch = defineQuery({
     const wanted = out.abs().toFixed();
     const { rows } = await sql<{ id: string; party_id: string; party_name: string | null; invoice_number: string | null; amount: string; exported_at: Date | string }>`
       SELECT p.id, p.party_id, pa.name AS party_name, d.invoice_number, p.amount::text AS amount, p.exported_at
-        FROM crove_finance.supplier_payment p
-        JOIN crove_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
+        FROM ludy_finance.supplier_payment p
+        JOIN ludy_finance.supplier_bank_account a ON a.org_id = p.org_id AND a.id = p.bank_account_id
           AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id
-        LEFT JOIN crove_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
+        LEFT JOIN ludy_finance.purchase_document d ON d.org_id = p.org_id AND d.id = p.purchase_document_id
         LEFT JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${line.legalEntityId}::uuid AND p.status = 'approved' AND p.currency = 'VND'
          AND p.exported_at IS NOT NULL AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
          AND p.amount = ${wanted}::numeric
          AND (p.first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${line.date}::date AND p.amount = trunc(p.amount)
-         AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
+         AND NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
          AND NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal q WHERE q.org_id = p.org_id AND q.command = ${SUPPLIER_PAYMENT_SETTLE_COMMAND} AND q.status = 'pending'
                            AND pg_catalog.lower(q.payload->'supplierPayment'->>'paymentId') = p.id::text)
        ORDER BY (d.invoice_number IS NOT NULL AND d.invoice_number <> '' AND pg_catalog.strpos(pg_catalog.lower(${line.description}), pg_catalog.lower(d.invoice_number)) > 0) DESC, p.exported_at DESC, p.id
@@ -262,8 +262,8 @@ export async function refuseSupplierPaymentReversal(ctx: QueryContext, entry: { 
   if (entry.source_type !== 'finance.cash_voucher') return;
   const { rows } = await sql<{ payment_id: string }>`
     SELECT v.supplier_payment_id AS payment_id
-      FROM crove_finance.cash_voucher v
-      JOIN crove_finance.supplier_payment p ON p.org_id = v.org_id AND p.id = v.supplier_payment_id AND p.status = 'paid'
+      FROM ludy_finance.cash_voucher v
+      JOIN ludy_finance.supplier_payment p ON p.org_id = v.org_id AND p.id = v.supplier_payment_id AND p.status = 'paid'
      WHERE v.org_id = ${ctx.orgId}::uuid AND v.id = ${entry.source_id}::uuid AND v.supplier_payment_id IS NOT NULL`.execute(ctx.trx);
   if (rows[0]) throw new DomainError('SUPPLIER_PAYMENT_PAID', 409, 'Chứng từ này ghi sổ một khoản chi nhà cung cấp đã chi nên không đảo được', { paymentId: rows[0].payment_id });
 }

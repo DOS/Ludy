@@ -98,7 +98,7 @@ async function lockVariant(ctx: CommandContext, variantId: string): Promise<{ po
   const v = (await lockVariants(ctx.trx, ctx.orgId, postId)).find((x) => x.id === variantId);
   if (!v) throw new DomainError('VARIANT_NOT_FOUND', 404, 'Không tìm thấy kênh này của bài đăng');
   const edit = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['edit_body', 'edit_content_hash', 'edit_requested_at', 'edit_requested_by', 'edit_state', 'edit_error_code'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', v.id)
@@ -189,7 +189,7 @@ export const variantEditPublished = defineCommand({
     const content = effectiveContent(base(post), overrides(next), next.content_frozen, settingsOf(next));
     // The person's approval of the new content, under the revision it takes once the platform confirms it.
     await ctx.trx
-      .insertInto('crove_social.post_approval')
+      .insertInto('ludy_social.post_approval')
       .values({
         org_id: ctx.orgId,
         post_id: post.id,
@@ -225,7 +225,7 @@ export const variantEditPublished = defineCommand({
 async function shortLinkOf(ctx: CommandContext, v: VariantRow, target: string | null): Promise<{ code: string; target: string } | undefined> {
   if (!target) return undefined;
   const row = await ctx.trx
-    .selectFrom('crove_social.short_link')
+    .selectFrom('ludy_social.short_link')
     .select(['code', 'target_url'])
     .where('org_id', '=', ctx.orgId)
     .where('variant_id', '=', v.id)
@@ -307,7 +307,7 @@ async function confirm(ctx: CommandContext, post: PostRow, v: VariantRow & EditC
 // sent, signature included): null when no approval of that hash gives back exactly that content.
 async function olderAsk(ctx: CommandContext, post: PostRow, v: VariantRow, hash: string): Promise<{ body: string; by: string; hash: string } | null> {
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_approval')
+    .selectFrom('ludy_social.post_approval')
     .select(['snapshot', 'decided_by'])
     .where('org_id', '=', ctx.orgId)
     .where('variant_id', '=', v.id)

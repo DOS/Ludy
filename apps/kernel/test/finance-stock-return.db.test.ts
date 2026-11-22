@@ -47,7 +47,7 @@ suite('a partial return of the goods of a sale (#3712)', () => {
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
   // A move straight into the table as the database owner: the triggers fire, RLS does not (the commands that write moves come with the posting of document lines).
   const addMove = async (o: Org, itemId: string, quantity: string, date = '2026-11-03') =>
-    String((await rows<{ id: string }>("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, itemId, date, quantity]))[0]?.id);
+    String((await rows<{ id: string }>("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, itemId, date, quantity]))[0]?.id);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -81,7 +81,7 @@ suite('a partial return of the goods of a sale (#3712)', () => {
 
   // A sale's stock-out as the database owner: a delivered CRM order line is a stock-out with no document behind it (the guards fire, RLS does not).
   const addSale = async (o: Org, itemId: string, quantity: string) =>
-    String((await rows<{ id: string }>("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, crm_order_id, crm_order_line_no) VALUES ($1, $2, '2026-11-03', $3, 'crm_order_line', $4, 1) RETURNING id", [o.orgId, itemId, quantity, randomUUID()]))[0]?.id);
+    String((await rows<{ id: string }>("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, crm_order_id, crm_order_line_no) VALUES ($1, $2, '2026-11-03', $3, 'crm_order_line', $4, 1) RETURNING id", [o.orgId, itemId, quantity, randomUUID()]))[0]?.id);
   interface Move {
     id: string;
     quantity: string;
@@ -157,7 +157,7 @@ suite('a partial return of the goods of a sale (#3712)', () => {
     const back = await giveBack(o, sale, '4');
     // The sale move cannot be reversed under its return, by the command or by the database.
     await expect(execute(o, 'finance.stock_move.reverse', { moveId: sale })).rejects.toMatchObject({ code: 'STOCK_MOVE_HAS_RETURN' });
-    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, current_date, 10, 'reversal', $3)", [o.orgId, item, sale])).rejects.toMatchObject({
+    await expect(rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, current_date, 10, 'reversal', $3)", [o.orgId, item, sale])).rejects.toMatchObject({
       code: '23514',
       message: expect.stringContaining('STOCK_MOVE_HAS_RETURN'),
     });
@@ -179,13 +179,13 @@ suite('a partial return of the goods of a sale (#3712)', () => {
     const { o, item, sale } = await sold();
     const other = (await execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code: 'SP002', name: 'Đường', unit: 'kg', stockAccount: '156', trade: 'goods' })).id;
     const insert = (itemId: string, quantity: string, of: string | null) =>
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, return_of_move_id) VALUES ($1, $2, current_date, $3, 'sale_return', $4)", [o.orgId, itemId, quantity, of]);
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, return_of_move_id) VALUES ($1, $2, current_date, $3, 'sale_return', $4)", [o.orgId, itemId, quantity, of]);
     await expect(insert(other, '1', sale)).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_RETURN_NOT_SALE') });
     await expect(insert(item, '-1', sale)).rejects.toMatchObject({ code: '23514' });
     await expect(insert(item, '1', null)).rejects.toMatchObject({ code: '23514' });
     await expect(insert(item, '11', sale)).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_RETURN_EXCEEDS') });
     await expect(insert(item, '10', sale)).resolves.toBeDefined();
     // Another source cannot carry the link.
-    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, return_of_move_id) VALUES ($1, $2, current_date, 1, 'manual', $3)", [o.orgId, item, sale])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, return_of_move_id) VALUES ($1, $2, current_date, 1, 'manual', $3)", [o.orgId, item, sale])).rejects.toMatchObject({ code: '23514' });
   });
 });

@@ -49,19 +49,19 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       try {
         const doc = (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id)
+            `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id)
              VALUES ($1, $2, '1C26TAA', $3, '2026-09-10', 100, 0, 100, 'sale', $4) RETURNING id`,
             [orgId, party, number, entity],
           )
         ).rows[0]?.id as string;
         const entry = (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+            `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
              VALUES ($1, '2026-09-10', 'bán', 'finance.purchase_document', $2, $3) RETURNING id`,
             [orgId, doc, entity],
           )
         ).rows[0]?.id as string;
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 100, 0), ($1, $2, 2, '5111', 0, 100)`, [
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 100, 0), ($1, $2, 2, '5111', 0, 100)`, [
           orgId,
           entry,
         ]);
@@ -113,7 +113,7 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       const b = await book(c, orgId, party, entityB, '00000002');
       const type = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, 'tu-van', 'Tư vấn', 30, $2, $2) RETURNING id`,
+          `INSERT INTO ludy_crm.event_type (org_id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, 'tu-van', 'Tư vấn', 30, $2, $2) RETURNING id`,
           [orgId, author],
         )
       ).rows[0]?.id as string;
@@ -126,7 +126,7 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       ).rows[0]?.id as string;
       const booking = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_crm.booking (org_id, event_type_id, starts_at, ends_at, status, calendar_event_id, visitor_name, email, time_zone, decided_at)
+          `INSERT INTO ludy_crm.booking (org_id, event_type_id, starts_at, ends_at, status, calendar_event_id, visitor_name, email, time_zone, decided_at)
            VALUES ($1, $2, '2026-12-01T03:00:00Z', '2026-12-01T03:30:00Z', 'confirmed', $3, 'Khách', 'khach@notes-links.test', 'Asia/Ho_Chi_Minh', now()) RETURNING id`,
           [orgId, type, event],
         )
@@ -242,7 +242,7 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       expect.objectContaining({ targetType: 'crm.booking', targetId: o.booking }),
     ]);
     // A module record has no column of its own on the link: party_id and file_id stay empty.
-    const rows = await admin((c) => c.query('SELECT target_type, party_id, file_id FROM crove_notes.link WHERE org_id = $1 AND note_id = $2 ORDER BY created_at, id', [o.orgId, noteId]));
+    const rows = await admin((c) => c.query('SELECT target_type, party_id, file_id FROM ludy_notes.link WHERE org_id = $1 AND note_id = $2 ORDER BY created_at, id', [o.orgId, noteId]));
     expect(rows.rows).toEqual(all.map(([t]) => ({ target_type: t, party_id: null, file_id: null })));
   });
 

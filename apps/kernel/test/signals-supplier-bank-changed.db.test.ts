@@ -68,9 +68,9 @@ suite('rule 3: a supplier bank account changed while a payment waits (#3113 S4)'
     const entry = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query("INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, partyId, `inv-${doc.slice(0, 8)}`, total]);
-      await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'rule 3 test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, partyId, `inv-${doc.slice(0, 8)}`, total]);
+      await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'rule 3 test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
       await c.query('COMMIT');
     });
     return doc;
@@ -173,7 +173,7 @@ suite('rule 3: a supplier bank account changed while a payment waits (#3113 S4)'
     const items = await rule(o);
     expect(items.map((i) => i.id)).toEqual([`signal:supplier-bank-changed:${other}`]);
     // The change of the second supplier is 31 days old: outside the window, so it no longer flags.
-    await rows("UPDATE crove_finance.supplier_bank_account_change SET changed_at = now() - interval '31 days' WHERE org_id = $1 AND party_id = $2", [o.orgId, other]);
+    await rows("UPDATE ludy_finance.supplier_bank_account_change SET changed_at = now() - interval '31 days' WHERE org_id = $1 AND party_id = $2", [o.orgId, other]);
     expect(await rule(o)).toEqual([]);
   });
 

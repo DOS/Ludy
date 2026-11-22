@@ -311,10 +311,10 @@ export const mcpBookings = defineQuery({
     if (ctx.actor.type !== 'user' || !ctx.actor.mcp || ctx.actor.mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới dùng được truy vấn này');
     const upcoming = input.period === 'upcoming';
     let q = ctx.trx
-      .selectFrom('crove_crm.booking as b')
-      .innerJoin('crove_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
-      .leftJoin('crove_crm.deal as dl', (j) => j.onRef('dl.org_id', '=', 'b.org_id').onRef('dl.id', '=', 'b.deal_id'))
-      .leftJoin('crove_crm.pipeline_stage as ds', (j) => j.onRef('ds.org_id', '=', 'dl.org_id').onRef('ds.id', '=', 'dl.stage_id'))
+      .selectFrom('ludy_crm.booking as b')
+      .innerJoin('ludy_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
+      .leftJoin('ludy_crm.deal as dl', (j) => j.onRef('dl.org_id', '=', 'b.org_id').onRef('dl.id', '=', 'b.deal_id'))
+      .leftJoin('ludy_crm.pipeline_stage as ds', (j) => j.onRef('ds.org_id', '=', 'dl.org_id').onRef('ds.id', '=', 'dl.stage_id'))
       .select(['b.id', 'b.status', 'b.starts_at', 'b.ends_at', 'b.time_zone', 'b.visitor_name', 'b.email', 'b.phone', 'b.note', 'b.party_id', 'b.meeting_state', 'b.deal_id', 'dl.title as deal_title', 'ds.name as deal_stage', 'ds.kind as deal_status', 'e.id as type_id', 'e.slug', 'e.title'])
       .where('b.org_id', '=', ctx.orgId)
       // The bookings the screen lists: confirmed and cancelled ones (requests the worker refused are not bookings).

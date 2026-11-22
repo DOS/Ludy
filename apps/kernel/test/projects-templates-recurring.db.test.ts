@@ -368,12 +368,12 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     await withAdmin(async (c) => {
       await expect(
         c.query(
-          `INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)`,
+          `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)`,
           [org.orgId, snap.templateId, hcmTaskId],
         ),
       ).rejects.toThrow(/PROJECT_TASK_ON_TEMPLATE/);
       await expect(
-        c.query(`UPDATE crove_projects.project SET is_template = true WHERE org_id = $1 AND id = $2`, [
+        c.query(`UPDATE ludy_projects.project SET is_template = true WHERE org_id = $1 AND id = $2`, [
           org.orgId,
           projectId,
         ]),
@@ -500,7 +500,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     // Ensure Copy 2's next_at (2026-11-30) triggers if test runs before 2026-11-30: test advance directly or move source recurrence_next_at back in SQL for past simulation.
     await withAdmin(async (c) => {
       await c.query(
-        `UPDATE crove_projects.project_task SET recurrence_next_at = pg_catalog.now() - interval '1 minute' WHERE org_id = $1 AND task_id = $2`,
+        `UPDATE ludy_projects.project_task SET recurrence_next_at = pg_catalog.now() - interval '1 minute' WHERE org_id = $1 AND task_id = $2`,
         [org.orgId, monthlyTaskId],
       );
     });
@@ -622,7 +622,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     expect(cleared.cleared).toBe(true);
     expect(await sweepProjectsRecurring({ runtime: workerRt, workerDb })).toBe(0);
 
-    // Agent run is blocked from calling template/recurrence commands and from writing crove_projects directly.
+    // Agent run is blocked from calling template/recurrence commands and from writing ludy_projects directly.
     await exec(owner.userId, org.orgId, 'kernel.task.create', {
       title: 'Wake for agent guard',
       assigneePositionId: installed.positionId,
@@ -674,28 +674,28 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
       { value: 'binh@example.com' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(foundEmail.matches.some((m) => m.column === 'crove_projects.project.template_tasks' && m.rowId === templateId)).toBe(true);
+    expect(foundEmail.matches.some((m) => m.column === 'ludy_projects.project.template_tasks' && m.rowId === templateId)).toBe(true);
 
     const foundPhone = await rt.execute<PersonalDataResult>(
       'kernel.personal_data.find',
       { value: '0901234567' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(foundPhone.matches.some((m) => m.column === 'crove_projects.project.template_tasks' && m.rowId === templateId)).toBe(true);
+    expect(foundPhone.matches.some((m) => m.column === 'ludy_projects.project.template_tasks' && m.rowId === templateId)).toBe(true);
 
     const erasedEmail = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: 'binh@example.com' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erasedEmail.erased.some((e) => e.column === 'crove_projects.project.template_tasks' && e.rows === 1)).toBe(true);
+    expect(erasedEmail.erased.some((e) => e.column === 'ludy_projects.project.template_tasks' && e.rows === 1)).toBe(true);
 
     const erasedPhone = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: '0901234567' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erasedPhone.erased.some((e) => e.column === 'crove_projects.project.template_tasks' && e.rows === 1)).toBe(true);
+    expect(erasedPhone.erased.some((e) => e.column === 'ludy_projects.project.template_tasks' && e.rows === 1)).toBe(true);
 
     const afterEmail = await rt.execute<PersonalDataResult>(
       'kernel.personal_data.find',
@@ -740,12 +740,12 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     try {
       await lockClient.query('BEGIN');
       await lockClient.query(
-        'SELECT id FROM crove_projects.project WHERE org_id = $1 AND id = $2 FOR UPDATE',
+        'SELECT id FROM ludy_projects.project WHERE org_id = $1 AND id = $2 FOR UPDATE',
         [org.orgId, projectId],
       );
 
       // Concurrent worker advance pre-reads assignee_position_id = seatId, locks position FOR SHARE,
-      // then blocks waiting for crove_projects.project FOR SHARE.
+      // then blocks waiting for ludy_projects.project FOR SHARE.
       const advancePromise = workerRt.execute<{ createdTaskId: string | null; seriesEnded: boolean; reason: string }>(
         'projects.recurring.advance',
         { projectId, taskId },

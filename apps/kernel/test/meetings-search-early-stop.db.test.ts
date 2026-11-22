@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// crove_meetings.search_segment_ids after migration 20270117140000 (#3843): the page is read meeting by meeting in the order of the answer and stopped when full, and falls back to the
+// ludy_meetings.search_segment_ids after migration 20270117140000 (#3843): the page is read meeting by meeting in the order of the answer and stopped when full, and falls back to the
 // statement of 20261226000000 when 40 meetings were not enough. The proof is a comparison against that statement, kept here as a reference function of the test database only: the same
 // ids in the same order, for an owner, an admin, a recorder, a reader and a member who reads nothing, over common, rare and unreadable-only words, pages and offsets, with drafts and a meeting
 // past its text date; and a count of the readability checks (pg_stat_user_functions), so the saving is measured by the database and not by a clock.
@@ -21,7 +21,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
-suite('crove_meetings.search_segment_ids reads the first page early and answers what it answered before (#3843)', () => {
+suite('ludy_meetings.search_segment_ids reads the first page early and answers what it answered before (#3843)', () => {
   const dbName = `crove_test_meetings_search_early_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
@@ -52,7 +52,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     }
   }
   const ids = async (c: pg.Client, fn: string, q: string, limit: number, offset: number): Promise<string[]> =>
-    (await c.query<{ id: string }>(`SELECT id FROM crove_meetings.${fn}($1, $2, $3)`, [q, limit, offset])).rows.map((r) => r.id);
+    (await c.query<{ id: string }>(`SELECT id FROM ludy_meetings.${fn}($1, $2, $3)`, [q, limit, offset])).rows.map((r) => r.id);
 
   async function meetings(count: number, recorder: string, visibility: 'org' | 'attendees', readers: string[], held: (g: number) => string, lines: (g: number) => string[], stage: 'published' | 'draft' = 'published', org = orgId): Promise<string[]> {
     const made: string[] = [];
@@ -60,14 +60,14 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
       const id = randomUUID();
       made.push(id);
       await sqlAdmin(
-        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, $3, 'vi', $4::timestamptz, $4::timestamptz + interval '30 minutes', 1800, $5, $6, 'ready', 'told_at_start', $5, now(), '1.0', current_date + 20, current_date + 365)`,
         [org, id, `Họp ${id.slice(0, 8)}`, held(g), users[recorder], visibility],
       );
-      for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
+      for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
       let start = 0;
       for (const text of lines(g)) {
-        await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 1, 'Hà', $4, $5)`, [org, id, start, text, stage]);
+        await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 1, 'Hà', $4, $5)`, [org, id, start, text, stage]);
         start += 2;
       }
     }
@@ -87,9 +87,9 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     await sqlAdmin(`ALTER DATABASE ${dbName} SET track_functions = 'all'`);
     // The statement of 20261226000000, kept under another name in this test database only, as the reference.
     const original = rewriteHistoricalCoreSql(readFileSync(`${MIGRATIONS}/20261226000000_crove_meetings_search.sql`, 'utf8'));
-    const body = original.slice(original.indexOf('CREATE OR REPLACE FUNCTION crove_meetings.search_segment_ids'), original.indexOf('REVOKE ALL ON FUNCTION crove_meetings.search_segment_ids'));
+    const body = original.slice(original.indexOf('CREATE OR REPLACE FUNCTION ludy_meetings.search_segment_ids'), original.indexOf('REVOKE ALL ON FUNCTION ludy_meetings.search_segment_ids'));
     await sqlAdmin(body.replace('search_segment_ids', 'search_segment_ids_reference'));
-    await sqlAdmin('GRANT EXECUTE ON FUNCTION crove_meetings.search_segment_ids_reference(text, integer, integer) TO ludy_tenant');
+    await sqlAdmin('GRANT EXECUTE ON FUNCTION ludy_meetings.search_segment_ids_reference(text, integer, integer) TO ludy_tenant');
     const url = new URL(adminUrl);
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
@@ -112,15 +112,15 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     await meetings(3, 'owner', 'attendees', [], (g) => day(g + 20), () => ['Của chủ về giá', 'Nháp khuyến mãi'], 'draft');
     // A meeting past its text date: left out for everyone.
     const [expired] = await meetings(1, 'recorder', 'org', [], () => '2026-12-01T03:00:00Z', () => ['Hết hạn về giá đặc biệt khuyến mãi']);
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = (timezone('Asia/Ho_Chi_Minh', now()))::date WHERE id = $1`, [expired]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = (timezone('Asia/Ho_Chi_Minh', now()))::date WHERE id = $1`, [expired]);
     // The newest meeting by date is the expired one: a filter that forgot the text date would put its lines on the first page. Three meetings of the org have no start time (the held date is then their creation).
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET started_at = NULL, ended_at = NULL WHERE id IN (SELECT id FROM crove_meetings.meeting WHERE org_id = $1 AND visibility = 'org' ORDER BY id LIMIT 3)`, [orgId]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET started_at = NULL, ended_at = NULL WHERE id IN (SELECT id FROM ludy_meetings.meeting WHERE org_id = $1 AND visibility = 'org' ORDER BY id LIMIT 3)`, [orgId]);
     // A second org where its owner reads only 5 meetings: every meeting they read is visited and the page is not full, the answer being complete without the old way.
     const second = new Runtime(createDb(pools[0] as pg.Pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
     users.owner2 = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'meetings-early', subject: 'owner2', email: 'owner2@meetings-early.test', name: null });
     orgTwo = (await createOrg(second, { type: 'user', userId: users.owner2 as string, aal: 'aal1' }, 'Công ty nhỏ')).orgId;
     await meetings(5, 'owner2', 'attendees', [], (g) => day(g), (g) => [`Họp nhỏ về giá ${g}`, 'Báo giá cho khách', 'Hết giờ'], 'published', orgTwo);
-    await sqlAdmin('ANALYZE crove_meetings.transcript_segment');
+    await sqlAdmin('ANALYZE ludy_meetings.transcript_segment');
   }, 600_000);
 
   afterAll(async () => {
@@ -188,7 +188,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
 
   it('checks the readability of a few meetings for a common word, where the statement it replaced checked every meeting with a hit', async () => {
     const checks = async (fn: string): Promise<number> => {
-      await sqlAdmin(`SELECT pg_catalog.pg_stat_reset_single_function_counters('crove_meetings.is_meeting_reader(uuid, uuid, uuid)'::regprocedure)`);
+      await sqlAdmin(`SELECT pg_catalog.pg_stat_reset_single_function_counters('ludy_meetings.is_meeting_reader(uuid, uuid, uuid)'::regprocedure)`);
       await asUser('reader', async (c) => {
         await ids(c, 'search_segment_ids' + fn, 'giá', 21, 0);
         await c.query('SELECT pg_catalog.pg_stat_force_next_flush()');
@@ -212,7 +212,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     const acl = (
       await sqlAdmin<{ acl: string; secdef: boolean; config: string[] | null; public_exec: boolean }>(
         `SELECT p.proacl::text AS acl, p.prosecdef AS secdef, p.proconfig AS config, pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
-           FROM pg_catalog.pg_proc p WHERE p.oid = 'crove_meetings.search_segment_ids(text, integer, integer)'::regprocedure`,
+           FROM pg_catalog.pg_proc p WHERE p.oid = 'ludy_meetings.search_segment_ids(text, integer, integer)'::regprocedure`,
       )
     ).rows[0];
     expect(acl).toMatchObject({ secdef: true, public_exec: false });

@@ -199,7 +199,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const out = await create(a, { body: 'Đã đăng', at: new Date(base.getTime() + 30 * HOUR), channels: [quanA] });
     const variantId = out.variants[0]?.variantId as string;
     await admin((c) =>
-      c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = $2, content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND id = $3", [
+      c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = $2, content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND id = $3", [
         a.orgId,
         new Date(base.getTime() + 2 * DAY + 4 * HOUR),
         variantId,
@@ -207,7 +207,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     );
     const print = await exportPlan(a, a.member, { ...range, timeZone: 'UTC', format: 'print' });
     expect(print.rows?.at(-1)).toMatchObject({ variantId, status: 'published', body: 'Bản đã đăng', at: new Date(base.getTime() + 2 * DAY + 4 * HOUR).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND id = $2", [a.orgId, variantId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND id = $2", [a.orgId, variantId]));
   });
 
   it("never holds another org's posts, and is for members and above over at most 92 days", async () => {

@@ -629,7 +629,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       require_email_otp: boolean;
       revoked_at: Date | null;
     }>(
-      'SELECT token_sha256, enabled, require_email_otp, revoked_at FROM crove_sign.template_direct_link WHERE org_id = $1 AND template_id = $2',
+      'SELECT token_sha256, enabled, require_email_otp, revoked_at FROM ludy_sign.template_direct_link WHERE org_id = $1 AND template_id = $2',
       [orgA, tpl.templateId],
     );
     expect(storedRows.rows).toHaveLength(1);
@@ -657,7 +657,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     expect(rotated.url).toBe(`${SIGN_DIRECT_PAGE_PATH}#${rotated.token}`);
 
     const afterRotate = await adminPool!.query<{ token_sha256: string; revoked_at: Date | null }>(
-      'SELECT token_sha256, revoked_at FROM crove_sign.template_direct_link WHERE org_id = $1 AND template_id = $2 ORDER BY created_at ASC',
+      'SELECT token_sha256, revoked_at FROM ludy_sign.template_direct_link WHERE org_id = $1 AND template_id = $2 ORDER BY created_at ASC',
       [orgA, tpl.templateId],
     );
     expect(afterRotate.rows).toHaveLength(2);
@@ -681,7 +681,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
         }),
       ]);
       await expect(
-        c.query('SELECT crove_sign.template_direct_link_set($1::uuid, true, false, $2)', [
+        c.query('SELECT ludy_sign.template_direct_link_set($1::uuid, true, false, $2)', [
           tpl.templateId,
           'f'.repeat(64),
         ]),
@@ -705,7 +705,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       { actor: asUser(ownerA), orgId: orgA },
     );
     const activeAfterMulti = await adminPool!.query<{ id: string }>(
-      'SELECT id FROM crove_sign.template_direct_link WHERE org_id = $1 AND template_id = $2 AND revoked_at IS NULL',
+      'SELECT id FROM ludy_sign.template_direct_link WHERE org_id = $1 AND template_id = $2 AND revoked_at IS NULL',
       [orgA, tpl.templateId],
     );
     expect(activeAfterMulti.rows).toHaveLength(0);
@@ -873,61 +873,61 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       }
     };
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.envelope (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+      `INSERT INTO ludy_sign.envelope (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
        VALUES ($1, 'Forged', $2, $3, $4, $5, 'passed', $6)`,
       [orgA, file.fileId, file.storageKey, file.generation, file.sha256, ownerA],
       /ENVELOPE_FORBIDDEN/,
     );
     await expectTenantSqlRejects(
-      "UPDATE crove_sign.template SET inspect_status = 'failed' WHERE org_id = $1 AND id = $2",
+      "UPDATE ludy_sign.template SET inspect_status = 'failed' WHERE org_id = $1 AND id = $2",
       [orgA, tpl.templateId],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
     await expectTenantSqlRejects(
-      'SELECT * FROM crove_sign.template_direct_link WHERE org_id = $1',
+      'SELECT * FROM ludy_sign.template_direct_link WHERE org_id = $1',
       [orgA],
       /permission denied/,
     );
     const uninspectedFile = await ingestPdf(ownerA, orgA, 'forge-uninspected');
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, page_count, status, created_by)
+      `INSERT INTO ludy_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, page_count, status, created_by)
        VALUES ($1, 'Forged Passed', $2, $3, $4, $5, 'passed', 1, 'active', $6)`,
       [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
     // Raw SQL INSERT with inspect_status = 'passed' and NULL page_count is rejected both for uninspected and inspected source PDFs (#3566).
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+      `INSERT INTO ludy_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
        VALUES ($1, 'Forged Passed Null PageCount Draft', $2, $3, $4, $5, 'passed', 'draft', $6)`,
       [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+      `INSERT INTO ludy_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
        VALUES ($1, 'Forged Passed Null PageCount Active', $2, $3, $4, $5, 'passed', 'active', $6)`,
       [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+      `INSERT INTO ludy_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
        VALUES ($1, 'Forged Passed Null PageCount Inspected File', $2, $3, $4, $5, 'passed', 'active', $6)`,
       [orgA, file.fileId, file.storageKey, file.generation, file.sha256, ownerA],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
     await expect(
       adminPool!.query(
-        "UPDATE crove_sign.template SET page_count = NULL WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_sign.template SET page_count = NULL WHERE org_id = $1 AND id = $2",
         [orgA, tpl.templateId],
       ),
     ).rejects.toThrow(/SIGN_TEMPLATE_SYSTEM_ONLY/);
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+      `INSERT INTO ludy_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
        VALUES ($1, 'Forged Failed', $2, $3, $4, $5, 'failed', $6)`,
       [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
     await expectTenantSqlRejects(
-      'SELECT * FROM crove_sign.template_work_recovery_candidates(pg_catalog.now(), 10, NULL)',
+      'SELECT * FROM ludy_sign.template_work_recovery_candidates(pg_catalog.now(), 10, NULL)',
       [],
       /permission denied/,
     );
@@ -954,7 +954,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       ]);
       await expect(
         inheritBypassClient.query(
-          "UPDATE crove_sign.envelope SET inspect_status = 'passed', page_count = 1 WHERE org_id = $1 AND id = $2",
+          "UPDATE ludy_sign.envelope SET inspect_status = 'passed', page_count = 1 WHERE org_id = $1 AND id = $2",
           [orgA, pendingEnv.envelopeId],
         ),
       ).rejects.toThrow(/ENVELOPE_SYSTEM_ONLY/);
@@ -1011,7 +1011,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
           mfaAt: null,
         }),
       ]);
-      await trigClient.query("UPDATE crove_sign.template SET status = 'draft' WHERE org_id = $1 AND id = $2", [
+      await trigClient.query("UPDATE ludy_sign.template SET status = 'draft' WHERE org_id = $1 AND id = $2", [
         orgA,
         triggerTpl.templateId,
       ]);
@@ -1023,7 +1023,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       trigClient.release();
     }
     const revokedAfterRawStatus = await adminPool!.query<{ revoked_at: Date | null }>(
-      'SELECT revoked_at FROM crove_sign.template_direct_link WHERE org_id = $1 AND template_id = $2',
+      'SELECT revoked_at FROM ludy_sign.template_direct_link WHERE org_id = $1 AND template_id = $2',
       [orgA, triggerTpl.templateId],
     );
     expect(revokedAfterRawStatus.rows[0]?.revoked_at).not.toBeNull();
@@ -1150,7 +1150,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     expect(reusedDetail.template.detectedTags).toEqual(detectedTags);
 
     // Instantiating a draft envelope from the template inherits detected_tags_json via template_inherit_inspect
-    // AND preserves roleKey on crove_sign.signer even when r1 is routingOrder 2 and r2 is routingOrder 1.
+    // AND preserves roleKey on ludy_sign.signer even when r1 is routingOrder 2 and r2 is routingOrder 1.
     await runtime.execute(
       'sign.template.roles_set',
       {
@@ -1205,7 +1205,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       ['r1', 2],
     ]);
 
-    // Hyphenated and 40-char template roleKeys instantiate cleanly into crove_sign.signer.role_key and pass zSignEnvelopeDetail.
+    // Hyphenated and 40-char template roleKeys instantiate cleanly into ludy_sign.signer.role_key and pass zSignEnvelopeDetail.
     const longRoleKey = 'dai-dien-phap-luat-cong-ty-doi-tac-chien'; // 40 chars
     expect(longRoleKey).toHaveLength(40);
     await runtime.execute(
@@ -1248,7 +1248,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await client.query('BEGIN');
       await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
       await expect(
-        client.query("UPDATE crove_sign.template SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
+        client.query("UPDATE ludy_sign.template SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
           orgA,
           tpl.templateId,
         ]),
@@ -1258,7 +1258,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await client.query('BEGIN');
       await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
       await expect(
-        client.query("UPDATE crove_sign.envelope SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
+        client.query("UPDATE ludy_sign.envelope SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
           orgA,
           inst.envelopeId,
         ]),
@@ -1384,7 +1384,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     );
     await runtime.orgless(async (db) => {
       await sql`
-        SELECT crove_sign.public_submit(
+        SELECT ludy_sign.public_submit(
           ${hashSigningToken(stdSent.links[0]!.token)},
           true,
           'draw',
@@ -1399,7 +1399,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     await sealEnvelope(stdEnv.envelopeId);
 
     const { rows: stdEnvRow } = await adminPool!.query<{ direct_link_id: string | null }>(
-      'SELECT direct_link_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+      'SELECT direct_link_id FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2',
       [orgA, stdEnv.envelopeId],
     );
     expect(stdEnvRow[0]?.direct_link_id).toBeNull();
@@ -1470,13 +1470,13 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     const instTokenHash = hashSigningToken(instSent.links[0]!.token);
     const instView = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ v: { fields: Array<{ id: string }> } }>`
-        SELECT crove_sign.public_record_view(${instTokenHash}, ${ipHash}, 'InstTest/1.0') AS v
+        SELECT ludy_sign.public_record_view(${instTokenHash}, ${ipHash}, 'InstTest/1.0') AS v
       `.execute(db);
       return rows[0]!.v;
     });
     await runtime.orgless(async (db) => {
       await sql`
-        SELECT crove_sign.public_submit(
+        SELECT ludy_sign.public_submit(
           ${instTokenHash},
           true,
           'draw',
@@ -1509,7 +1509,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       const signingTokenHash = hashSigningToken(generateRawSigningToken());
       const started = await runtime.orgless(async (db) => {
         const { rows } = await sql<{ v: { status: string; envelopeId: string } }>`
-          SELECT crove_sign.public_direct_start(
+          SELECT ludy_sign.public_direct_start(
             ${directTokenHash},
             'Anonymous Caller',
             ${victimEmail},
@@ -1524,13 +1524,13 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       expect(started.status).toBe('ok');
       const view = await runtime.orgless(async (db) => {
         const { rows } = await sql<{ v: { fields: Array<{ id: string }> } }>`
-          SELECT crove_sign.public_record_view(${signingTokenHash}, ${ipHash}, 'RelayCheck/1.0') AS v
+          SELECT ludy_sign.public_record_view(${signingTokenHash}, ${ipHash}, 'RelayCheck/1.0') AS v
         `.execute(db);
         return rows[0]!.v;
       });
       await runtime.orgless(async (db) => {
         await sql`
-          SELECT crove_sign.public_submit(
+          SELECT ludy_sign.public_submit(
             ${signingTokenHash},
             true,
             'draw',
@@ -1547,7 +1547,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
 
     const directEnvId = await startAndCompleteUnverifiedDirect('unverified-victim@sign-tpl.test');
     const { rows: directEnvBefore } = await adminPool!.query<{ direct_link_id: string | null }>(
-      'SELECT direct_link_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+      'SELECT direct_link_id FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2',
       [orgA, directEnvId],
     );
     expect(directEnvBefore[0]?.direct_link_id).not.toBeNull();
@@ -1570,7 +1570,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await adminClient.query('BEGIN');
       await adminClient.query('SET LOCAL session_replication_role = replica');
       await adminClient.query(
-        `UPDATE crove_sign.template_direct_link
+        `UPDATE ludy_sign.template_direct_link
          SET revoked_at = now() - interval '35 days'
          WHERE org_id = $1 AND template_id = $2`,
         [orgA, tpl.templateId],
@@ -1589,7 +1589,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     expect(cleanupRes.directLinks).toBeGreaterThanOrEqual(1);
 
     const { rows: prunedEnvRow } = await adminPool!.query<{ direct_link_id: string | null }>(
-      'SELECT direct_link_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+      'SELECT direct_link_id FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2',
       [orgA, prunedDirectEnvId],
     );
     expect(prunedEnvRow[0]?.direct_link_id).toBeNull();
@@ -1668,7 +1668,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       adminClient.release();
     }
 
-    for (const tbl of ['crove_sign.template', 'crove_sign.template_role', 'crove_sign.template_field', 'crove_sign.template_direct_link']) {
+    for (const tbl of ['ludy_sign.template', 'ludy_sign.template_role', 'ludy_sign.template_field', 'ludy_sign.template_direct_link']) {
       const left = await adminPool!.query<{ count: string }>(`SELECT count(*)::text AS count FROM ${tbl} WHERE org_id = $1`, [orgB]);
       expect(Number(left.rows[0]!.count), tbl).toBe(0);
     }

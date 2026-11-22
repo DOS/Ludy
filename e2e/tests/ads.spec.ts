@@ -84,7 +84,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(page).toHaveURL(/\/ads\?account=[0-9a-f-]{36}/);
     // The sandbox says plainly that its figures are made up.
     await expect(page.getByText('Thử nghiệm (số liệu mẫu)')).toBeVisible();
-    const rows = sql<{ provider: string }>(`SELECT a.provider FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ provider: string }>(`SELECT a.provider FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ provider: 'sandbox_ads' }]);
   });
 
@@ -105,7 +105,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     // The platform still revises its latest days: the screen says which are not final, in words.
     await expect(page.getByRole('region', { name: 'Theo ngày' }).getByText('chưa chốt', { exact: true }).first()).toBeVisible();
     const stored = sql<{ days: number }>(
-      `SELECT count(*)::int AS days FROM crove_ads.ad_spend_day d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' AND d.level = 'account'`,
+      `SELECT count(*)::int AS days FROM ludy_ads.ad_spend_day d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' AND d.level = 'account'`,
       { slug },
     );
     expect(stored[0]?.days).toBeGreaterThan(30);
@@ -127,7 +127,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(stat(totals, 'Kết quả')).toHaveText(/[1-9]/);
     await expect(totals.getByText('Mua hàng', { exact: true })).toBeVisible();
     await expect(stat(totals, 'Chi phí mỗi kết quả')).toHaveText(/[1-9]/);
-    const rows = sql<{ result_kind: string | null }>(`SELECT a.result_kind FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ result_kind: string | null }>(`SELECT a.result_kind FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ result_kind: 'purchase' }]);
   });
 
@@ -154,7 +154,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect.poll(() => books.getByRole('row').count(), { message: 'a row per month with spend' }).toBeGreaterThan(1);
     // The books hold nothing for advertising yet, so the whole spend is the difference: shown, not explained away.
     await expect(books.getByText('không sửa sổ sách và không đoán nguyên nhân', { exact: false })).toBeVisible();
-    const rows = sql<{ expense_account_code: string | null }>(`SELECT a.expense_account_code FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ expense_account_code: string | null }>(`SELECT a.expense_account_code FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ expense_account_code: '6421' }]);
   });
 
@@ -172,18 +172,18 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     // journal entry (the database refuses a document without one), written as the superuser like the other seeds.
     exec(
       `WITH acc AS (
-         SELECT t.org_id, a.legal_entity_id FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'
+         SELECT t.org_id, a.legal_entity_id FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'
        ), seller AS (
          INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Sandbox Ads Pte. Ltd.', 'organization' FROM acc RETURNING org_id, id
        ), doc AS (
-         INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+         INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
          SELECT seller.org_id, seller.id, 'C26TAA', '1', (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'VND', 100000, 0, 100000, 'purchase', acc.legal_entity_id
          FROM seller JOIN acc USING (org_id) RETURNING org_id, id, party_id, invoice_date, legal_entity_id
        ), entry AS (
-         INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+         INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
          SELECT org_id, invoice_date, 'HĐ Sandbox Ads', 'finance.purchase_document', id, legal_entity_id FROM doc RETURNING org_id, id, legal_entity_id
        )
-       INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+       INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
        SELECT entry.org_id, entry.id, l.line_no, l.account_code, l.debit, l.credit, doc.party_id, entry.legal_entity_id
        FROM entry JOIN doc USING (org_id)
        CROSS JOIN (VALUES (1, '6421', 100000, 0), (2, '331', 0, 100000)) AS l(line_no, account_code, debit, credit)`,
@@ -202,9 +202,9 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(lines.getByText(/\d+ dòng, đã trả/)).toHaveCount(0);
     // A statement line on a bank account of the entity naming the platform, dated today, written as the superuser like the other seeds.
     exec(
-      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
+      `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
        SELECT t.org_id, '1121', gen_random_uuid(), 1, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'THE VISA SANDBOX ADS 0042', -300000, a.legal_entity_id
-       FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`,
+       FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     await page.reload();
@@ -220,7 +220,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     // The sandbox platform has no token life of its own; a Meta connection records about 60 days, so set 5 days ahead as the superuser.
     exec(
       `UPDATE ludy_kernel.channel_connection c SET expires_at = now() + interval '5 days'
-       FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
+       FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
        WHERE c.org_id = a.org_id AND c.id = a.channel_connection_id AND t.slug = :'slug'`,
       { slug },
     );
@@ -313,7 +313,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
     // In the database only that connection is revoked, and no figure was dropped.
     const connections = sql<{ name: string; status: string }>(
-      `SELECT a.name, c.status FROM crove_ads.ad_account a
+      `SELECT a.name, c.status FROM ludy_ads.ad_account a
          JOIN ludy_kernel.channel_connection c ON c.org_id = a.org_id AND c.id = a.channel_connection_id
          JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
         WHERE t.slug = :'slug'`,
@@ -327,8 +327,8 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
       ]),
     );
     const kept = sql<{ days: number }>(
-      `SELECT count(*)::int AS days FROM crove_ads.ad_spend_day d
-         JOIN crove_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
+      `SELECT count(*)::int AS days FROM ludy_ads.ad_spend_day d
+         JOIN ludy_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
          JOIN ludy_kernel.tenant t ON t.org_id = d.org_id
         WHERE t.slug = :'slug' AND a.name = 'Quảng cáo cửa hàng E2E' AND d.level = 'account'`,
       { slug },

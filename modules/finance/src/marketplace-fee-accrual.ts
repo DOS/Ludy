@@ -65,7 +65,7 @@ export async function feeAccrualOffers(
   platformName: (platform: string) => string,
 ): Promise<{ accruals: FeeAccrualOffer[]; reversals: FeeAccrualReversalOffer[] }> {
   let links = ctx.trx
-    .selectFrom('crove_finance.marketplace_party as m')
+    .selectFrom('ludy_finance.marketplace_party as m')
     .innerJoin('ludy_kernel.legal_entity as le', (join) => join.onRef('le.org_id', '=', 'm.org_id').onRef('le.id', '=', 'm.legal_entity_id'))
     .select(['m.legal_entity_id', 'm.platform', 'm.party_id', 'le.kind'])
     .where('m.org_id', '=', ctx.orgId);
@@ -87,7 +87,7 @@ export async function feeAccrualOffers(
         // A locked period refuses an entry dated inside it: the reversal is dated the day after the lock when that is later.
         const reverseOn = lockedThrough && lockedThrough >= firstDay ? addDays(lockedThrough, 1) : firstDay;
         const lines = await ctx.trx
-          .selectFrom('crove_finance.journal_line')
+          .selectFrom('ludy_finance.journal_line')
           .select((eb) => eb.fn.sum<string>('credit').as('credit'))
           .where('org_id', '=', ctx.orgId)
           .where('entry_id', '=', s.entryId)
@@ -112,8 +112,8 @@ export async function feeAccrualOffers(
     if (!map) continue;
     // The fees the platform kept, as the books say at the end of the month: its debit balance on 331 (a credit balance is an invoice no fee waited for, and nothing to accrue).
     const balance = await ctx.trx
-      .selectFrom('crove_finance.journal_line as l')
-      .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
+      .selectFrom('ludy_finance.journal_line as l')
+      .innerJoin('ludy_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
       .select(sql<string>`coalesce(sum(l.debit) - sum(l.credit), 0)`.as('balance'))
       .where('l.org_id', '=', ctx.orgId)
       .where('l.legal_entity_id', '=', link.legal_entity_id)

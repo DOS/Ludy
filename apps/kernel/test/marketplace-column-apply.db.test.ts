@@ -96,7 +96,7 @@ suite('a saved column mapping applied on import (#4037)', () => {
     return { fileId, ...(await readMarketplaceFile({ runtime: worker, store, extract }, o.orgId, fileId)) };
   };
   const saveProfile = (o: Org, columns: unknown, over: { platform?: string; digest?: string; at?: string } = {}) =>
-    rows('INSERT INTO crove_finance.marketplace_column_profile (org_id, platform, header_row, columns, header_digest, confirmed_by, confirmed_at) VALUES ($1, $2, 1, $3::jsonb, $4, $5, COALESCE($6::timestamptz, clock_timestamp()))', [
+    rows('INSERT INTO ludy_finance.marketplace_column_profile (org_id, platform, header_row, columns, header_digest, confirmed_by, confirmed_at) VALUES ($1, $2, 1, $3::jsonb, $4, $5, COALESCE($6::timestamptz, clock_timestamp()))', [
       o.orgId,
       over.platform ?? 'shopee',
       JSON.stringify(columns),
@@ -105,7 +105,7 @@ suite('a saved column mapping applied on import (#4037)', () => {
       over.at ?? null,
     ]);
   const staged = (o: Org) => rt.query<Array<{ fileId: string; summary: { platform: string; lines: number; orders: number; profileVersion: string; profileConfirmed: boolean } }>>('finance.marketplace.staged', {}, { actor: asUser(o.member), orgId: o.orgId });
-  const orderRows = (o: Org) => rows<{ order_no: string }>('SELECT order_no FROM crove_finance.channel_order WHERE org_id = $1 ORDER BY order_no', [o.orgId]);
+  const orderRows = (o: Org) => rows<{ order_no: string }>('SELECT order_no FROM ludy_finance.channel_order WHERE org_id = $1 ORDER BY order_no', [o.orgId]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -167,7 +167,7 @@ suite('a saved column mapping applied on import (#4037)', () => {
     await rt.execute('finance.marketplace.confirm', { fileId: result.fileId }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() });
     expect((await orderRows(o)).map((r) => r.order_no)).toEqual(['9001', '9002', '9003']);
     // Nothing of the buyer is stored anywhere in the org's rows.
-    const everything = JSON.stringify(await rows('SELECT to_jsonb(l) AS l FROM crove_finance.channel_order_line l WHERE org_id = $1', [o.orgId]));
+    const everything = JSON.stringify(await rows('SELECT to_jsonb(l) AS l FROM ludy_finance.channel_order_line l WHERE org_id = $1', [o.orgId]));
     for (const value of Object.values(BUYER)) expect(everything).not.toContain(value);
   });
 

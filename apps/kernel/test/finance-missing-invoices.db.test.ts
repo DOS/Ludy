@@ -334,7 +334,7 @@ suite('missing invoice requests (#669)', () => {
   it('scans for due reminders on their day from 08:00 Vietnam time, once a month', async () => {
     const local = new Date(Date.now() + 7 * 3_600_000);
     const today = local.getUTCDate();
-    const due = async () => admin(async (c) => (await c.query('SELECT org_id FROM crove_finance.missing_invoice_reminders_due(100)')).rows.map((r) => r.org_id as string));
+    const due = async () => admin(async (c) => (await c.query('SELECT org_id FROM ludy_finance.missing_invoice_reminders_due(100)')).rows.map((r) => r.org_id as string));
     if (today > 28) return;
     // The org reminded this month is not due again; the other org (contact, reminder today) is, from 08:00.
     await admin((c) => c.query('UPDATE ludy_kernel.tenant SET missing_invoice_reminder_day = $2 WHERE org_id = ANY($1::uuid[])', [[org.orgId, otherOrg.orgId], today]));
@@ -363,6 +363,6 @@ suite('missing invoice requests (#669)', () => {
       expect(rows).not.toContain(otherOrg.orgId);
     }
     // Only the worker may scan.
-    await expect(pool.query('SELECT * FROM crove_finance.missing_invoice_reminders_due(1)')).rejects.toThrow(/permission denied/);
+    await expect(pool.query('SELECT * FROM ludy_finance.missing_invoice_reminders_due(1)')).rejects.toThrow(/permission denied/);
   });
 });

@@ -69,17 +69,17 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
         [orgId, ENTRIES],
       );
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
          SELECT $1, doc_id, party_id, '1C26TAA', pg_catalog.lpad(g::text, 8, '0'), day, total, 0, total FROM seeded`,
         [orgId],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id)
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id)
          SELECT $1, entry_id, day, 'Mua hàng ' || g, 'finance.purchase_document', doc_id FROM seeded`,
         [orgId],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
          SELECT $1::uuid, entry_id, 1, '6422', total, 0 FROM seeded UNION ALL SELECT $1::uuid, entry_id, 2, '331', 0, total FROM seeded`,
         [orgId],
       );
@@ -87,12 +87,12 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');
       const table = (
         await c.query<{ seq_scan: string; seq_tup_read: string }>(
-          `SELECT seq_scan, seq_tup_read FROM pg_catalog.pg_stat_xact_user_tables WHERE relid = 'crove_finance.journal_entry'::regclass`,
+          `SELECT seq_scan, seq_tup_read FROM pg_catalog.pg_stat_xact_user_tables WHERE relid = 'ludy_finance.journal_entry'::regclass`,
         )
       ).rows[0];
       const entityIndex = (
         await c.query<{ idx_tup_read: string }>(
-          `SELECT pg_catalog.pg_stat_get_xact_tuples_returned('crove_finance.journal_entry_legal_entity_idx'::regclass) AS idx_tup_read`,
+          `SELECT pg_catalog.pg_stat_get_xact_tuples_returned('ludy_finance.journal_entry_legal_entity_idx'::regclass) AS idx_tup_read`,
         )
       ).rows[0];
       await c.query('COMMIT');

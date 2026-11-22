@@ -64,9 +64,9 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
   async function post(o: Org, body: string, set: { status: string; scheduledAt?: Date; queueSlotAt?: Date; publishedAt?: Date; title?: string; variantBody?: string }) {
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body, channels: [{ connectionId: o.conn }] });
     return admin(async (c) => {
-      if (set.title !== undefined) await c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [postId, set.title]);
+      if (set.title !== undefined) await c.query('UPDATE ludy_social.post SET title = $2 WHERE id = $1', [postId, set.title]);
       const { rows } = await c.query<{ id: string }>(
-        'UPDATE crove_social.post_variant SET status = $2, scheduled_at = $3, queue_slot_at = $4, published_at = $5, body = coalesce($6, body) WHERE post_id = $1 RETURNING id',
+        'UPDATE ludy_social.post_variant SET status = $2, scheduled_at = $3, queue_slot_at = $4, published_at = $5, body = coalesce($6, body) WHERE post_id = $1 RETURNING id',
         [postId, set.status, set.scheduledAt ?? null, set.queueSlotAt ?? null, set.publishedAt ?? null, set.variantBody ?? null],
       );
       return { postId, variantId: rows[0]?.id as string };
@@ -173,13 +173,13 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const second = await exec<{ token: string }>(o, o.owner, 'social.calendar_feed.create');
     expect(await calendarFeed(rt, first.token)).toBeNull();
     expect(await calendarFeed(rt, second.token)).toMatchObject({ slug: o.slug, events: [] });
-    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.n);
+    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.n);
     expect(live).toBe(1);
     // Everyone sees that there is one and who made it, never the token.
     const seen = await rt.query<CalendarFeedView | null>('social.calendar_feed.get', {}, { actor: asUser(o.viewer), orgId: o.orgId });
     expect(seen).toEqual({ createdAt: expect.any(String), createdBy: o.owner });
     expect(JSON.stringify(seen)).not.toContain(second.token);
-    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.token_sha256);
+    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.token_sha256);
     expect(stored).toMatch(/^[0-9a-f]{64}$/);
     // The audit keeps no token.
     const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.calendar_feed.%'", [o.orgId])).rows));
@@ -228,7 +228,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ grantee: string }>(
-          "SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'crove_social' AND routine_name = 'calendar_feed_events' AND grantee NOT IN ('postgres') ORDER BY 1",
+          "SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'ludy_social' AND routine_name = 'calendar_feed_events' AND grantee NOT IN ('postgres') ORDER BY 1",
         )
       ).rows.map((r) => r.grantee),
     );
@@ -236,7 +236,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'calendar_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'calendar_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
@@ -247,7 +247,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const w = new pg.Client({ connectionString: worker.toString() });
     await w.connect();
     try {
-      await expect(w.query("SELECT crove_social.calendar_feed_events('x')")).rejects.toMatchObject({ code: '42501' });
+      await expect(w.query("SELECT ludy_social.calendar_feed_events('x')")).rejects.toMatchObject({ code: '42501' });
     } finally {
       await w.end();
     }

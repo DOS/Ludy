@@ -37,7 +37,7 @@ const marketplaceColumnsSaved = defineQuery({
     const { rows } = await sql<{ header_digest: string; platform: string; columns: unknown }>`
       SELECT header_digest, platform, columns FROM (
         SELECT DISTINCT ON (header_digest) header_digest, platform, columns, confirmed_at, id
-          FROM crove_finance.marketplace_column_profile
+          FROM ludy_finance.marketplace_column_profile
          WHERE org_id = ${ctx.orgId}::uuid
          ORDER BY header_digest, confirmed_at DESC, id DESC) latest
        ORDER BY confirmed_at DESC, id DESC

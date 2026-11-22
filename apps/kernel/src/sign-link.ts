@@ -179,7 +179,7 @@ export interface SignRequestMeta {
 }
 
 // Two-stage IP keying: Node hashes with a domain prefix so raw client IPs never appear in SQL queries or logs, then
-// crove_sign.public_keyed_ip_hash(org_id, p_ip_hash) applies HMAC-SHA256 under ludy_kernel.mail_hash_key scoped to org_id.
+// ludy_sign.public_keyed_ip_hash(org_id, p_ip_hash) applies HMAC-SHA256 under ludy_kernel.mail_hash_key scoped to org_id.
 export function signIpHash(ip: string | null): string | null {
   const trimmed = ip?.trim() ?? '';
   if (!trimmed) return null;
@@ -203,7 +203,7 @@ export async function resolvePublicToken(
 ): Promise<SignResolvedToken | null> {
   const resolved = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ resolved: SignResolvedToken | null }>`
-      SELECT crove_sign.public_token_resolve(${tokenHash}, ${allowUsed}) AS resolved
+      SELECT ludy_sign.public_token_resolve(${tokenHash}, ${allowUsed}) AS resolved
     `.execute(db);
     return rows[0]?.resolved ?? null;
   });
@@ -241,7 +241,7 @@ export async function resolvePublicPdf(
         sha256?: string;
       } | null;
     }>`
-      SELECT crove_sign.public_pdf_source(${tokenHash}) AS source
+      SELECT ludy_sign.public_pdf_source(${tokenHash}) AS source
     `.execute(db);
     return rows[0]?.source ?? null;
   });
@@ -293,7 +293,7 @@ export async function runSignView(
   if (!resolved) return { status: 'not_found' };
   const view = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ view: SignPublicView | null }>`
-      SELECT crove_sign.public_record_view(
+      SELECT ludy_sign.public_record_view(
         ${tokenHash},
         ${signIpHash(meta.ip)},
         ${sanitizeSignUserAgent(meta.userAgent)}
@@ -353,7 +353,7 @@ export async function runSignOtpRequest(
     | null;
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlOtpRequestRow }>`
-      SELECT crove_sign.public_request_otp(${tokenHash}, ${DEFAULT_MESSAGE_ID_DOMAIN}) AS result
+      SELECT ludy_sign.public_request_otp(${tokenHash}, ${DEFAULT_MESSAGE_ID_DOMAIN}) AS result
     `.execute(db);
     return rows[0]?.result ?? null;
   });
@@ -404,7 +404,7 @@ export async function runSignOtpVerify(
     | null;
   const result = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlOtpVerifyRow }>`
-      SELECT crove_sign.public_verify_otp(
+      SELECT ludy_sign.public_verify_otp(
         ${tokenHash},
         ${parsed.data.code},
         ${signIpHash(meta.ip)},
@@ -471,7 +471,7 @@ export async function runSignSubmit(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlSubmitRow }>`
-      SELECT crove_sign.public_submit(
+      SELECT ludy_sign.public_submit(
         ${tokenHash},
         ${parsed.data.consentAccepted},
         ${parsed.data.signatureKind ?? null},
@@ -544,7 +544,7 @@ export async function runSignDecline(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlDeclineRow }>`
-      SELECT crove_sign.public_decline(
+      SELECT ludy_sign.public_decline(
         ${tokenHash},
         ${parsed.data.reason ?? null},
         ${signIpHash(meta.ip)},
@@ -622,7 +622,7 @@ export async function runSignDelegate(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlDelegateRow }>`
-      SELECT crove_sign.public_delegate(
+      SELECT ludy_sign.public_delegate(
         ${tokenHash},
         ${parsed.data.delegateName},
         ${parsed.data.delegateEmail},
@@ -669,7 +669,7 @@ export async function runSignVerify(
         sealedSha256: string;
       } | null;
     }>`
-      SELECT crove_sign.public_verify_certificate(${parsed.data.certificateCode}, ${parsed.data.fileSha256}) AS verified
+      SELECT ludy_sign.public_verify_certificate(${parsed.data.certificateCode}, ${parsed.data.fileSha256}) AS verified
     `.execute(db);
     return rows[0]?.verified ?? null;
   });
@@ -768,7 +768,7 @@ export async function runSignAttachmentUpload(
 
   const preflight = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlPreflightRow }>`
-      SELECT crove_sign.public_attachment_preflight(${tokenHash}, ${validFieldId}::uuid) AS result
+      SELECT ludy_sign.public_attachment_preflight(${tokenHash}, ${validFieldId}::uuid) AS result
     `.execute(db);
     return rows[0]?.result ?? null;
   });
@@ -813,7 +813,7 @@ export async function runSignAttachmentUpload(
 
   const recorded = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlRecordAttachmentRow }>`
-      SELECT crove_sign.public_record_attachment(
+      SELECT ludy_sign.public_record_attachment(
         ${tokenHash},
         ${preflight.fieldId}::uuid,
         ${filename},

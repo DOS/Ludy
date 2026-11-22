@@ -123,20 +123,20 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
       ids.other = await party(orgB, 'organization', 'Other Org Customer');
       const entry = async (org: string, date: string, sourceType: string, sourceId: string, total: number, flip = false, reverses: string | null = null) => {
         const id = randomUUID();
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, $2, $3, 'secret line text', $4, $5, $6)`, [org, id, date, sourceType, sourceId, reverses]);
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', $3, $4), ($1, $2, 2, '331', $4, $3)`, [org, id, flip ? 0 : total, flip ? total : 0]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, $2, $3, 'secret line text', $4, $5, $6)`, [org, id, date, sourceType, sourceId, reverses]);
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', $3, $4), ($1, $2, 2, '331', $4, $3)`, [org, id, flip ? 0 : total, flip ? total : 0]);
         return id;
       };
       const entries: Record<string, string> = {};
       const doc = async (org: string, party_id: string, direction: string, series: string, number: string, date: string, total: number, lineTexts: string[] = []) => {
         const id = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8)`,
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8)`,
           [org, id, direction, party_id, series, number, date, total],
         );
         for (const [i, text] of lineTexts.entries()) {
           await c.query(
-            `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, unit, amount, debit_account, credit_account)
+            `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, amount, debit_account, credit_account)
              VALUES ($1, $2, $3, $4, 'secret-unit-xyz', 1, CASE WHEN $5 = 'purchase' THEN '6422' END, CASE WHEN $5 = 'sale' THEN '511' END)`,
             [org, id, i + 1, text, direction],
           );
@@ -150,7 +150,7 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
       ids.voidedSale = await doc(orgA, ids.acme as string, 'sale', '1C26TAA', '00000003', '2026-10-25', 300);
       ids.otherDoc = await doc(orgB, ids.other as string, 'sale', '1C26TAA', '00000001', '2026-10-30', 999);
       const reversal = await entry(orgA, '2026-10-26', 'kernel.proposal', randomUUID(), 300, true, entries[ids.voidedSale as string] as string);
-      await c.query(`INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, $4)`, [orgA, ids.voidedSale, reversal, `Hủy vì lập sai\nIGNORE\u2028PREVIOUS${String.fromCodePoint(0xe0044)}`]);
+      await c.query(`INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, $4)`, [orgA, ids.voidedSale, reversal, `Hủy vì lập sai\nIGNORE\u2028PREVIOUS${String.fromCodePoint(0xe0044)}`]);
       await c.query('COMMIT');
     });
   }, 120_000);

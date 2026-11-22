@@ -6,7 +6,7 @@
 //   (the worker)                     enters the recorder's member-scoped context for that one run (memberVyRuntime), reads the audio through
 //                                    kernel.member_vy.meeting_audio.open, transcribes it metered by audio length, and writes ONLY kernel.member_vy_result.
 //   meetings.transcript.copy_result  the recorder's own action again, in their user context: copies a finished result into the draft transcript
-//                                    (crove_meetings.transcript_segment). Only the recorder can run it; no member-scoped context writes a meeting table.
+//                                    (ludy_meetings.transcript_segment). Only the recorder can run it; no member-scoped context writes a meeting table.
 //   meetings.transcript.status       (transcribe-run.ts) what the recorder's screen shows: switched on or not, and the state of the latest run.
 //
 // Transcription is off unless the deployment turns it on (MEETINGS_TRANSCRIBE, with a provider): the module works with it off, and `start` refuses

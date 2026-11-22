@@ -3,8 +3,8 @@
 // Excel export of it (GET /api/export/vat.xlsx), like finance.journal.export.
 //
 // Input invoices are the recorded purchase documents, output invoices the recorded sales documents (sales e-invoices,
-// issue #313); both live in crove_finance.purchase_document, told apart by direction. A document recorded from e-invoice
-// XML since #685 carries the invoice's own VAT table (crove_finance.purchase_tax_rate), which splits it by rate exactly;
+// issue #313); both live in ludy_finance.purchase_document, told apart by direction. A document recorded from e-invoice
+// XML since #685 carries the invoice's own VAT table (ludy_finance.purchase_tax_rate), which splits it by rate exactly;
 // the others are split by estimate from their lines and flagged rate_split when that spreads VAT over several rates.
 //
 // The period of an input invoice is its posting date, the date of its journal entry (#478). That is its invoice date,
@@ -238,8 +238,8 @@ interface PeriodInvoice {
 // intake normalizes it: digits without leading zeros). Of two drafts that meet one invoice (a symbol and a number under two template numbers) the one issued first answers, so a row
 // is never doubled, and its own answer stands: a draft with no sale date of its own gives none, it never borrows the other's.
 const SALE_DATE: RawBuilder<string | null> = sql`(
-  SELECT e.sale_date FROM crove_finance.einvoice_draft e
-  JOIN crove_finance.einvoice_series es ON es.org_id = e.org_id AND es.id = e.series_id
+  SELECT e.sale_date FROM ludy_finance.einvoice_draft e
+  JOIN ludy_finance.einvoice_series es ON es.org_id = e.org_id AND es.id = e.series_id
   WHERE e.org_id = d.org_id AND e.legal_entity_id = d.legal_entity_id AND e.state = 'issued'
     AND es.symbol = d.invoice_series
     AND CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number
@@ -248,7 +248,7 @@ const SALE_DATE: RawBuilder<string | null> = sql`(
 // The sales whose sale date is in an earlier period than `period` but that were issued in it (#3535): issued here, declared there.
 async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<Array<{ id: string; series: string; number: string; partyName: string; issueDate: string; saleDate: string; total: string; vatAmount: string; recordedAt: Date }>> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.vat_amount', 'd.total', 'd.created_at', 'p.name'])
     .select(SALE_DATE.as('sale_date'))
@@ -260,7 +260,7 @@ async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEnti
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+          selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
         ),
       ),
     )
@@ -279,9 +279,9 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
   // A sale is in the period of its sale date when it has one (#3535), else of its invoice date.
   const periodDate = direction === 'purchase' ? sql<string>`j.entry_date` : sql<string>`COALESCE(${SALE_DATE}, d.invoice_date)`;
   const docs = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .innerJoin('crove_finance.journal_entry as j', (join) =>
+    .innerJoin('ludy_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'd.created_at', 'p.name', 'p.tax_code', 'd.correction_kind', 'd.corrected_series', 'd.corrected_number'])
@@ -294,7 +294,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+          selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
         ),
       ),
     )
@@ -310,7 +310,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
   }
   if (docs.length === 0) return [];
   const lines = await ctx.trx
-    .selectFrom('crove_finance.purchase_line')
+    .selectFrom('ludy_finance.purchase_line')
     .select(['document_id', 'amount', 'vat_rate'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -329,7 +329,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
   }
   // The invoice's own VAT table, for the documents recorded from e-invoice XML since #685.
   const rateRows = await ctx.trx
-    .selectFrom('crove_finance.purchase_tax_rate')
+    .selectFrom('ludy_finance.purchase_tax_rate')
     .select(['document_id', 'vat_rate', 'taxable_amount', 'vat_amount'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -385,7 +385,7 @@ async function latestMarks(ctx: QueryContext, ids: string[]): Promise<Map<string
   const marks = new Map<string, CheckMark>();
   if (ids.length === 0) return marks;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.input_vat_check')
+    .selectFrom('ludy_finance.input_vat_check')
     .select(['document_id', 'outcome', 'voucher_id', 'note', 'created_at'])
     .distinctOn('document_id')
     .where('org_id', '=', ctx.orgId)
@@ -442,7 +442,7 @@ async function filedReturns(ctx: QueryContext, legalEntityId: string, periods: s
   const out = new Map<string, VatFiledReturn>();
   if (periods.length === 0) return out;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.vat_return_filed')
+    .selectFrom('ludy_finance.vat_return_filed')
     .select(['period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'created_at'])
     .distinctOn('period')
     .where('org_id', '=', ctx.orgId)
@@ -543,7 +543,7 @@ async function lockedAt(ctx: QueryContext, period: VatPeriod, legalEntityId: str
     WHERE e.org_id = ${ctx.orgId}::uuid AND e.command = 'finance.period.lock' AND e.outcome = 'ok'
       AND e.occurred_at >= ${period.from}::date AND e.detail->>'month' = ${period.to.slice(0, 7)}::text AND e.detail->>'legalEntityId' = ${legalEntityId}::text`.execute(ctx.trx);
   if (rows[0]?.at) return new Date(rows[0].at);
-  const row = await ctx.trx.selectFrom('crove_finance.period_lock').select('updated_at').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', legalEntityId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_finance.period_lock').select('updated_at').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', legalEntityId).executeTakeFirst();
   return row ? new Date(row.updated_at) : null;
 }
 
@@ -602,7 +602,7 @@ export const salesNumberGapsQuery = defineQuery({
     const fromDate = range ? `${range.from.slice(0, 4)}-01-01` : input.fromYear !== undefined ? `${input.fromYear}-01-01` : null;
     const toDate = range ? `${range.to.slice(0, 4)}-12-31` : null;
     let query = ctx.trx
-      .selectFrom('crove_finance.purchase_document as d')
+      .selectFrom('ludy_finance.purchase_document as d')
       .select(['d.invoice_series', 'd.invoice_number', 'd.invoice_date'])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.legal_entity_id', '=', legalEntityId)
@@ -610,7 +610,7 @@ export const salesNumberGapsQuery = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+            selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
           ),
         ),
       );
@@ -735,14 +735,14 @@ export const vatPaymentMark = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới đánh dấu được hóa đơn');
     const doc = await ctx.trx
-      .selectFrom('crove_finance.purchase_document as d')
+      .selectFrom('ludy_finance.purchase_document as d')
       .select(['d.id', 'd.direction', 'd.invoice_date', 'd.total', 'd.payment_method', 'd.legal_entity_id'])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.id', '=', input.documentId)
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+            selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
           ),
         ),
       )
@@ -755,7 +755,7 @@ export const vatPaymentMark = defineCommand({
     if (voucherId !== null) {
       if (input.outcome !== 'paid_by_bank') throw new DomainError('VOUCHER_NOT_BANK', 422, 'Chỉ gắn chứng từ ngân hàng khi hóa đơn đã thanh toán qua ngân hàng');
       const voucher = await ctx.trx
-        .selectFrom('crove_finance.cash_voucher')
+        .selectFrom('ludy_finance.cash_voucher')
         .select('voucher_type')
         .where('org_id', '=', ctx.orgId)
         // A voucher of the invoice's legal entity (#1280); the database holds both parents of a mark to one entity.
@@ -766,7 +766,7 @@ export const vatPaymentMark = defineCommand({
     }
     const note = input.note ?? null;
     await ctx.trx
-      .insertInto('crove_finance.input_vat_check')
+      .insertInto('ludy_finance.input_vat_check')
       .values({ org_id: ctx.orgId, document_id: doc.id, outcome: input.outcome, voucher_id: voucherId, note, marked_by: ctx.actor.userId })
       .execute();
     ctx.audit({ document_id: doc.id, outcome: input.outcome, ...(voucherId ? { voucher_id: voucherId } : {}) });
@@ -777,7 +777,7 @@ export const vatPaymentMark = defineCommand({
 const FILERS: readonly MemberRole[] = ['owner', 'admin'];
 
 // Marks the period's VAT return filed (#1400), with the tax calendar's done mark hung on it: one appended row of
-// crove_finance.vat_return_filed with [22], [25] and [43] as filed, and kernel.tax_obligation.done for vat_return in
+// ludy_finance.vat_return_filed with [22], [25] and [43] as filed, and kernel.tax_obligation.done for vat_return in
 // the same transaction. With figures (the VAT screen) they are recorded as entered. Without them (the tax calendar's
 // done button) Crove records its own working: [22] from the return before, [25] the suggested deduction (#917) and
 // the [43] the form's formulas give; a period already marked filed keeps its figures. done false takes both marks
@@ -809,7 +809,7 @@ export const vatReturnMark = defineCommand({
       if (input.figures) throw new DomainError('INVALID', 422, 'Bỏ đánh dấu đã nộp thì không kèm số liệu');
       if (current) {
         await ctx.trx
-          .insertInto('crove_finance.vat_return_filed')
+          .insertInto('ludy_finance.vat_return_filed')
           .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, period: period.period, status: 'withdrawn', source: null, carried_in_amount: null, deductible_amount: null, carried_out_amount: null, marked_by: ctx.actor.userId })
           .execute();
       }
@@ -841,7 +841,7 @@ export const vatReturnMark = defineCommand({
       !(current && current.source === source && current.carriedIn === figures.carriedIn && current.deductible === figures.deductible && current.carriedOut === figures.carriedOut);
     if (figures && recorded) {
       await ctx.trx
-        .insertInto('crove_finance.vat_return_filed')
+        .insertInto('ludy_finance.vat_return_filed')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: legalEntityId,

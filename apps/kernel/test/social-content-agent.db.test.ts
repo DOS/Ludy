@@ -106,7 +106,7 @@ suite('the social.content_manager agent on PostgreSQL (#799)', () => {
     const after = await admin(async (c) => ({
       comment: (await c.query<{ body: string; author_type: string }>(`SELECT body, author_type FROM ludy_kernel.task_comment WHERE org_id = $1`, [orgId])).rows,
       escalations: (await c.query(`SELECT title, created_by_type FROM ludy_kernel.task WHERE org_id = $1 AND kind = 'escalation'`, [orgId])).rows,
-      variants: (await c.query<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE org_id = $1`, [orgId])).rows,
+      variants: (await c.query<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE org_id = $1`, [orgId])).rows,
     }));
     expect(after.comment).toHaveLength(1);
     expect(after.comment[0]).toMatchObject({ author_type: 'agent' });

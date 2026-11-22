@@ -84,7 +84,7 @@ async function storedAround(
     batchKeys.length === 0 && batchRefs.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_finance.bank_line')
+          .selectFrom('ludy_finance.bank_line')
           .select(['dedupe_key', 'bank_ref', 'value_date', 'amount'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', legalEntityId)
@@ -108,7 +108,7 @@ async function storedAround(
   let before: StoredChainLine | null = null;
   if (from && to) {
     within = await ctx.trx
-      .selectFrom('crove_finance.bank_line')
+      .selectFrom('ludy_finance.bank_line')
       .select(['value_date as date', 'amount', 'running_balance as balance'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -121,7 +121,7 @@ async function storedAround(
       .execute();
     before =
       (await ctx.trx
-        .selectFrom('crove_finance.bank_line')
+        .selectFrom('ludy_finance.bank_line')
         .select(['value_date as date', 'amount', 'running_balance as balance'])
         .where('org_id', '=', ctx.orgId)
         .where('legal_entity_id', '=', legalEntityId)
@@ -157,7 +157,7 @@ async function check(ctx: QueryContext, input: BankStatementImport, legalEntityI
 // there is none: files and the feed are only deduplicated.
 export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string, syncedOnly = false): Promise<string | null> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.bank_feed_account as a')
+    .selectFrom('ludy_finance.bank_feed_account as a')
     .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
     .select((eb) => eb.fn.min('a.feed_from').as('feed_from'))
     .where('a.org_id', '=', ctx.orgId)
@@ -182,7 +182,7 @@ async function storeLines(ctx: CommandContext, legalEntityId: string, bankAccoun
   for (let i = 0; i < lines.length; i += 500) {
     const chunk = lines.slice(i, i + 500);
     const inserted = await ctx.trx
-      .insertInto('crove_finance.bank_line')
+      .insertInto('ludy_finance.bank_line')
       .values(
         chunk.map((l) => ({
           org_id: ctx.orgId,
@@ -345,7 +345,7 @@ export const bankLines = defineQuery({
     // The lines of one legal entity (#1280).
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_line')
+      .selectFrom('ludy_finance.bank_line')
       .select(['id', 'value_date', 'description', 'amount', 'running_balance', 'bank_ref', 'ambiguous', 'import_id'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -392,7 +392,7 @@ export const bankPlatformLines = defineQuery({
     // A folded description is words of a-z and 0-9 apart by one space, so padded with spaces a term is found only as whole words.
     const named = sql<boolean>`pg_catalog.strpos(' ' || ludy_kernel.search_fold(l.description) || ' ', ' ' || ludy_kernel.search_fold(t.term) || ' ') > 0`;
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_line as l')
+      .selectFrom('ludy_finance.bank_line as l')
       .select(['l.id', 'l.bank_account', 'l.value_date', 'l.description', 'l.amount'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.legal_entity_id', '=', legalEntityId)

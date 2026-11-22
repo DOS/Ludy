@@ -135,7 +135,7 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     expect((await tag(o, f, ['THE-00'])).tags).toHaveLength(MAX_TAGS_PER_FILE);
     await untag(o, f, ['the-00']);
     expect((await tag(o, f, ['mot-the-nua'])).tags).toHaveLength(MAX_TAGS_PER_FILE);
-    const rows = await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_social.media_tag WHERE org_id = $1 AND file_id = $2', [o.orgId, f]));
+    const rows = await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_social.media_tag WHERE org_id = $1 AND file_id = $2', [o.orgId, f]));
     expect(rows.rows[0].n).toBe(MAX_TAGS_PER_FILE);
   });
 
@@ -200,7 +200,7 @@ suite('social media library tags on PostgreSQL (#904)', () => {
     await tag(o, gone, ['Tết', 'Khách A']);
     await tag(o, kept, ['Tết']);
     await admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, gone]));
-    const rows = await admin((c) => c.query('SELECT file_id, tag FROM crove_social.media_tag WHERE org_id = $1 ORDER BY tag', [o.orgId]));
+    const rows = await admin((c) => c.query('SELECT file_id, tag FROM ludy_social.media_tag WHERE org_id = $1 ORDER BY tag', [o.orgId]));
     expect(rows.rows).toEqual([{ file_id: kept, tag: 'Tết' }]);
     expect((await tags(o)).map((x) => [x.tag, x.files])).toEqual([['Tết', 1]]);
   });

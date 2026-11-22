@@ -7,7 +7,7 @@ export const socialManifest = defineModule({
   id: 'social',
   dependsOn: ['kernel'],
   tables: {
-    crove_social: {
+    ludy_social: {
       account_snapshot: columns(['org_id', 'id', 'channel_connection_id', 'captured_on', 'followers', 'reach', 'error', 'captured_at', 'audience', 'performance']),
       banned_word: columns(['org_id', 'id', 'phrase', 'normalized', 'level', 'reason', 'connection_ids', 'created_by', 'created_at']),
       bio_click: columns(['org_id', 'id', 'page_id', 'target', 'day', 'clicks']),

@@ -56,7 +56,7 @@ async function pendingProposals(ctx: QueryContext, entity: string, b: MonthBound
 async function unmatchedInvoices(ctx: QueryContext, entity: string, month: string, kind: VatFilingPeriod | null): Promise<{ count: number; period: string; direction?: 'sale' } | null> {
   const preference = portalPeriods(month, kind);
   const lists = await ctx.trx
-    .selectFrom('crove_finance.portal_invoice_list')
+    .selectFrom('ludy_finance.portal_invoice_list')
     .select(['period', 'direction'])
     .distinct()
     .where('org_id', '=', ctx.orgId)
@@ -85,7 +85,7 @@ async function unmatchedInvoices(ctx: QueryContext, entity: string, month: strin
 // screen shows as still to do (the rule of finance.bank.open_lines and bankLineStates, here for one month and with the payout vouchers counted).
 async function unbookedBankLines(ctx: QueryContext, entity: string, b: MonthBounds): Promise<number> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.bank_line as l')
+    .selectFrom('ludy_finance.bank_line as l')
     .select(sql<string>`pg_catalog.count(*)`.as('n'))
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', entity)
@@ -94,20 +94,20 @@ async function unbookedBankLines(ctx: QueryContext, entity: string, b: MonthBoun
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.cash_voucher as v')
-            .innerJoin('crove_finance.journal_entry as e', (join) =>
+          selectFrom('ludy_finance.cash_voucher as v')
+            .innerJoin('ludy_finance.journal_entry as e', (join) =>
               join.onRef('e.org_id', '=', 'v.org_id').onRef('e.source_id', '=', 'v.id').on('e.source_type', '=', VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null).on(latestRevision('e')),
             )
             .select('v.id')
             .whereRef('v.org_id', '=', 'l.org_id')
             .whereRef('v.bank_line_id', '=', 'l.id')
             .where(({ not, exists, selectFrom }) =>
-              not(exists(selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
+              not(exists(selectFrom('ludy_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
             ),
         ),
       ),
     )
-    .where(({ not, exists, selectFrom }) => not(exists(selectFrom('crove_finance.journal_voucher as j').select('j.id').whereRef('j.org_id', '=', 'l.org_id').whereRef('j.payout_bank_line_id', '=', 'l.id'))))
+    .where(({ not, exists, selectFrom }) => not(exists(selectFrom('ludy_finance.journal_voucher as j').select('j.id').whereRef('j.org_id', '=', 'l.org_id').whereRef('j.payout_bank_line_id', '=', 'l.id'))))
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
@@ -134,14 +134,14 @@ async function unbookedBankLines(ctx: QueryContext, entity: string, b: MonthBoun
 async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds): Promise<number> {
   const standing = sql`s.org_id = ${ctx.orgId}::uuid AND s.legal_entity_id = ${entity}::uuid AND s.period_end >= ${b.from}::date AND s.period_end <= ${b.last}::date
     AND s.reversal_of IS NULL
-    AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
+    AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
   const pending = (command: string) =>
     sql`NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal p WHERE p.org_id = s.org_id AND p.command = ${command} AND p.status = 'pending' AND pg_catalog.lower(p.payload->>'settlementId') = pg_catalog.lower(s.id::text))`;
   const candidates = (
     await sql<{ id: string; period_end: string }>`
-      SELECT s.id, s.period_end::text AS period_end FROM crove_finance.channel_settlement s
+      SELECT s.id, s.period_end::text AS period_end FROM ludy_finance.channel_settlement s
       WHERE ${standing}
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
         AND ${pending(MARKETPLACE_SETTLEMENT_COMMAND)}`.execute(ctx.trx)
   ).rows;
   let toPost = 0;
@@ -169,12 +169,12 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
         pg_catalog.count(*) FILTER (WHERE l.other > 0 AND l.other <> pg_catalog.trunc(l.other)) AS other_fraction,
         pg_catalog.count(*) FILTER (WHERE l.tax_withheld > 0) AS tax_lines,
         pg_catalog.count(*) FILTER (WHERE l.tax_withheld > 0 AND l.tax_withheld <> pg_catalog.trunc(l.tax_withheld)) AS tax_fraction
-      FROM crove_finance.channel_settlement s
-      JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
+      FROM ludy_finance.channel_settlement s
+      JOIN ludy_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
       WHERE ${standing}
-        AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher j WHERE j.org_id = s.org_id AND j.settlement_id = s.id AND ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)})
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
+        AND EXISTS (SELECT 1 FROM ludy_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_voucher j WHERE j.org_id = s.org_id AND j.settlement_id = s.id AND ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)})
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
         AND ${pending(MARKETPLACE_PAYOUT_COMMAND)}
       GROUP BY s.id
     ) x
@@ -190,14 +190,14 @@ async function openMarketplace(ctx: QueryContext, entity: string, b: MonthBounds
 // no move of its own after the last closed one needs no close (as the close command itself says), so it is left out: null.
 async function stockCloseOpen(ctx: QueryContext, entity: string, b: MonthBounds, today: string): Promise<boolean | null> {
   if (!monthOver(b, today)) return null;
-  const closed = await ctx.trx.selectFrom('crove_finance.stock_period').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).where('period_month', '>=', b.from).limit(1).executeTakeFirst();
+  const closed = await ctx.trx.selectFrom('ludy_finance.stock_period').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).where('period_month', '>=', b.from).limit(1).executeTakeFirst();
   if (closed !== undefined) return false;
   const { rows } = await sql<{ pending: boolean }>`
     SELECT EXISTS (
-      SELECT 1 FROM crove_finance.stock_move m
+      SELECT 1 FROM ludy_finance.stock_move m
       WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${entity}::uuid AND m.move_date < ${b.next}::date
         AND m.move_date >= COALESCE(
-          (SELECT pg_catalog.max(p.period_month) + INTERVAL '1 month' FROM crove_finance.stock_period p WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${entity}::uuid AND p.period_month < ${b.from}::date),
+          (SELECT pg_catalog.max(p.period_month) + INTERVAL '1 month' FROM ludy_finance.stock_period p WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${entity}::uuid AND p.period_month < ${b.from}::date),
           DATE '0001-01-01')
     ) AS pending`.execute(ctx.trx);
   return rows[0]?.pending === true ? true : null;
@@ -206,7 +206,7 @@ async function stockCloseOpen(ctx: QueryContext, entity: string, b: MonthBounds,
 // Whether the return of the VAT period is not marked as filed: the latest mark of the period (or of the quarter that holds a month, for a filer who changed period) is not a filed one.
 async function vatMarkOpen(ctx: QueryContext, entity: string, period: string): Promise<boolean> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.vat_return_filed')
+    .selectFrom('ludy_finance.vat_return_filed')
     .select(['period', 'status', 'source'])
     .distinctOn('period')
     .where('org_id', '=', ctx.orgId)

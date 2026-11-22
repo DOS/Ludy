@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Nightly keeping sweep for Projects Public Roadmap OTP challenges (#4399, ADR-0053, ADR-0057).
-// Prunes expired/invalidated `crove_projects.roadmap_otp` rows older than 24 hours even when `projects` is switched off.
+// Prunes expired/invalidated `ludy_projects.roadmap_otp` rows older than 24 hours even when `projects` is switched off.
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
 import type { Actor, Runtime } from '@ludy/kernel-runtime';
@@ -20,7 +20,7 @@ export async function sweepRoadmapOtpCleanup(deps: {
   const cutoff = new Date(nowMs - ROADMAP_OTP_RETENTION_HOURS * 3_600_000);
   const { rows: orgs } = await sql<{ org_id: string }>`
     SELECT org_id
-      FROM crove_projects.cleanup_roadmap_otp_due_orgs(${cutoff}::timestamptz, ${SWEEP_ORG_BATCH}::int)
+      FROM ludy_projects.cleanup_roadmap_otp_due_orgs(${cutoff}::timestamptz, ${SWEEP_ORG_BATCH}::int)
      ORDER BY org_id ASC`.execute(deps.workerDb);
 
   const totals = { orgs: 0, deleted: 0 };

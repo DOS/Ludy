@@ -288,7 +288,7 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     // The uploaders are authors: a third person approves (P10).
     const done = await rt.execute<{ journalEntryId: string; documentId: string }>('kernel.proposal.approve', { id: pdf.proposalId, revision: detail.revision, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId });
     expect(done.journalEntryId).toEqual(expect.any(String));
-    const documents = await admin(async (c) => (await c.query<{ source_file_id: string }>(`SELECT source_file_id FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = '5003'`, [orgId])).rows);
+    const documents = await admin(async (c) => (await c.query<{ source_file_id: string }>(`SELECT source_file_id FROM ludy_finance.purchase_document WHERE org_id = $1 AND invoice_number = '5003'`, [orgId])).rows);
     expect(documents).toEqual([{ source_file_id: xml.fileId }]);
     expect(await fileStatus(users.owner, pdf.fileId)).toMatchObject({ status: 'proposed' });
   });

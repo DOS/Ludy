@@ -14,7 +14,7 @@ export async function householdTaxRate(ctx: Ctx, legalEntityId: string, date: st
   const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', legalEntityId).executeTakeFirst();
   if (entity?.kind !== 'household') return null;
   const profile = await ctx.trx
-    .selectFrom('crove_finance.household_profile')
+    .selectFrom('ludy_finance.household_profile')
     .select('trades')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -37,7 +37,7 @@ export async function householdTaxRate(ctx: Ctx, legalEntityId: string, date: st
     );
   }
   const rows = await ctx.trx
-    .selectFrom('crove_finance.household_trade_rate')
+    .selectFrom('ludy_finance.household_trade_rate')
     .select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'status'])
     .where('trade', '=', trade)
     .where('effective_from', '<=', date)

@@ -26,11 +26,11 @@ describe('meetings manifest and constants', () => {
   it('exposes the expected manifest properties', () => {
     expect(meetingsManifest.id).toBe('meetings');
     expect(meetingsManifest.dependsOn).toEqual(['kernel']);
-    expect(meetingsManifest.tables.crove_meetings.meeting).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.meeting_reader).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.audio_segment).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.meeting_video).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.media_key).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.meeting).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.meeting_reader).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.audio_segment).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.meeting_video).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.media_key).toBeDefined();
     expect(meetingsManifest.routes).toHaveLength(4);
     expect(meetingsManifest.routes[0].path).toBe('meetings');
     expect(meetingsManifest.routes[1].path).toBe('meetings/record');
@@ -50,7 +50,7 @@ describe('meetings manifest and constants', () => {
     expect(MEETING['audio_retention_date']).toBe('internal');
     expect(MEETING['title']).toBe('pii');
 
-    const mediaKey = meetingsManifest.tables.crove_meetings.media_key;
+    const mediaKey = meetingsManifest.tables.ludy_meetings.media_key;
     expect(mediaKey['wrapped_key']).toBe('sensitive');
   });
 

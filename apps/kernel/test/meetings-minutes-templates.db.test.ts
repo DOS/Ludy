@@ -51,12 +51,12 @@ suite('minutes templates an organization writes (#3578)', () => {
   const section = (title: string, hint = 'Điều cần ghi lại.', key?: string) => ({ ...(key ? { key } : {}), title, hint });
   const create = (who: string, name: string, sections = [section('Nội dung'), section('Quyết định'), section('Việc tiếp theo')], org = orgId) => exec<Done>(who, 'meetings.template.create', { name, sections }, org);
   const list = (who: string, org = orgId) => query<MinutesTemplates>(who, 'meetings.template.list', {}, org).then((r) => r.templates);
-  const stored = async (templateId: string) => (await sqlAdmin<{ name: string; sections: Array<{ key: string; title: string; hint: string }>; archived_at: string | null }>('SELECT name, sections, archived_at FROM crove_meetings.minutes_template WHERE id = $1', [templateId])).rows[0];
+  const stored = async (templateId: string) => (await sqlAdmin<{ name: string; sections: Array<{ key: string; title: string; hint: string }>; archived_at: string | null }>('SELECT name, sections, archived_at FROM ludy_meetings.minutes_template WHERE id = $1', [templateId])).rows[0];
 
   async function meeting(recorder: string): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp dự án', 'vi', now(), now(), 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
       [orgId, id, users[recorder]],
     );
@@ -65,7 +65,7 @@ suite('minutes templates an organization writes (#3578)', () => {
   const copyOf = async (meetingId: string) =>
     (
       await sqlAdmin<{ summary_template: string; minutes_template_name: string | null; minutes_template_sections: Array<{ key: string; title: string; hint: string }> | null; minutes_template_hash: string | null; hash_ok: boolean | null }>(
-        `SELECT summary_template, minutes_template_name, minutes_template_sections, minutes_template_hash, minutes_template_hash = md5(minutes_template_sections::text) AS hash_ok FROM crove_meetings.meeting WHERE id = $1`,
+        `SELECT summary_template, minutes_template_name, minutes_template_sections, minutes_template_hash, minutes_template_hash = md5(minutes_template_sections::text) AS hash_ok FROM ludy_meetings.meeting WHERE id = $1`,
         [meetingId],
       )
     ).rows[0];
@@ -199,15 +199,15 @@ suite('minutes templates an organization writes (#3578)', () => {
   });
 
   it('keeps at most 50 active templates, and an archived one does not count', async () => {
-    await sqlAdmin(`DELETE FROM crove_meetings.minutes_template WHERE org_id = $1`, [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.minutes_template WHERE org_id = $1`, [orgId]);
     await sqlAdmin(
-      `INSERT INTO crove_meetings.minutes_template (org_id, name, sections, created_by) SELECT $1, 'Mẫu ' || g, '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, $2 FROM generate_series(1, 50) g`,
+      `INSERT INTO ludy_meetings.minutes_template (org_id, name, sections, created_by) SELECT $1, 'Mẫu ' || g, '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, $2 FROM generate_series(1, 50) g`,
       [orgId, users.owner],
     );
     expect(await refuses(create('owner', 'Mẫu thứ 51'))).toBe('MINUTES_TEMPLATES_MAX');
-    await sqlAdmin(`UPDATE crove_meetings.minutes_template SET archived_at = now() WHERE org_id = $1 AND name = 'Mẫu 1'`, [orgId]);
+    await sqlAdmin(`UPDATE ludy_meetings.minutes_template SET archived_at = now() WHERE org_id = $1 AND name = 'Mẫu 1'`, [orgId]);
     expect((await create('owner', 'Mẫu thứ 51')).archived).toBe(false);
-    await sqlAdmin(`DELETE FROM crove_meetings.minutes_template WHERE org_id = $1`, [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.minutes_template WHERE org_id = $1`, [orgId]);
   });
 
   it('stores a title and a hint as plain text: control characters and separators are stripped, whitespace is collapsed, markup and markdown stay literal', async () => {
@@ -231,7 +231,7 @@ suite('minutes templates an organization writes (#3578)', () => {
 
   it('holds the same rules in the database: a member\'s direct INSERT or UPDATE is refused, an owner\'s goes through, nobody deletes, and a malformed row is refused whoever writes it', async () => {
     const { templateId } = await create('owner', 'Mẫu để thử SQL');
-    const insert = `INSERT INTO crove_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu lén', '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, $2)`;
+    const insert = `INSERT INTO ludy_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu lén', '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, $2)`;
     // A plain member and a viewer: the row policy shows them the row (the app's list command refuses a viewer, the table does not) and lets them write nothing.
     for (const who of ['rec', 'viewer']) {
       await asContext(who, orgId, async (run) => {
@@ -239,20 +239,20 @@ suite('minutes templates an organization writes (#3578)', () => {
       });
       await asContext(who, orgId, async (run) => {
         // The row is visible to a member (every member reads) and the write policy hides it from their UPDATE: no row is changed (a row policy's USING clause filters, it does not raise).
-        expect((await run('SELECT 1 FROM crove_meetings.minutes_template WHERE id = $1', [templateId])).rowCount).toBe(1);
-        expect((await run(`UPDATE crove_meetings.minutes_template SET name = 'Bị đổi' WHERE id = $1`, [templateId])).rowCount, `update, ${who}`).toBe(0);
+        expect((await run('SELECT 1 FROM ludy_meetings.minutes_template WHERE id = $1', [templateId])).rowCount).toBe(1);
+        expect((await run(`UPDATE ludy_meetings.minutes_template SET name = 'Bị đổi' WHERE id = $1`, [templateId])).rowCount, `update, ${who}`).toBe(0);
       });
     }
     for (const who of ['owner', 'adm']) {
       await asContext(who, orgId, async (run) => {
-        expect((await run(`UPDATE crove_meetings.minutes_template SET name = 'Được đổi' WHERE id = $1`, [templateId])).rowCount, `update, ${who}`).toBe(1);
+        expect((await run(`UPDATE ludy_meetings.minutes_template SET name = 'Được đổi' WHERE id = $1`, [templateId])).rowCount, `update, ${who}`).toBe(1);
         expect((await run(insert, [orgId, users[who]])).rowCount, `insert, ${who}`).toBe(1);
-        await expect(run('DELETE FROM crove_meetings.minutes_template WHERE id = $1', [templateId]), `delete, ${who}`).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+        await expect(run('DELETE FROM ludy_meetings.minutes_template WHERE id = $1', [templateId]), `delete, ${who}`).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
       });
     }
     // An owner of another org cannot write into this org's table, and sees none of its templates.
     await asContext('ownerB', otherOrgId, async (run) => {
-      expect((await run('SELECT 1 FROM crove_meetings.minutes_template WHERE id = $1', [templateId])).rowCount).toBe(0);
+      expect((await run('SELECT 1 FROM ludy_meetings.minutes_template WHERE id = $1', [templateId])).rowCount).toBe(0);
       await expect(run(insert, [orgId, users.ownerB])).rejects.toMatchObject({ code: '42501' });
     });
     // The shape is pinned whoever writes (the table owner here): bad sections, bad names.
@@ -279,7 +279,7 @@ suite('minutes templates an organization writes (#3578)', () => {
       ['an empty name', '', '[{"key":"s1","title":"Mục","hint":""}]'],
     ];
     for (const [label, name, sections] of bad) {
-      const refusal = await sqlAdmin(`INSERT INTO crove_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, $2, $3::jsonb, $4)`, [orgId, name, sections, users.owner]).then(
+      const refusal = await sqlAdmin(`INSERT INTO ludy_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, $2, $3::jsonb, $4)`, [orgId, name, sections, users.owner]).then(
         () => null,
         (e: { code?: string }) => e.code ?? 'ERR',
       );
@@ -321,7 +321,7 @@ suite('minutes templates an organization writes (#3578)', () => {
     expect(await copyOf(id)).toMatchObject({ summary_template: 'briefing', minutes_template_name: null, minutes_template_sections: null, minutes_template_hash: null });
     // Deleting the template's row (the org purge's way) leaves a copy alone too: no foreign key links them.
     await pick('rec', id, 'custom', second.templateId);
-    await sqlAdmin('DELETE FROM crove_meetings.minutes_template WHERE id = $1', [second.templateId]);
+    await sqlAdmin('DELETE FROM ludy_meetings.minutes_template WHERE id = $1', [second.templateId]);
     expect(await copyOf(id)).toMatchObject({ summary_template: 'custom', minutes_template_name: 'Họp khách hàng', hash_ok: true });
   });
 
@@ -340,7 +340,7 @@ suite('minutes templates an organization writes (#3578)', () => {
     expect(await refuses(pick('adm', id, 'custom', mine.templateId))).not.toBeNull();
     expect(await copyOf(id)).toMatchObject({ summary_template: 'general' });
     // The database refuses a copy that does not match its hash, a copy without the code, and the code without a copy, whoever writes.
-    const attempt = (set: string) => sqlAdmin(`UPDATE crove_meetings.meeting SET ${set} WHERE id = $1`, [id]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR');
+    const attempt = (set: string) => sqlAdmin(`UPDATE ludy_meetings.meeting SET ${set} WHERE id = $1`, [id]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR');
     expect(await attempt(`summary_template = 'custom'`)).toBe('23514');
     expect(await attempt(`minutes_template_name = 'Mẫu', minutes_template_sections = '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, minutes_template_hash = md5('sai')`)).toBe('23514');
     expect(await attempt(`summary_template = 'custom', minutes_template_name = 'Mẫu', minutes_template_sections = '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, minutes_template_hash = md5('[{"key": "s1", "hint": "", "title": "Mục"}]')`)).toBeNull();
@@ -363,8 +363,8 @@ suite('minutes templates an organization writes (#3578)', () => {
         }
       };
       // The row policy lets an agent context reach the rows, so it is the guard that refuses (a row policy that hid them would run the statement as a no-op instead).
-      await expect(inAgent(`INSERT INTO crove_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu của tác tử', '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, $2)`, [orgId, users.owner])).rejects.toMatchObject({ code: '42501', message: 'AGENT_FORBIDDEN' });
-      await expect(inAgent(`UPDATE crove_meetings.minutes_template SET name = 'Tác tử đổi' WHERE id = $1`, [templateId])).rejects.toMatchObject({ code: '42501', message: 'AGENT_FORBIDDEN' });
+      await expect(inAgent(`INSERT INTO ludy_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu của tác tử', '[{"key":"s1","title":"Mục","hint":""}]'::jsonb, $2)`, [orgId, users.owner])).rejects.toMatchObject({ code: '42501', message: 'AGENT_FORBIDDEN' });
+      await expect(inAgent(`UPDATE ludy_meetings.minutes_template SET name = 'Tác tử đổi' WHERE id = $1`, [templateId])).rejects.toMatchObject({ code: '42501', message: 'AGENT_FORBIDDEN' });
     } finally {
       await c.end();
     }

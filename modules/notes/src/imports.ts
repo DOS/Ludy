@@ -78,7 +78,7 @@ export const noteImportEnex = defineCommand({
     }
 
     const existingNotebooks = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(['id', 'name', 'sort_key'])
       .where('org_id', '=', ctx.orgId)
       .where('author_user_id', '=', userId)
@@ -94,7 +94,7 @@ export const noteImportEnex = defineCommand({
     }
 
     const existingAllCountRow = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(({ fn }) => fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('author_user_id', '=', userId)
@@ -102,13 +102,13 @@ export const noteImportEnex = defineCommand({
     let totalOwnedNotebooks = Number(existingAllCountRow?.n ?? 0);
 
     const { rows: lastNbRows } = await sql<{ last: string | null }>`
-      SELECT pg_catalog.max(sort_key) AS last FROM crove_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+      SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     let lastNotebookSortKey = lastNbRows[0]?.last ?? null;
 
     const seenNoteKeys = new Set<string>();
     if (input.skipDuplicates) {
       const existingNotes = await ctx.trx
-        .selectFrom('crove_notes.note')
+        .selectFrom('ludy_notes.note')
         .select(['notebook_id', 'title'])
         .where('org_id', '=', ctx.orgId)
         .where('author_user_id', '=', userId)
@@ -158,7 +158,7 @@ export const noteImportEnex = defineCommand({
         let nextSortKey = keyBetween(lastNotebookSortKey, null);
         if (nextSortKey.length > REBALANCE_AT) {
           const ownNbs = await ctx.trx
-            .selectFrom('crove_notes.notebook')
+            .selectFrom('ludy_notes.notebook')
             .select('id')
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
@@ -168,7 +168,7 @@ export const noteImportEnex = defineCommand({
           const fresh = spreadKeys(ownNbs.length + 1);
           for (let i = 0; i < ownNbs.length; i += 1) {
             await ctx.trx
-              .updateTable('crove_notes.notebook')
+              .updateTable('ludy_notes.notebook')
               .set({ sort_key: fresh[i] as string })
               .where('org_id', '=', ctx.orgId)
               .where('id', '=', ownNbs[i]!.id)
@@ -177,7 +177,7 @@ export const noteImportEnex = defineCommand({
           nextSortKey = fresh[ownNbs.length] as string;
         }
         const nbRow = await ctx.trx
-          .insertInto('crove_notes.notebook')
+          .insertInto('ludy_notes.notebook')
           .values({
             org_id: ctx.orgId,
             author_user_id: userId,
@@ -205,7 +205,7 @@ export const noteImportEnex = defineCommand({
       const updatedAt = rawUpdated.getTime() < createdAt.getTime() ? createdAt : rawUpdated;
 
       const noteRow = await ctx.trx
-        .insertInto('crove_notes.note')
+        .insertInto('ludy_notes.note')
         .values({
           org_id: ctx.orgId,
           author_user_id: userId,
@@ -228,7 +228,7 @@ export const noteImportEnex = defineCommand({
           throw new DomainError('INVALID', 400, 'Khóa lưu trữ tệp đính kèm không hợp lệ');
         }
         await ctx.trx
-          .insertInto('crove_notes.attachment')
+          .insertInto('ludy_notes.attachment')
           .values({
             org_id: ctx.orgId,
             id: att.attachmentId,
@@ -295,7 +295,7 @@ export const todoImportTodoist = defineCommand({
     }
 
     const existingLists = await ctx.trx
-      .selectFrom('crove_notes.todo_list')
+      .selectFrom('ludy_notes.todo_list')
       .select(['id', 'name', 'sections', 'sort_key', 'revision'])
       .where('org_id', '=', ctx.orgId)
       .where('owner_user_id', '=', userId)
@@ -325,7 +325,7 @@ export const todoImportTodoist = defineCommand({
     const seenTodoKeys = new Set<string>();
     if (input.skipDuplicates) {
       const existingTodos = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select(['list_id', 'title'])
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
@@ -372,7 +372,7 @@ export const todoImportTodoist = defineCommand({
         }
         if (added > 0) {
           await ctx.trx
-            .updateTable('crove_notes.todo_list')
+            .updateTable('ludy_notes.todo_list')
             .set({ sections: JSON.stringify(nextSections), revision: targetListRow.revision + 1, updated_at: ctx.now })
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', targetListRow.id)
@@ -406,7 +406,7 @@ export const todoImportTodoist = defineCommand({
           }
           if (added > 0) {
             await ctx.trx
-              .updateTable('crove_notes.todo_list')
+              .updateTable('ludy_notes.todo_list')
               .set({ sections: JSON.stringify(existing.sections), revision: existing.revision + 1, updated_at: ctx.now })
               .where('org_id', '=', ctx.orgId)
               .where('id', '=', existing.id)
@@ -424,7 +424,7 @@ export const todoImportTodoist = defineCommand({
           let sortKey = keyBetween(lastListSortKey, null);
           if (sortKey.length > REBALANCE_AT) {
             const currentActive = await ctx.trx
-              .selectFrom('crove_notes.todo_list')
+              .selectFrom('ludy_notes.todo_list')
               .select('id')
               .where('org_id', '=', ctx.orgId)
               .where('owner_user_id', '=', userId)
@@ -435,7 +435,7 @@ export const todoImportTodoist = defineCommand({
             const fresh = spreadKeys(currentActive.length + 1);
             for (let i = 0; i < currentActive.length; i += 1) {
               await ctx.trx
-                .updateTable('crove_notes.todo_list')
+                .updateTable('ludy_notes.todo_list')
                 .set({ sort_key: fresh[i] as string })
                 .where('org_id', '=', ctx.orgId)
                 .where('owner_user_id', '=', userId)
@@ -450,7 +450,7 @@ export const todoImportTodoist = defineCommand({
             return { id, name: secName };
           });
           const inserted = await ctx.trx
-            .insertInto('crove_notes.todo_list')
+            .insertInto('ludy_notes.todo_list')
             .values({
               org_id: ctx.orgId,
               owner_user_id: userId,
@@ -486,7 +486,7 @@ export const todoImportTodoist = defineCommand({
           if (ownSortRows.length > 0) {
             const ids = ownSortRows.map((r) => r.id);
             const keys = fresh.slice(0, ownSortRows.length);
-            await sql`UPDATE crove_notes.todo AS t SET sort_key = v.key
+            await sql`UPDATE ludy_notes.todo AS t SET sort_key = v.key
               FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
               WHERE t.org_id = ${ctx.orgId}::uuid AND t.id = v.id`.execute(ctx.trx);
             for (let i = 0; i < ownSortRows.length; i += 1) {
@@ -500,7 +500,7 @@ export const todoImportTodoist = defineCommand({
         const when = due({ dueOn: task.dueOn, dueTime: task.dueTime, timeZone: task.timeZone });
         const remind = remindAt('auto', when, ctx.now);
         const insertedTodo = await ctx.trx
-          .insertInto('crove_notes.todo')
+          .insertInto('ludy_notes.todo')
           .values({
             org_id: ctx.orgId,
             owner_user_id: userId,

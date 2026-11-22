@@ -50,7 +50,7 @@ interface Matches {
 async function matchesFor(ctx: CommandContext, legalEntityId: string, keys: readonly string[]): Promise<Matches> {
   const byCode: Matches['byCode'] = new Map();
   const items = await ctx.trx
-    .selectFrom('crove_finance.stock_item')
+    .selectFrom('ludy_finance.stock_item')
     .select(['id', 'code', 'unit'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -65,8 +65,8 @@ async function matchesFor(ctx: CommandContext, legalEntityId: string, keys: read
   }
   const byAlias: Matches['byAlias'] = new Map();
   const aliases = await ctx.trx
-    .selectFrom('crove_finance.stock_alias as a')
-    .innerJoin('crove_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'a.org_id').onRef('i.id', '=', 'a.item_id'))
+    .selectFrom('ludy_finance.stock_alias as a')
+    .innerJoin('ludy_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'a.org_id').onRef('i.id', '=', 'a.item_id'))
     .select(['a.alias_key', 'a.item_id', 'a.factor', 'a.source_unit'])
     .where('a.org_id', '=', ctx.orgId)
     .where('a.legal_entity_id', '=', legalEntityId)
@@ -145,12 +145,12 @@ export async function reverseDocumentStock(ctx: CommandContext, documentId: stri
   // other's rows, so a voided document never keeps a move that nothing reverses.
   await lockDocumentStock(ctx, documentId);
   const moves = await ctx.trx
-    .selectFrom('crove_finance.stock_move as m')
+    .selectFrom('ludy_finance.stock_move as m')
     .select(['m.id', 'm.item_id', 'm.quantity'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.document_id', '=', documentId)
     .where('m.source_type', '=', 'document_line')
-    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS r WHERE r.org_id = m.org_id AND r.reverses_move_id = m.id)`)
+    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move AS r WHERE r.org_id = m.org_id AND r.reverses_move_id = m.id)`)
     .orderBy('m.line_no')
     .execute();
   for (const move of moves) {
@@ -174,21 +174,21 @@ export const stockUnassigned = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<StockUnassignedLine[]> => {
     let query = ctx.trx
-      .selectFrom('crove_finance.purchase_line as l')
-      .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
+      .selectFrom('ludy_finance.purchase_line as l')
+      .innerJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
       .select(['l.document_id', 'l.line_no', 'l.description', 'l.unit', 'l.quantity', 'd.legal_entity_id', 'd.direction', 'd.invoice_date', 'd.invoice_series', 'd.invoice_number'])
       .where('l.org_id', '=', ctx.orgId)
       .where(sql<boolean>`l.quantity > 0 AND l.amount > 0 AND d.correction_kind IS DISTINCT FROM 'adjustment' AND l.source_kind IS DISTINCT FROM ${ORDER_SOURCE_KIND}`)
-      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void AS v WHERE v.org_id = l.org_id AND v.document_id = l.document_id)`)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void AS v WHERE v.org_id = l.org_id AND v.document_id = l.document_id)`)
       // A line has a live move when its latest try was not reversed; one whose move was reversed (assigned to the wrong item) is unassigned again.
       .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.document_id = l.document_id AND m.line_no = l.line_no AND m.source_type = 'document_line'
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS r WHERE r.org_id = m.org_id AND r.reverses_move_id = m.id))`,
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.document_id = l.document_id AND m.line_no = l.line_no AND m.source_type = 'document_line'
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move AS r WHERE r.org_id = m.org_id AND r.reverses_move_id = m.id))`,
       )
       .where(
         sql<boolean>`CASE WHEN d.direction = 'sale'
-          THEN (l.credit_account = ${STOCK_GOODS_ACCOUNT.sale} OR l.credit_account IN (SELECT o.code FROM crove_finance.org_account AS o WHERE o.org_id = l.org_id AND o.root_code = ${STOCK_GOODS_ACCOUNT.sale}))
-          ELSE (l.debit_account = ${STOCK_GOODS_ACCOUNT.purchase} OR l.debit_account IN (SELECT o.code FROM crove_finance.org_account AS o WHERE o.org_id = l.org_id AND o.root_code = ${STOCK_GOODS_ACCOUNT.purchase}))
+          THEN (l.credit_account = ${STOCK_GOODS_ACCOUNT.sale} OR l.credit_account IN (SELECT o.code FROM ludy_finance.org_account AS o WHERE o.org_id = l.org_id AND o.root_code = ${STOCK_GOODS_ACCOUNT.sale}))
+          ELSE (l.debit_account = ${STOCK_GOODS_ACCOUNT.purchase} OR l.debit_account IN (SELECT o.code FROM ludy_finance.org_account AS o WHERE o.org_id = l.org_id AND o.root_code = ${STOCK_GOODS_ACCOUNT.purchase}))
         END`,
       );
     if (input.legalEntityId) query = query.where('d.legal_entity_id', '=', input.legalEntityId);
@@ -223,8 +223,8 @@ export const stockAssign = defineCommand({
     const item = await loadItem(ctx, input.itemId);
     if (!item.active) throw new DomainError('STOCK_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng, hãy bật lại trước khi gán tên cho nó');
     const line = await ctx.trx
-      .selectFrom('crove_finance.purchase_line as l')
-      .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
+      .selectFrom('ludy_finance.purchase_line as l')
+      .innerJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
       .select(['l.description', 'l.unit', 'l.quantity', 'l.amount', 'l.debit_account', 'l.credit_account', 'd.direction', 'd.legal_entity_id', 'd.invoice_date', 'd.correction_kind', 'l.source_kind'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.document_id', '=', input.documentId)
@@ -233,17 +233,17 @@ export const stockAssign = defineCommand({
     if (!line) throw new DomainError('STOCK_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng hóa đơn này');
     if (line.source_kind === ORDER_SOURCE_KIND) throw new DomainError('STOCK_LINE_ORDER_SOURCE', 409, 'Dòng này lập từ đơn bán hàng, kho ghi theo lần giao hàng của đơn');
     if (line.legal_entity_id !== item.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và hóa đơn thuộc hai pháp nhân khác nhau');
-    const voided = await ctx.trx.selectFrom('crove_finance.purchase_document_void').select('document_id').where('org_id', '=', ctx.orgId).where('document_id', '=', input.documentId).executeTakeFirst();
+    const voided = await ctx.trx.selectFrom('ludy_finance.purchase_document_void').select('document_id').where('org_id', '=', ctx.orgId).where('document_id', '=', input.documentId).executeTakeFirst();
     if (voided) throw new DomainError('STOCK_LINE_VOIDED', 409, 'Hóa đơn này đã bị hủy');
     // A line with a move not yet reversed is assigned; one whose move was reversed may be assigned again, and the history stays.
     const made = await ctx.trx
-      .selectFrom('crove_finance.stock_move as m')
+      .selectFrom('ludy_finance.stock_move as m')
       .select('m.id')
       .where('m.org_id', '=', ctx.orgId)
       .where('m.document_id', '=', input.documentId)
       .where('m.line_no', '=', input.lineNo)
       .where('m.source_type', '=', 'document_line')
-      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS r WHERE r.org_id = m.org_id AND r.reverses_move_id = m.id)`)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move AS r WHERE r.org_id = m.org_id AND r.reverses_move_id = m.id)`)
       .executeTakeFirst();
     if (made) throw new DomainError('STOCK_LINE_ASSIGNED', 409, 'Dòng này đã được gán cho một mặt hàng');
     const account = line.direction === 'sale' ? line.credit_account : line.debit_account;
@@ -260,7 +260,7 @@ export const stockAssign = defineCommand({
       line.direction === 'sale'
         ? null
         : await ctx.trx
-            .selectFrom('crove_finance.journal_entry as e')
+            .selectFrom('ludy_finance.journal_entry as e')
             .select('e.entry_date')
             .where('e.org_id', '=', ctx.orgId)
             .where('e.source_type', '=', 'finance.purchase_document')

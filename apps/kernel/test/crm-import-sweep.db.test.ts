@@ -62,9 +62,9 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
       await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, user]));
       return user;
     };
-    const rows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM crove_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
-    const age = (batchId: string, days: number) => admin((c) => c.query(`UPDATE crove_crm.import_batch SET created_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2`, [orgId, batchId, days]));
-    const status = (batchId: string) => admin((c) => c.query<{ status: string }>('SELECT status FROM crove_crm.import_batch WHERE org_id = $1 AND id = $2', [orgId, batchId]).then((r) => r.rows[0]?.status));
+    const rows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM ludy_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
+    const age = (batchId: string, days: number) => admin((c) => c.query(`UPDATE ludy_crm.import_batch SET created_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2`, [orgId, batchId, days]));
+    const status = (batchId: string) => admin((c) => c.query<{ status: string }>('SELECT status FROM ludy_crm.import_batch WHERE org_id = $1 AND id = $2', [orgId, batchId]).then((r) => r.rows[0]?.status));
     return { orgId, owner, stage, member, rows, age, status };
   }
 
@@ -109,10 +109,10 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
   it('refuses every other login, and the worker from inside an org', async () => {
     const o = await org();
     const asApp = login('ludy_app', 'test-app-pw');
-    await expect(asApp.query("SELECT * FROM crove_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501' });
+    await expect(asApp.query("SELECT * FROM ludy_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501' });
     // No tenant or app role holds EXECUTE on it, and the worker login does.
     const grants = await admin((c) =>
-      c.query<{ role: string; ok: boolean }>("SELECT r AS role, has_function_privilege(r, 'crove_crm.import_expired(timestamptz, integer)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant']) AS r"),
+      c.query<{ role: string; ok: boolean }>("SELECT r AS role, has_function_privilege(r, 'ludy_crm.import_expired(timestamptz, integer)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant']) AS r"),
     );
     expect(new Map(grants.rows.map((g) => [g.role, g.ok]))).toEqual(new Map([['ludy_tenant', false], ['ludy_app', false], ['ludy_worker', true], ['ludy_definer_tenant', false]]));
     // Nor can the command be run by a person: refused by its access rule, not by some other failure.
@@ -125,7 +125,7 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
     try {
       await client.query('BEGIN');
       await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
-      await expect(client.query("SELECT * FROM crove_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501', message: 'CRM_WORKER_ONLY' });
+      await expect(client.query("SELECT * FROM ludy_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501', message: 'CRM_WORKER_ONLY' });
     } finally {
       await client.query('ROLLBACK');
       client.release();
@@ -141,10 +141,10 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
     await blocker.connect();
     try {
       await blocker.query('BEGIN');
-      await blocker.query("SELECT 1 FROM crove_crm.import_batch WHERE org_id = $1 AND id = $2 FOR UPDATE", [o.orgId, old.batch.id]);
+      await blocker.query("SELECT 1 FROM ludy_crm.import_batch WHERE org_id = $1 AND id = $2 FOR UPDATE", [o.orgId, old.batch.id]);
       const sweep = worker.execute<{ batches: number; rows: number }>('crm.import.expire', {}, { actor: SYSTEM, orgId: o.orgId });
       await new Promise((resolve) => setTimeout(resolve, 400));
-      await blocker.query("UPDATE crove_crm.import_batch SET status = 'committed', created_rows = 1, decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]);
+      await blocker.query("UPDATE ludy_crm.import_batch SET status = 'committed', created_rows = 1, decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]);
       await blocker.query('COMMIT');
       expect(await sweep).toEqual({ batches: 0, rows: 0 });
     } finally {
@@ -197,6 +197,6 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
 });
 
 async function sweepList(db: Db): Promise<string[]> {
-  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_crm.import_expired(now() - interval '7 days', 500)`.execute(db);
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_crm.import_expired(now() - interval '7 days', 500)`.execute(db);
   return rows.map((r) => r.org_id);
 }

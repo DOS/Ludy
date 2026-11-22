@@ -247,7 +247,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
 
     const noteRow = await admin(async (c) =>
       (await c.query<{ visibility: string; tainted: boolean; author_user_id: string; body: string; tags: string[] }>(
-        'SELECT visibility, tainted, author_user_id, body, tags FROM crove_notes.note WHERE id = $1',
+        'SELECT visibility, tainted, author_user_id, body, tags FROM ludy_notes.note WHERE id = $1',
         [noteId],
       )).rows[0],
     );
@@ -259,7 +259,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
 
     const todoRow = await admin(async (c) =>
       (await c.query<{ owner_user_id: string; tainted: boolean; details: string; due_on: string }>(
-        'SELECT owner_user_id, tainted, details, due_on::text FROM crove_notes.todo WHERE id = $1',
+        'SELECT owner_user_id, tainted, details, due_on::text FROM ludy_notes.todo WHERE id = $1',
         [todoId],
       )).rows[0],
     );
@@ -308,7 +308,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
       tags: ['research'],
     });
     expect(edited.status).toBe(200);
-    const clearedRow = await admin(async (c) => (await c.query<{ tainted: boolean }>('SELECT tainted FROM crove_notes.note WHERE id = $1', [noteId])).rows[0]);
+    const clearedRow = await admin(async (c) => (await c.query<{ tainted: boolean }>('SELECT tainted FROM ludy_notes.note WHERE id = $1', [noteId])).rows[0]);
     expect(clearedRow?.tainted).toBe(false);
   });
 

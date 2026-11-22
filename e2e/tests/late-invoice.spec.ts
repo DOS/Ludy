@@ -87,8 +87,8 @@ test('post an invoice of a locked month in the first open month, keeping its inv
   await test.step('the document keeps its invoice date, the entry is on the posting date, the audit rows record it', async () => {
     const posted = sql<{ invoice_date: string; entry_date: string }>(
       `SELECT d.invoice_date::text AS invoice_date, j.entry_date::text AS entry_date
-       FROM crove_finance.purchase_document d
-       JOIN crove_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
+       FROM ludy_finance.purchase_document d
+       JOIN ludy_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
        JOIN ludy_kernel.tenant t ON t.org_id = d.org_id
        WHERE t.slug = :'slug'`,
       { slug },

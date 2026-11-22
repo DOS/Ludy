@@ -106,7 +106,7 @@ export const verifyPayrollPayment = defineCommand({
 });
 
 // The amount of each payment of the approved runs asked for, for the matching of a bank statement line with a payment (#2532). Owners and admins, who are the ones that ask for a payment. It reads the
-// run's totals by cost department (crove_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
+// run's totals by cost department (ludy_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
 // approved, that has an adjustment made before its split was kept, a line not calculated, a department or fund the posting does not know or per-fund sums that do not add to the insurance, or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
 // entry (a test ties them): the net pay, the insurance (what employees and the employer owe), the union fee and the tax.
 export const payrollPaymentAmounts = defineQuery({
@@ -117,7 +117,7 @@ export const payrollPaymentAmounts = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const out: HrRunPaymentAmounts[] = [];
     for (const runId of new Set(runIds)) {
-      const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
+      const { rows } = await sql<{ totals: unknown }>`SELECT ludy_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
       const t = rows[0]?.totals as
         | { month: string; status: string; counts: Record<string, number>; groups: StoredGroup[] }
         | null

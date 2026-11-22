@@ -55,7 +55,7 @@ export const zGoalSet = z.strictObject({
 });
 
 // One write at a time per org, so the zone stays the same on every row and the count holds until the commit.
-const lockOrg = (ctx: CommandContext) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.goal:${ctx.orgId}`}))`.execute(ctx.trx);
+const lockOrg = (ctx: CommandContext) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.goal:${ctx.orgId}`}))`.execute(ctx.trx);
 
 // Sets the targets of a scope (the org, or one of its live channels); with none set, removes the scope's goals. The
 // zone goes on every goal of the org.
@@ -90,31 +90,31 @@ export const goalSet = defineCommand({
       followers_gained: count(input.targets.followersGained),
     };
     const existing = await ctx.trx
-      .selectFrom('crove_social.goal')
+      .selectFrom('ludy_social.goal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where((eb) => (input.connectionId === null ? eb('connection_id', 'is', null) : eb('connection_id', '=', input.connectionId)))
       .executeTakeFirst();
     const targets = targetsOf(input.targets);
     if (targets.length === 0) {
-      if (existing) await ctx.trx.deleteFrom('crove_social.goal').where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      if (existing) await ctx.trx.deleteFrom('ludy_social.goal').where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       ctx.audit({ connection_id: input.connectionId, removed: Boolean(existing) });
       return { goalId: existing?.id ?? null };
     }
     let goalId: string;
     if (existing) {
       await ctx.trx
-        .updateTable('crove_social.goal')
+        .updateTable('ludy_social.goal')
         .set({ ...values, time_zone: timeZone, updated_by: userId, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
         .execute();
       goalId = existing.id;
     } else {
-      const rows = await ctx.trx.selectFrom('crove_social.goal').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+      const rows = await ctx.trx.selectFrom('ludy_social.goal').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
       if (Number(rows.n) >= GOALS_MAX) throw new DomainError('GOAL_LIMIT', 409, `Mỗi tổ chức đặt tối đa ${GOALS_MAX} nhóm mục tiêu`);
       const row = await ctx.trx
-        .insertInto('crove_social.goal')
+        .insertInto('ludy_social.goal')
         .values({ org_id: ctx.orgId, connection_id: input.connectionId, time_zone: timeZone, ...values, created_by: userId, created_at: ctx.now, updated_by: userId, updated_at: ctx.now })
         .returning('id')
         .executeTakeFirstOrThrow();
@@ -122,7 +122,7 @@ export const goalSet = defineCommand({
     }
     // Every goal of the org is counted in the same zone.
     await ctx.trx
-      .updateTable('crove_social.goal')
+      .updateTable('ludy_social.goal')
       .set({ time_zone: timeZone, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('time_zone', '<>', timeZone)
@@ -141,7 +141,7 @@ export const goalRemove = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const gone = await ctx.trx
-      .deleteFrom('crove_social.goal')
+      .deleteFrom('ludy_social.goal')
       .where('org_id', '=', ctx.orgId)
       .where((eb) => (input.connectionId === null ? eb('connection_id', 'is', null) : eb('connection_id', '=', input.connectionId)))
       .returning('id')
@@ -164,7 +164,7 @@ export interface GoalRow {
 /** The org's goals: its own first, then its channels'. */
 export async function goalsOf(trx: Trx, orgId: string): Promise<GoalRow[]> {
   const rows = await trx
-    .selectFrom('crove_social.goal')
+    .selectFrom('ludy_social.goal')
     .select(['id', 'connection_id', 'time_zone', 'posts', 'reach', 'impressions', 'engagement', 'followers_gained', 'updated_by', 'updated_at'])
     .where('org_id', '=', orgId)
     .orderBy(sql`connection_id IS NOT NULL`)
@@ -214,7 +214,7 @@ async function followersGained(trx: Trx, orgId: string, start: Date, end: Date):
   const { rows } = await sql<{ conn: string; gained: string }>`
     WITH s AS (
       SELECT s.channel_connection_id AS conn, s.captured_on, s.followers, (s.captured_on + time '12:00') AT TIME ZONE 'UTC' AS midday
-      FROM crove_social.account_snapshot s
+      FROM ludy_social.account_snapshot s
       WHERE s.org_id = ${orgId} AND s.followers IS NOT NULL
         AND s.captured_on >= (${start}::timestamptz AT TIME ZONE 'UTC')::date - ${FOLLOWER_BASE_DAYS + 1}::int
         AND s.captured_on <= (${end}::timestamptz AT TIME ZONE 'UTC')::date

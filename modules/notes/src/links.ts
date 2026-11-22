@@ -56,7 +56,7 @@ export async function insertRecordLink(
 ): Promise<string> {
   const column = parent.kind === 'note' ? 'note_id' : 'todo_id';
   const { n } = await ctx.trx
-    .selectFrom('crove_notes.link')
+    .selectFrom('ludy_notes.link')
     .select((eb) => eb.fn.countAll<string>().as('n'))
     .where('org_id', '=', ctx.orgId)
     .where(column, '=', parent.id)
@@ -70,7 +70,7 @@ export async function insertRecordLink(
   }
   const expectedConstraint = parent.kind === 'note' ? 'link_note_target_uq' : 'link_todo_target_uq';
   const link = await ctx.trx
-    .insertInto('crove_notes.link')
+    .insertInto('ludy_notes.link')
     .values({
       org_id: ctx.orgId,
       note_id: parent.kind === 'note' ? parent.id : null,
@@ -100,7 +100,7 @@ export async function insertRecordLink(
 export async function loadEnrichedLinks(ctx: QueryContext, parent: LinkParent): Promise<NoteLink[]> {
   const column = parent.kind === 'note' ? 'note_id' : 'todo_id';
   const rows = await ctx.trx
-    .selectFrom('crove_notes.link')
+    .selectFrom('ludy_notes.link')
     .select(['id', 'target_type', 'target_id', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where(column, '=', parent.id)

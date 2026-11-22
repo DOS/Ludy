@@ -68,7 +68,7 @@ export async function sweepFeeds(deps: FeedDeps): Promise<number> {
   const seen = new Set<string>();
   let drafted = 0;
   for (let batch = 0; batch < FEED_BATCHES; batch++) {
-    const { rows } = await sql<{ org_id: string; feed_id: string }>`SELECT org_id, feed_id FROM crove_social.feeds_due(${FEED_LIMIT}::int)`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string; feed_id: string }>`SELECT org_id, feed_id FROM ludy_social.feeds_due(${FEED_LIMIT}::int)`.execute(deps.workerDb);
     const fresh = rows.filter((r) => !seen.has(r.feed_id));
     for (const row of fresh) {
       seen.add(row.feed_id);

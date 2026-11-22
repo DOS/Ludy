@@ -384,7 +384,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     // Days before today less the three-day revision window are final.
     expect(account?.settledThrough).toBe(new Date(Date.parse(today) - 4 * DAY_MS).toISOString().slice(0, 10));
     const days = await row<{ day: string; currency: string; level: string; settled: boolean }>(
-      `SELECT day::text, currency, level, settled_at IS NOT NULL AS settled FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
+      `SELECT day::text, currency, level, settled_at IS NOT NULL AS settled FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
       [orgId, adAccountId],
     );
     expect(days.length).toBeGreaterThan(300);
@@ -401,7 +401,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const { connectionId, adAccountId } = await connect('Đọc lại');
     await sync(connectionId);
     const before = await row<{ id: string; day: string; spend: string; fetched_at: Date; settled: boolean }>(
-      `SELECT id, day::text, spend::text, fetched_at, settled_at IS NOT NULL AS settled FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
+      `SELECT id, day::text, spend::text, fetched_at, settled_at IS NOT NULL AS settled FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
       [orgId, adAccountId],
     );
     // A second sync asks the platform for the unsettled days only.
@@ -415,13 +415,13 @@ suite('ads on PostgreSQL (#2217)', () => {
         },
       },
     };
-    const target = await row<{ settled_through: string }>(`SELECT settled_through::text FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+    const target = await row<{ settled_through: string }>(`SELECT settled_through::text FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
     await sync(connectionId, spy);
     const settledThrough = target[0]?.settled_through as string;
     expect(ranges).toHaveLength(1);
     expect(ranges[0]?.from).toBe(new Date(Date.parse(settledThrough) + DAY_MS).toISOString().slice(0, 10));
     const after = await row<{ id: string; day: string; spend: string; fetched_at: Date; settled: boolean }>(
-      `SELECT id, day::text, spend::text, fetched_at, settled_at IS NOT NULL AS settled FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
+      `SELECT id, day::text, spend::text, fetched_at, settled_at IS NOT NULL AS settled FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
       [orgId, adAccountId],
     );
     expect(after.map((r) => r.day)).toEqual(before.map((r) => r.day));
@@ -436,8 +436,8 @@ suite('ads on PostgreSQL (#2217)', () => {
 
   // The days of the account's figures that are not final yet, newest first.
   const unsettledDays = async (adAccountId: string) =>
-    (await row<{ day: string }>(`SELECT day::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND settled_at IS NULL ORDER BY day DESC`, [orgId, adAccountId])).map((r) => r.day);
-  const daysCount = async (adAccountId: string, day: string) => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day = $3`, [orgId, adAccountId, day]))[0]?.n);
+    (await row<{ day: string }>(`SELECT day::text FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND settled_at IS NULL ORDER BY day DESC`, [orgId, adAccountId])).map((r) => r.day);
+  const daysCount = async (adAccountId: string, day: string) => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day = $3`, [orgId, adAccountId, day]))[0]?.n);
 
   // The instants the platform's day and the account's day can disagree around (#2548): inside the window the flake was seen in (14:04 to 14:13 UTC, 21:04 to
   // 21:13 in Ho Chi Minh City), the second before and after that zone's midnight (17:00 UTC), and the turn of the UTC date. Dated two days back from the real clock's UTC
@@ -468,7 +468,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(await unsettledDays(adAccountId)).toEqual([]);
     for (const day of window) expect(await daysCount(adAccountId, day), day).toBe(0);
     // A final day is never in the window, so an empty answer leaves it.
-    const final = (await row<{ day: string }>(`SELECT day::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND settled_at IS NOT NULL LIMIT 1`, [orgId, adAccountId]))[0]?.day as string;
+    const final = (await row<{ day: string }>(`SELECT day::text FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND settled_at IS NOT NULL LIMIT 1`, [orgId, adAccountId]))[0]?.day as string;
     expect(await daysCount(adAccountId, final)).toBeGreaterThan(0);
   });
 
@@ -506,7 +506,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(summary.resultKind).toBe('purchase');
     const sums = await row<{ spend: string; impressions: string; clicks: string; purchases: string }>(
       `SELECT sum(spend)::text AS spend, sum(impressions)::text AS impressions, sum(clicks)::text AS clicks, sum((results ->> 'purchase')::numeric)::text AS purchases
-       FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND day BETWEEN $3 AND $4`,
+       FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND day BETWEEN $3 AND $4`,
       [orgId, adAccountId, from, to],
     );
     expect(summary.total.spend).toBe(sums[0]?.spend);
@@ -577,12 +577,12 @@ suite('ads on PostgreSQL (#2217)', () => {
     // Moving an account to another entity moves its history with it.
     await sync(own.connectionId);
     const entities = async (account: string) =>
-      row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND legal_entity_id = $3`, [orgId, account, branch]);
+      row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND legal_entity_id = $3`, [orgId, account, branch]);
     expect(Number((await entities(own.adAccountId))[0]?.n)).toBeGreaterThan(0);
     const defaultEntity = (await row<{ id: string }>(`SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]))[0]?.id as string;
     await ok('ads/configure', owner, { adAccountId: own.adAccountId, legalEntityId: defaultEntity, idempotencyKey: randomUUID() });
     expect(Number((await entities(own.adAccountId))[0]?.n)).toBe(0);
-    const moved = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND legal_entity_id = $3`, [orgId, own.adAccountId, defaultEntity]);
+    const moved = await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND legal_entity_id = $3`, [orgId, own.adAccountId, defaultEntity]);
     expect(Number(moved[0]?.n)).toBeGreaterThan(0);
     expect(((await ok('ads/accounts', accountant, undefined)) as AdAccountView[])).toEqual([]);
   });
@@ -622,7 +622,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const runs = (await ok('ads/syncRuns', owner, { adAccountId })) as AdsSyncRunView[];
     expect(runs[0]).toMatchObject({ status: 'failed', errorKind: 'rate_limited', errorCode: '80000' });
     // The hold passes (here by hand: the owner of the database moves it).
-    await row(`UPDATE crove_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+    await row(`UPDATE ludy_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
     // A refused token ends the connection: expired until an owner reconnects it, and no longer swept.
     await sync(connectionId, failing(new AdPlatformError('token_expired', '190')));
     account = await view(owner, adAccountId);
@@ -634,7 +634,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     // Whatever an unclassified error carried, only a fixed code is kept.
     const other = await connect('Lỗi lạ');
     await expect(sync(other.connectionId, { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => { throw new Error('boom sbx_secret'); } } })).rejects.toThrow('boom');
-    const failed = await row<{ error_code: string }>(`SELECT error_code FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, other.adAccountId]);
+    const failed = await row<{ error_code: string }>(`SELECT error_code FROM ludy_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, other.adAccountId]);
     expect(failed).toEqual([{ error_code: 'ADAPTER_ERROR' }]);
     // A refusal that would come every hour is recorded on the account and shown, not thrown into the dead letters.
     const odd = await connect('Dữ liệu lạ');
@@ -649,7 +649,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     };
     expect(await sync(odd.connectionId, twice)).toEqual({ rows: 0, slices: 0 });
     expect(await view(owner, odd.adAccountId)).toMatchObject({ connectionStatus: 'active', lastErrorKind: 'bad_request' });
-    const refusal = await row<{ error_code: string }>(`SELECT error_code FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, odd.adAccountId]);
+    const refusal = await row<{ error_code: string }>(`SELECT error_code FROM ludy_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, odd.adAccountId]);
     expect(refusal).toEqual([{ error_code: 'ADS_ROWS_INVALID' }]);
     // The database failing in a way that passes (here a deadlock the runtime names RETRY) is a passing failure: recorded as
     // such, and left to the job's retry, not shown as a refusal that would come every hour.
@@ -673,7 +673,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const { connectionId, adAccountId } = await connect('Rất nhiều chiến dịch');
     // 40 days of history, so the first read is a 31-day slice and a shorter one: from the UTC date of the frozen instant, which the expectation below counts from too.
     const first = addDays(at.toISOString().slice(0, 10), -40);
-    await row(`UPDATE crove_ads.ad_account SET backfill_from = $3 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId, first]);
+    await row(`UPDATE ludy_ads.ad_account SET backfill_from = $3 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId, first]);
     const dense: Readonly<Record<string, AdPlatform>> = {
       sandbox_ads: {
         ...(sandbox.sandbox_ads as AdPlatform),
@@ -692,7 +692,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     // The 31-day slice (24,831 rows) was read as two halves, so more parts than the two slices.
     expect(done.slices).toBeGreaterThan(2);
     const stored = await row<{ days: string; n: string }>(
-      `SELECT count(DISTINCT day)::text AS days, count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`,
+      `SELECT count(DISTINCT day)::text AS days, count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`,
       [orgId, adAccountId],
     );
     // From the first day of history (40 days back, by the UTC date) to today in the account's zone, on the frozen clock the sync read.
@@ -705,7 +705,7 @@ suite('ads on PostgreSQL (#2217)', () => {
   it('keeps the history of an account connected again after a disconnect, on the same row', async () => {
     const { connectionId, adAccountId } = await connect('Nối lại');
     await sync(connectionId);
-    const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId]);
+    const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId]);
     expect((await rpc('channels/disconnect', await tokenFor(owner), { connectionId, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await view(owner, adAccountId)).toMatchObject({ connectionStatus: 'revoked' });
     // A revoked connection is not synced, and the sweep skips it.
@@ -713,7 +713,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect((await adsDue(workerDb, null)).some((d) => d.connectionId === connectionId)).toBe(false);
     // The same platform account connected again: a new connection takes over the row and its history. The sandbox makes
     // a fresh account each time, so this is done with the same account id by sealing its secret again.
-    const secret = (await row<{ id: string }>(`SELECT external_account_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id as string;
+    const secret = (await row<{ id: string }>(`SELECT external_account_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id as string;
     const login = JSON.stringify({ accessToken: `sbx_${'a'.repeat(43)}`, currency: 'VND', key: 'reconnect-key' });
     const sealed = vault.seal(login, { orgId, provider: 'sandbox_ads', externalAccountId: secret });
     const reconnected = await api.execute<{ connectionId: string }>(
@@ -725,7 +725,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const linked = await api.execute<{ adAccountId: string; linked: boolean }>('ads.account.link', { connectionId: reconnected.connectionId }, { actor: asOwner(), orgId });
     expect(linked).toEqual({ adAccountId, linked: false });
     expect(await view(owner, adAccountId)).toMatchObject({ connectionId: reconnected.connectionId, connectionStatus: 'active' });
-    const after = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId]);
+    const after = await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId]);
     expect(after[0]?.n).toBe(before[0]?.n);
   });
 
@@ -749,12 +749,12 @@ suite('ads on PostgreSQL (#2217)', () => {
     await expect(record({ rows: [{ level: 'account', day: today, ...base }] })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
     // A final day is never rewritten, even by a window that covers it.
     const finalDay = (await row<{ day: string; spend: string; external: string }>(
-      `SELECT d.day::text, d.spend::text, a.external_account_id AS external FROM crove_ads.ad_spend_day d JOIN crove_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
+      `SELECT d.day::text, d.spend::text, a.external_account_id AS external FROM ludy_ads.ad_spend_day d JOIN ludy_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
        WHERE d.org_id = $1 AND d.ad_account_id = $2 AND d.level = 'account' AND d.settled_at IS NOT NULL ORDER BY d.day DESC LIMIT 1`,
       [orgId, adAccountId],
     ))[0] as { day: string; spend: string; external: string };
     await record({ window: { from: finalDay.day, to: finalDay.day }, rows: [{ level: 'account', day: finalDay.day, ...base, externalObjectId: finalDay.external, spend: '1' }] });
-    const kept = await row<{ spend: string }>(`SELECT spend::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND day = $3`, [orgId, adAccountId, finalDay.day]);
+    const kept = await row<{ spend: string }>(`SELECT spend::text FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND day = $3`, [orgId, adAccountId, finalDay.day]);
     expect(kept).toEqual([{ spend: finalDay.spend }]);
     // A person cannot run it, whatever their role.
     await expect(api.execute('ads.sync.record', { adAccountId, details, window: { from: today, to: today }, settleBefore: null, rows: [] }, { actor: asOwner(), orgId })).rejects.toMatchObject({ status: 403 });
@@ -773,9 +773,9 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(await adsDue(workerDb, { orgId: due.at(-1)?.orgId as string, connectionId: due.at(-1)?.connectionId as string })).toEqual([]);
     // Runs older than 90 days go, newer ones stay.
     const { adAccountId } = accounts.get('Đồng') as { adAccountId: string };
-    const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.legal_entity_id as string;
-    await row(`INSERT INTO crove_ads.ad_sync_run (org_id, ad_account_id, legal_entity_id, status, started_at) VALUES ($1, $2, $3, 'ok', now() - interval '120 days')`, [orgId, adAccountId, entity]);
-    const total = async () => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_sync_run WHERE org_id = $1`, [orgId]))[0]?.n);
+    const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.legal_entity_id as string;
+    await row(`INSERT INTO ludy_ads.ad_sync_run (org_id, ad_account_id, legal_entity_id, status, started_at) VALUES ($1, $2, $3, 'ok', now() - interval '120 days')`, [orgId, adAccountId, entity]);
+    const total = async () => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_sync_run WHERE org_id = $1`, [orgId]))[0]?.n);
     const before = await total();
     expect(await pruneAdsRuns(workerDb, new Date())).toBeGreaterThanOrEqual(1);
     expect(await total()).toBeLessThan(before);
@@ -784,8 +784,8 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(await total()).toBeGreaterThan(0);
     const appClient = await pool.connect();
     try {
-      await expect(appClient.query(`SELECT crove_ads.sync_runs_prune(now())`)).rejects.toMatchObject({ code: '42501' });
-      await expect(appClient.query(`SELECT * FROM crove_ads.ads_due(NULL, NULL, 10)`)).rejects.toMatchObject({ code: '42501' });
+      await expect(appClient.query(`SELECT ludy_ads.sync_runs_prune(now())`)).rejects.toMatchObject({ code: '42501' });
+      await expect(appClient.query(`SELECT * FROM ludy_ads.ads_due(NULL, NULL, 10)`)).rejects.toMatchObject({ code: '42501' });
     } finally {
       appClient.release();
     }
@@ -800,7 +800,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const callAs = async (who: Account, path: string, input: unknown) => rpc(path, await tokenFor(who), input);
     const key = () => randomUUID();
     const state = async (who: Account = owner) => (await ok('ads/writeState', who, undefined)) as { writeEnabled: boolean; launchesBlocked: boolean; updatedAt: string | null; caps: Array<{ scope: string; adAccountId: string | null; period: string; amount: string; currency: string; setBy: string }>; pending: Array<{ proposalId: string; change: unknown; requestedAt: string }> };
-    const settingRows = async () => row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_org_setting WHERE org_id = $1`, [orgId]);
+    const settingRows = async () => row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_org_setting WHERE org_id = $1`, [orgId]);
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
     // SQL in a context of each kind. Rolled back unless `commit`, since a refused statement aborts the transaction it ran in.
@@ -813,7 +813,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
         }
-        await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
+        await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
         const out = await fn(c);
         if (commit) await c.query('COMMIT');
         return out;
@@ -828,12 +828,12 @@ suite('ads on PostgreSQL (#2217)', () => {
       inContext(
         owner,
         async (c) => {
-          await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
-          if (adAccountIds.length > 0) await c.query('UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = ANY ($2::uuid[])', [orgId, adAccountIds]);
+          await c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
+          if (adAccountIds.length > 0) await c.query('UPDATE ludy_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = ANY ($2::uuid[])', [orgId, adAccountIds]);
         },
         true,
       );
-    const closed = () => inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]), true);
+    const closed = () => inContext(owner, (c) => c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]), true);
 
     it('starts off, and only owners and admins read it', async () => {
       expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: false, caps: [] });
@@ -862,7 +862,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: true });
       expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: false });
       // The record names the owner and the audit row says what the switch-off closed.
-      expect(await row(`SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = $1 AND updated_by = $2`, [orgId, owner.userId])).toHaveLength(1);
+      expect(await row(`SELECT 1 FROM ludy_ads.ad_org_setting WHERE org_id = $1 AND updated_by = $2`, [orgId, owner.userId])).toHaveLength(1);
       const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'ads.write.disable' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
       expect(audit[0]?.detail).toMatchObject({ writeEnabled: false, wasEnabled: true });
     });
@@ -894,10 +894,10 @@ suite('ads on PostgreSQL (#2217)', () => {
     // The database keeps the switches to their owners whatever path reaches the table (the Platform PO's conditions on #2294):
     // the commands check the role too, so these go to the table directly, in a context of each kind.
     it('lets only a signed-in owner turn a switch on and only an owner or admin turn it off, in the database whatever the command says', async () => {
-      const on = 'UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
-      const blockOn = 'UPDATE crove_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1';
-      const blockOff = 'UPDATE crove_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1';
-      const off = 'UPDATE crove_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1';
+      const on = 'UPDATE ludy_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
+      const blockOn = 'UPDATE ludy_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1';
+      const blockOff = 'UPDATE ludy_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1';
+      const off = 'UPDATE ludy_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1';
       // Start from writing off and launches open, so every change below is a change.
       await closed();
       expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: false });
@@ -927,25 +927,25 @@ suite('ads on PostgreSQL (#2217)', () => {
       await closed();
       const before = Date.now();
       await inContext(owner, async (c) => {
-        await c.query(`UPDATE crove_ads.ad_org_setting SET write_enabled = true, updated_by = $2, updated_at = '2000-01-01T00:00:00Z' WHERE org_id = $1`, [orgId, member.userId]);
-        const stamped = (await c.query<{ updated_by: string; updated_at: Date }>('SELECT updated_by, updated_at FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0];
+        await c.query(`UPDATE ludy_ads.ad_org_setting SET write_enabled = true, updated_by = $2, updated_at = '2000-01-01T00:00:00Z' WHERE org_id = $1`, [orgId, member.userId]);
+        const stamped = (await c.query<{ updated_by: string; updated_at: Date }>('SELECT updated_by, updated_at FROM ludy_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0];
         expect(stamped?.updated_by).toBe(owner.userId);
         expect(new Date(stamped?.updated_at ?? 0).getTime()).toBeGreaterThanOrEqual(before - 5_000);
       });
       // A change that touches neither switch is stamped too: whoever sends it is on record, and the system leaves no user.
       await inContext(member, async (c) => {
-        await c.query('UPDATE crove_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, owner.userId]);
-        expect((await c.query<{ updated_by: string }>('SELECT updated_by FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0]?.updated_by).toBe(member.userId);
+        await c.query('UPDATE ludy_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, owner.userId]);
+        expect((await c.query<{ updated_by: string }>('SELECT updated_by FROM ludy_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0]?.updated_by).toBe(member.userId);
       });
       await inContext('system', async (c) => {
-        await c.query('UPDATE crove_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, owner.userId]);
-        expect((await c.query<{ updated_by: string | null }>('SELECT updated_by FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0]?.updated_by).toBeNull();
+        await c.query('UPDATE ludy_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, owner.userId]);
+        expect((await c.query<{ updated_by: string | null }>('SELECT updated_by FROM ludy_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0]?.updated_by).toBeNull();
       });
     });
 
     it('guards an ad account’s flag the same way, on a row changed and on a row born with writing on', async () => {
       const { adAccountId } = await connect('Cổng ở cơ sở dữ liệu');
-      const accountOn = 'UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
+      const accountOn = 'UPDATE ludy_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
       await inContext(owner, async (c) => {
         await c.query(accountOn, [orgId, adAccountId]);
       });
@@ -956,7 +956,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const born = async (flag: boolean) => {
         const connectionId = randomUUID();
         await row(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Sinh ra đã bật', $4)`, [orgId, connectionId, `born-${connectionId}`, owner.userId]);
-        return [`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, write_enabled) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Sinh ra đã bật', '2025-10-01', ${flag})`, [orgId, randomUUID(), connectionId, `born-${connectionId}`]] as const;
+        return [`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, write_enabled) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Sinh ra đã bật', '2025-10-01', ${flag})`, [orgId, randomUUID(), connectionId, `born-${connectionId}`]] as const;
       };
       const [insertOn, paramsOn] = await born(true);
       await inContext(owner, async (c) => {
@@ -973,14 +973,14 @@ suite('ads on PostgreSQL (#2217)', () => {
     it('keeps one row of switches per org in the database: a second row for the org is refused, whoever makes it', async () => {
       for (const who of [owner, adminAccount, member, 'system'] as const) {
         await inContext(who, async (c) => {
-          await expect(c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1)', [orgId])).rejects.toMatchObject({ code: '23505', constraint: 'ad_org_setting_org_uq' });
+          await expect(c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1)', [orgId])).rejects.toMatchObject({ code: '23505', constraint: 'ad_org_setting_org_uq' });
         });
       }
     });
 
     describe('the spend caps', () => {
       const crafted = 'ffffffff-ffff-7fff-bfff-ffffffffffff';
-      const insert = `INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, 'VND', $4, '2999-01-01T00:00:00Z') RETURNING id, set_by, set_at`;
+      const insert = `INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, 'VND', $4, '2999-01-01T00:00:00Z') RETURNING id, set_by, set_at`;
 
       it('lets only a signed-in owner insert a cap, and stamps its id, who set it and when, whatever the writer sent', async () => {
         await inContext(owner, async (c) => {
@@ -1002,14 +1002,14 @@ suite('ads on PostgreSQL (#2217)', () => {
         const latest = await state();
         expect(latest.caps.filter((c) => c.scope === 'org' && c.period === 'daily')).toEqual([expect.objectContaining({ amount: '8000000.50', currency: 'VND', setBy: owner.userId })]);
         // The cap history stays: every insert is a row.
-        expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]))[0]?.n).toBe('2');
+        expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]))[0]?.n).toBe('2');
         expect((await rpc('ads/writeState', await tokenFor(member), undefined)).status).toBe(403);
       });
 
       it('keeps the cap history append-only for every tenant role: no update and no delete of a row', async () => {
         const id = ((await inContext(owner, (c) => c.query<{ id: string }>(insert, [orgId, randomUUID(), '1000', owner.userId]), true)).rows[0] as { id: string }).id;
         for (const who of [owner, adminAccount, member, 'system'] as const) {
-          for (const change of ['UPDATE crove_ads.ad_spend_cap SET amount = 1 WHERE org_id = $1 AND id = $2', 'DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2']) {
+          for (const change of ['UPDATE ludy_ads.ad_spend_cap SET amount = 1 WHERE org_id = $1 AND id = $2', 'DELETE FROM ludy_ads.ad_spend_cap WHERE org_id = $1 AND id = $2']) {
             await inContext(who, async (c) => {
               await expect(c.query(change, [orgId, id])).rejects.toMatchObject({ code: '42501' });
             });
@@ -1022,7 +1022,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       await open();
       await Promise.all([callAs(owner, 'ads/pauseAll', { idempotencyKey: key() }), callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() }), callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })]);
       expect(await settingRows()).toEqual([{ n: '1' }]);
-      expect(await row(`SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = $1`, [otherOrgId])).toEqual([]);
+      expect(await row(`SELECT 1 FROM ludy_ads.ad_org_setting WHERE org_id = $1`, [otherOrgId])).toEqual([]);
       // The other org's owner reads their own, never ours.
       const theirs = (await ok('ads/writeState', outsider, undefined, otherSlug)) as { writeEnabled: boolean; caps: unknown[] };
       expect(theirs).toMatchObject({ writeEnabled: false, caps: [] });
@@ -1056,7 +1056,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect((await approve(adminAccount, id)).status).toBe(200);
         expect(await state()).toMatchObject({ writeEnabled: true, pending: [] });
         // The switch records the approver, and a repeat is refused before it is a proposal.
-        expect(await row(`SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = $1 AND updated_by = $2`, [orgId, adminAccount.userId])).toHaveLength(1);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_org_setting WHERE org_id = $1 AND updated_by = $2`, [orgId, adminAccount.userId])).toHaveLength(1);
         expect(await ask(owner, { change: 'write_enable' })).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_ALREADY_ON' } });
       });
 
@@ -1106,7 +1106,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect((await state()).caps).toContainEqual(expect.objectContaining({ scope: 'account', adAccountId: usd.adAccountId, currency: 'USD', amount: '200' }));
         expect(await lower(owner, { scope: 'account', adAccountId: usd.adAccountId, period: 'monthly', amount: '100' })).toMatchObject({ status: 409, body: { code: 'ADS_CAP_NOT_SET' } });
         const fresh = await connect('Chưa cập nhật');
-        await row(`UPDATE crove_ads.ad_account SET currency = NULL WHERE org_id = $1 AND id = $2`, [orgId, fresh.adAccountId]);
+        await row(`UPDATE ludy_ads.ad_account SET currency = NULL WHERE org_id = $1 AND id = $2`, [orgId, fresh.adAccountId]);
         expect(await ask(owner, { ...accountCap, adAccountId: fresh.adAccountId })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_ACCOUNT_UNSYNCED' } });
         // The shapes the request refuses: an org cap naming an account, an account cap naming none, zero, a third decimal, a typo.
         for (const bad of [{ ...orgCap, adAccountId: usd.adAccountId }, { change: 'cap_set', scope: 'account', period: 'daily', amount: '1', currency: 'VND' }, { ...orgCap, amount: '0' }, { ...orgCap, amount: '1.234' }, { ...orgCap, currency: 'VDN' }]) {
@@ -1176,7 +1176,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         // A cap whose id is far ahead of the clock (as after a clock that stepped back), put in by the database owner outside
         // any session, where the guard does not stamp it.
         await row(
-          `INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000000', 'account', $2, 'daily', '100', 'VND', $3)`,
+          `INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000000', 'account', $2, 'daily', '100', 'VND', $3)`,
           [orgId, account.adAccountId, owner.userId],
         );
         const lowered = await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'account', adAccountId: account.adAccountId, period: 'daily', amount: '50' });
@@ -1259,9 +1259,9 @@ suite('ads on PostgreSQL (#2217)', () => {
       // nothing else.
       it('lets the database pass a change only inside the execution of its own approved proposal, naming that change', async () => {
         // Writing off and launches blocked, so there are two different openings to try.
-        await inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = true WHERE org_id = $1', [orgId]), true);
+        await inContext(owner, (c) => c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = false, launches_blocked = true WHERE org_id = $1', [orgId]), true);
         const enable = proposalId(await ask(owner, { change: 'write_enable' }));
-        const on = 'UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
+        const on = 'UPDATE ludy_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
         const approveRaw = (c: pg.Client | pg.PoolClient, id: string) => c.query('SELECT ludy_kernel.proposal_approve($1::uuid, 1, $2::uuid)', [id, randomUUID()]);
         // Pending is not approved: the admin's own statement is refused.
         await inContext(adminAccount, (c) => refused(c, on, [orgId]));
@@ -1269,21 +1269,21 @@ suite('ads on PostgreSQL (#2217)', () => {
         await inContext(adminAccount, async (c) => {
           await approveRaw(c, enable);
           await c.query(on, [orgId]);
-          await refused(c, 'UPDATE crove_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1', [orgId]);
+          await refused(c, 'UPDATE ludy_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1', [orgId]);
         });
         // Approving a proposal does not make any other change: another account, then another cap, are still refused.
         await open();
         const { adAccountId } = await connect('Cổng đề xuất');
         const other = await connect('Tài khoản khác');
         const account = proposalId(await ask(owner, { change: 'account_enable', adAccountId }));
-        const flag = 'UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
+        const flag = 'UPDATE ludy_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
         await inContext(adminAccount, async (c) => {
           await approveRaw(c, account);
           await c.query(flag, [orgId, adAccountId]);
           await refused(c, flag, [orgId, other.adAccountId]);
         });
         const capProposal = proposalId(await ask(owner, { change: 'cap_set', scope: 'org', period: 'daily', amount: '90000000', currency: 'VND' }));
-        const capSql = `INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', $2, $3, 'VND', $4)`;
+        const capSql = `INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', $2, $3, 'VND', $4)`;
         const capParams = (amount: string, period: string) => [orgId, period, amount, adminAccount.userId];
         // Each attempt in a transaction of its own: a refused statement aborts the one it ran in.
         const approvedCap = (attempt: (c: pg.Client | pg.PoolClient) => Promise<unknown>) =>
@@ -1308,7 +1308,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         });
         // The system's kind of context never passes, even with a row in the state `approved`: only a user decides. (Writing is
         // off again first, so turning it on is a change.)
-        await inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1', [orgId]), true);
+        await inContext(owner, (c) => c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1', [orgId]), true);
         await inContext('system', async (c) => {
           await c.query(`UPDATE ludy_kernel.proposal SET status = 'approved', executed_command_id = $2::uuid, decided_at = now() WHERE org_id = $1 AND id = $3`, [orgId, randomUUID(), enable]);
           await refused(c, on, [orgId]);
@@ -1316,18 +1316,18 @@ suite('ads on PostgreSQL (#2217)', () => {
         // No login role can call the marker, and the ids of caps made one after another only grow.
         for (const who of [owner, adminAccount, 'system'] as const) {
           await inContext(who, async (c) => {
-            await expect(c.query(`SELECT crove_ads.approved_execution('ads.cap.set')`)).rejects.toMatchObject({ code: '42501' });
+            await expect(c.query(`SELECT ludy_ads.approved_execution('ads.cap.set')`)).rejects.toMatchObject({ code: '42501' });
           });
         }
         await inContext(owner, async (c) => {
           const ids: string[] = [];
           for (let n = 1; n <= 15; n += 1) {
-            ids.push(((await c.query<{ id: string }>(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', 'daily', $2, 'VND', $3) RETURNING id`, [orgId, String(n), owner.userId])).rows[0] as { id: string }).id);
+            ids.push(((await c.query<{ id: string }>(`INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', 'daily', $2, 'VND', $3) RETURNING id`, [orgId, String(n), owner.userId])).rows[0] as { id: string }).id);
           }
           expect(ids, 'the id of a cap made after another is above it, even within one millisecond').toEqual([...ids].sort());
           expect(new Set(ids).size).toBe(ids.length);
           // An amount that is not a finite number is no cap.
-          await expect(c.query(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', 'daily', 'NaN', 'VND', $2)`, [orgId, owner.userId])).rejects.toMatchObject({ code: '23514' });
+          await expect(c.query(`INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', 'daily', 'NaN', 'VND', $2)`, [orgId, owner.userId])).rejects.toMatchObject({ code: '23514' });
         });
         // Clear what is left open in the org.
         for (const id of [enable, account, capProposal]) await reject(adminAccount, id);
@@ -1373,14 +1373,14 @@ suite('ads on PostgreSQL (#2217)', () => {
         const ready = async (name: string) => {
           // An approved plan holds its amount against the caps as a queued launch (W2-2): the ones the tests before left are released, so each test starts from
           // the caps alone (the ledger's own tests are in invariant/ads-launch-ledger.db.test.ts and below).
-          for (const l of await row<{ id: string }>(`SELECT id FROM crove_ads.ad_launch WHERE org_id = $1 AND state = 'queued'`, [orgId])) {
+          for (const l of await row<{ id: string }>(`SELECT id FROM ludy_ads.ad_launch WHERE org_id = $1 AND state = 'queued'`, [orgId])) {
             expect((await callAs(owner, 'ads/cancelLaunch', { launchId: l.id, idempotencyKey: key() })).status).toBe(200);
           }
           // The launches the job tests (W2-3) leave started hold their commitment too: the system, which knows nothing ran, releases them.
-          await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'test_cleanup' WHERE org_id = $1 AND state IN ('launching', 'needs_attention')`, [orgId]), true);
+          await inContext('system', (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'test_cleanup' WHERE org_id = $1 AND state IN ('launching', 'needs_attention')`, [orgId]), true);
           // A launch a person stopped (W2-4a) keeps its commitment to at least the first day of its flight, which a final state can never release, and a live one (W2-4b)
           // keeps all of its: the tests that stop one or run one to live leave it, so the next test starts from the caps alone (the table's owner removes the row; nothing in the ledger deletes one).
-          await admin((c) => c.query(`DELETE FROM crove_ads.ad_launch WHERE org_id = $1 AND state IN ('stopped', 'live') AND commit_until IS NOT NULL`, [orgId]));
+          await admin((c) => c.query(`DELETE FROM ludy_ads.ad_launch WHERE org_id = $1 AND state IN ('stopped', 'live') AND commit_until IS NOT NULL`, [orgId]));
           await open();
           const made = await connect(name);
           await sync(made.connectionId);
@@ -1395,7 +1395,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           for (const id of ids) expect((await approve(adminAccount, id)).status).toBe(200);
           return made.adAccountId;
         };
-        const draftRow = async (id: string) => (await row<{ status: string; revision: number; proposal_id: string | null; approved_at: Date | null; max_spend: string | null; daily_budget: string | null }>(`SELECT status, revision, proposal_id, approved_at, max_spend::text AS max_spend, daily_budget::text AS daily_budget FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+        const draftRow = async (id: string) => (await row<{ status: string; revision: number; proposal_id: string | null; approved_at: Date | null; max_spend: string | null; daily_budget: string | null }>(`SELECT status, revision, proposal_id, approved_at, max_spend::text AS max_spend, daily_budget::text AS daily_budget FROM ludy_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
         const refusedBy = (sqlText: string, params: unknown[], message: string) => expect(row(sqlText, params), message).rejects.toMatchObject({ message: expect.stringContaining(message) });
 
         it('lets an owner, an admin and a member draft, a viewer none; a plan in progress needs only a name and an objective, and says what is missing', async () => {
@@ -1452,7 +1452,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           }
           const messenger = await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: null }));
           // A connection of the org that is not a Facebook Page (the account's own, for reading) is not a Page; an id that is not the org's is refused.
-          const readConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
+          const readConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
           expect(codes(await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: readConnection }), messenger.id))).toContain('error:page_not_found');
           expect(await save(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: randomUUID() }), messenger.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
           expect(codes(await saved(owner, account, plan({ pageConnectionId: readConnection })))).toContain('error:page_not_found');
@@ -1487,8 +1487,8 @@ suite('ads on PostgreSQL (#2217)', () => {
           // While the request waits the draft is frozen: for the commands (a friendly refusal) and for the database, whatever path reaches it.
           expect(await save(owner, account, plan({ dailyBudget: '90000' }), good.id)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_SUBMITTED' } });
           expect(await callAs(owner, 'ads/discardCampaignDraft', { draftId: good.id, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_SUBMITTED' } });
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $1 AND id = $2`, [orgId, good.id], 'ADS_DRAFT_SUBMITTED');
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'discarded' WHERE org_id = $1 AND id = $2`, [orgId, good.id], 'ADS_DRAFT_SUBMITTED');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $1 AND id = $2`, [orgId, good.id], 'ADS_DRAFT_SUBMITTED');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET status = 'discarded' WHERE org_id = $1 AND id = $2`, [orgId, good.id], 'ADS_DRAFT_SUBMITTED');
           expect(await callAs(owner, 'ads/campaignDraft', { draftId: good.id })).toMatchObject({ body: { pendingProposalId: id } });
           // A rejected request sends it back to its author: editable again, and a new request is possible.
           expect((await reject(adminAccount, id)).status).toBe(200);
@@ -1513,7 +1513,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(await save(owner, account, plan({ dailyBudget: '90000' }), draft.id)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_CLOSED' } });
           expect((await callAs(owner, 'ads/discardCampaignDraft', { draftId: draft.id, idempotencyKey: key() })).status).toBe(409);
           expect((await submit(owner, draft.id)).status).toBe(409);
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $1 AND id = $2`, [orgId, draft.id], 'ADS_DRAFT_FROZEN');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $1 AND id = $2`, [orgId, draft.id], 'ADS_DRAFT_FROZEN');
           // The audit row has the ids, the amount and the hash, never the creative text.
           const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'ads.campaign.launch' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
           expect(audit[0]?.detail).toMatchObject({ draftId: draft.id, maxSpend: '700000', currency: 'VND', days: 7, planHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) });
@@ -1525,8 +1525,8 @@ suite('ads on PostgreSQL (#2217)', () => {
           const a = await saved(owner, account, plan());
           const b = await saved(owner, account, plan({ name: 'Một chiến dịch khác' }));
           // A raw statement cannot approve a draft or insert one that is approved, discarded or with a proposal, whoever runs it.
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, a.id], 'ADS_DRAFT_FORBIDDEN');
-          const forged = (columns: string, values: string) => refusedBy(`INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, created_by, ${columns}) VALUES ($1, $2, 'Giả', 'traffic', $3, ${values})`, [orgId, account, owner.userId], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, a.id], 'ADS_DRAFT_FORBIDDEN');
+          const forged = (columns: string, values: string) => refusedBy(`INSERT INTO ludy_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, created_by, ${columns}) VALUES ($1, $2, 'Giả', 'traffic', $3, ${values})`, [orgId, account, owner.userId], 'ADS_DRAFT_FORBIDDEN');
           await forged('status', `'discarded'`);
           await forged('proposal_id', 'gen_random_uuid()');
           await forged('revision', '5');
@@ -1537,19 +1537,19 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await approve(adminAccount, id)).status).toBe(200);
           expect((await draftRow(b.id))?.status).toBe('draft');
           // The writer cannot stamp who or when, or the revision: the database does, each on its own; who wrote it and the keys never change.
-          await row(`UPDATE crove_ads.ad_campaign_draft SET revision = 99 WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
+          await row(`UPDATE ludy_ads.ad_campaign_draft SET revision = 99 WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
           expect((await draftRow(b.id))?.revision).toBe(1);
-          await row(`UPDATE crove_ads.ad_campaign_draft SET updated_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, b.id, member.userId]);
-          expect((await row<{ updated_by: string | null }>(`SELECT updated_by FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, b.id]))[0]?.updated_by).toBeNull();
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET created_at = '2000-01-01' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET origin = 'ai' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET ai_fields = ARRAY['dailyBudget'] WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await row(`UPDATE ludy_ads.ad_campaign_draft SET updated_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, b.id, member.userId]);
+          expect((await row<{ updated_by: string | null }>(`SELECT updated_by FROM ludy_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, b.id]))[0]?.updated_by).toBeNull();
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET created_at = '2000-01-01' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET origin = 'ai' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET ai_fields = ARRAY['dailyBudget'] WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
           // No amount that is not a number: NaN and Infinity are refused by the table.
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 'NaN' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_daily_budget_check');
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET max_spend = 'Infinity' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_max_spend_check');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET daily_budget = 'NaN' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_daily_budget_check');
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET max_spend = 'Infinity' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_max_spend_check');
           // A draft with no amount is never approved, even by a proposal that names it.
-          await row(`UPDATE crove_ads.ad_campaign_draft SET max_spend = NULL WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
-          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await row(`UPDATE ludy_ads.ad_campaign_draft SET max_spend = NULL WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
+          await refusedBy(`UPDATE ludy_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
         });
 
         it('checks again at approval: a cap lowered, running ads switched off or launches blocked after the request stop the approval, and the draft stays a draft', async () => {
@@ -1588,21 +1588,21 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await approve(adminAccount, proposalId(await submit(owner, approved.id)))).status).toBe(200);
           const open = await saved(owner, account, plan({ name: 'Đang soạn' }));
           const entity = (await row<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh quảng cáo', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
-          const entityOf = async (id: string) => (await row<{ legal_entity_id: string; status: string }>(`SELECT legal_entity_id, status FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+          const entityOf = async (id: string) => (await row<{ legal_entity_id: string; status: string }>(`SELECT legal_entity_id, status FROM ludy_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
           const before = (await entityOf(open.id))?.legal_entity_id;
           // The account's foreign key cascades the new entity to its drafts; the guard lets that alone through for a draft that is over too.
-          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
+          await row(`UPDATE ludy_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
           expect(await entityOf(discarded.id)).toEqual({ legal_entity_id: entity, status: 'discarded' });
           expect(await entityOf(approved.id)).toEqual({ legal_entity_id: entity, status: 'approved' });
           expect((await entityOf(open.id))?.legal_entity_id).toBe(entity);
-          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
+          await row(`UPDATE ludy_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
           expect((await entityOf(approved.id))?.legal_entity_id).toBe(before);
           // A request made in one entity is not approved after its account moved to another: the approval is refused and a new request is the way.
           const asked = proposalId(await submit(owner, open.id));
-          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
+          await row(`UPDATE ludy_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
           expect(await approve(adminAccount, asked)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_CHANGED' } });
           expect((await draftRow(open.id))?.status).toBe('draft');
-          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
+          await row(`UPDATE ludy_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
           expect((await approve(adminAccount, asked)).status).toBe(200);
         });
 
@@ -1611,7 +1611,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           const body = plan({ name: 'Do đồng nghiệp AI soạn' });
           // A draft the system wrote (origin ai, the fields it drafted named), inserted as the database owner: the draft job's command does the same in the system context.
           const [made] = await row<{ id: string }>(
-            `INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, daily_budget, start_on, end_on, targeting, link_url, page_connection_id, variants, origin, ai_fields, max_spend, created_by)
+            `INSERT INTO ludy_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, daily_budget, start_on, end_on, targeting, link_url, page_connection_id, variants, origin, ai_fields, max_spend, created_by)
              VALUES ($1, $2, $3, 'traffic', $4, $5, $6, $7::jsonb, $8, $12, $9::jsonb, 'ai', ARRAY['name', 'targeting', 'variants'], $10, $11) RETURNING id`,
             [orgId, account, body.name, body.dailyBudget, body.startOn, body.endOn, JSON.stringify(body.targeting), body.linkUrl, JSON.stringify(body.variants), '700000', member.userId, draftsPage],
           );
@@ -1644,7 +1644,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         const launchOf = async (draftId: string) =>
           (
             await row<{ id: string; state: string; step: string | null; attempt: number; currency: string; daily_budget: string; amount: string; start_on: string; end_on: string; commit_until: string | null; tag: string; proposal_id: string; plan_hash: string; created_by: string; stop_reason: string | null; finished_at: Date | null }>(
-              `SELECT id, state, step, attempt, currency, daily_budget::text, amount::text, start_on::text, end_on::text, commit_until::text, tag, proposal_id, plan_hash, created_by, stop_reason, finished_at FROM crove_ads.ad_launch WHERE org_id = $1 AND draft_id = $2`,
+              `SELECT id, state, step, attempt, currency, daily_budget::text, amount::text, start_on::text, end_on::text, commit_until::text, tag, proposal_id, plan_hash, created_by, stop_reason, finished_at FROM ludy_ads.ad_launch WHERE org_id = $1 AND draft_id = $2`,
               [orgId, draftId],
             )
           )[0];
@@ -1758,9 +1758,9 @@ suite('ads on PostgreSQL (#2217)', () => {
           const account = await ready('Chưa đặt hạn mức');
           const month = inDays(2).slice(0, 7);
           // The org's caps are in dong; an account that reports in another currency has no cap in force.
-          await admin((c) => c.query(`UPDATE crove_ads.ad_account SET currency = 'USD' WHERE org_id = $1 AND id = $2`, [orgId, account]));
+          await admin((c) => c.query(`UPDATE ludy_ads.ad_account SET currency = 'USD' WHERE org_id = $1 AND id = $2`, [orgId, account]));
           expect((await callAs(owner, 'ads/committed', { adAccountId: account, month })).body).toMatchObject({ currency: 'USD', hasCap: false, capCurrencyMismatch: true, account: { committed: '0', cap: null, left: null }, org: { committed: '0', cap: null, left: null } });
-          await admin((c) => c.query(`UPDATE crove_ads.ad_account SET currency = 'VND' WHERE org_id = $1 AND id = $2`, [orgId, account]));
+          await admin((c) => c.query(`UPDATE ludy_ads.ad_account SET currency = 'VND' WHERE org_id = $1 AND id = $2`, [orgId, account]));
         });
 
         it('serialises launches approved at the same moment: the commitments never pass a cap between them', async () => {
@@ -1774,11 +1774,11 @@ suite('ads on PostgreSQL (#2217)', () => {
           const answers = await Promise.all(ids.map((i) => approve(adminAccount, i.proposal)));
           expect(answers.filter((a) => a.status === 200)).toHaveLength(2);
           expect(answers.filter((a) => a.status === 409).map((a) => a.body.code)).toEqual(['ADS_SPEND_CAP', 'ADS_SPEND_CAP', 'ADS_SPEND_CAP']);
-          const queued = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_launch WHERE org_id = $1 AND state = 'queued'`, [orgId]);
+          const queued = await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_launch WHERE org_id = $1 AND state = 'queued'`, [orgId]);
           expect(queued[0]?.n).toBe('2');
           // Whatever the order they ran in, no day of the org commits more than the cap.
           const over = await row<{ day: string; total: string }>(
-            `SELECT d::date::text AS day, sum(l.daily_budget)::text AS total FROM crove_ads.ad_launch l, generate_series(l.start_on, l.commit_until, interval '1 day') d
+            `SELECT d::date::text AS day, sum(l.daily_budget)::text AS total FROM ludy_ads.ad_launch l, generate_series(l.start_on, l.commit_until, interval '1 day') d
              WHERE l.org_id = $1 AND l.commit_until IS NOT NULL GROUP BY 1 HAVING sum(l.daily_budget) > 200000`,
             [orgId],
           );
@@ -1797,9 +1797,9 @@ suite('ads on PostgreSQL (#2217)', () => {
           // The system does not cancel through the command (an owner's or an admin's).
           await expect(api.execute('ads.launch.cancel', { launchId: launch }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
           // A launch the writer has started (the system's move, W2-3) is not cancelled by this command.
-          await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [orgId, launch]), true);
+          await inContext('system', (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [orgId, launch]), true);
           expect(await callAs(adminAccount, 'ads/cancelLaunch', { launchId: launch, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCH_NOT_QUEUED' } });
-          await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL WHERE org_id = $1 AND id = $2`, [orgId, launch]), true);
+          await inContext('system', (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'stopped', commit_until = NULL WHERE org_id = $1 AND id = $2`, [orgId, launch]), true);
           const second = await approvedPlan(account, { name: 'Lần thứ hai' });
           const secondLaunch = (await launchOf(second.draft.id))?.id as string;
           expect(await callAs(adminAccount, 'ads/cancelLaunch', { launchId: secondLaunch, idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchId: secondLaunch, released: '700000' } });
@@ -1871,7 +1871,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           };
           const run = (writers: SandboxAdWriter | Readonly<Record<string, LaunchWriter>>, launchId: string, runtime: Runtime = worker) =>
             runAdsLaunch({ runtime, broker: vault, writers: writers instanceof SandboxAdWriter ? adLaunchWriters({ sandbox: writers }) : writers }, { orgId, launchId });
-          const launchNow = async (id: string) => (await row<{ state: string; step: string | null; attempt: number; commit_until: string | null; stop_reason: string | null; finished_at: Date | null }>(`SELECT state, step, attempt, commit_until::text, stop_reason, finished_at FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+          const launchNow = async (id: string) => (await row<{ state: string; step: string | null; attempt: number; commit_until: string | null; stop_reason: string | null; finished_at: Date | null }>(`SELECT state, step, attempt, commit_until::text, stop_reason, finished_at FROM ludy_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
           const calls = async (id: string) => {
             const found = await row<{ key: string; step: string; state: string; calls: number; external_ref: string | null; error_kind: string | null; error_code: string | null }>(
               `SELECT key, step, state, calls, external_ref, error_kind, error_code FROM ludy_kernel.external_call WHERE org_id = $1 AND key LIKE $2`,
@@ -1880,7 +1880,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             // The same step of two attempts has two rows: the key (which carries the attempt) breaks the tie, since the database gives no order of its own.
             return found.sort((a, b) => ORDER.indexOf(a.step) - ORDER.indexOf(b.step) || a.key.localeCompare(b.key, 'en', { numeric: true }));
           };
-          const objectsOf = async (id: string) => (await row<{ slot: string; level: string; external_id: string; name: string; configured_status: string }>(`SELECT slot, level, external_id, name, configured_status FROM crove_ads.ad_object WHERE org_id = $1 AND launch_id = $2`, [orgId, id])).sort((a, b) => ORDER.indexOf(a.slot) - ORDER.indexOf(b.slot));
+          const objectsOf = async (id: string) => (await row<{ slot: string; level: string; external_id: string; name: string; configured_status: string }>(`SELECT slot, level, external_id, name, configured_status FROM ludy_ads.ad_object WHERE org_id = $1 AND launch_id = $2`, [orgId, id])).sort((a, b) => ORDER.indexOf(a.slot) - ORDER.indexOf(b.slot));
           // The clock of a call the job began, put back (a dead worker, a minute that passed), as the Social publish tests do.
           const age = (id: string, seconds: number) =>
             row(`UPDATE ludy_kernel.external_call SET updated_at = updated_at - make_interval(secs => $3) WHERE org_id = $1 AND key LIKE $2 AND state IN ('started', 'ambiguous')`, [orgId, `ads.launch:${id}:%`, seconds]);
@@ -2121,7 +2121,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             const began = await worker.execute<{ action: string; callKey: string; step: string }>('ads.launch.begin', { launchId: launch.id, writers }, options);
             expect(began).toMatchObject({ action: 'call', step: 'campaign' });
             // The switch went off and a run stopped the launch while the call was in flight; the platform made the campaign.
-            await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'switch_off' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]), true);
+            await inContext('system', (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'switch_off' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]), true);
             const accepted = { launchId: launch.id, callKey: began.callKey, phase: 'call', result: { kind: 'accepted', externalId: 'sbx-late-1' } };
             expect(await worker.execute('ads.launch.record', accepted, options)).toMatchObject({ recorded: true, state: 'stopped', next: 'stop' });
             expect((await objectsOf(launch.id)).map((o) => [o.slot, o.external_id, o.configured_status])).toEqual([['campaign', 'sbx-late-1', 'paused']]);
@@ -2190,12 +2190,12 @@ suite('ads on PostgreSQL (#2217)', () => {
             await admin(async (c) => {
               await c.query('BEGIN');
               try {
-                await c.query(`ALTER TABLE crove_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard`);
-                await c.query(`ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard`);
-                await c.query(`UPDATE crove_ads.ad_campaign_draft SET page_connection_id = NULL WHERE org_id = $1 AND id = $2`, [orgId, noPage.draft.id]);
-                await c.query(`UPDATE crove_ads.ad_launch SET plan_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, noPage.launch.id, planHash(legacy as NonNullable<typeof legacy>, noPage.account, 'VND')]);
-                await c.query(`ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`);
-                await c.query(`ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard`);
+                await c.query(`ALTER TABLE ludy_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard`);
+                await c.query(`ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard`);
+                await c.query(`UPDATE ludy_ads.ad_campaign_draft SET page_connection_id = NULL WHERE org_id = $1 AND id = $2`, [orgId, noPage.draft.id]);
+                await c.query(`UPDATE ludy_ads.ad_launch SET plan_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, noPage.launch.id, planHash(legacy as NonNullable<typeof legacy>, noPage.account, 'VND')]);
+                await c.query(`ALTER TABLE ludy_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`);
+                await c.query(`ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard`);
                 await c.query('COMMIT');
               } catch (err) {
                 await c.query('ROLLBACK');
@@ -2221,12 +2221,12 @@ suite('ads on PostgreSQL (#2217)', () => {
             const w = new SandboxAdWriter();
             for (const zone of [null, 'Mars/Phobos']) {
               const { account, launch } = await queued(`Múi giờ ${zone ?? 'trống'}`);
-              await row(`UPDATE crove_ads.ad_account SET time_zone = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, zone]);
+              await row(`UPDATE ludy_ads.ad_account SET time_zone = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, zone]);
               expect(await run(w, launch.id), String(zone)).toEqual({ steps: 0, ended: 'zone_unknown' });
               expect(await launchNow(launch.id), String(zone)).toMatchObject({ state: 'needs_attention', stop_reason: 'zone_unknown', commit_until: inDays(8) });
               expect(await calls(launch.id)).toEqual([]);
               // The account is put right again: the reads of the other tests (the spend flags) read every account's zone and refuse one they cannot read.
-              await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
+              await row(`UPDATE ludy_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
             }
             expect(w.received).toEqual([]);
           });
@@ -2236,11 +2236,11 @@ suite('ads on PostgreSQL (#2217)', () => {
             const { launch } = await queued('Hết hạn trước khi chạy');
             // The days pass while it waits (the ledger's guard is off for the statement: the plan and its days never change otherwise): the flight ended last month.
             await admin(async (c) => {
-              await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+              await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
               try {
-                await c.query(`UPDATE crove_ads.ad_launch SET start_on = start_on - 30, end_on = end_on - 30, commit_until = commit_until - 30 WHERE org_id = $1 AND id = $2`, [orgId, launch.id]);
+                await c.query(`UPDATE ludy_ads.ad_launch SET start_on = start_on - 30, end_on = end_on - 30, commit_until = commit_until - 30 WHERE org_id = $1 AND id = $2`, [orgId, launch.id]);
               } finally {
-                await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
               }
             });
             expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'flight_over' });
@@ -2261,7 +2261,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect(first).toMatchObject({ action: 'reconcile', step: 'campaign' });
             // The write connection closes while the lookup runs (a member who left: the closing does not touch the launch row); the lookup finds nothing, and the job still
             // holds the token it opened. (The owner's own stops, a switch-off or the kill switch, stop the launch itself, so the record is stale then: tested below.)
-            const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+            const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
             await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
             const missing = { launchId: launch.id, callKey: first.callKey, phase: 'reconcile', result: { kind: 'missing' } };
             expect(await worker.execute('ads.launch.record', missing, options)).toMatchObject({ recorded: true, next: 'stop' });
@@ -2330,7 +2330,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             w.inject({ level: 'ad_set', when: 'after' });
             expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
             // The write connection is closed behind the launch's back (a member who left): the next begin finds the condition and stops it.
-            const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+            const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
             await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
             await age(launch.id, 61);
             expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
@@ -2381,20 +2381,20 @@ suite('ads on PostgreSQL (#2217)', () => {
             };
             const pauseRun = (w: SandboxAdWriter, launchId: string) => runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId });
             const windDown = async (id: string) =>
-              (await row<{ wound_down_at: Date | null; wind_down_tries: number; wind_down_next_at: Date | null; wind_down_code: string | null }>(`SELECT wound_down_at, wind_down_tries, wind_down_next_at, wind_down_code FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+              (await row<{ wound_down_at: Date | null; wind_down_tries: number; wind_down_next_at: Date | null; wind_down_code: string | null }>(`SELECT wound_down_at, wind_down_tries, wind_down_next_at, wind_down_code FROM ludy_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
             const pauseCalls = (id: string) => row<{ key: string; step: string; state: string; error_kind: string | null; error_code: string | null }>(`SELECT key, step, state, error_kind, error_code FROM ludy_kernel.external_call WHERE org_id = $1 AND key LIKE $2 ORDER BY key`, [orgId, `ads.pause:${id}:%`]);
             const stopAs = (who: Account, launchId: string) => callAs(who, 'ads/stopLaunch', { launchId, idempotencyKey: key() });
             // The ledger's guard is on for every role, so a test that puts a clock or a count back does it with the guard off for the statement, as the ledger's own tests do.
             const edit = (statement: string, params: unknown[]) =>
               admin(async (c) => {
-                await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
                 try {
                   await c.query(statement, params);
                 } finally {
-                  await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                  await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
                 }
               });
-            const dueNow = (id: string) => edit(`UPDATE crove_ads.ad_launch SET wind_down_next_at = now() - interval '1 second' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+            const dueNow = (id: string) => edit(`UPDATE ludy_ads.ad_launch SET wind_down_next_at = now() - interval '1 second' WHERE org_id = $1 AND id = $2`, [orgId, id]);
 
             it('lets an owner or an admin stop a launch that has started, keeps its commitment to today, and the pause job pauses what it made, once, by the record and the tag', async () => {
               const w = new SandboxAdWriter();
@@ -2517,7 +2517,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               const w2 = new SandboxAdWriter();
               const tenth = await startedNow('Lần thứ mười', w2);
               await stopAs(owner, tenth.launch.id);
-              await edit(`UPDATE crove_ads.ad_launch SET wind_down_tries = 9 WHERE org_id = $1 AND id = $2`, [orgId, tenth.launch.id]);
+              await edit(`UPDATE ludy_ads.ad_launch SET wind_down_tries = 9 WHERE org_id = $1 AND id = $2`, [orgId, tenth.launch.id]);
               w2.inject({ level: 'ad', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
               expect(await pauseRun(w2, tenth.launch.id)).toEqual({ ran: true, ended: 'gave_up' });
               expect(await windDown(tenth.launch.id)).toMatchObject({ wind_down_tries: 10, wind_down_code: 'attempts', wound_down_at: null });
@@ -2525,16 +2525,16 @@ suite('ads on PostgreSQL (#2217)', () => {
               const w3 = new SandboxAdWriter();
               const old = await startedNow('Quá bảy ngày', w3);
               await stopAs(owner, old.launch.id);
-              await edit(`UPDATE crove_ads.ad_launch SET finished_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2`, [orgId, old.launch.id]);
+              await edit(`UPDATE ludy_ads.ad_launch SET finished_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2`, [orgId, old.launch.id]);
               expect(await pauseRun(w3, old.launch.id)).toEqual({ ran: false, ended: 'gave_up' });
               expect(w3.statusCalls).toEqual([]);
               expect(await windDown(old.launch.id)).toMatchObject({ wind_down_code: 'age', wind_down_tries: 0 });
               // A launch that made nothing and ran nothing is wound down at once, with no call to the platform.
               const w4 = new SandboxAdWriter();
               const blank = await queued('Chưa tạo gì');
-              await row(`UPDATE crove_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, blank.account]);
+              await row(`UPDATE ludy_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, blank.account]);
               expect(await run(w4, blank.launch.id)).toEqual({ steps: 0, ended: 'zone_unknown' });
-              await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, blank.account]);
+              await row(`UPDATE ludy_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, blank.account]);
               expect((await stopAs(owner, blank.launch.id)).status).toBe(200);
               expect(await pauseRun(w4, blank.launch.id)).toEqual({ ran: false, ended: 'nothing_to_pause' });
               expect((await windDown(blank.launch.id))?.wound_down_at).toBeInstanceOf(Date);
@@ -2548,7 +2548,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
               expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(2) });
               // The write connection closed in the same transaction: its token is gone from the connection, and a copy is held for the revoke.
-              const obligation = async () => (await row<{ state: string; attempts: number; last_error_kind: string | null; last_error_code: string | null }>(`SELECT state, attempts, last_error_kind, last_error_code FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]))[0];
+              const obligation = async () => (await row<{ state: string; attempts: number; last_error_kind: string | null; last_error_code: string | null }>(`SELECT state, attempts, last_error_kind, last_error_code FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]))[0];
               expect(await obligation()).toMatchObject({ state: 'pending', attempts: 0 });
               // The pause job has no token of its own any more: it leaves the launch to the revoke sweep, counts no try, and calls nothing.
               expect(await pauseRun(w, launch.id)).toEqual({ ran: false, ended: 'revoke_path' });
@@ -2562,13 +2562,13 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await obligation()).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'transient', last_error_code: 'PAUSE_PENDING' });
               expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 1 });
               // Due again: the pause finishes with the same copy, the launch is wound down, and the permission is removed after it.
-              await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+              await admin((c) => c.query(`UPDATE ludy_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
               await dueNow(launch.id);
               await sweep();
               expect([...w.objects.values()].every((o) => o.status === 'paused')).toBe(true);
               expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
               expect(await obligation()).toMatchObject({ state: 'done' });
-              const how = await row<{ how_done: string | null }>(`SELECT how_done FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]);
+              const how = await row<{ how_done: string | null }>(`SELECT how_done FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]);
               expect(how[0]?.how_done).toBe('sandbox');
             });
 
@@ -2582,20 +2582,20 @@ suite('ads on PostgreSQL (#2217)', () => {
               const readSeal = vault.seal(readLogin.secret, { orgId, provider: readLogin.provider, externalAccountId: readLogin.externalAccountId });
               const readId = randomUUID();
               await admin(async (c) => {
-                await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+                await c.query('ALTER TABLE ludy_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
                 try {
-                  await c.query(`UPDATE crove_ads.ad_token_revoke SET grantor_hash = $3 WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write'`, [orgId, account, hash]);
+                  await c.query(`UPDATE ludy_ads.ad_token_revoke SET grantor_hash = $3 WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write'`, [orgId, account, hash]);
                 } finally {
-                  await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+                  await c.query('ALTER TABLE ludy_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
                 }
                 await c.query(
-                  `INSERT INTO crove_ads.ad_token_revoke (org_id, id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
+                  `INSERT INTO ludy_ads.ad_token_revoke (org_id, id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
                    VALUES ($1, $2, $3, $4, $5, $6, 'read_spend', 'disconnected', $7, $8)`,
                   [orgId, readId, randomUUID(), account, readLogin.provider, readLogin.externalAccountId, hash, owner.userId],
                 );
-                await c.query(`INSERT INTO crove_ads.ad_token_seal (org_id, revoke_id, key_id, envelope) VALUES ($1, $2, $3, $4)`, [orgId, readId, readSeal.keyId, readSeal.envelope]);
+                await c.query(`INSERT INTO ludy_ads.ad_token_seal (org_id, revoke_id, key_id, envelope) VALUES ($1, $2, $3, $4)`, [orgId, readId, readSeal.keyId, readSeal.envelope]);
               });
-              const state = async (id: string) => (await row<{ state: string; attempts: number; last_error_code: string | null }>(`SELECT state, attempts, last_error_code FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+              const state = async (id: string) => (await row<{ state: string; attempts: number; last_error_code: string | null }>(`SELECT state, attempts, last_error_code FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
               // Every revoke call, and whether the launch had been wound down when it was made.
               const base = revokerOf(w);
               const revokedWhen: boolean[] = [];
@@ -2616,7 +2616,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 1 });
               // Due again: the launch is wound down with the write copy, and both revokes are made after it.
               for (let n = 0; n < 3 && (await state(readId))?.state !== 'done'; n += 1) {
-                await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+                await admin((c) => c.query(`UPDATE ludy_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
                 await dueNow(launch.id);
                 await sweep();
               }
@@ -2660,8 +2660,8 @@ suite('ads on PostgreSQL (#2217)', () => {
             };
             const activations = (id: string) => row<{ step: string; state: string }>(`SELECT step, state FROM ludy_kernel.external_call WHERE org_id = $1 AND key LIKE $2 ORDER BY started_at, id`, [orgId, `ads.launch:${id}:%:activate\\_%`]);
             const statuses = (w: SandboxAdWriter) => [...w.objects.values()].map((o) => `${o.level}:${o.status}`).sort();
-            const toLive = (id: string) => inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [orgId, id]));
-            const problem = async (id: string) => (await row<{ p: string | null }>(`SELECT crove_ads.launch_activation_problem($1, $2) AS p`, [orgId, id]))[0]?.p;
+            const toLive = (id: string) => inContext('system', (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [orgId, id]));
+            const problem = async (id: string) => (await row<{ p: string | null }>(`SELECT ludy_ads.launch_activation_problem($1, $2) AS p`, [orgId, id]))[0]?.p;
             const events = (type: string, id: string) => row<{ payload: Record<string, unknown> }>(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload ->> 'launchId' = $3`, [orgId, type, id]);
 
             it('switches on the launch\'s own objects, each ad first, then the ad set, the campaign last, one call each, and the launch is live', async () => {
@@ -2693,9 +2693,9 @@ suite('ads on PostgreSQL (#2217)', () => {
               await expect(toLive(launch.id)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_LAUNCH_ACTIVATION'), detail: 'activation' });
               expect(await problem(launch.id)).toBe('activation');
               expect(await launchNow(launch.id)).toMatchObject({ state: 'launching' });
-              for (const who of [owner, adminAccount, member]) await expect(inContext(who, (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'live' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
+              for (const who of [owner, adminAccount, member]) await expect(inContext(who, (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'live' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
               // A person has no column that asks for a retry: the request is the definer's, and a person's own update of it is a privilege error.
-              await expect(inContext(owner, (c) => c.query(`UPDATE crove_ads.ad_launch SET retry_requested_at = now() WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
+              await expect(inContext(owner, (c) => c.query(`UPDATE ludy_ads.ad_launch SET retry_requested_at = now() WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
               // The run to live, then what the rule says of the switches (the kill switch blocks launches) once every activation has settled.
               expect(await activate(w, launch.id)).toEqual({ steps: 3, ended: 'live' });
               expect(await problem(launch.id)).toBeNull();
@@ -2713,7 +2713,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // The write connection closed between the creates and the activation, as no stop command saw it: begin stops the launch, keeping its commitment to today, and
               // the pause job is queued (ids only).
               const b = await created('Kết nối đóng', w);
-              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, b.account]))[0];
+              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, b.account]))[0];
               await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
               expect(await activate(w, b.launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
               expect(await launchNow(b.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'connection_closed', commit_until: inDays(0) });
@@ -2722,7 +2722,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // A cap of the account lowered below the launch after it was created: needs attention, nothing called.
               const c = await created('Hạ hạn mức trước khi bật', w);
               // (A cap lowered through the command cannot go below what is committed, so the row is put in by the database owner, as the clock test does.)
-              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000001', 'account', $2, 'daily', '90000', 'VND', $3)`, [orgId, c.account, owner.userId]);
+              await row(`INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000001', 'account', $2, 'daily', '90000', 'VND', $3)`, [orgId, c.account, owner.userId]);
               expect(await activate(w, c.launch.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
               expect(await launchNow(c.launch.id)).toMatchObject({ state: 'needs_attention', stop_reason: 'cap_lowered' });
               expect((await activations(c.launch.id)).length).toBe(0);
@@ -2736,7 +2736,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               w.inject({ level: 'campaign', when: 'status_after' });
               expect(await activate(w, launch.id)).toEqual({ steps: 3, ended: 'unknown' });
               expect(statuses(w).filter((s) => s.endsWith(':active')).sort()).toEqual(['ad:active', 'ad_set:active', 'campaign:active']);
-              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000002', 'account', $2, 'daily', '90000', 'VND', $3)`, [orgId, account, owner.userId]);
+              await row(`INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000002', 'account', $2, 'daily', '90000', 'VND', $3)`, [orgId, account, owner.userId]);
               expect(await activate(w, launch.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
               // Not needs attention: stopped, its commitment kept to today, and the pause is queued (ids only) for what may be on.
               expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'cap_lowered', commit_until: inDays(0) });
@@ -2764,14 +2764,14 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused' });
               expect(await problem(launch.id)).toBe('activation');
               // The sweep leaves it alone before its first day, and brings a launch whose first day has come and whose event was lost.
-              const sweep = () => inContext('system', async (c) => Number((await c.query<{ n: number }>(`SELECT crove_ads.activate_requeue($1::text[], 50) AS n`, [['sandboxwrite_ads']])).rows[0]?.n), true);
+              const sweep = () => inContext('system', async (c) => Number((await c.query<{ n: number }>(`SELECT ludy_ads.activate_requeue($1::text[], 50) AS n`, [['sandboxwrite_ads']])).rows[0]?.n), true);
               const aged = (id: string) =>
                 admin(async (c) => {
-                  await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                  await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
                   try {
-                    await c.query(`UPDATE crove_ads.ad_launch SET updated_at = now() - interval '10 minutes', state = state, step = step WHERE org_id = $1 AND id = $2`, [orgId, id]);
+                    await c.query(`UPDATE ludy_ads.ad_launch SET updated_at = now() - interval '10 minutes', state = state, step = step WHERE org_id = $1 AND id = $2`, [orgId, id]);
                   } finally {
-                    await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                    await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
                   }
                 });
               await aged(launch.id);
@@ -2789,7 +2789,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // The ad set is made at the platform and the answer is lost: the row stays unclear, and the launch is sent to a person.
               w.inject({ level: 'ad_set', when: 'after' });
               expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
-              await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'needs_attention' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]), true);
+              await inContext('system', (c) => c.query(`UPDATE ludy_ads.ad_launch SET state = 'needs_attention' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]), true);
               // Nothing runs it again by itself, and nobody but an owner or an admin asks.
               expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'needs_attention' });
               for (const who of [member, viewer, accountant, outsider]) expect((await callAs(who, 'ads/retryLaunch', { launchId: launch.id, idempotencyKey: key() })).status, who.email).toBe(403);
@@ -2872,18 +2872,18 @@ suite('ads on PostgreSQL (#2217)', () => {
             const live = async (name: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => liveOn(await ready(name), w, over);
             const changesOf = (launchId: string) =>
               row<{ id: string; kind: string; slot: string; state: string; code: string | null; from_budget: string | null; to_budget: string | null; from_end_on: string | null; to_end_on: string | null; proposal_id: string | null; settled_on: string | null }>(
-                `SELECT id, kind, slot, state, code, from_budget::text, to_budget::text, from_end_on::text, to_end_on::text, proposal_id, settled_on::text FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 ORDER BY seq`,
+                `SELECT id, kind, slot, state, code, from_budget::text, to_budget::text, from_end_on::text, to_end_on::text, proposal_id, settled_on::text FROM ludy_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 ORDER BY seq`,
                 [orgId, launchId],
               );
             const lastChange = async (launchId: string) => (await changesOf(launchId)).at(-1) as NonNullable<Awaited<ReturnType<typeof changesOf>>[number]>;
             const objectId = async (launchId: string, slot: string) => (await objectsOf(launchId)).find((o) => o.slot === slot)?.external_id as string;
             const callOf = async (changeId: string) => (await row<{ state: string; calls: number; step: string; error_code: string | null }>(`SELECT state, calls, step, error_code FROM ludy_kernel.external_call WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${changeId}:apply`]))[0];
-            const hold = async (launchId: string) => (await row<{ daily_budget: string; end_on: string }>(`SELECT daily_budget::text, end_on::text FROM crove_ads.launch_hold($1, $2)`, [orgId, launchId]))[0];
+            const hold = async (launchId: string) => (await row<{ daily_budget: string; end_on: string }>(`SELECT daily_budget::text, end_on::text FROM ludy_ads.launch_hold($1, $2)`, [orgId, launchId]))[0];
             // What the caps are judged against for this account's launch: the budget and the last day it commits.
             // The commitments of the account's launch are segments (what ran under a budget counts at that budget): `commitAll` lists them, `commit` is the one that runs to the end.
             const addDaysText = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
             const commitAll = async (account: string) =>
-              inContext('system', async (c) => (await c.query<{ ad_account_id: string; daily_budget: string; start_on: string; commit_until: string }>(`SELECT ad_account_id, daily_budget, start_on::text, commit_until::text FROM crove_ads.launch_commitments('VND', $1::date, $2::date)`, [inDays(-30), inDays(300)])).rows.filter((r) => r.ad_account_id === account));
+              inContext('system', async (c) => (await c.query<{ ad_account_id: string; daily_budget: string; start_on: string; commit_until: string }>(`SELECT ad_account_id, daily_budget, start_on::text, commit_until::text FROM ludy_ads.launch_commitments('VND', $1::date, $2::date)`, [inDays(-30), inDays(300)])).rows.filter((r) => r.ad_account_id === account));
             const commit = async (account: string) => (await commitAll(account)).at(-1);
             const queuedEvents = (changeId: string) => row<{ payload: Record<string, unknown> }>(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.manage.queued' AND payload ->> 'changeId' = $2`, [orgId, changeId]);
             // The clock of a call the job began, put back (a dead worker, a minute that passed).
@@ -2910,21 +2910,21 @@ suite('ads on PostgreSQL (#2217)', () => {
             // A cap the table's owner puts in (a cap lowered through the command cannot go below what is committed).
             const putCap = async (account: string, period: 'daily' | 'monthly', amount: string) => {
               const id = randomUUID();
-              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, $2, 'account', $3, $4, $5, 'VND', $6)`, [orgId, id, account, period, amount, owner.userId]);
+              await row(`INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, $2, 'account', $3, $4, $5, 'VND', $6)`, [orgId, id, account, period, amount, owner.userId]);
               return id;
             };
-            const dropCap = (id: string) => row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, id]);
+            const dropCap = (id: string) => row(`DELETE FROM ludy_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, id]);
             // The org's daily cap is the newest row of its key, and the rows earlier tests of this file left are not this test's to depend on (one of them was sent with an id from the far
             // future): the test sets the org's daily caps to exactly the ones it names, and puts the others back afterwards, whatever happens in between.
             const withOrgDailyCaps = async (caps: ReadonlyArray<{ amount: string; currency: string }>, body: () => Promise<void>) => {
-              const saved = await row<{ id: string; amount: string; currency: string; set_by: string; set_at: Date }>(`SELECT id, amount::text, currency, set_by, set_at FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
-              await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+              const saved = await row<{ id: string; amount: string; currency: string; set_by: string; set_at: Date }>(`SELECT id, amount::text, currency, set_by, set_at FROM ludy_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+              await row(`DELETE FROM ludy_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
               try {
-                for (const c of caps) await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, ludy_kernel.uuid_v7(), 'org', 'daily', $2, $3, $4)`, [orgId, c.amount, c.currency, owner.userId]);
+                for (const c of caps) await row(`INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, ludy_kernel.uuid_v7(), 'org', 'daily', $2, $3, $4)`, [orgId, c.amount, c.currency, owner.userId]);
                 await body();
               } finally {
-                await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
-                for (const c of saved) await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, $4, $5, $6)`, [orgId, c.id, c.amount, c.currency, c.set_by, c.set_at]);
+                await row(`DELETE FROM ludy_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+                for (const c of saved) await row(`INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, $4, $5, $6)`, [orgId, c.id, c.amount, c.currency, c.set_by, c.set_at]);
               }
             };
             const stopLaunchAs = (who: Account, launchId: string) => callAs(who, 'ads/stopLaunch', { launchId, idempotencyKey: key() });
@@ -3260,7 +3260,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               await worker.execute('ads.manage.begin', { changeId: begun, providers: [w.provider] }, { actor: SYSTEM, orgId });
               expect(await callOf(begun)).toMatchObject({ state: 'started', calls: 1 });
               expect(await cancel(owner, begun)).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_BEGUN' } });
-              await expect(inContext(owner, (c) => c.query(`UPDATE crove_ads.ad_manage_change SET state = 'cancelled' WHERE org_id = $1 AND id = $2`, [orgId, begun]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_MANAGE_FORBIDDEN') });
+              await expect(inContext(owner, (c) => c.query(`UPDATE ludy_ads.ad_manage_change SET state = 'cancelled' WHERE org_id = $1 AND id = $2`, [orgId, begun]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_MANAGE_FORBIDDEN') });
               expect((await changesOf(launch.id)).at(-1)).toMatchObject({ id: begun, state: 'queued' });
             });
 
@@ -3431,7 +3431,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(winners).toHaveLength(1);
               expect(winners[0]).toMatchObject({ kind: 'budget_raise', state: 'queued', to_budget: '110000' });
               // The commitments of the org on any day: 110 000 + 80 000, never more than the cap.
-              const rows = await inContext('system', async (c) => (await c.query<{ daily_budget: string; start_on: string; commit_until: string }>(`SELECT daily_budget, start_on::text, commit_until::text FROM crove_ads.launch_commitments('VND', $1::date, $2::date)`, [inDays(-1), inDays(8)])).rows);
+              const rows = await inContext('system', async (c) => (await c.query<{ daily_budget: string; start_on: string; commit_until: string }>(`SELECT daily_budget, start_on::text, commit_until::text FROM ludy_ads.launch_commitments('VND', $1::date, $2::date)`, [inDays(-1), inDays(8)])).rows);
               const perDay = new Map<string, number>();
               for (const r of rows) for (let d = r.start_on; d <= r.commit_until; d = addDaysText(d, 1)) perDay.set(d, (perDay.get(d) ?? 0) + Number(r.daily_budget));
               expect(Math.max(...perDay.values())).toBe(190000);
@@ -3600,8 +3600,8 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await changesOf(launch.id)).toHaveLength(1);
               expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
               // A lower that was queued before (put in by the table's owner: no command can make one now) is refused again by begin: it is never called, whatever the platform runs.
-              const queuedLower = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, legal_entity_id, launch_id, kind, slot, level, object_id, from_budget, to_budget, requested_by)
-                SELECT l.org_id, l.ad_account_id, l.legal_entity_id, l.id, 'budget_lower', 'ad_set', 'ad_set', $3, 150000, 120000, l.created_by FROM crove_ads.ad_launch l WHERE l.org_id = $1 AND l.id = $2 RETURNING id`, [orgId, launch.id, adSet]))[0]?.id as string;
+              const queuedLower = (await row<{ id: string }>(`INSERT INTO ludy_ads.ad_manage_change (org_id, ad_account_id, legal_entity_id, launch_id, kind, slot, level, object_id, from_budget, to_budget, requested_by)
+                SELECT l.org_id, l.ad_account_id, l.legal_entity_id, l.id, 'budget_lower', 'ad_set', 'ad_set', $3, 150000, 120000, l.created_by FROM ludy_ads.ad_launch l WHERE l.org_id = $1 AND l.id = $2 RETURNING id`, [orgId, launch.id, adSet]))[0]?.id as string;
               expect(await manage(rig, queuedLower)).toEqual({ steps: 0, ended: 'unclear_family' });
               expect((await changesOf(launch.id)).find((c) => c.id === queuedLower)).toMatchObject({ state: 'cancelled', code: 'unclear_family' });
               expect(rig.manager.changes).toEqual([]);
@@ -3792,7 +3792,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // The database refuses the same, whatever path writes: a lower budget and an archive for an owner's context with writing off.
               await expect(
                 inContext(owner, (c) =>
-                  c.query(`INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_budget, to_budget) VALUES ($1, $2, $3, 'budget_lower', 'ad_set', 'ad_set', $4, 100000, 60000)`, [orgId, account, launch.id, adSet]),
+                  c.query(`INSERT INTO ludy_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_budget, to_budget) VALUES ($1, $2, $3, 'budget_lower', 'ad_set', 'ad_set', $4, 100000, 60000)`, [orgId, account, launch.id, adSet]),
                 ),
               ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_MANAGE_FORBIDDEN') });
               // A pause is allowed (stopping spend always is) and reaches the platform.
@@ -3810,11 +3810,11 @@ suite('ads on PostgreSQL (#2217)', () => {
               // No path of the launch job moves a live launch to needs attention; the table's owner does, with the guard of the launch set aside for the statement.
               const setState = (state: string) =>
                 admin(async (c) => {
-                  await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                  await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
                   try {
-                    await c.query(`UPDATE crove_ads.ad_launch SET state = $3 WHERE org_id = $1 AND id = $2`, [orgId, launch.id, state]);
+                    await c.query(`UPDATE ludy_ads.ad_launch SET state = $3 WHERE org_id = $1 AND id = $2`, [orgId, launch.id, state]);
                   } finally {
-                    await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                    await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
                   }
                 });
               await setState('needs_attention');
@@ -3830,7 +3830,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await changesOf(launch.id)).at(-1)).toMatchObject({ id: queuedLower, state: 'cancelled', code: 'launch_needs_attention' });
               await setState('live');
               // The write connection closed: a pause is accepted (stopping spend always is), but no token is left to make the call with.
-              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
               await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
               const afterClose = await pause(owner, launch.id, 'ad_1');
               if (afterClose.status === 200) {
@@ -3850,7 +3850,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               await approved(await askRaise(launch.id, '150000'));
               const raise = await lastChange(launch.id);
               // Blocked: the kill switch's state, set the way the stop sets it.
-              await inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1', [orgId]), true);
+              await inContext(owner, (c) => c.query('UPDATE ludy_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1', [orgId]), true);
               expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'launches_blocked' });
               expect(await changesOf(launch.id)).toMatchObject([{ kind: 'pause', state: 'applied' }, { id: raise.id, state: 'cancelled', code: 'launches_blocked' }]);
               expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
@@ -3919,7 +3919,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           describe('the platform\'s object states (#3301)', () => {
             const readerOf = (w: SandboxAdWriter) => adStateReaders({ sandbox: w });
             const stateSync = async (w: SandboxAdWriter, account: string, readers: Readonly<Record<string, AdStateReader>> = readerOf(w)) => {
-              const read = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
+              const read = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
               return runAdsStateSync({ runtime: worker, broker: vault, readers }, { orgId, connectionId: read });
             };
             // A launch whose objects are created, paused and (when asked) switched on, as the activation job leaves them.
@@ -3929,10 +3929,10 @@ suite('ads on PostgreSQL (#2217)', () => {
               if (activate) expect(await runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId: made.launch.id })).toMatchObject({ ended: 'live' });
               return made;
             };
-            const shown = async (id: string) => (await row<{ slot: string; effective_status: string | null; review_reason: string | null; last_seen_at: Date | null; updated_at: Date }>(`SELECT slot, effective_status, review_reason, last_seen_at, updated_at FROM crove_ads.ad_object WHERE org_id = $1 AND launch_id = $2`, [orgId, id])).sort((a, b) => ORDER.indexOf(a.slot) - ORDER.indexOf(b.slot));
+            const shown = async (id: string) => (await row<{ slot: string; effective_status: string | null; review_reason: string | null; last_seen_at: Date | null; updated_at: Date }>(`SELECT slot, effective_status, review_reason, last_seen_at, updated_at FROM ludy_ads.ad_object WHERE org_id = $1 AND launch_id = $2`, [orgId, id])).sort((a, b) => ORDER.indexOf(a.slot) - ORDER.indexOf(b.slot));
             const idOf = async (id: string, slot: string) => ((await objectsOf(id)).find((o) => o.slot === slot) as { external_id: string }).external_id;
             const stateCalls = (id: string) => row<{ key: string; state: string; calls: number; error_kind: string | null; error_code: string | null; step: string }>(`SELECT key, state, calls, error_kind, error_code, step FROM ludy_kernel.external_call WHERE org_id = $1 AND key LIKE $2 ORDER BY key DESC`, [orgId, `ads.state:${id}:%`]);
-            const launchRow = async (id: string) => (await row<Record<string, unknown>>(`SELECT * FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+            const launchRow = async (id: string) => (await row<Record<string, unknown>>(`SELECT * FROM ludy_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
 
             it('shows a launched ad moving to review, active and rejected with its reason, within one run each, and a creative stays without a status', async () => {
               const w = new SandboxAdWriter();
@@ -3966,7 +3966,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await stateSync(w, account)).toMatchObject({ changed: 4 });
               const objectsBefore = JSON.stringify(await shown(launch.id));
               const launchBefore = JSON.stringify(await launchRow(launch.id));
-              const capsBefore = JSON.stringify(await row(`SELECT * FROM crove_ads.ad_spend_cap WHERE org_id = $1 ORDER BY id`, [orgId]));
+              const capsBefore = JSON.stringify(await row(`SELECT * FROM ludy_ads.ad_spend_cap WHERE org_id = $1 ORDER BY id`, [orgId]));
               expect(await stateSync(w, account)).toMatchObject({ launches: 1, changed: 0, failed: 0 });
               expect(JSON.stringify(await shown(launch.id))).toBe(objectsBefore);
               // Even a status the platform makes alarming leaves the launch's own columns and the caps as they were.
@@ -3975,7 +3975,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               campaign.reviewReason = 'issue_1487';
               expect(await stateSync(w, account)).toMatchObject({ changed: 1 });
               expect(JSON.stringify(await launchRow(launch.id))).toBe(launchBefore);
-              expect(JSON.stringify(await row(`SELECT * FROM crove_ads.ad_spend_cap WHERE org_id = $1 ORDER BY id`, [orgId]))).toBe(capsBefore);
+              expect(JSON.stringify(await row(`SELECT * FROM ludy_ads.ad_spend_cap WHERE org_id = $1 ORDER BY id`, [orgId]))).toBe(capsBefore);
               expect(await launchNow(launch.id)).toMatchObject({ state: 'live', step: 'live', commit_until: inDays(6) });
               // One row of the kernel's ledger per read, and no word of what the platform answered.
               const rows = await stateCalls(launch.id);
@@ -4073,7 +4073,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await stateSync(w, account)).toMatchObject({ changed: 4 });
               expect((await shown(launch.id)).find((o) => o.slot === 'ad_2')).toMatchObject({ effective_status: 'DELETED', review_reason: 'deleted_at_platform' });
               expect(await stateSync(w, account, {})).toMatchObject({ launches: 0, ended: 'no_reader' });
-              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
               await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
               // The connection is closed: there is nothing to read with, and the last known state stays.
               const before = JSON.stringify(await shown(launch.id));
@@ -4143,11 +4143,11 @@ suite('ads on PostgreSQL (#2217)', () => {
             // The launch ledger's guard is on for every role, so a test that moves a launch along does it with the guard off for the statement, as the ledger's own tests do.
             const setLaunch = (statement: string, params: unknown[]) =>
               admin(async (c) => {
-                await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
                 try {
                   await c.query(statement, params);
                 } finally {
-                  await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                  await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
                 }
               });
             afterAll(async () => {
@@ -4179,7 +4179,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               const again = await boosted(member, account, post, { budget: '100000', audience: 'hcm_hn', goal: 'engagement' });
               expect(again).toMatchObject({ edited: true, draft: { id: first.draft.id, maxSpend: '99999', plan: { objective: 'engagement', dailyBudget: '33333', targeting: { locations: [{ country: 'VN', region: 'Ho Chi Minh City' }, { country: 'VN', region: 'Hanoi' }] } } } });
               expect(Number(again.draft.maxSpend)).toBeLessThanOrEqual(100000);
-              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2`, [orgId, post]))[0]?.n).toBe('1');
+              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2`, [orgId, post]))[0]?.n).toBe('1');
               // Every ad runs as the Page, a Messenger one has no link; the options list the Pages an ad can run as.
               expect(first.draft.plan).toMatchObject({ pageConnectionId: pageId });
               expect((options.body as { pages: Array<{ id: string; name: string }> }).pages).toEqual(expect.arrayContaining([{ id: pageId, name: 'Trang đẩy bài' }]));
@@ -4202,7 +4202,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await boost(member, account, post, { linkUrl: null })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_LINK_NEEDED' } });
               // The Page every ad runs as: one of another org, one that is not a Facebook Page, one that is closed.
               expect(await boost(member, account, post, { pageConnectionId: randomUUID() })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
-              const sandboxConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id;
+              const sandboxConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id;
               expect(await boost(member, account, post, { pageConnectionId: sandboxConnection })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
               expect(await boost(member, account, post, { budget: '2', days: 3 })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_BUDGET_TOO_SMALL' } });
               // Input the contract does not take.
@@ -4271,7 +4271,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await approve(owner, id)).status).toBe(200);
               const queuedState = (await boostStates(member, [post]))[0];
               expect(queuedState).toMatchObject({ state: 'queued', proposalId: null, maxSpend: '300000' });
-              const launch = (await row<{ id: string; state: string; amount: string; start_on: string; end_on: string; commit_until: string | null; tag: string }>(`SELECT id, state, amount::text, start_on::text, end_on::text, commit_until::text, tag FROM crove_ads.ad_launch WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]))[0];
+              const launch = (await row<{ id: string; state: string; amount: string; start_on: string; end_on: string; commit_until: string | null; tag: string }>(`SELECT id, state, amount::text, start_on::text, end_on::text, commit_until::text, tag FROM ludy_ads.ad_launch WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]))[0];
               expect(launch).toMatchObject({ id: queuedState?.launchId, state: 'queued', amount: '300000', start_on: inDays(1), end_on: inDays(3), commit_until: inDays(3) });
               // The launch job creates the plan's objects at the sandbox platform, every one paused, once; the activation waits for the first day.
               const w = new SandboxAdWriter();
@@ -4286,7 +4286,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // A boost still going is not boosted again.
               expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS', data: { state: 'launching' } } });
               // The post shows a live boost too (the activation's own rule is W2-4b's: here the ledger is moved along as the activation leaves it).
-              await setLaunch(`UPDATE crove_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [orgId, launch?.id]);
+              await setLaunch(`UPDATE ludy_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [orgId, launch?.id]);
               expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'live' })]);
               // The stop (owner or admin) ends it; the pause job pauses what it made, and the post shows it stopped.
               expect((await callAs(adminAccount, 'ads/stopLaunch', { launchId: launch?.id, idempotencyKey: key() })).status).toBe(200);
@@ -4313,7 +4313,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // Its real account and Page: this org's member cannot boost with them, and their owner cannot boost with ours.
               const [theirConnection, theirAccount, theirPage] = [randomUUID(), randomUUID(), randomUUID()];
               await row(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Của tổ chức khác', $4), ($1, $5, 'facebook_page', $6, 'Trang tổ chức khác', $4)`, [otherOrgId, theirConnection, `act-${randomUUID().slice(0, 8)}`, outsider.userId, theirPage, String(100_000_000 + Math.floor(Math.random() * 899_999_999))]);
-              await row(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản tổ chức khác', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [otherOrgId, theirAccount, theirConnection, `act-${randomUUID().slice(0, 8)}`]);
+              await row(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản tổ chức khác', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [otherOrgId, theirAccount, theirConnection, `act-${randomUUID().slice(0, 8)}`]);
               expect((await boost(member, theirAccount, randomUUID())).status).toBe(404);
               expect(await boost(member, account, randomUUID(), { pageConnectionId: theirPage })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
               expect((await rpc('ads/draftBoost', await tokenFor(outsider), boostBody(account, randomUUID()), otherSlug)).status).toBe(404);
@@ -4327,12 +4327,12 @@ suite('ads on PostgreSQL (#2217)', () => {
               const post = randomUUID();
               const both = await Promise.all([boost(member, first, post), boost(adminAccount, first, post, { budget: '150000' })]);
               expect(both.map((r) => r.status)).toEqual([200, 200]);
-              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 AND status <> 'discarded'`, [orgId, post]))[0]?.n).toBe('1');
+              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 AND status <> 'discarded'`, [orgId, post]))[0]?.n).toBe('1');
               expect(both.filter((r) => (r.body as { edited: boolean }).edited)).toHaveLength(1);
               // Boosted from another account: the open draft of the first account is discarded and the post has one draft, in the second.
               const moved = await boosted(member, second, post);
               expect(moved.edited).toBe(false);
-              const open = await row<{ ad_account_id: string; status: string }>(`SELECT ad_account_id, status FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 ORDER BY created_at`, [orgId, post]);
+              const open = await row<{ ad_account_id: string; status: string }>(`SELECT ad_account_id, status FROM ludy_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 ORDER BY created_at`, [orgId, post]);
               expect(open.map((d) => [d.ad_account_id, d.status])).toEqual([[first, 'discarded'], [second, 'draft']]);
               expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: moved.draft.id, adAccountId: second });
             });
@@ -4358,7 +4358,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'queued' });
               expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
               // Its flight moves ten days into the past (the ledger's guard lifted for the statement, as the ledger's own tests do): live, but over.
-              await setLaunch(`UPDATE crove_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
+              await setLaunch(`UPDATE ludy_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
               expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'ended', draftId: made.draft.id });
               const again = await boosted(member, account, post, { budget: '150000' });
               expect(again.draft.id).not.toBe(made.draft.id);
@@ -4372,13 +4372,13 @@ suite('ads on PostgreSQL (#2217)', () => {
                 const post = randomUUID();
                 const made = await boosted(member, account, post);
                 expect((await approve(adminAccount, proposalId(await submitBoost(owner, made.draft.id)))).status).toBe(200);
-                await setLaunch(`UPDATE crove_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
+                await setLaunch(`UPDATE ludy_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
                 expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'ended' });
                 // The change as the manage job leaves it (the table's owner puts it there: no command writes a settled change), a schedule extension to a day ahead.
                 await row(
-                  `INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_end_on, to_end_on, proposal_id, requested_by, state, settled_at, settled_on)
+                  `INSERT INTO ludy_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_end_on, to_end_on, proposal_id, requested_by, state, settled_at, settled_on)
                    SELECT l.org_id, l.ad_account_id, l.id, 'schedule_extend', 'ad_set', 'ad_set', 'set-extended', l.end_on, $3::date, gen_random_uuid(), l.created_by, $4::text, now(), CASE WHEN $4::text = 'applied' THEN current_date END
-                   FROM crove_ads.ad_launch l WHERE l.org_id = $1 AND l.draft_id = $2`,
+                   FROM ludy_ads.ad_launch l WHERE l.org_id = $1 AND l.draft_id = $2`,
                   [orgId, made.draft.id, inDays(toDays), state],
                 );
                 return { account, post, made };
@@ -4399,13 +4399,13 @@ suite('ads on PostgreSQL (#2217)', () => {
 
             it('does not offer an account whose time zone is not read yet, and refuses it: a launch cannot start without the zone', async () => {
               const account = await ready('Đẩy bài chưa có múi giờ');
-              await row(`UPDATE crove_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, account]);
+              await row(`UPDATE ludy_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, account]);
               try {
                 const options = await callAs(member, 'ads/boostOptions', undefined);
                 expect((options.body as { accounts: Array<{ id: string }> }).accounts.some((a) => a.id === account)).toBe(false);
                 expect(await boost(member, account, randomUUID())).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_ACCOUNT_NOT_READY' } });
               } finally {
-                await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
+                await row(`UPDATE ludy_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
               }
             });
           });
@@ -4416,7 +4416,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     // W0b: the write connection of an ad account (ADR-0043 points 3 and 4): its own provider, its own sealed token, attached to the account the
     // read connection linked, the owner's, only while the org's switch is on, and closed (its token dropped) when writing is switched off.
     describe('the write connection (W0b)', () => {
-      const attached = async (adAccountId: string) => (await row<{ id: string | null }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id ?? null;
+      const attached = async (adAccountId: string) => (await row<{ id: string | null }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id ?? null;
       const status = async (connectionId: string) => (await row<{ status: string }>(`SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [orgId, connectionId]))[0]?.status;
       const sealed = async (connectionId: string) => (await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.credential WHERE org_id = $1 AND connection_id = $2`, [orgId, connectionId]))[0]?.n;
       const connectWrite = (who: Account, adAccountId: string) => callAs(who, 'ads/connectSandboxWrite', { adAccountId, idempotencyKey: key() });
@@ -4430,7 +4430,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       // An active write connection of an account that no account refers to: what the sign-in dialog leaves between making a connection and
       // attaching it (a crash, a deploy, or a refused attaching whose close failed), with its sealed token.
       const unattachedWrite = async (adAccountId: string, provider: 'sandboxwrite_ads' = 'sandboxwrite_ads') => {
-        const external = (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.e as string;
+        const external = (await row<{ e: string }>(`SELECT external_account_id AS e FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.e as string;
         const login = sandboxWriteLogin({ externalAccountId: external, currency: 'VND' });
         expect(login.provider).toBe(provider);
         const token = vault.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
@@ -4469,7 +4469,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await view(owner, made.adAccountId)).toMatchObject({ canRunAds: true, writeConnectionStatus: 'active', connectionStatus: 'active', provider: 'sandbox_ads', extraScopes: [] });
         const connection = (await row<{ provider: string; scopes: string[]; external_account_id: string }>(`SELECT provider, scopes, external_account_id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [orgId, writeId]))[0];
         expect(connection).toMatchObject({ provider: 'sandboxwrite_ads', scopes: expect.arrayContaining(['ads_management']) });
-        expect(connection?.external_account_id).toBe((await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.e);
+        expect(connection?.external_account_id).toBe((await row<{ e: string }>(`SELECT external_account_id AS e FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.e);
         expect(await sealed(writeId)).toBe('1');
         expect(await sealed(made.connectionId)).toBe('1');
         // It is never an account of its own: the list holds the one account, and the read sync still works on the read connection.
@@ -4575,14 +4575,14 @@ suite('ads on PostgreSQL (#2217)', () => {
         eraseAuditsBefore += 1;
         expect(await status(made.writeConnectionId)).toBe('revoked');
         expect(await sealed(made.writeConnectionId)).toBe('0');
-        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId])).toEqual([]);
       });
 
       it('lets only a signed-in owner attach a live write connection of the account’s own twin, and only while the switch is on', async () => {
         await open();
         const made = await connect('Cổng kết nối ghi');
         const twin = await unattachedWrite(made.adAccountId);
-        const attach = 'UPDATE crove_ads.ad_account SET write_connection_id = $3 WHERE org_id = $1 AND id = $2';
+        const attach = 'UPDATE ludy_ads.ad_account SET write_connection_id = $3 WHERE org_id = $1 AND id = $2';
         const refusedWith = (c: pg.Client | pg.PoolClient, params: unknown[], code: string, message: string) => expect(c.query(attach, params)).rejects.toMatchObject({ code, message: expect.stringContaining(message) });
         // Nobody but the signed-in owner, whatever they attach.
         for (const who of [adminAccount, member, viewer, 'system'] as const) await inContext(who, (c) => refusedWith(c, [orgId, made.adAccountId, twin], '42501', 'ADS_WRITE_CONNECTION_FORBIDDEN'));
@@ -4595,7 +4595,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           await row(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Sai', $5)`, [orgId, id, provider, external, owner.userId]);
           return id;
         };
-        const externalOf = async (adAccountId: string) => (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.e as string;
+        const externalOf = async (adAccountId: string) => (await row<{ e: string }>(`SELECT external_account_id AS e FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.e as string;
         const wrong = [made.connectionId, other.connectionId, otherTwin, await insert('metawrite_ads', await externalOf(made.adAccountId)), await insert('sandboxwrite_ads', `elsewhere-${randomUUID()}`)];
         for (const connectionId of wrong) await inContext(owner, (c) => refusedWith(c, [orgId, made.adAccountId, connectionId], '22023', 'ADS_WRITE_CONNECTION_INVALID'));
         await api.execute('kernel.channel.disconnect', { connectionId: otherTwin }, { actor: asOwner(), orgId });
@@ -4611,7 +4611,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       it('clears or replaces a write connection only once it is closed, and removes an account row only with it closed', async () => {
         await open();
         const made = await withWrite('Chỉ gỡ khi đã đóng');
-        const clear = 'UPDATE crove_ads.ad_account SET write_connection_id = NULL, write_granted_by_hash = NULL WHERE org_id = $1 AND id = $2';
+        const clear = 'UPDATE ludy_ads.ad_account SET write_connection_id = NULL, write_granted_by_hash = NULL WHERE org_id = $1 AND id = $2';
         const params = [orgId, made.adAccountId];
         // Open: nobody clears it, so no row forgets a token that is still sealed.
         for (const who of [owner, adminAccount, 'system'] as const) {
@@ -4619,7 +4619,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         }
         // Nor is the row removed (the read connection is closed first: the definer refuses an open one on its own).
         expect((await callAs(owner, 'channels/disconnect', { connectionId: made.connectionId, idempotencyKey: key() })).status).toBe(200);
-        const remove = 'SELECT removed FROM crove_ads.account_history_delete($1::uuid, true, NULL)';
+        const remove = 'SELECT removed FROM ludy_ads.account_history_delete($1::uuid, true, NULL)';
         await inContext(owner, (c) => expect(c.query(remove, [made.adAccountId])).rejects.toMatchObject({ code: '55000', message: expect.stringContaining('ADS_WRITE_CONNECTION_OPEN') }));
         // Closed: an owner, an admin or the system clear it; a member or a viewer still cannot; the row can go.
         await api.execute('kernel.channel.disconnect', { connectionId: made.writeConnectionId }, { actor: asOwner(), orgId });
@@ -4667,7 +4667,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         const twin = await unattachedWrite(made.adAccountId);
         await inContext(owner, async (c) => {
           // The switch-off holds the setting (it locks it FOR UPDATE) and has not committed yet; the attaching reads it FOR SHARE and waits.
-          await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = true WHERE org_id = $1', [orgId]);
+          await c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = false, launches_blocked = true WHERE org_id = $1', [orgId]);
           const pending = api.execute('ads.account.link_write', { connectionId: twin }, { actor: asOwner(), orgId }).then(
             () => null,
             (error: unknown) => error,
@@ -4692,9 +4692,9 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await sealed(made.writeConnectionId)).toBe('0');
         expect(await view(owner, made.adAccountId)).toMatchObject({ canRunAds: false, connectionStatus: 'revoked' });
         // The query the sign-in asks first leaves it out too.
-        const external = (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.e as string;
+        const external = (await row<{ e: string }>(`SELECT external_account_id AS e FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.e as string;
         const live = await connect('Còn đọc');
-        const liveExternal = (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, live.adAccountId]))[0]?.e as string;
+        const liveExternal = (await row<{ e: string }>(`SELECT external_account_id AS e FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, live.adAccountId]))[0]?.e as string;
         expect(await api.query('ads.account.write_ready', { provider: 'sandboxwrite_ads', externalAccountIds: [external, liveExternal, 'never-linked'] }, { actor: asOwner(), orgId })).toEqual([liveExternal]);
         await expect(api.query('ads.account.write_ready', { provider: 'sandboxwrite_ads', externalAccountIds: [liveExternal] }, { actor: { type: 'user', userId: adminAccount.userId, aal: 'aal1', sessionId: randomUUID() }, orgId })).rejects.toMatchObject({ status: 403 });
       });
@@ -4703,7 +4703,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         await open();
         // Somebody else granted the read connection; the person who asks granted the write one only.
         const onlyWrite = await withWrite('Chỉ quyền ghi của người xin xóa');
-        await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId, platformUserHash(META_SECRET, '6102')]);
+        await row(`UPDATE ludy_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId, platformUserHash(META_SECRET, '6102')]);
         await api.execute('ads.account.link_write', { connectionId: onlyWrite.writeConnectionId, grantedByHash: platformUserHash(META_SECRET, '6101') }, { actor: asOwner(), orgId });
         // The account is allowed to run ads: the closing as the system must not touch the flag (the switch guard refuses a system update of it).
         await open([onlyWrite.adAccountId]);
@@ -4714,19 +4714,19 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await sealed(onlyWrite.writeConnectionId)).toBe('0');
         expect(await attached(onlyWrite.adAccountId)).toBeNull();
         // The flag stays (the owner withdraws it; nothing can run without a live write connection).
-        expect(await row(`SELECT write_granted_by_hash, write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId])).toEqual([{ write_granted_by_hash: null, write_enabled: true }]);
+        expect(await row(`SELECT write_granted_by_hash, write_enabled FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId])).toEqual([{ write_granted_by_hash: null, write_enabled: true }]);
         expect(await view(owner, onlyWrite.adAccountId)).toMatchObject({ connectionStatus: 'active', canRunAds: false, writeConnectionStatus: null });
         expect(await sealed(onlyWrite.connectionId)).toBe('1');
-        expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, onlyWrite.adAccountId]))[0]?.n)).toBeGreaterThan(0);
+        expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, onlyWrite.adAccountId]))[0]?.n)).toBeGreaterThan(0);
         // The account stays, so it is not counted among the accounts the page says were deleted (#2366).
         expect(await adsDeletionStatus(api, code)).toMatchObject({ accounts: 0 });
         // The same person granted both: the account goes, with both connections closed.
         const both = await withWrite('Cả hai của người xin xóa');
-        await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId, platformUserHash(META_SECRET, '6103')]);
+        await row(`UPDATE ludy_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId, platformUserHash(META_SECRET, '6103')]);
         await api.execute('ads.account.link_write', { connectionId: both.writeConnectionId, grantedByHash: platformUserHash(META_SECRET, '6103') }, { actor: asOwner(), orgId });
         const second = await requestDeletion('6103');
         eraseAuditsBefore += 1;
-        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId])).toEqual([]);
         for (const id of [both.connectionId, both.writeConnectionId]) {
           expect(await status(id)).toBe('revoked');
           expect(await sealed(id)).toBe('0');
@@ -4755,7 +4755,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         const made = await withWrite('Ứng dụng ghi riêng');
         // The read grant was made through the read app by one person, the write grant through the write app by another (or the same
         // one: their ids under the two apps are different numbers, and so are the hashes).
-        await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId, platformUserHash(READ_APP, '8001')]);
+        await row(`UPDATE ludy_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId, platformUserHash(READ_APP, '8001')]);
         await api.execute('ads.account.link_write', { connectionId: made.writeConnectionId, grantedByHash: platformUserHash(WRITE_APP, '9001') }, { actor: asOwner(), orgId });
         await sync(made.connectionId);
         // A request signed by neither app is refused, as before.
@@ -4773,7 +4773,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await attached(made.adAccountId)).toBeNull();
         expect(await status(made.connectionId)).toBe('active');
         expect(await sealed(made.connectionId)).toBe('1');
-        expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, made.adAccountId]))[0]?.n)).toBeGreaterThan(0);
+        expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, made.adAccountId]))[0]?.n)).toBeGreaterThan(0);
         // The account stays, so it is not counted among the accounts the page says were deleted; the page says so in its own words.
         const done = await adsDeletionStatus(api, code);
         expect(done).toMatchObject({ accounts: 0 });
@@ -4781,7 +4781,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         // Signed by the read app for the person who granted the read connection: the account is erased as before.
         await ask(READ_APP, '8001');
         eraseAuditsBefore += 1;
-        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId])).toEqual([]);
         expect(await status(made.connectionId)).toBe('revoked');
       });
 
@@ -4810,16 +4810,16 @@ suite('ads on PostgreSQL (#2217)', () => {
         const accepted = await post(only, form(WRITE_APP, '9002'));
         expect(accepted.status).toBe(200);
         const { confirmation_code: code } = (await accepted.json()) as { confirmation_code: string };
-        expect(await row(`SELECT user_hash FROM crove_ads.deletion_request WHERE code = $1`, [code])).toEqual([{ user_hash: platformUserHash(WRITE_APP, '9002') }]);
+        expect(await row(`SELECT user_hash FROM ludy_ads.deletion_request WHERE code = $1`, [code])).toEqual([{ user_hash: platformUserHash(WRITE_APP, '9002') }]);
         expect((await only.request(`/api/ads/meta/data-deletion?code=${code}`)).status).toBe(200);
         // Signed with the read app's secret, which this deployment does not hold: refused, and stored nowhere.
         expect((await post(only, form('meta-app-secret', '9003'))).status).toBe(401);
-        expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash('meta-app-secret', '9003')])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.deletion_request WHERE user_hash = $1`, [platformUserHash('meta-app-secret', '9003')])).toEqual([]);
         await runAdsDeletions({ runtime: worker, workerDb });
         // The Ads module off: no route for the write app's secret either (the request is refused, and nothing is stored).
         const off = mount(new Runtime(appDb, { manifests: TEST_MANIFESTS, absentModules: ['ads'] }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) }));
         expect((await post(off, form(WRITE_APP, '9004'))).status).not.toBe(200);
-        expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(WRITE_APP, '9004')])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(WRITE_APP, '9004')])).toEqual([]);
       });
 
       // The owner's own setup is one app for the reads, the writing and the Pages: the three secrets are the same, the Ads side is asked
@@ -4859,7 +4859,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           await c.query('BEGIN');
           const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, token]);
-          await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
+          await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
           await c.query(text, [otherOrgId, adAccountId, outsider.userId]);
           await c.query('COMMIT');
         } finally {
@@ -4876,12 +4876,12 @@ suite('ads on PostgreSQL (#2217)', () => {
         const made = await rpc('ads/connectSandbox', await tokenFor(outsider), { displayName: 'Cờ chi tiêu', idempotencyKey: randomUUID() }, otherSlug);
         expect(made.status, JSON.stringify(made.body)).toBe(200);
         const mine = made.body.adAccountId as string;
-        await row(`UPDATE crove_ads.ad_account SET synced_through = NULL WHERE org_id = $1 AND id <> $2`, [otherOrgId, mine]);
-        await row(`UPDATE crove_ads.ad_account SET currency = 'VND', time_zone = 'Asia/Ho_Chi_Minh', result_kind = 'purchase', synced_through = '2026-11-09' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
-        const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]))[0]?.legal_entity_id as string;
+        await row(`UPDATE ludy_ads.ad_account SET synced_through = NULL WHERE org_id = $1 AND id <> $2`, [otherOrgId, mine]);
+        await row(`UPDATE ludy_ads.ad_account SET currency = 'VND', time_zone = 'Asia/Ho_Chi_Minh', result_kind = 'purchase', synced_through = '2026-11-09' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
+        const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]))[0]?.legal_entity_id as string;
         const seed = (level: 'account' | 'campaign', objectId: string, name: string, day: string, spend: string, purchases: string | null) =>
           row(
-            `INSERT INTO crove_ads.ad_spend_day (org_id, ad_account_id, legal_entity_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
+            `INSERT INTO ludy_ads.ad_spend_day (org_id, ad_account_id, legal_entity_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 'VND', $8, 0, 0, $9::jsonb)`,
             [otherOrgId, mine, entity, level, objectId, name, day, spend, purchases === null ? '{}' : JSON.stringify({ purchase: purchases })],
           );
@@ -4899,24 +4899,24 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(before[0]).toMatchObject({ campaignId: 'c1', campaignName: 'Chiến dịch A', currency: 'VND', day: '2026-11-09', recentCost: '3000', medianCost: '1000', ratio: '3.00', recentResults: '300', historyDays: 6 });
         // A monthly cap of 250 000 and a daily cap of 5 000 on the account (the signed-in owner sets them): the pace and the day flag, in decimal.
         const caps = (text: string) => capsFor(mine, text);
-        await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
+        await caps(`INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
         const after = await flagsOf();
         expect(after.map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
         expect(after.find((f) => f.kind === 'pace')).toEqual({ kind: 'pace', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', skippedAccounts: 0, cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, month: '2026-11-01' });
         expect(after.find((f) => f.kind === 'day')).toEqual({ kind: 'day', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', skippedAccounts: 0, period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' });
         // A cap above the projection and above the day's spend raises neither (a raised cap is the latest row of its key).
-        await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '300000', 'VND', $3), ($1, 'account', $2, 'daily', '9000', 'VND', $3)`);
+        await caps(`INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '300000', 'VND', $3), ($1, 'account', $2, 'daily', '9000', 'VND', $3)`);
         expect((await flagsOf()).map((f) => f.kind)).toEqual(['cpr']);
         // The 1st of the next month: yesterday is the last day of November, which the loader must read (it starts at the month of yesterday), so
         // a day over its share is flagged on that day too; no pace is judged on the 1st.
         for (let d = 10; d <= 30; d++) await seed('account', 'acct', 'Cờ chi tiêu', `2026-11-${String(d).padStart(2, '0')}`, '10000', null);
-        await row(`UPDATE crove_ads.ad_account SET synced_through = '2026-11-30' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
-        await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
+        await row(`UPDATE ludy_ads.ad_account SET synced_through = '2026-11-30' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
+        await caps(`INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
         const firstOfMonth = ((await api.query('ads.flags', { now: '2026-12-01T05:00:00.000Z' }, { actor: asOutsider(), orgId: otherOrgId })) as Array<Record<string, unknown>>).filter((f) => f.adAccountId === mine);
         expect(firstOfMonth.map((f) => f.kind)).toEqual(['day']);
         expect(firstOfMonth[0]).toMatchObject({ day: '2026-11-30', spend: '10000', ratio: '2.00' });
         // A flag moves nothing: the cap rows and the account's flags of running ads are as they were.
-        expect(await row(`SELECT write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine])).toEqual([{ write_enabled: false }]);
+        expect(await row(`SELECT write_enabled FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine])).toEqual([{ write_enabled: false }]);
       });
 
       // The thresholds are an org setting (#2378 slice 2): owners and admins read and set them, the contract and the database hold the bounds,
@@ -4936,7 +4936,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(typeof saved.body.setAt).toBe('string');
         expect(await callAs(owner, 'ads/flagSettings', undefined)).toMatchObject({ status: 200, body: { set, defaults } });
         // One row for the org, stamped with who set it; the audit row names the change.
-        expect(await row(`SELECT count(*)::int AS n, bool_and(set_by = $2) AS mine FROM crove_ads.ad_flag_setting WHERE org_id = $1`, [orgId, adminAccount.userId])).toEqual([{ n: 1, mine: true }]);
+        expect(await row(`SELECT count(*)::int AS n, bool_and(set_by = $2) AS mine FROM ludy_ads.ad_flag_setting WHERE org_id = $1`, [orgId, adminAccount.userId])).toEqual([{ n: 1, mine: true }]);
         const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'ads.flag_settings_set' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
         expect(audit[0]?.detail).toMatchObject({ previous: nulls, set });
         // The contract refuses what is out of range.
@@ -4947,18 +4947,18 @@ suite('ads on PostgreSQL (#2217)', () => {
         }
         // The database holds the same bounds, whoever writes.
         for (const bad of ['pace_min_days = 0', 'pace_min_days = 16', 'day_factor = 1', 'day_factor = 10.01', 'day_factor = 1.555', 'cpr_factor = 2.555', 'cpr_factor = 0.5', 'cpr_min_results = 0', 'cpr_min_history_days = 2', 'cpr_min_history_days = 15']) {
-          await expect(row(`UPDATE crove_ads.ad_flag_setting SET ${bad} WHERE org_id = $1`, [orgId]), bad).rejects.toMatchObject({ code: '23514' });
+          await expect(row(`UPDATE ludy_ads.ad_flag_setting SET ${bad} WHERE org_id = $1`, [orgId]), bad).rejects.toMatchObject({ code: '23514' });
         }
         // The row policies: a member and a viewer change and delete nothing, and insert nothing, in SQL as well; an owner's context writes it.
         for (const who of [member, viewer]) {
           await inContext(who, async (c) => {
-            expect((await c.query('UPDATE crove_ads.ad_flag_setting SET pace_min_days = 9 WHERE org_id = $1', [orgId])).rowCount, who.email).toBe(0);
-            expect((await c.query('DELETE FROM crove_ads.ad_flag_setting WHERE org_id = $1', [orgId])).rowCount, who.email).toBe(0);
+            expect((await c.query('UPDATE ludy_ads.ad_flag_setting SET pace_min_days = 9 WHERE org_id = $1', [orgId])).rowCount, who.email).toBe(0);
+            expect((await c.query('DELETE FROM ludy_ads.ad_flag_setting WHERE org_id = $1', [orgId])).rowCount, who.email).toBe(0);
           });
-          await inContext(who, (c) => refused(c, 'INSERT INTO crove_ads.ad_flag_setting (org_id) VALUES ($1)', [orgId], 'row-level security'));
+          await inContext(who, (c) => refused(c, 'INSERT INTO ludy_ads.ad_flag_setting (org_id) VALUES ($1)', [orgId], 'row-level security'));
         }
         await inContext(owner, async (c) => {
-          expect((await c.query('UPDATE crove_ads.ad_flag_setting SET pace_min_days = 4 WHERE org_id = $1', [orgId])).rowCount).toBe(1);
+          expect((await c.query('UPDATE ludy_ads.ad_flag_setting SET pace_min_days = 4 WHERE org_id = $1', [orgId])).rowCount).toBe(1);
         });
         expect((await callAs(owner, 'ads/flagSettings', undefined)).body.set).toEqual(set);
         // Back to the defaults.
@@ -4970,25 +4970,25 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(made.status, JSON.stringify(made.body)).toBe(200);
         const mine = made.body.adAccountId as string;
         // Only this account is judged: the others of the org (the first test's) have not read yesterday.
-        await row(`UPDATE crove_ads.ad_account SET synced_through = NULL WHERE org_id = $1 AND id <> $2`, [otherOrgId, mine]);
-        await row(`UPDATE crove_ads.ad_account SET currency = 'VND', time_zone = 'Asia/Ho_Chi_Minh', result_kind = 'purchase', synced_through = '2026-11-09' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
-        const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]))[0]?.legal_entity_id as string;
+        await row(`UPDATE ludy_ads.ad_account SET synced_through = NULL WHERE org_id = $1 AND id <> $2`, [otherOrgId, mine]);
+        await row(`UPDATE ludy_ads.ad_account SET currency = 'VND', time_zone = 'Asia/Ho_Chi_Minh', result_kind = 'purchase', synced_through = '2026-11-09' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
+        const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]))[0]?.legal_entity_id as string;
         for (let d = 1; d <= 9; d++) {
           const day = `2026-11-${String(d).padStart(2, '0')}`;
           await row(
-            `INSERT INTO crove_ads.ad_spend_day (org_id, ad_account_id, legal_entity_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
+            `INSERT INTO ludy_ads.ad_spend_day (org_id, ad_account_id, legal_entity_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
              VALUES ($1, $2, $3, 'account', 'acct', 'Ngưỡng cờ', $4, 'VND', '10000', 0, 0, '{}'::jsonb),
                     ($1, $2, $3, 'campaign', 'c1', 'Chiến dịch A', $4, 'VND', $5, 0, 0, '{"purchase":"100"}'::jsonb)`,
             [otherOrgId, mine, entity, day, d <= 6 ? '100000' : '300000'],
           );
         }
-        await capsFor(mine, `INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
+        await capsFor(mine, `INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
         const flags = async () => ((await api.query('ads.flags', { now: NOW }, { actor: asOutsider(), orgId: otherOrgId })) as Array<{ kind: string; adAccountId: string }>).filter((f) => f.adAccountId === mine);
         const today = async (actor: Parameters<typeof api.query>[2]['actor'] = asOutsider()) => (await api.query('ads.today', { now: NOW }, { actor, orgId: otherOrgId })) as TodayItem[];
         const mineOnly = async () => (await today()).filter((i) => i.id.includes(mine));
         const setThresholds = (set: Record<string, unknown>) => api.execute('ads.flag_settings_set', set, { actor: asOutsider(), orgId: otherOrgId });
         const nulls = { paceMinDays: null, dayFactor: null, cprFactor: null, cprMinResults: null, cprMinHistoryDays: null };
-        const switches = () => row(`SELECT write_enabled, launches_blocked, updated_at::text AS updated_at FROM crove_ads.ad_org_setting WHERE org_id = $1`, [otherOrgId]);
+        const switches = () => row(`SELECT write_enabled, launches_blocked, updated_at::text AS updated_at FROM ludy_ads.ad_org_setting WHERE org_id = $1`, [otherOrgId]);
         const switchesBefore = await switches();
         // The defaults: the pace, the day and the cost per result are flagged, and Home lists them for the owner, the pace first.
         expect((await flags()).map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
@@ -5039,7 +5039,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       },
     };
     const daysOf = async (adAccountId: string, org = orgId) =>
-      (await row<{ day: string }>(`SELECT DISTINCT to_char(day, 'YYYY-MM-DD') AS day FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 ORDER BY 1`, [org, adAccountId])).map((r) => r.day);
+      (await row<{ day: string }>(`SELECT DISTINCT to_char(day, 'YYYY-MM-DD') AS day FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 ORDER BY 1`, [org, adAccountId])).map((r) => r.day);
     const notices = async (kind: string) =>
       row<{ user_id: string; detail: Record<string, string> }>(`SELECT user_id, detail FROM ludy_kernel.notification WHERE org_id = $1 AND kind = $2 ORDER BY created_at, id`, [orgId, kind]);
     // Meta's signed request: the payload and its HMAC-SHA256 under the app secret, both base64url.
@@ -5078,7 +5078,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const full = await daysOf(adAccountId);
       expect(full.length).toBeGreaterThan(300);
       // The platform refuses the token: the connection is expired, the account says why and since when, and the cursors stay.
-      const cursors = () => row(`SELECT settled_through::text, synced_through::text FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+      const cursors = () => row(`SELECT settled_through::text, synced_through::text FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
       const before = await cursors();
       await sync(connectionId, expiring);
       const paused = await view(owner, adAccountId);
@@ -5100,8 +5100,8 @@ suite('ads on PostgreSQL (#2217)', () => {
       // By the platform's id only: no name, no token.
       expect(told[0]?.detail).toEqual({ provider: 'sandbox_ads' });
       // Days pass while it is paused: the last ten of the stored figures are gone, as if the sync had missed them.
-      await row(`DELETE FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day > (now() AT TIME ZONE 'UTC')::date - 10`, [orgId, adAccountId]);
-      await row(`UPDATE crove_ads.ad_account SET settled_through = (now() AT TIME ZONE 'UTC')::date - 40, synced_through = (now() AT TIME ZONE 'UTC')::date - 10 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+      await row(`DELETE FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day > (now() AT TIME ZONE 'UTC')::date - 10`, [orgId, adAccountId]);
+      await row(`UPDATE ludy_ads.ad_account SET settled_through = (now() AT TIME ZONE 'UTC')::date - 40, synced_through = (now() AT TIME ZONE 'UTC')::date - 10 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
       // The owner connects the same platform account again: the row, its settings and its history stay, and the next sync
       // reads from the day after the last final one, so nothing between the pause and now is missing.
       const again = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined, key, secret);
@@ -5145,7 +5145,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(done.days).toBeGreaterThan(300);
       expect(done.runs).toBeGreaterThan(0);
       expect(await daysOf(adAccountId)).toEqual([]);
-      expect(await row(`SELECT 1 FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId])).toEqual([]);
+      expect(await row(`SELECT 1 FROM ludy_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId])).toEqual([]);
       expect(await view(owner, adAccountId)).toMatchObject({ connectionStatus: 'active', syncedThrough: null, settledThrough: null, lastRunAt: null, lastErrorKind: null });
       // The audit row names the account and counts, never a figure.
       const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'ads.account.delete_history' ORDER BY id DESC LIMIT 1`, [orgId]);
@@ -5157,8 +5157,8 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect((await rpc('channels/disconnect', await tokenFor(owner), { connectionId, idempotencyKey: randomUUID() })).status).toBe(200);
       const closed = (await ok('ads/deleteHistory', owner, { adAccountId, idempotencyKey: randomUUID() })) as { removed: boolean };
       expect(closed.removed).toBe(true);
-      expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId])).toEqual([]);
-      expect(await row(`SELECT 1 FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId])).toEqual([]);
+      expect(await row(`SELECT 1 FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId])).toEqual([]);
+      expect(await row(`SELECT 1 FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId])).toEqual([]);
       expect(await view(owner, adAccountId)).toBeUndefined();
       const gone = await rpc('ads/deleteHistory', await tokenFor(owner), { adAccountId, idempotencyKey: randomUUID() });
       expect(gone.status).toBe(404);
@@ -5170,7 +5170,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     it('checks Meta’s signature before anything else, and answers a verified request with a code and a status page', async () => {
       const post = (body: string) => app.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
       // Forged, the wrong secret, the wrong algorithm, not a user id, malformed: none is stored.
-      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`);
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.deletion_request`);
       expect((await post(form(signed('4242', 'another-secret')))).status).toBe(401);
       expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA1', user_id: '4242' })))).status).toBe(401);
       expect((await post(form(signed('not-a-number')))).status).toBe(401);
@@ -5184,14 +5184,14 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: nowSeconds + 3600, user_id: '4242' })))).status).toBe(401);
       expect((await post('other=1')).status).toBe(400);
       expect((await post('')).status).toBe(400);
-      expect(await row(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`)).toEqual(before);
+      expect(await row(`SELECT count(*)::text AS n FROM ludy_ads.deletion_request`)).toEqual(before);
       // A verified one: a code of 128 random bits and the status page's address; the user id is stored nowhere.
       const accepted = await post(form(signed('4242')));
       expect(accepted.status).toBe(200);
       const body = (await accepted.json()) as { url: string; confirmation_code: string };
       expect(body.confirmation_code).toMatch(/^[0-9a-f]{32}$/);
       expect(body.url).toBe(`${appConfig.PUBLIC_URL}/api/ads/meta/data-deletion?code=${body.confirmation_code}`);
-      const stored = await row<{ user_hash: string; completed_at: string | null }>(`SELECT user_hash, completed_at FROM crove_ads.deletion_request WHERE code = $1`, [body.confirmation_code]);
+      const stored = await row<{ user_hash: string; completed_at: string | null }>(`SELECT user_hash, completed_at FROM ludy_ads.deletion_request WHERE code = $1`, [body.confirmation_code]);
       expect(stored).toEqual([{ user_hash: platformUserHash(SECRET_META, '4242'), completed_at: null }]);
       expect(JSON.stringify(stored)).not.toContain('4242');
       // The status page: waiting, then done, and 404 for a code nobody was given. It shows nothing of any org.
@@ -5215,7 +5215,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const first = (await (await post(form(signed('9191')))).json()) as { confirmation_code: string };
       const replay = (await (await post(form(signed('9191')))).json()) as { confirmation_code: string };
       expect(replay.confirmation_code).toBe(first.confirmation_code);
-      expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(SECRET_META, '9191')])).toHaveLength(1);
+      expect(await row(`SELECT 1 FROM ludy_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(SECRET_META, '9191')])).toHaveLength(1);
       // The table's own limit is the database's answer (53400), which the runtime calls OVERLOADED: the callback says 503.
       const full = { orgless: async () => Promise.reject(new DomainError('OVERLOADED', 503, 'full')) } as unknown as Runtime;
       expect(await acceptAdsDeletion(full, SECRET_META, form(signed('9292')))).toEqual({ status: 503, code: 'DELETION_BACKLOG' });
@@ -5226,7 +5226,7 @@ suite('ads on PostgreSQL (#2217)', () => {
 
     it('drops the person who granted an account when a link says the platform did not name them, and keeps it when the link says nothing', async () => {
       const made = await linkedAs(orgId, asOwner(), 'Đổi người cấp quyền', '8080');
-      const hashOf = async () => (await row<{ h: string | null }>(`SELECT granted_by_hash AS h FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.h;
+      const hashOf = async () => (await row<{ h: string | null }>(`SELECT granted_by_hash AS h FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.h;
       expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8080'));
       // A link that says nothing of it (a retry, the sandbox) leaves it.
       await api.execute('ads.account.link', { connectionId: made.connectionId }, { actor: asOwner(), orgId });
@@ -5252,7 +5252,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         adsDeletionLimit: new RateLimiter({ perMinute: 3 }),
       });
       const post = (body: string) => limited.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
-      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`);
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_ads.deletion_request`);
       // A body past 8 KiB is refused whatever it holds, before it is read (so it does not use up the address's calls).
       const big = await post(`signed_request=${'a'.repeat(9 * 1024)}`);
       expect(big.status).toBe(413);
@@ -5261,7 +5261,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const refused = await post(form(signed('4242')));
       expect(refused.status).toBe(429);
       expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
-      expect(await row(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`)).toEqual(before);
+      expect(await row(`SELECT count(*)::text AS n FROM ludy_ads.deletion_request`)).toEqual(before);
       // The status page shares the limit: it too answers 429 once the address has used it.
       expect((await limited.request(`/api/ads/meta/data-deletion?code=${'0'.repeat(32)}`)).status).toBe(429);
     });
@@ -5281,9 +5281,9 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await runAdsDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
       // Everything of the three accounts is gone, in both orgs; the other person's is not.
       for (const [made, org] of [[mine1, orgId], [mine2, orgId], [theirs, otherOrgId]] as const) {
-        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [org, made.adAccountId])).toEqual([]);
-        expect(await row(`SELECT 1 FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
-        expect(await row(`SELECT 1 FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [org, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM ludy_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
         // The connection is closed and its token forgotten.
         // Closed, with the account's name and the token's permissions gone too: a platform id and the time it closed remain.
         expect(await row(`SELECT status, status_reason, display_name, scopes FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [org, made.connectionId])).toEqual([
@@ -5306,24 +5306,24 @@ suite('ads on PostgreSQL (#2217)', () => {
     it('lets only the API login enqueue and read a status, only the worker claim and complete, and no tenant role read the table', async () => {
       const code = randomBytes(16).toString('hex');
       const hash = platformUserHash(SECRET_META, '6060');
-      await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [code, hash]);
-      expect((await pool.query('SELECT * FROM crove_ads.deletion_request_status($1)', [code])).rows).toHaveLength(1);
-      await expect(pool.query('SELECT * FROM crove_ads.deletion_request_claim(10)')).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [code])).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT * FROM crove_ads.deletion_request')).rejects.toMatchObject({ code: '42501' });
+      await pool.query('SELECT ludy_ads.deletion_request_enqueue($1, $2)', [code, hash]);
+      expect((await pool.query('SELECT * FROM ludy_ads.deletion_request_status($1)', [code])).rows).toHaveLength(1);
+      await expect(pool.query('SELECT * FROM ludy_ads.deletion_request_claim(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT ludy_ads.deletion_request_complete($1, 0)', [code])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_ads.deletion_request')).rejects.toMatchObject({ code: '42501' });
       const workerPool = workerPools[0] as pg.Pool;
-      await expect(workerPool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [randomBytes(16).toString('hex'), hash])).rejects.toMatchObject({ code: '42501' });
-      await expect(workerPool.query('SELECT * FROM crove_ads.deletion_request_status($1)', [code])).rejects.toMatchObject({ code: '42501' });
-      expect((await workerPool.query('SELECT * FROM crove_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(true);
+      await expect(workerPool.query('SELECT ludy_ads.deletion_request_enqueue($1, $2)', [randomBytes(16).toString('hex'), hash])).rejects.toMatchObject({ code: '42501' });
+      await expect(workerPool.query('SELECT * FROM ludy_ads.deletion_request_status($1)', [code])).rejects.toMatchObject({ code: '42501' });
+      expect((await workerPool.query('SELECT * FROM ludy_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(true);
       // A request that failed is put off, by the worker alone, and is not claimed again until its time.
-      await expect(pool.query('SELECT crove_ads.deletion_request_defer($1)', [code])).rejects.toMatchObject({ code: '42501' });
-      await workerPool.query('SELECT crove_ads.deletion_request_defer($1)', [code]);
-      expect((await workerPool.query('SELECT * FROM crove_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(false);
+      await expect(pool.query('SELECT ludy_ads.deletion_request_defer($1)', [code])).rejects.toMatchObject({ code: '42501' });
+      await workerPool.query('SELECT ludy_ads.deletion_request_defer($1)', [code]);
+      expect((await workerPool.query('SELECT * FROM ludy_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(false);
       // A bad code or hash is refused; the same person asking again gets the open request's code, and no new row.
-      await expect(pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', ['nope', hash])).rejects.toMatchObject({ code: '22P02' });
-      expect((await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2) AS code', [randomBytes(16).toString('hex'), hash])).rows[0]?.code).toBe(code);
+      await expect(pool.query('SELECT ludy_ads.deletion_request_enqueue($1, $2)', ['nope', hash])).rejects.toMatchObject({ code: '22P02' });
+      expect((await pool.query('SELECT ludy_ads.deletion_request_enqueue($1, $2) AS code', [randomBytes(16).toString('hex'), hash])).rows[0]?.code).toBe(code);
       // The history definer needs a context of an org: the API login alone gets none.
-      await expect(pool.query('SELECT * FROM crove_ads.account_history_delete($1::uuid, false, NULL)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_ads.account_history_delete($1::uuid, false, NULL)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     });
   });
 
@@ -5384,7 +5384,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(mine.map((a) => a.extraScopes)).toEqual([[], ['pages_manage_posts']]);
       // The person who granted them is kept as a keyed hash only (#2219), never as the id Meta gave: Meta's data deletion
       // request finds their accounts by it.
-      const grantedBy = await row<{ granted_by_hash: string }>(`SELECT granted_by_hash FROM crove_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' ORDER BY external_account_id`, [orgId]);
+      const grantedBy = await row<{ granted_by_hash: string }>(`SELECT granted_by_hash FROM ludy_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' ORDER BY external_account_id`, [orgId]);
       expect(grantedBy.map((r) => r.granted_by_hash)).toEqual([platformUserHash('meta-app-secret', META_GRANT.user), platformUserHash('meta-app-secret', META_GRANT.user)]);
       expect(JSON.stringify(grantedBy)).not.toContain(META_GRANT.user);
       // Sealed once per connection and in no answer, audit row or event; the first sync was queued by the link.
@@ -5413,7 +5413,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           await c.query('BEGIN');
           const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
-          await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
+          await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
           await c.query(text, params);
           await c.query('COMMIT');
         } finally {
@@ -5421,8 +5421,8 @@ suite('ads on PostgreSQL (#2217)', () => {
           c.release();
         }
       })();
-    const switchOn = () => ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
-    const switchOff = () => ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]);
+    const switchOn = () => ownerSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
+    const switchOff = () => ownerSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]);
     const readStatus = async (provider: string) =>
       row<{ id: string; external_account_id: string; status: string; status_reason: string | null; scopes: string[]; sealed: string }>(
         `SELECT k.id, k.external_account_id, k.status, k.status_reason, k.scopes, (SELECT count(*)::text FROM ludy_kernel.credential c WHERE c.org_id = k.org_id AND c.connection_id = k.id) AS sealed
@@ -5445,8 +5445,8 @@ suite('ads on PostgreSQL (#2217)', () => {
         link: () => api.execute<{ adAccountId: string | null; linked: boolean; refused?: string }>('ads.account.link', { connectionId: made.connectionId, ...(grantor ? { grantedByHash: platformUserHash('meta-app-secret', grantor) } : {}) }, { actor: asOwner(), orgId }),
       };
     };
-    const adAccountOf = async (externalAccountId: string) => (await row<{ id: string }>(`SELECT id FROM crove_ads.ad_account WHERE org_id = $1 AND external_account_id = $2`, [orgId, externalAccountId]))[0]?.id as string;
-    const attachedWrite = async (adAccountId: string) => (await row<{ id: string | null }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id ?? null;
+    const adAccountOf = async (externalAccountId: string) => (await row<{ id: string }>(`SELECT id FROM ludy_ads.ad_account WHERE org_id = $1 AND external_account_id = $2`, [orgId, externalAccountId]))[0]?.id as string;
+    const attachedWrite = async (adAccountId: string) => (await row<{ id: string | null }>(`SELECT write_connection_id AS id FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id ?? null;
     const statusOf = async (connectionId: string, provider = 'meta_ads') => (await readStatus(provider)).find((r) => r.id === connectionId);
 
     it('connects the write connection of a Meta grant for the owner alone, while the switch is on, and only to accounts linked for reading', async () => {
@@ -5456,9 +5456,9 @@ suite('ads on PostgreSQL (#2217)', () => {
         return { started, finished: await metaRpc('channels/oauthFinish', who, { provider: 'metawrite_ads', state: started.body.state, code: 'the-code' }) };
       };
       // The read grant of the test before made the two accounts (the write connection hangs off them); the switch on now.
-      await ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]);
+      await ownerSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]);
       expect((await writeGrant(owner)).started).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
-      await ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]);
+      await ownerSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]);
       // The owner's alone: an admin, a member and a viewer are refused before the dialog.
       for (const who of [adminAccount, member, viewer]) expect((await writeGrant(who)).started.status, who.email).toBe(403);
       const { started, finished } = await writeGrant(owner);
@@ -5475,7 +5475,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       ]);
       expect(listed.map((a) => a.extraScopes)).toEqual([[], ['pages_manage_posts']]);
       expect(listed).toHaveLength(2);
-      const hashes = await row<{ h: string | null; g: string | null }>(`SELECT write_granted_by_hash AS h, granted_by_hash AS g FROM crove_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' ORDER BY external_account_id`, [orgId]);
+      const hashes = await row<{ h: string | null; g: string | null }>(`SELECT write_granted_by_hash AS h, granted_by_hash AS g FROM ludy_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' ORDER BY external_account_id`, [orgId]);
       // The same person granted both: with one app the two hashes are equal, and neither is Meta's id.
       expect(hashes.map((r) => r.h)).toEqual([platformUserHash('meta-app-secret', META_GRANT.user), platformUserHash('meta-app-secret', META_GRANT.user)]);
       expect(hashes.map((r) => r.h)).toEqual(hashes.map((r) => r.g));
@@ -5593,7 +5593,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             await c.query('BEGIN');
             const ctxToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
             await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, ctxToken]);
-            await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
+            await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
             await c.query(text, [otherOrgId]);
             await c.query('COMMIT');
           } finally {
@@ -5614,7 +5614,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const ids = [await reading('act_9501', '7001'), await reading('act_9502', null)];
       expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.channel_connection WHERE org_id = $1 AND provider = 'metawrite_ads'`, [otherOrgId]))[0]?.n).toBe('0');
       // The owner turns running ads on and starts the dialog for the connection that can run ads: the person consents at Meta (or means to).
-      await settingSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
+      await settingSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
       const started = await rpc('channels/oauthStart', token, { provider: 'metawrite_ads' }, otherSlug);
       expect(started.status, JSON.stringify(started.body)).toBe(200);
       // Running ads is switched off before the callback comes back: the callback is refused and nothing of the consent reaches Ludy, yet
@@ -5634,7 +5634,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect((await rpc('ads/writeDisable', token, { idempotencyKey: randomUUID() }, otherSlug)).body.readConnectionsClosed).toBe(0);
       // With a write app of its own (the API says `sharedApp: false`, from its config) no reading token can hold the permission: a clean
       // reading connection stays open when running ads is switched off, and one whose recorded scopes hold the permission still closes.
-      await settingSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
+      await settingSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
       const clean = await reading('act_9503', '7001');
       const recorded = await reading('act_9504', null, ['ads_read', 'ads_management']);
       const own = await api.execute<{ readConnectionsClosed: number }>('ads.write.disable', { sharedApp: false }, { actor: asOutsider, orgId: otherOrgId });
@@ -5643,7 +5643,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await state(clean)).toBe('active');
       expect(await state(recorded)).toBe('revoked');
       // Said nothing, it fails safe: the clean one closes too.
-      await settingSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
+      await settingSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
       const safe = await api.execute<{ readConnectionsClosed: number }>('ads.write.disable', {}, { actor: asOutsider, orgId: otherOrgId });
       expect(safe.readConnectionsClosed).toBe(1);
       expect(await state(clean)).toBe('revoked');
@@ -5680,7 +5680,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(view2).toMatchObject({ lastErrorKind: 'rate_limited', syncedThrough: null, settledThrough: null, connectionStatus: 'active' });
       expect(Date.parse(view2.nextRunAt as string)).toBeGreaterThan(Date.now() + 50 * 60_000);
       // A refused token ends the connection, kept as it is.
-      await row(`UPDATE crove_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, account.id]);
+      await row(`UPDATE ludy_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, account.id]);
       await sync(account.connectionId, read('expired'));
       view2 = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id) as AdAccountView;
       expect(view2).toMatchObject({ connectionStatus: 'expired', lastErrorKind: 'token_expired' });
@@ -5690,7 +5690,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const back = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).filter((a) => a.name === 'Meta act_9002');
       expect(back).toHaveLength(1);
       expect(back[0]).toMatchObject({ id: account.id, connectionId: account.connectionId, connectionStatus: 'active' });
-      await row(`UPDATE crove_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, account.id]);
+      await row(`UPDATE ludy_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, account.id]);
       const resumed = await sync(account.connectionId, read('ok'));
       expect(resumed.rows).toBeGreaterThan(300 * 3);
       const final = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id);

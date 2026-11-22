@@ -198,7 +198,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
     const proposal = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, fileId);
     const recorded = await approve(adminUser, String(proposal.proposalId));
     expect(recorded.status).toBe(200);
-    const [doc] = await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows);
+    const [doc] = await admin(async (c) => (await c.query('SELECT party_id FROM ludy_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows);
     vendor = doc.party_id;
     customer = randomUUID();
     await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`, [org.orgId, customer]));
@@ -215,7 +215,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
       idempotencyKey: randomUUID(),
     });
     expect(imported.status).toBe(200);
-    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>('SELECT id, bank_ref FROM crove_finance.bank_line WHERE org_id = $1', [org.orgId])).rows)) {
+    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>('SELECT id, bank_ref FROM ludy_finance.bank_line WHERE org_id = $1', [org.orgId])).rows)) {
       lineId[r.bank_ref] = r.id;
     }
   });
@@ -233,7 +233,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
   // The invoice of the fixture's seller and its tax code, read from the books.
   async function sellerFacts() {
     return admin(async (c) => {
-      const doc = (await c.query<{ invoice_number: string; invoice_series: string; total: string }>(`SELECT invoice_number, invoice_series, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND party_id = $2`, [org.orgId, vendor])).rows[0];
+      const doc = (await c.query<{ invoice_number: string; invoice_series: string; total: string }>(`SELECT invoice_number, invoice_series, total::text FROM ludy_finance.purchase_document WHERE org_id = $1 AND party_id = $2`, [org.orgId, vendor])).rows[0];
       const party = (await c.query<{ name: string; tax_code: string }>(`SELECT name, tax_code FROM ludy_kernel.party WHERE org_id = $1 AND id = $2`, [org.orgId, vendor])).rows[0];
       return { number: String(doc?.invoice_number), series: String(doc?.invoice_series), total: Number(doc?.total), taxCode: String(party?.tax_code), name: String(party?.name) };
     });
@@ -265,7 +265,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
       idempotencyKey: randomUUID(),
     });
     expect(imported.status).toBe(200);
-    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>(`SELECT id, bank_ref FROM crove_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'GR%'`, [org.orgId])).rows)) {
+    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>(`SELECT id, bank_ref FROM ludy_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'GR%'`, [org.orgId])).rows)) {
       refByRef.set(r.bank_ref, r.id);
     }
 
@@ -316,7 +316,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
     expect(alone.status).toBe(200);
     expect(alone.body.results).toEqual([expect.objectContaining({ id: cleanProposal, outcome: 'refused', code: 'FOUR_EYES_REQUIRED' })]);
     // Nothing was posted: the line is still proposed, and the clean group no longer offers it.
-    const lines = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.cash_voucher WHERE org_id = $1 AND bank_line_id = $2`, [org.orgId, refByRef.get('GR1')])).rows[0]?.n);
+    const lines = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.cash_voucher WHERE org_id = $1 AND bank_line_id = $2`, [org.orgId, refByRef.get('GR1')])).rows[0]?.n);
     expect(Number(lines)).toBe(0);
     expect(((await groups()).body.clean as any[]).map((l) => l.line.reference)).toEqual([]);
   });

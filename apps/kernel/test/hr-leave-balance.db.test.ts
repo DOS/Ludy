@@ -313,7 +313,7 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       ).rejects.toMatchObject({ status: 422 });
       await withAdmin((c) =>
         c.query(
-          `UPDATE crove_hr.payroll_leave_entry SET days = 1.25 WHERE org_id = $1 AND employee_id = $2 AND month = '2026-11' AND kind = 'unpaid_leave'`,
+          `UPDATE ludy_hr.payroll_leave_entry SET days = 1.25 WHERE org_id = $1 AND employee_id = $2 AND month = '2026-11' AND kind = 'unpaid_leave'`,
           [o.orgId, emp.employeeId],
         ),
       );
@@ -475,7 +475,7 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       //   do NOT mask `heavyEmp`'s synced leave provenance, so deleting `heavyEmp`'s leave entry still resets to '0';
       // - `importedEmp`'s pre-upgrade imported days ('3') survive repeated `sync_leave` calls.
       await withAdmin((c) =>
-        c.query(`UPDATE crove_hr.payroll_line SET inputs = inputs - 'unpaidLeaveFromLedger' WHERE org_id = $1 AND id = $2`, [
+        c.query(`UPDATE ludy_hr.payroll_line SET inputs = inputs - 'unpaidLeaveFromLedger' WHERE org_id = $1 AND id = $2`, [
           o.orgId,
           afterHeavy.id,
         ]),
@@ -491,7 +491,7 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
         rows: [{ lineId: afterImported.id, unpaidLeaveDays: '3', daysNotEmployed: '0', nightHours: '0', overtime: [] }],
       });
       await withAdmin((c) =>
-        c.query(`UPDATE crove_hr.payroll_line SET inputs = inputs - 'unpaidLeaveFromLedger' WHERE org_id = $1 AND id = $2`, [
+        c.query(`UPDATE ludy_hr.payroll_line SET inputs = inputs - 'unpaidLeaveFromLedger' WHERE org_id = $1 AND id = $2`, [
           o.orgId,
           afterImported.id,
         ]),

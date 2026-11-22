@@ -239,7 +239,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
   it('adds a person\'s corrections to their pay in one amount, refuses a person whose total is below zero with a count, and refuses a run whose total differs from the net pay frozen at approval or that is paid or closed, giving no file (#2532)', async () => {
     const downloadCount = async () => (await rows(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId])).length;
     const before = await downloadCount();
-    const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [orgId]);
+    const [first] = await rows<{ id: string }>(`SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [orgId]);
     // A correction of March carried in a June run is added to the person's own pay: one row, one amount (the pay line's net and the correction's net together), and the files of all the banks still add up
     // to the net pay frozen at approval (which includes the correction).
     const june = await approvedRun('2026-06', async (id) => {
@@ -268,10 +268,10 @@ suite('the bank salary file of a pay run (#2532)', () => {
     expect((await get(url(may.runId))).status).toBe(200);
     // Each real download of this test adds exactly one audit row (the corrected month's and this one); the refusals around them add none.
     expect(await downloadCount()).toBe(before + 2);
-    await rows(`ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row`);
-    await rows(`ALTER TABLE crove_hr.payroll_run DISABLE TRIGGER frozen_row`);
+    await rows(`ALTER TABLE ludy_hr.payroll_line DISABLE TRIGGER frozen_row`);
+    await rows(`ALTER TABLE ludy_hr.payroll_run DISABLE TRIGGER frozen_row`);
     try {
-      await rows(`UPDATE crove_hr.payroll_line SET net = net + 1000 WHERE org_id = $1 AND id = (SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [orgId, may.runId]);
+      await rows(`UPDATE ludy_hr.payroll_line SET net = net + 1000 WHERE org_id = $1 AND id = (SELECT id FROM ludy_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [orgId, may.runId]);
       // The total of the whole run is checked, so every bank's file is refused, not only the bank of the person whose line changed.
       for (const bank of ['VCB', 'TCB']) {
         const changed = await get(url(may.runId, `bank=${bank}`));
@@ -279,11 +279,11 @@ suite('the bank salary file of a pay run (#2532)', () => {
         expect(JSON.stringify(await changed.json())).toContain('HR_BANK_FILE_MISMATCH');
       }
       // A run that is no longer approved (money moved, or closed) gives no second file to upload.
-      await rows(`UPDATE crove_hr.payroll_run SET status = 'paid' WHERE org_id = $1 AND id = $2`, [orgId, may.runId]);
+      await rows(`UPDATE ludy_hr.payroll_run SET status = 'paid' WHERE org_id = $1 AND id = $2`, [orgId, may.runId]);
       expect((await get(url(may.runId))).status).toBe(409);
     } finally {
-      await rows(`ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row`);
-      await rows(`ALTER TABLE crove_hr.payroll_run ENABLE ALWAYS TRIGGER frozen_row`);
+      await rows(`ALTER TABLE ludy_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row`);
+      await rows(`ALTER TABLE ludy_hr.payroll_run ENABLE ALWAYS TRIGGER frozen_row`);
     }
     // The audit rows of the refused requests are reads only: no download row was written for them.
     expect(await downloadCount()).toBe(before + 2);
@@ -343,7 +343,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
   it('refuses the whole export, with a count and no name, when a person has no bank, and a bank nobody of the run is paid at, and never writes a download row for either (#2897)', async () => {
     const downloads = async () => (await rows(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId])).length;
     const before = await downloads();
-    const [person] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 AND bank_code = 'VCB' ORDER BY id LIMIT 1`, [orgId]);
+    const [person] = await rows<{ id: string }>(`SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 AND bank_code = 'VCB' ORDER BY id LIMIT 1`, [orgId]);
     await exec('hr.payroll.employee.edit', { employeeId: person?.id, bankCode: null });
     try {
       // Whatever bank is asked for, the file is refused: a person of the run belongs to no file.
@@ -367,7 +367,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
   });
 
   it('refuses the whole file, with a count and no name, when a person has no account number, and holds a second factor for the query itself', async () => {
-    const run = (await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY id LIMIT 1`, [orgId]))[0]?.id as string;
+    const run = (await rows<{ id: string }>(`SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 ORDER BY id LIMIT 1`, [orgId]))[0]?.id as string;
     await exec('hr.payroll.employee.edit', { employeeId: run, accountNumber: null });
     const response = await get(url(runId));
     expect(response.status).toBe(422);

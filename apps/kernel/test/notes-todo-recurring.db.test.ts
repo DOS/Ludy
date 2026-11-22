@@ -110,10 +110,10 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     await root.end();
   });
 
-  it('enforces crove_notes.todo_recurrence_valid(jsonb) CHECK constraints at the SQL layer', async () => {
+  it('enforces ludy_notes.todo_recurrence_valid(jsonb) CHECK constraints at the SQL layer', async () => {
     await admin(async (c) => {
       const check = async (expr: string, params: unknown[] = []) => {
-        const res = await c.query<{ ok: boolean }>(`SELECT crove_notes.todo_recurrence_valid(${expr}) AS ok`, params);
+        const res = await c.query<{ ok: boolean }>(`SELECT ludy_notes.todo_recurrence_valid(${expr}) AS ok`, params);
         return res.rows[0]?.ok;
       };
       expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 1 })])).toBe(true);
@@ -153,7 +153,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     });
 
     // Simulate a previous reminder delivery marker so we can verify the spawned occurrence clears reminded_at.
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, created.todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, created.todoId]));
 
     const initial = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: created.todoId });
     expect(initial.seriesId).toBe(created.todoId);
@@ -190,7 +190,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     ]);
 
     const rawDbNext = await admin((c) =>
-      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, nextId]),
+      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, nextId]),
     );
     expect(rawDbNext.rows[0]?.reminded_at).toBeNull();
 
@@ -274,7 +274,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     }
 
     // Mark a's reminded_at so reschedule must clear it.
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]));
 
     // Reschedule both in batch to a future day; a retains 15:00 + 14:30 reminder, b stays reminder: null, order is preserved.
     const resched = await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
@@ -293,7 +293,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     expect(bAfter.remindAt).toBeNull();
 
     const rawA = await admin((c) =>
-      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]),
+      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]),
     );
     expect(rawA.rows[0]?.reminded_at).toBeNull();
 
@@ -343,7 +343,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     // Reschedule day3 to a past calendar date so its reminder timestamp has already passed -> reminded_at must be stamped.
     await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', { todoIds: [day3Id], dueOn: '2020-01-01' });
     const rawPast = await admin((c) =>
-      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, day3Id]),
+      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, day3Id]),
     );
     expect(rawPast.rows[0]?.reminded_at).not.toBeNull();
 
@@ -375,7 +375,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     const febRes = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: jan30.todoId });
     expect(febRes.nextDueOn).toBe('2026-02-28');
     await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: jan30.todoId });
-    await admin((c) => c.query(`DELETE FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, jan30.todoId]));
+    await admin((c) => c.query(`DELETE FROM ludy_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, jan30.todoId]));
     const febTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: febRes.nextTodoId as string });
     expect(febTodo.dueOn).toBe('2026-02-28');
     expect(febTodo.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: 30 });
@@ -499,9 +499,9 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', { todoIds: [febOccupied.nextTodoId as string], dueOn: '2027-01-31' });
     await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: jan31.todoId });
     // Now mark older row as occupying 2027-02-28 and clear byMonthDay on the active Jan 31 row to verify stepRule fixes target day.
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET due_on = '2027-02-28' WHERE org_id = $1 AND id = $2`, [o.orgId, jan31.todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET due_on = '2027-02-28' WHERE org_id = $1 AND id = $2`, [o.orgId, jan31.todoId]));
     await admin((c) =>
-      c.query(`UPDATE crove_notes.todo SET recurrence = '{"freq":"monthly","interval":1}'::jsonb WHERE org_id = $1 AND id = $2`, [
+      c.query(`UPDATE ludy_notes.todo SET recurrence = '{"freq":"monthly","interval":1}'::jsonb WHERE org_id = $1 AND id = $2`, [
         o.orgId,
         febOccupied.nextTodoId,
       ]),

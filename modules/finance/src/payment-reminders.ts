@@ -99,7 +99,7 @@ export interface CustomerBounds {
 export async function loadCustomers(ctx: QueryContext, entity: string, today: string, only?: string | readonly string[], bounds?: CustomerBounds): Promise<Customer[]> {
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   let balances = ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
+    .selectFrom('ludy_finance.journal_line as l')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select(sql<string>`sum(l.debit - l.credit)`.as('balance'))
@@ -110,7 +110,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .having(sql<boolean>`sum(l.debit - l.credit) > 0`);
   if (bounds?.entriesTo !== undefined) {
     balances = balances
-      .innerJoin('crove_finance.journal_entry as je', (join) => join.onRef('je.org_id', '=', 'l.org_id').onRef('je.id', '=', 'l.entry_id'))
+      .innerJoin('ludy_finance.journal_entry as je', (join) => join.onRef('je.org_id', '=', 'l.org_id').onRef('je.id', '=', 'l.entry_id'))
       .where('je.entry_date', '<=', bounds.entriesTo);
   }
   if (bounds !== undefined) balances = balances.orderBy(sql`sum(l.debit - l.credit)`, 'desc').orderBy(kept).limit(bounds.customers);
@@ -121,9 +121,9 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   const ids = owed.map((r) => r.party_id);
   const parties = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
   const invoiceRows = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
-    .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select(kept.as('party_id'))
     .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency'])
     .where('d.org_id', '=', ctx.orgId)
@@ -136,7 +136,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
       q
         .where('d.invoice_date', '<=', bounds?.entriesTo ?? '')
         .where(
-          sql<boolean>`exists (select 1 from crove_finance.journal_entry e where e.org_id = d.org_id and e.source_type = 'finance.purchase_document' and e.source_id = d.id and e.entry_date <= ${bounds?.entriesTo ?? ''})`,
+          sql<boolean>`exists (select 1 from ludy_finance.journal_entry e where e.org_id = d.org_id and e.source_type = 'finance.purchase_document' and e.source_id = d.id and e.entry_date <= ${bounds?.entriesTo ?? ''})`,
         ),
     )
     .$if(bounds !== undefined, (q) => q.orderBy('d.invoice_date', 'desc').orderBy('d.id').limit((bounds?.documents ?? 0) + 1))
@@ -155,7 +155,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   // The settings sit on the kept party; a party marked as a duplicate afterwards may still hold its own row (nothing moves it), so every party of the group is read: the
   // terms are the kept party's, else a duplicate's, and the pause is the latest of the group (the same rule as the customer's own screen: mergeGroupRows).
   const rows = await ctx.trx
-    .selectFrom('crove_finance.customer_collection as c')
+    .selectFrom('ludy_finance.customer_collection as c')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
     .select([kept.as('group_id'), 'c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
@@ -258,7 +258,7 @@ export const paymentRemindersList = defineQuery({
 // The org's bank accounts with a number recorded in the entity, oldest record first, as the mail would name them.
 async function payToOptions(ctx: QueryContext, entity: string): Promise<Array<{ id: string; bank: string; number: string; holder: string }>> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.bank_account_number')
+    .selectFrom('ludy_finance.bank_account_number')
     .select(['id', 'bank_account', 'account_number'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)

@@ -139,7 +139,7 @@ export async function runSignPublicHubList(
         items: SignPublicHubItem[];
       } | null;
     }>`
-      SELECT crove_sign.public_hub_list(${orgSlug}) AS hub
+      SELECT ludy_sign.public_hub_list(${orgSlug}) AS hub
     `.execute(db);
     return rows[0]?.hub ?? null;
   });
@@ -178,7 +178,7 @@ export async function resolvePublicHubTemplate(
 ): Promise<SqlHubResolveRow | null> {
   const resolved = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ resolved: SqlHubResolveRow | null }>`
-      SELECT crove_sign.public_hub_resolve(${orgSlug}, ${templateId}::uuid, ${claimHash}) AS resolved
+      SELECT ludy_sign.public_hub_resolve(${orgSlug}, ${templateId}::uuid, ${claimHash}) AS resolved
     `.execute(db);
     return rows[0]?.resolved ?? null;
   });
@@ -217,7 +217,7 @@ export async function resolvePublicHubPdf(
         sha256?: string;
       } | null;
     }>`
-      SELECT crove_sign.public_hub_pdf_source(${orgSlug}, ${templateId}::uuid, ${claimHash}) AS source
+      SELECT ludy_sign.public_hub_pdf_source(${orgSlug}, ${templateId}::uuid, ${claimHash}) AS source
     `.execute(db);
     return rows[0]?.source ?? null;
   });
@@ -340,7 +340,7 @@ export async function runSignPublicHubAction(
     type SqlOtpRequestRow = ({ status: 'ok'; otpId?: string } & SignDirectOtpRequestResult) | SqlErrorPayload | null;
     const res = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: SqlOtpRequestRow }>`
-        SELECT crove_sign.public_hub_request_otp(
+        SELECT ludy_sign.public_hub_request_otp(
           ${orgSlug},
           ${templateId}::uuid,
           ${email},
@@ -386,7 +386,7 @@ export async function runSignPublicHubAction(
 
     const res = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: SqlOtpVerifyRow }>`
-        SELECT crove_sign.public_hub_verify_otp(
+        SELECT ludy_sign.public_hub_verify_otp(
           ${orgSlug},
           ${templateId}::uuid,
           ${email},
@@ -450,7 +450,7 @@ export async function runSignPublicHubAction(
 
     const res = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: SqlHubStartRow }>`
-        SELECT crove_sign.public_hub_start(
+        SELECT ludy_sign.public_hub_start(
           ${orgSlug},
           ${templateId}::uuid,
           ${name},

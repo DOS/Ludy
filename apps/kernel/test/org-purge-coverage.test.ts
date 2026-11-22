@@ -33,11 +33,11 @@ describe('the tables ludy_kernel.org_purge deletes (#1217)', () => {
     const { whole, partial } = purgedTables(newestSource);
     const hasTable = (set: Set<string>, table: string) => set.has(table) || set.has(table.replace(/^ludy_kernel\./, 'crove_kernel.'));
     // The append-only working rows are deleted whole, under the purge's own mark (#1032).
-    for (const table of ['crove_notes.link', 'ludy_kernel.inbox_item', 'crove_crm.event_type', 'crove_social.media_archive', 'ludy_kernel.tenant_member', 'ludy_kernel.task_comment', 'crove_social.post_approval']) {
+    for (const table of ['ludy_notes.link', 'ludy_kernel.inbox_item', 'ludy_crm.event_type', 'ludy_social.media_archive', 'ludy_kernel.tenant_member', 'ludy_kernel.task_comment', 'ludy_social.post_approval']) {
       expect(hasTable(whole, table), table).toBe(true);
     }
     // What kept rows keep: kept proposals with their tasks and approved posts, the books' parties and files.
-    for (const table of ['ludy_kernel.proposal', 'crove_social.post', 'crove_social.post_variant', 'ludy_kernel.task', 'ludy_kernel.party', 'ludy_kernel.file']) {
+    for (const table of ['ludy_kernel.proposal', 'ludy_social.post', 'ludy_social.post_variant', 'ludy_kernel.task', 'ludy_kernel.party', 'ludy_kernel.file']) {
       expect(hasTable(partial, table), table).toBe(true);
     }
     // Updated, never deleted.
@@ -92,7 +92,7 @@ describe('purge coverage problems (#1217)', () => {
   });
 
   it('does not count the children of a table deleted in part: those of its kept rows stay', () => {
-    // As crove_social.post_comment under crove_social.post, whose approved posts stay: a purge that stopped naming the
+    // As ludy_social.post_comment under ludy_social.post, whose approved posts stay: a purge that stopped naming the
     // comments would leave every comment of a kept post.
     const cascades = [{ child: 'crove_a.comment', parent: 'crove_a.partial' }];
     expect(purgeCoverageProblems(catalog(['crove_a.partial', 'crove_a.comment'], { cascades }), {}, where)).toEqual([

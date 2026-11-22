@@ -44,11 +44,11 @@ const changed = () => new DomainError('SUPPLIER_PAYMENT_CHANGED', 409, 'Tài kho
 // The invoice a payment is for: a purchase of the org (not a sale), not voided.
 async function loadInvoice(trx: Trx, orgId: string, id: string) {
   const doc = await trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .select(['d.id', 'd.party_id', 'd.total', 'd.currency', 'd.legal_entity_id', 'd.direction'])
     .where('d.org_id', '=', orgId)
     .where('d.id', '=', id.toLowerCase())
-    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)`)
+    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)`)
     .executeTakeFirst();
   if (!doc || doc.direction !== 'purchase') throw new DomainError('SUPPLIER_PAYMENT_INVOICE_NOT_FOUND', 404, 'Không tìm thấy hóa đơn mua vào này');
   return doc;
@@ -57,7 +57,7 @@ async function loadInvoice(trx: Trx, orgId: string, id: string) {
 // The supplier's active account: exactly one, so the approver is never asked to choose between two.
 async function activeAccount(trx: Trx, orgId: string, partyId: string) {
   const rows = await trx
-    .selectFrom('crove_finance.supplier_bank_account')
+    .selectFrom('ludy_finance.supplier_bank_account')
     .select(['id', 'bank_name', 'last4', 'number_hash', 'hash_key_id', 'created_at'])
     .where('org_id', '=', orgId)
     .where('party_id', '=', partyId)
@@ -72,7 +72,7 @@ async function activeAccount(trx: Trx, orgId: string, partyId: string) {
 async function refuseDuplicate(ctx: CommandContext, invoiceId: string): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`${SUPPLIER_PAYMENT_COMMAND}:${invoiceId}`}, 0))`.execute(ctx.trx);
   const live = await ctx.trx
-    .selectFrom('crove_finance.supplier_payment')
+    .selectFrom('ludy_finance.supplier_payment')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('purchase_document_id', '=', invoiceId)
@@ -154,7 +154,7 @@ export const supplierPaymentRecord = defineCommand({
       throw changed();
     }
     const row = await ctx.trx
-      .insertInto('crove_finance.supplier_payment')
+      .insertInto('ludy_finance.supplier_payment')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: doc.legal_entity_id,
@@ -223,8 +223,8 @@ const PAYMENT_COLUMNS = ['p.id', 'p.party_id', 'p.purchase_document_id', 'p.amou
 
 async function loadPayment(trx: Trx, orgId: string, id: string) {
   const row = await trx
-    .selectFrom('crove_finance.supplier_payment as p')
-    .innerJoin('crove_finance.supplier_bank_account as a', (join) => join.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.bank_account_id'))
+    .selectFrom('ludy_finance.supplier_payment as p')
+    .innerJoin('ludy_finance.supplier_bank_account as a', (join) => join.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.bank_account_id'))
     .select([...PAYMENT_COLUMNS, 'a.bank_name', 'a.last4'])
     .where('p.org_id', '=', orgId)
     .where('p.id', '=', id.toLowerCase())
@@ -248,7 +248,7 @@ export const supplierPaymentConfirmAccount = defineCommand({
     if (row.status !== 'approved') throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Khoản chi này không còn ở trạng thái đã duyệt');
     if (row.confirmed_at !== null) throw new DomainError('SUPPLIER_PAYMENT_ALREADY_CONFIRMED', 409, 'Khoản chi này đã được ghi nhận xác nhận với nhà cung cấp');
     await ctx.trx
-      .updateTable('crove_finance.supplier_payment')
+      .updateTable('ludy_finance.supplier_payment')
       .set({ confirmed_by: ctx.actor.userId, confirmed_at: ctx.now, confirmed_channel: input.channel })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -271,7 +271,7 @@ export const supplierPaymentCancel = defineCommand({
     const row = await loadPayment(ctx.trx, ctx.orgId, input.paymentId);
     if (row.status !== 'approved') throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Khoản chi này không còn ở trạng thái đã duyệt');
     await ctx.trx
-      .updateTable('crove_finance.supplier_payment')
+      .updateTable('ludy_finance.supplier_payment')
       .set({ status: 'cancelled', cancelled_by: ctx.actor.userId, cancel_reason: input.reason })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -289,8 +289,8 @@ export const supplierPaymentList = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input): Promise<SupplierPayment[]> => {
     let query = ctx.trx
-      .selectFrom('crove_finance.supplier_payment as p')
-      .innerJoin('crove_finance.supplier_bank_account as a', (join) => join.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.bank_account_id'))
+      .selectFrom('ludy_finance.supplier_payment as p')
+      .innerJoin('ludy_finance.supplier_bank_account as a', (join) => join.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.bank_account_id'))
       .select([...PAYMENT_COLUMNS, 'a.bank_name', 'a.last4'])
       .where('p.org_id', '=', ctx.orgId);
     if (input.partyId) query = query.where('p.party_id', '=', input.partyId.toLowerCase());
@@ -327,7 +327,7 @@ export const financeSupplierPaymentsWaitingSignals = defineQuery({
         ) g WHERE rn = 1
       ), waiting AS (
         SELECT coalesce(pa.duplicate_of, pa.id) AS kept, p.amount, p.currency
-          FROM crove_finance.supplier_payment p
+          FROM ludy_finance.supplier_payment p
           JOIN ludy_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
          WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'approved'
         UNION ALL

@@ -6,7 +6,7 @@
 // - The secret never passes through a command in the clear: the API makes it, seals it with the credential broker and hands the command only the envelope; the audit rows name the host and the
 //   fields, never the address, the secret or any text.
 // - The body is built only by meetingHookBody (packages/kernel-contract/src/meeting-hook-body.ts), here from rows the recorder reads under row security, and checked again by the database
-//   (crove_meetings.hook_body_ok). The system context cannot read meetings, so the body is built at publish and kept only while the delivery is queued.
+//   (ludy_meetings.hook_body_ok). The system context cannot read meetings, so the body is built at publish and kept only while the delivery is queued.
 // - The owner's switch (ludy_kernel.tenant.meeting_hooks, off by default) gates all of it; turning it off drops every queued delivery in the same transaction.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
@@ -79,7 +79,7 @@ type HookRow = {
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
 async function readHook(trx: Trx): Promise<MeetingHookView | null> {
-  const { rows } = await sql<HookRow>`SELECT url, fields, enabled, paused_reason, secret_hint, previous_until, failing_since, consecutive_failures, last_delivery_at, last_status, created_at FROM crove_meetings.hook_get()`
+  const { rows } = await sql<HookRow>`SELECT url, fields, enabled, paused_reason, secret_hint, previous_until, failing_since, consecutive_failures, last_delivery_at, last_status, created_at FROM ludy_meetings.hook_get()`
     .execute(trx)
     .catch(hookError);
   const r = rows[0];
@@ -129,7 +129,7 @@ export const meetingHookSet = defineCommand({
     if (mcpWakeUrlProblem(input.url) !== null) throw new DomainError('INVALID', 422, 'Địa chỉ nhận phải là https, dùng tên miền công khai, cổng 443, không kèm tài khoản');
     const url = new URL(input.url);
     const { rows } = await sql<{ created: boolean }>`
-      SELECT crove_meetings.hook_put(${url.href}, ${sealedOf(input.credential)}::jsonb, ${input.credential.hint}, ${input.fields}::text[], ${input.enabled}) AS created`
+      SELECT ludy_meetings.hook_put(${url.href}, ${sealedOf(input.credential)}::jsonb, ${input.credential.hint}, ${input.fields}::text[], ${input.enabled}) AS created`
       .execute(ctx.trx)
       .catch(hookError);
     const created = rows[0]?.created === true;
@@ -148,7 +148,7 @@ export const meetingHookRotate = defineCommand({
   handler: async (ctx, input) => {
     userOnly(ctx, 'đổi được khóa bí mật của địa chỉ nhận biên bản');
     stepUp(ctx, 'đổi khóa bí mật');
-    const { rows } = await sql<{ rotated: boolean }>`SELECT crove_meetings.hook_rotate(${sealedOf(input.credential)}::jsonb, ${input.credential.hint}) AS rotated`.execute(ctx.trx).catch(hookError);
+    const { rows } = await sql<{ rotated: boolean }>`SELECT ludy_meetings.hook_rotate(${sealedOf(input.credential)}::jsonb, ${input.credential.hint}) AS rotated`.execute(ctx.trx).catch(hookError);
     if (rows[0]?.rotated !== true) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
     ctx.audit({ hint: input.credential.hint });
     return { rotated: true as const };
@@ -163,7 +163,7 @@ export const meetingHookClear = defineCommand({
   access: ROLES,
   handler: async (ctx) => {
     userOnly(ctx, 'gỡ được địa chỉ nhận biên bản');
-    const { rows } = await sql<{ cleared: boolean }>`SELECT crove_meetings.hook_clear() AS cleared`.execute(ctx.trx).catch(hookError);
+    const { rows } = await sql<{ cleared: boolean }>`SELECT ludy_meetings.hook_clear() AS cleared`.execute(ctx.trx).catch(hookError);
     if (rows[0]?.cleared !== true) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
     ctx.audit({});
     return { cleared: true as const };
@@ -180,7 +180,7 @@ export const meetingHookTest = defineCommand({
   handler: async (ctx) => {
     userOnly(ctx, 'gửi thử được tới địa chỉ nhận biên bản');
     stepUp(ctx, 'gửi thử');
-    const { rows } = await sql<{ id: string }>`SELECT crove_meetings.hook_test() AS id`.execute(ctx.trx).catch(hookError);
+    const { rows } = await sql<{ id: string }>`SELECT ludy_meetings.hook_test() AS id`.execute(ctx.trx).catch(hookError);
     const eventId = rows[0]?.id;
     if (!eventId) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
     ctx.audit({ eventId });
@@ -204,7 +204,7 @@ export const meetingHooksSwitchSet = defineCommand({
     await ctx.trx.updateTable('ludy_kernel.tenant').set({ meeting_hooks: input.on }).where('org_id', '=', ctx.orgId).execute().catch(hookError);
     let dropped = 0;
     if (!input.on) {
-      const { rows } = await sql<{ n: number }>`SELECT crove_meetings.hooks_drop_all() AS n`.execute(ctx.trx).catch(hookError);
+      const { rows } = await sql<{ n: number }>`SELECT ludy_meetings.hooks_drop_all() AS n`.execute(ctx.trx).catch(hookError);
       dropped = rows[0]?.n ?? 0;
     }
     ctx.audit({ on: input.on, previous, dropped });
@@ -230,10 +230,10 @@ const dateOnly = (value: string | Date | null): string | null => (value === null
 // Stores the event for the recorder's webhook when there is one to send to: the member has an enabled address, the owner's switch is on and they are still in the org. Called by
 // meetings.result.publish in its own transaction, after the result and the items are published, so a publish that fails stores nothing and a stored event is for a publish that happened.
 export async function enqueueMinutesHook(ctx: CommandContext, published: PublishedMinutes): Promise<boolean> {
-  const { rows: found } = await sql<{ hook_id: string; fields: MeetingHookField[] }>`SELECT hook_id, fields FROM crove_meetings.hook_for_publish(${published.meetingId}::uuid)`.execute(ctx.trx);
+  const { rows: found } = await sql<{ hook_id: string; fields: MeetingHookField[] }>`SELECT hook_id, fields FROM ludy_meetings.hook_for_publish(${published.meetingId}::uuid)`.execute(ctx.trx);
   const hook = found[0];
   if (!hook) return false;
-  const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select(['title', 'started_at', 'length_seconds']).where('org_id', '=', ctx.orgId).where('id', '=', published.meetingId).executeTakeFirst();
+  const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select(['title', 'started_at', 'length_seconds']).where('org_id', '=', ctx.orgId).where('id', '=', published.meetingId).executeTakeFirst();
   if (!meeting) return false;
   const eventId = published.resultId ?? randomUUID();
   const publishedAt = new Date().toISOString();
@@ -268,7 +268,7 @@ export async function enqueueMinutesHook(ctx: CommandContext, published: Publish
     return false;
   }
   const { rows } = await sql<{ stored: boolean }>`
-    SELECT crove_meetings.hook_enqueue_publish(${eventId}::uuid, ${hook.hook_id}::uuid, ${published.meetingId}::uuid, ${text}::jsonb) AS stored`
+    SELECT ludy_meetings.hook_enqueue_publish(${eventId}::uuid, ${hook.hook_id}::uuid, ${published.meetingId}::uuid, ${text}::jsonb) AS stored`
     .execute(ctx.trx)
     .catch(hookError);
   return rows[0]?.stored === true;
@@ -290,7 +290,7 @@ export const meetingHookQueued = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     systemOnly(ctx, 'ghi nhận lần chuyển vào hàng đợi');
-    const { rows } = await sql<{ done: boolean }>`SELECT crove_meetings.hook_touch(${input.id}::uuid) AS done`.execute(ctx.trx).catch(hookError);
+    const { rows } = await sql<{ done: boolean }>`SELECT ludy_meetings.hook_touch(${input.id}::uuid) AS done`.execute(ctx.trx).catch(hookError);
     return { id: input.id, touched: rows[0]?.done === true };
   },
 });
@@ -304,7 +304,7 @@ export const meetingHookRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     systemOnly(ctx, 'ghi nhận kết quả một lần gửi');
-    const { rows } = await sql<{ done: boolean }>`SELECT crove_meetings.hook_record(${input.id}::uuid, ${input.outcome}, ${input.code ?? null}::int) AS done`.execute(ctx.trx).catch(hookError);
+    const { rows } = await sql<{ done: boolean }>`SELECT ludy_meetings.hook_record(${input.id}::uuid, ${input.outcome}, ${input.code ?? null}::int) AS done`.execute(ctx.trx).catch(hookError);
     const done = rows[0]?.done === true;
     // The outcome and the receiver's status code: never the answer, which is not read, and never the body, which is wiped here.
     ctx.audit({ eventId: input.id, outcome: input.outcome, code: input.code ?? null, settled: done });
@@ -320,7 +320,7 @@ export const meetingHookDelivery = defineQuery({
   handler: async (ctx, input): Promise<MeetingHookDeliveryRow | null> => {
     systemOnly(ctx, 'đọc một lần gửi biên bản đang chờ');
     const { rows } = await sql<{ id: string; hook_id: string; type: MeetingHookDeliveryRow['type']; body: Record<string, unknown> | null; status: MeetingHookDeliveryRow['status']; attempts: number }>`
-      SELECT id, hook_id, type, body, status, attempts FROM crove_meetings.hook_delivery_get(${ctx.orgId}::uuid, ${input.id}::uuid)`.execute(ctx.trx);
+      SELECT id, hook_id, type, body, status, attempts FROM ludy_meetings.hook_delivery_get(${ctx.orgId}::uuid, ${input.id}::uuid)`.execute(ctx.trx);
     const r = rows[0];
     return r ? { id: r.id, hookId: r.hook_id, type: r.type, body: r.body, status: r.status, attempts: r.attempts } : null;
   },
@@ -333,7 +333,7 @@ export const meetingHookTarget = defineQuery({
   handler: async (ctx, input): Promise<MeetingHookTargetRow | null> => {
     systemOnly(ctx, 'đọc địa chỉ nhận biên bản');
     const { rows } = await sql<{ user_id: string; url: string; secret_sealed: { keyId: string; envelope: string }; previous_sealed: { keyId: string; envelope: string } | null }>`
-      SELECT user_id, url, secret_sealed, previous_sealed FROM crove_meetings.hook_target(${input.hookId}::uuid)`.execute(ctx.trx);
+      SELECT user_id, url, secret_sealed, previous_sealed FROM ludy_meetings.hook_target(${input.hookId}::uuid)`.execute(ctx.trx);
     const r = rows[0];
     return r ? { userId: r.user_id, url: r.url, sealed: r.secret_sealed, previous: r.previous_sealed } : null;
   },

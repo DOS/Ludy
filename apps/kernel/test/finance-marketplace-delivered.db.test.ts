@@ -84,8 +84,8 @@ suite('the delivery day of an order line (#2516)', () => {
   const confirm = async (o: Org, bytes: Uint8Array) => execute<{ newLines: number; updatedLines: number; duplicateLines: number }>(o, 'finance.marketplace.confirm', { fileId: await read(o, bytes) });
   const days = (o: Org) =>
     rows<{ order_no: string; stage: string; delivered_at: string | null }>(
-      `SELECT o.order_no, l.stage, l.delivered_at::text AS delivered_at FROM crove_finance.channel_order_line l
-       JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 ORDER BY o.order_no`,
+      `SELECT o.order_no, l.stage, l.delivered_at::text AS delivered_at FROM ludy_finance.channel_order_line l
+       JOIN ludy_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 ORDER BY o.order_no`,
       [o.orgId],
     );
 
@@ -154,11 +154,11 @@ suite('the delivery day of an order line (#2516)', () => {
     const o = await org();
     await confirm(o, report(row('F1', 'Hoàn thành', '2026-11-03'), row('F2', 'Đang giao', '')));
     // The day of a delivered line is never changed or cleared, even by the owner of the table.
-    await expect(rows("UPDATE crove_finance.channel_order_line SET delivered_at = '2026-11-09' WHERE org_id = $1 AND line_key = 'QC-1' AND delivered_at IS NOT NULL", [o.orgId])).rejects.toMatchObject({ code: '23514', message: 'CHANNEL_ORDER_STAGE' });
-    await expect(rows('UPDATE crove_finance.channel_order_line SET delivered_at = NULL WHERE org_id = $1 AND delivered_at IS NOT NULL', [o.orgId])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows("UPDATE ludy_finance.channel_order_line SET delivered_at = '2026-11-09' WHERE org_id = $1 AND line_key = 'QC-1' AND delivered_at IS NOT NULL", [o.orgId])).rejects.toMatchObject({ code: '23514', message: 'CHANNEL_ORDER_STAGE' });
+    await expect(rows('UPDATE ludy_finance.channel_order_line SET delivered_at = NULL WHERE org_id = $1 AND delivered_at IS NOT NULL', [o.orgId])).rejects.toMatchObject({ code: '23514' });
     // A line that has not been delivered cannot carry one.
     await expect(
-      rows("UPDATE crove_finance.channel_order_line l SET delivered_at = '2026-11-03' FROM crove_finance.channel_order o WHERE l.org_id = $1 AND o.org_id = l.org_id AND o.id = l.order_id AND o.order_no = 'F2'", [o.orgId]),
+      rows("UPDATE ludy_finance.channel_order_line l SET delivered_at = '2026-11-03' FROM ludy_finance.channel_order o WHERE l.org_id = $1 AND o.org_id = l.org_id AND o.id = l.order_id AND o.order_no = 'F2'", [o.orgId]),
     ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('channel_order_line_delivered_ck') });
     // A delivered line that comes back keeps its day.
     await confirm(o, report(row('F1', 'Hoàn trả', '')));

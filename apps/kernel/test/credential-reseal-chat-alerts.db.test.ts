@@ -63,7 +63,7 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     await api.execute('social.chat_alert.save', { id, kind: 'telegram', keyId: sealed.keyId, envelope: sealed.envelope.toString('base64'), label: 'Nhóm', events: ['failed'] }, { actor: asUser(user), orgId });
     return id;
   }
-  const keyOf = (alertId: string) => admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM crove_social.chat_alert_target WHERE alert_id = $1', [alertId])).rows[0]?.key_id);
+  const keyOf = (alertId: string) => admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM ludy_social.chat_alert_target WHERE alert_id = $1', [alertId])).rows[0]?.key_id);
   const target = (orgId: string, alertId: string) => worker.query<SealedChatAlert>('social.chat_alert.target', { alertId }, { actor: system, orgId });
 
   beforeAll(async () => {
@@ -214,16 +214,16 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
         (
           await c.query<{ role: string }>(
             `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
-              WHERE has_function_privilege(r, 'crove_social.chat_alert_target_reseal_due(text, int, timestamptz, uuid)', 'EXECUTE')
-                 OR has_function_privilege(r, 'crove_social.chat_alert_target_key_counts()', 'EXECUTE')
-                 OR has_function_privilege(r, 'crove_social.chat_alert_target_reseal(uuid, text, text, text, bytea)', 'EXECUTE')`,
+              WHERE has_function_privilege(r, 'ludy_social.chat_alert_target_reseal_due(text, int, timestamptz, uuid)', 'EXECUTE')
+                 OR has_function_privilege(r, 'ludy_social.chat_alert_target_key_counts()', 'EXECUTE')
+                 OR has_function_privilege(r, 'ludy_social.chat_alert_target_reseal(uuid, text, text, text, bytea)', 'EXECUTE')`,
           )
         ).rows,
     );
     expect(roles.map((r) => r.role)).toEqual(['ludy_worker']);
     const usableRoles = await admin(
       async (c) =>
-        (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'crove_social.chat_alert_target_usable(uuid, uuid)', 'EXECUTE')`)).rows,
+        (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'ludy_social.chat_alert_target_usable(uuid, uuid)', 'EXECUTE')`)).rows,
     );
     expect(usableRoles).toEqual([]);
   });

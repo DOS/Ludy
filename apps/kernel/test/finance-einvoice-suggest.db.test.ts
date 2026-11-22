@@ -227,7 +227,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
+      await c.query("UPDATE ludy_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
       await c.query('COMMIT');
     });
     const c = await workerPool.connect();
@@ -235,7 +235,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
       await c.query('BEGIN');
       await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       await c.query(
-        "UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() - make_interval(mins => $4::int) WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() - make_interval(mins => $4::int) WHERE org_id = $1 AND id = $2",
         [o.orgId, draftId, `000${minutesAgo}`, minutesAgo],
       );
       await c.query('COMMIT');

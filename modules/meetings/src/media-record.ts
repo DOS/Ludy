@@ -57,7 +57,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
     SELECT m.consent_method = 'platform_notice' AS imported,
            EXISTS (SELECT 1 FROM ludy_kernel.meeting_platform_recording r
                    WHERE r.org_id = m.org_id AND r.meeting_id = m.id AND r.user_id = ${userId}::uuid AND r.status = 'claimed') AS claimed
-    FROM crove_meetings.meeting m WHERE m.org_id = ${ctx.orgId}::uuid AND m.id = ${meetingId}::uuid`.execute(ctx.trx);
+    FROM ludy_meetings.meeting m WHERE m.org_id = ${ctx.orgId}::uuid AND m.id = ${meetingId}::uuid`.execute(ctx.trx);
   if (made[0]?.imported === true && made[0].claimed !== true) {
     throw new DomainError('IMPORT_ONLY', 403, 'This meeting holds only the recording imported from its meeting platform');
   }
@@ -68,25 +68,25 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
   let replaced = false;
   if (input.kind === 'audio') {
     const { rows: segments } = await sql<{ joined: boolean }>`
-      SELECT joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
+      SELECT joined_from_pieces AS joined FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
     if (segments.length > 0) {
       if (p.joinedFromPieces || segments.some((row) => !row.joined)) throw new DomainError('MEDIA_ALREADY_RECORDED', 409, `This meeting already has its ${input.kind} recording`);
       if (await joinedAudioInUse(ctx, meetingId)) {
         throw new DomainError('MEDIA_JOINED_IN_USE', 409, 'The recording joined from the live pieces was already used for a transcript or a summary, so the complete recording cannot replace it');
       }
       // The joined segment and its key go (the key by the recorder's own definer; the file row stays for the orphan sweep, which deletes the object first).
-      await sql`DELETE FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
-      await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${meetingId}::uuid, 'audio')`.execute(ctx.trx);
+      await sql`DELETE FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
+      await sql`SELECT ludy_meetings.media_key_shred(${ctx.orgId}::uuid, ${meetingId}::uuid, 'audio')`.execute(ctx.trx);
       replaced = true;
     }
   } else {
     const { rows: held } = await sql<{ done: boolean }>`
-      SELECT EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid) AS done`.execute(ctx.trx);
+      SELECT EXISTS (SELECT 1 FROM ludy_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid) AS done`.execute(ctx.trx);
     if (held[0]?.done === true) throw new DomainError('MEDIA_ALREADY_RECORDED', 409, `This meeting already has its ${input.kind} recording`);
   }
-  const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${meetingId}::uuid) AS n`.execute(ctx.trx);
+  const { rows: discarded } = await sql<{ n: number }>`SELECT ludy_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${meetingId}::uuid) AS n`.execute(ctx.trx);
   const liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
-  await sql`SELECT crove_meetings.media_key_seal(
+  await sql`SELECT ludy_meetings.media_key_seal(
     ${ctx.orgId}::uuid,
     ${meetingId}::uuid,
     ${input.keyId}::text,
@@ -113,7 +113,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
 
   if (input.kind === 'audio') {
     await ctx.trx
-      .insertInto('crove_meetings.audio_segment')
+      .insertInto('ludy_meetings.audio_segment')
       .values({ org_id: ctx.orgId, id: randomUUID(), meeting_id: meetingId, file_id: fileId, segment_order: 0, start_offset_seconds: 0, length_seconds: input.lengthSeconds, joined_from_pieces: p.joinedFromPieces })
       .execute();
   } else {
@@ -121,7 +121,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
     const videoDay = retentionDates(ctx.now, await readRetentionSettings(ctx.trx, ctx.orgId)).video;
     const videoRetentionDate = videoDay < p.audioRetentionDay ? videoDay : p.audioRetentionDay;
     await ctx.trx
-      .insertInto('crove_meetings.meeting_video')
+      .insertInto('ludy_meetings.meeting_video')
       .values({ org_id: ctx.orgId, id: randomUUID(), meeting_id: meetingId, file_id: fileId, length_seconds: input.lengthSeconds, video_retention_date: videoRetentionDate })
       .execute();
   }
@@ -131,7 +131,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
   // Every recording that reaches the server ends its meeting's recording, whether it came as an upload or was joined from live pieces (#3205): ended_at is set
   // once (the first media wins), the start plus what was recorded and never later than now. That is also what takes the meeting out of the app's recording chip.
   await sql`
-    UPDATE crove_meetings.meeting
+    UPDATE ludy_meetings.meeting
     SET ended_at = LEAST(started_at + (${input.lengthSeconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
     WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
   // Its media reached the server, so the capture of the call is over (ADR-0055 slice 1, #4123).
@@ -145,14 +145,14 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
 // are not counted: they come from the live pieces, not from the joined recording. The recorder's Vy runs themselves are private rows this module does not read.
 async function joinedAudioInUse(ctx: CommandContext, meetingId: string): Promise<boolean> {
   const { rows } = await sql<{ used: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM crove_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid AND audio_used_at IS NOT NULL)
-        OR EXISTS (SELECT 1 FROM crove_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
-        OR EXISTS (SELECT 1 FROM crove_meetings.meeting_result WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
-        OR EXISTS (SELECT 1 FROM crove_meetings.action_item WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid) AS used`.execute(ctx.trx);
+    SELECT EXISTS (SELECT 1 FROM ludy_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid AND audio_used_at IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
+        OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_result WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
+        OR EXISTS (SELECT 1 FROM ludy_meetings.action_item WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid) AS used`.execute(ctx.trx);
   return rows[0]?.used === true;
 }
 
 /** The trace a transcription or summary start leaves on the meeting (#3187), under the media lock the caller already holds. Set once: the first start wins. */
 export async function markAudioUsed(ctx: CommandContext, meetingId: string): Promise<void> {
-  await sql`UPDATE crove_meetings.meeting SET audio_used_at = COALESCE(audio_used_at, ${ctx.now}::timestamptz) WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid`.execute(ctx.trx);
+  await sql`UPDATE ludy_meetings.meeting SET audio_used_at = COALESCE(audio_used_at, ${ctx.now}::timestamptz) WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid`.execute(ctx.trx);
 }

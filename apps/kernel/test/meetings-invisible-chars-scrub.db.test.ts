@@ -49,11 +49,11 @@ suite('widening the invisible-character class of the minutes templates and the c
   const sql = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const sections = (title: string, hint = 'Ghi rõ') => [{ key: 's1', title, hint }];
   const template = async (name: string, secs: unknown, archived = false) =>
-    (await sql<{ id: string }>(`INSERT INTO crove_meetings.minutes_template (org_id, name, sections, archived_at, created_by) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`, [orgId, name, JSON.stringify(secs), archived ? new Date() : null, userId])).rows[0]!.id;
+    (await sql<{ id: string }>(`INSERT INTO ludy_meetings.minutes_template (org_id, name, sections, archived_at, created_by) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`, [orgId, name, JSON.stringify(secs), archived ? new Date() : null, userId])).rows[0]!.id;
   const chapterRow = async (position: number, title: string) =>
-    (await sql<{ id: string }>(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, $3, $4, $5) RETURNING id`, [orgId, meetingId, position, title, position * 10])).rows[0]!.id;
-  const templateRow = async (id: string) => (await sql<{ name: string; sections: Array<{ key: string; title: string; hint: string }> }>(`SELECT name, sections FROM crove_meetings.minutes_template WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]!;
-  const titleOf = async (id: string) => (await sql<{ title: string }>(`SELECT title FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]!.title;
+    (await sql<{ id: string }>(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, $3, $4, $5) RETURNING id`, [orgId, meetingId, position, title, position * 10])).rows[0]!.id;
+  const templateRow = async (id: string) => (await sql<{ name: string; sections: Array<{ key: string; title: string; hint: string }> }>(`SELECT name, sections FROM ludy_meetings.minutes_template WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]!;
+  const titleOf = async (id: string) => (await sql<{ title: string }>(`SELECT title FROM ludy_meetings.meeting_chapter WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]!.title;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -88,7 +88,7 @@ suite('widening the invisible-character class of the minutes templates and the c
     ids.e = await template(ch(0xffa0), sections(`${ch(0x180c)}${ch(0x180d)}`, ch(0x206b)));
     meetingId = (
       await sql<{ id: string }>(
-        `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date,
+        `INSERT INTO ludy_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date,
                                               summary_template, minutes_template_name, minutes_template_sections, minutes_template_hash)
          VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30, 'custom', $4, $3::jsonb, md5($3::jsonb::text)) RETURNING id`,
         [orgId, userId, JSON.stringify(sections(`Tiêu${hidden}đề`, `Gợi${hidden}ý`)), `Bản${ch(0x206c)} sao`],
@@ -133,11 +133,11 @@ suite('widening the invisible-character class of the minutes templates and the c
   });
 
   it('cleans the meeting\'s copy of a template and makes its hash again, so the copy\'s CHECK holds and the meeting can be updated', async () => {
-    const row = (await sql<{ s: unknown; h: string; n: string }>(`SELECT minutes_template_sections AS s, minutes_template_hash AS h, minutes_template_name AS n FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!;
+    const row = (await sql<{ s: unknown; h: string; n: string }>(`SELECT minutes_template_sections AS s, minutes_template_hash AS h, minutes_template_name AS n FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!;
     expect(row.s).toEqual([{ key: 's1', title: 'Tiêuđề', hint: 'Gợiý' }]);
     expect(row.n).toBe('Bản sao');
-    expect(row.h).toBe((await sql<{ h: string }>(`SELECT md5(minutes_template_sections::text) AS h FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!.h);
-    await expect(sql(`UPDATE crove_meetings.meeting SET title = 'Họp đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).resolves.toMatchObject({ rowCount: 1 });
+    expect(row.h).toBe((await sql<{ h: string }>(`SELECT md5(minutes_template_sections::text) AS h FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!.h);
+    await expect(sql(`UPDATE ludy_meetings.meeting SET title = 'Họp đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).resolves.toMatchObject({ rowCount: 1 });
   });
 
   it('cleans the chapter titles (a title that would be empty is a dash) and leaves a clean one', async () => {

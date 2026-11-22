@@ -11,7 +11,7 @@ describe('Database', () => {
   it('uses the refinements over the generated tables', () => {
     expectTypeOf<Selectable<Database['ludy_kernel.tenant']>['status']>().toEqualTypeOf<'active' | 'offboarding' | 'closed'>();
     // A column ludy_tenant may not write takes no value but undefined (G.NotGranted).
-    expectTypeOf<Insertable<Database['crove_finance.journal_entry']>['created_xact_id']>().toEqualTypeOf<undefined>();
+    expectTypeOf<Insertable<Database['ludy_finance.journal_entry']>['created_xact_id']>().toEqualTypeOf<undefined>();
     // A refinement keeps that: tenant_member.role is refined to MemberRole, and ludy_tenant may update but not insert it.
     expectTypeOf<Insertable<Database['ludy_kernel.tenant_member']>['role']>().toEqualTypeOf<undefined>();
     expectTypeOf<Updateable<Database['ludy_kernel.tenant_member']>['role']>().toEqualTypeOf<MemberRole | undefined>();
@@ -61,8 +61,8 @@ describe('Database', () => {
     // outbox_event and the ledger: ludy_tenant may not insert or update a row (definers write them).
     // @ts-expect-error outbox_event has no column ludy_tenant may insert
     const outbox: Insertable<Database['ludy_kernel.outbox_event']> = { org_id: 'o', type: 'x', payload: '{}' };
-    // @ts-expect-error journal entries are written only by crove_finance.post_journal_entry()
-    const entry: Insertable<Database['crove_finance.journal_entry']> = { org_id: 'o', entry_date: '2026-01-01', description: 'd', source_type: 's', source_id: 'i' };
+    // @ts-expect-error journal entries are written only by ludy_finance.post_journal_entry()
+    const entry: Insertable<Database['ludy_finance.journal_entry']> = { org_id: 'o', entry_date: '2026-01-01', description: 'd', source_type: 's', source_id: 'i' };
     // Append-only tables: insert yes, update no.
     const audit: Insertable<Database['ludy_kernel.audit_event']> = { org_id: 'o', actor_type: 'user', command: 'c', command_id: 'i', outcome: 'ok', input_sha256: 'h' };
     // @ts-expect-error audit_event is append-only
@@ -102,6 +102,6 @@ describe('Database', () => {
     // @ts-expect-error outbox events are written by definers only
     db.insertInto('ludy_kernel.outbox_event').values({ org_id: 'o', type: 'x', payload: '{}' }).compile();
     // @ts-expect-error purchase documents are append-only
-    db.updateTable('crove_finance.purchase_document').set({ total: '1' }).compile();
+    db.updateTable('ludy_finance.purchase_document').set({ total: '1' }).compile();
   });
 });

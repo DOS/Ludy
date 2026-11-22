@@ -79,7 +79,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const app = new URL(adminUrl);
@@ -113,19 +113,19 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
           const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [orgId])).rows[0]?.id;
           document = (
             await a.query<{ id: string }>(
-              "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'sale', $7) RETURNING id",
+              "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'sale', $7) RETURNING id",
               [orgId, party, over.invoice.series, over.invoice.number, date, over.invoice.total, entity],
             )
           ).rows[0]?.id as string;
         }
         const id = (
           await a.query<{ id: string }>(
-            `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
             [orgId, date, description, document ? 'finance.purchase_document' : 'finance.journal_voucher', document ?? randomUUID(), entity, over.reverses ?? null],
           )
         ).rows[0]?.id as string;
         let no = 1;
-        for (const [account, debit, credit] of lines) await a.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, no++, account, debit, credit]);
+        for (const [account, debit, credit] of lines) await a.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, no++, account, debit, credit]);
         await a.query('COMMIT');
         return id;
       } catch (error) {
@@ -141,9 +141,9 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
   // The accountant's confirmation is a later dated row, never an edit: from 2026-10-01 the form and the four percentages are `confirmed`, so Q4 uses them and Q3 still sees `commentary`.
   async function confirmFromQ4() {
     await admin(async (a) => {
-      await a.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      await a.query("INSERT INTO ludy_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
       for (const [trade, vat, pit] of [['goods', 1, 0.5], ['services', 5, 2], ['catering', 3, 1.5], ['other', 2, 1]] as const) {
-        await a.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ($1, DATE '2026-10-01', $2, $3, 'test', 'confirmed') ON CONFLICT DO NOTHING", [trade, vat, pit]);
+        await a.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ($1, DATE '2026-10-01', $2, $3, 'test', 'confirmed') ON CONFLICT DO NOTHING", [trade, vat, pit]);
       }
     });
   }
@@ -156,10 +156,10 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
       const id = randomUUID();
       const net = 10000 - tax;
       let order: string = randomUUID();
-      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
-      else await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, entity, platform, `ST${randomUUID().slice(0, 12)}`]);
-      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, entity, platform, start, end, reversalOf ? -net : net, reversalOf]);
-      await a.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, $7, $8, $9)', [o.orgId, randomUUID(), entity, id, order, 'L1', tax, net, reversalOf !== null]);
+      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
+      else await a.query('INSERT INTO ludy_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, entity, platform, `ST${randomUUID().slice(0, 12)}`]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, entity, platform, start, end, reversalOf ? -net : net, reversalOf]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, $7, $8, $9)', [o.orgId, randomUUID(), entity, id, order, 'L1', tax, net, reversalOf !== null]);
       await a.query('COMMIT');
       return id;
     });
@@ -367,12 +367,12 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await entry(o.household, o.orgId, '2027-01-10', 'Bán hàng', [['111', 1000000, 0], ['511', 0, 1000000]]);
     await entry(o.household, o.orgId, '2027-03-10', 'Bán hàng', [['111', 1000000, 0], ['511', 0, 1000000]]);
     // A rate that changes on 2027-02-01 applies to the whole of Q1 2027, whatever day a sale was on.
-    await admin((a) => a.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2027-02-01', 2, 1, 'test', 'commentary') ON CONFLICT DO NOTHING"));
+    await admin((a) => a.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2027-02-01', 2, 1, 'test', 'commentary') ON CONFLICT DO NOTHING"));
     const q1 = await cnkd(o, 1, {}, o.household, o.owner, 2027);
     expect(q1.lines[0]).toMatchObject({ vatPercent: '2', pitPercent: '1', vat: '40000', pit: '20000' });
     expect(q1.unconfirmed).toContainEqual({ kind: 'rate', key: 'goods', effectiveFrom: '2027-02-01' });
     // A later dated row with no method retires the form from its date; the quarters before it keep it.
-    await admin((a) => a.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2027.1', DATE '2027-04-01', 'Tờ khai 01/CNKD', ARRAY[]::text[], 'test', 'commentary') ON CONFLICT DO NOTHING"));
+    await admin((a) => a.query("INSERT INTO ludy_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2027.1', DATE '2027-04-01', 'Tờ khai 01/CNKD', ARRAY[]::text[], 'test', 'commentary') ON CONFLICT DO NOTHING"));
     await expect(cnkd(o, 2, {}, o.household, o.owner, 2027)).rejects.toMatchObject({ code: 'HOUSEHOLD_RETURN_NOT_REQUIRED' });
     expect((await cnkd(o, 1, {}, o.household, o.owner, 2027)).form.version).toMatch(/^2026\.[12]$/);
   });

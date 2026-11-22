@@ -85,7 +85,7 @@ suite('the S2e-HKD book download (#2517 slice 2e)', () => {
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const appUrl = new URL(adminUrl);
@@ -121,14 +121,14 @@ suite('the S2e-HKD book download (#2517 slice 2e)', () => {
       const user = (await a.query<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
       for (const [id, name, group, method] of [[percentage, 'Hộ Theo Thu Nhập', 3, 'income'], [groupOne, 'Hộ Nhóm Một', 1, null]] as const) {
         await a.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'household', $4)", [orgId, id, name, user]);
-        await a.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', $3, $4, ARRAY['goods'])", [orgId, id, group, method]);
+        await a.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', $3, $4, ARRAY['goods'])", [orgId, id, group, method]);
       }
       // One sale on account 511 and one expense on account 632 in September for the household on the income method; one transaction, since an entry needs its lines at commit.
       await a.query('BEGIN');
-      const entry = (await a.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-12', 'Bán hàng', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), percentage])).rows[0]?.id;
-      await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500000, 0), ($1, $2, 2, '511', 0, 500000)", [orgId, entry]);
-      const expense = (await a.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-13', 'Mua hàng', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), percentage])).rows[0]?.id;
-      await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '632', 200000, 0), ($1, $2, 2, '111', 0, 200000)", [orgId, expense]);
+      const entry = (await a.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-12', 'Bán hàng', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), percentage])).rows[0]?.id;
+      await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500000, 0), ($1, $2, 2, '511', 0, 500000)", [orgId, entry]);
+      const expense = (await a.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-13', 'Mua hàng', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), percentage])).rows[0]?.id;
+      await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '632', 200000, 0), ($1, $2, 2, '111', 0, 200000)", [orgId, expense]);
       await a.query('COMMIT');
     });
   }, 120_000);

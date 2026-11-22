@@ -90,7 +90,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
   target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
   handler: async (ctx, input): Promise<MisaAmisMatchCheckQueued> => {
     const conn = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -105,7 +105,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
     const params = JSON.stringify({ ...input.ask, legalEntityId: conn.legal_entity_id });
     const by = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const existing = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match_check')
+      .selectFrom('ludy_finance.misa_amis_match_check')
       .select(['id', 'state', 'params', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.id)
@@ -118,14 +118,14 @@ export const misaAmisMatchRequestCheck = defineCommand({
     }
     if (existing) {
       await ctx.trx
-        .updateTable('crove_finance.misa_amis_match_check')
+        .updateTable('ludy_finance.misa_amis_match_check')
         .set({ params, state: 'requested', failure: null, requested_by: by, requested_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
         .execute();
     } else {
       await ctx.trx
-        .insertInto('crove_finance.misa_amis_match_check')
+        .insertInto('ludy_finance.misa_amis_match_check')
         .values({ org_id: ctx.orgId, connection_id: input.id, legal_entity_id: conn.legal_entity_id, params, requested_by: by, requested_at: ctx.now })
         .execute();
     }
@@ -148,9 +148,9 @@ export const misaAmisMatchCheckTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<MisaAmisMatchTarget> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .leftJoin('crove_finance.misa_amis_match_check as k', (join) => join.onRef('k.org_id', '=', 'c.org_id').onRef('k.connection_id', '=', 'c.id'))
+      .leftJoin('ludy_finance.misa_amis_match_check as k', (join) => join.onRef('k.org_id', '=', 'c.org_id').onRef('k.connection_id', '=', 'c.id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'c.default_sales_stock_code', 'c.unit_aliases', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
@@ -163,7 +163,7 @@ export const misaAmisMatchCheckTarget = defineQuery({
     if (!parsed.success) return { action: 'none', reason: 'not_requested' };
     if (row.requested_at === null) return { action: 'none', reason: 'not_requested' };
     const confirmed = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match')
+      .selectFrom('ludy_finance.misa_amis_match')
       .select(['match_key', 'catalogue_code'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.id)
@@ -201,7 +201,7 @@ export const misaAmisMatchRecordCheck = defineCommand({
   target: (input) => ({ type: 'finance.misa_amis_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<{ recorded: boolean; results: number }> => {
     const check = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match_check')
+      .selectFrom('ludy_finance.misa_amis_match_check')
       .select(['id', 'legal_entity_id', 'state', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
@@ -229,7 +229,7 @@ export const misaAmisMatchRecordCheck = defineCommand({
     const confirmed = new Map(
       (
         await ctx.trx
-          .selectFrom('crove_finance.misa_amis_match')
+          .selectFrom('ludy_finance.misa_amis_match')
           .select(['id', 'match_key'])
           .where('org_id', '=', ctx.orgId)
           .where('connection_id', '=', input.connectionId)
@@ -241,24 +241,24 @@ export const misaAmisMatchRecordCheck = defineCommand({
     // A done check replaces the results whole (parties, items, and name matches that no person confirmed); the confirmed names the worker says are gone go too.
     if (input.state === 'done') {
       await ctx.trx
-        .deleteFrom('crove_finance.misa_amis_match')
+        .deleteFrom('ludy_finance.misa_amis_match')
         .where('org_id', '=', ctx.orgId)
         .where('connection_id', '=', input.connectionId)
         .where((eb) => eb.or([eb('kind', '<>', 'party_name'), eb('state', '<>', 'confirmed')]))
         .execute();
       const gone = input.results.filter((r) => r.kind === 'party_name' && r.state === 'unknown' && confirmed.has(r.ref)).map((r) => confirmed.get(r.ref) as string);
-      if (gone.length > 0) await ctx.trx.deleteFrom('crove_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('id', 'in', gone).execute();
+      if (gone.length > 0) await ctx.trx.deleteFrom('ludy_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('id', 'in', gone).execute();
     }
     // What is written is what the check found anew: the markers for a confirmed name (`confirmed`, or `unknown` for one that is gone) and a party with no row to speak of are not rows.
     const written = input.results.filter((r) => !(r.kind === 'party_name' && (r.state === 'confirmed' || r.state === 'unknown')) && !(r.kind === 'party_name' && confirmed.has(r.ref)));
     if (input.state === 'done' && written.length > 0) {
       await ctx.trx
-        .insertInto('crove_finance.misa_amis_match')
+        .insertInto('ludy_finance.misa_amis_match')
         .values(written.map((r) => ({ org_id: ctx.orgId, connection_id: input.connectionId, legal_entity_id: check.legal_entity_id, kind: r.kind, match_key: r.ref, state: r.state, catalogue_code: r.code, catalogue_id: r.entryId, candidate_name: r.candidateName ?? null, confirmed_by: null, confirmed_at: null, checked_at: ctx.now })))
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_finance.misa_amis_match_check')
+      .updateTable('ludy_finance.misa_amis_match_check')
       .set(input.state === 'done' ? { state: 'done', failure: null, finished_at: ctx.now } : { state: input.state, failure: input.failure })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', check.id)
@@ -276,7 +276,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisMatchResults> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId ?? null);
     const check = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match_check')
+      .selectFrom('ludy_finance.misa_amis_match_check')
       .select(['connection_id', 'state', 'failure', 'params', 'requested_at', 'finished_at'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -289,12 +289,12 @@ export const misaAmisMatchResultsQuery = defineQuery({
       requestedAt: iso(check.requested_at),
       checkedAt: check.state === 'done' && check.finished_at ? iso(check.finished_at) : null,
     };
-    const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['product', 'default_sales_stock_code', 'unit_aliases']).where('org_id', '=', ctx.orgId).where('id', '=', check.connection_id).executeTakeFirst();
+    const connection = await ctx.trx.selectFrom('ludy_finance.misa_amis_connection').select(['product', 'default_sales_stock_code', 'unit_aliases']).where('org_id', '=', ctx.orgId).where('id', '=', check.connection_id).executeTakeFirst();
     const product = connection?.product;
     const salesStockCode = product === 'asp' ? (connection?.default_sales_stock_code ?? null) : null;
     const unitAliases = product === 'asp' ? aliasesOf(connection?.unit_aliases) : {};
     const rows = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match')
+      .selectFrom('ludy_finance.misa_amis_match')
       .select(['kind', 'match_key', 'state', 'catalogue_code', 'catalogue_id'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', check.connection_id)
@@ -338,9 +338,9 @@ export const misaAmisMatchResultsQuery = defineQuery({
 
 // The connection and its check row, locked, so that a person's decision and a worker's record of a check never run over each other; the check row is the lock the worker's record takes too.
 async function lockedConnection(ctx: { trx: Transaction<Database>; orgId: string }, connectionId: string) {
-  const conn = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['id']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+  const conn = await ctx.trx.selectFrom('ludy_finance.misa_amis_connection').select(['id']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
   if (!conn) throw new DomainError('MISA_AMIS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối MISA AMIS này');
-  await ctx.trx.selectFrom('crove_finance.misa_amis_match_check').select(['id']).where('org_id', '=', ctx.orgId).where('connection_id', '=', connectionId).forUpdate().execute();
+  await ctx.trx.selectFrom('ludy_finance.misa_amis_match_check').select(['id']).where('org_id', '=', ctx.orgId).where('connection_id', '=', connectionId).forUpdate().execute();
 }
 
 export const misaAmisMatchConfirmName = defineCommand({
@@ -355,7 +355,7 @@ export const misaAmisMatchConfirmName = defineCommand({
   handler: async (ctx, input): Promise<MisaAmisNameDecided> => {
     await lockedConnection(ctx, input.connectionId);
     const proposal = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match')
+      .selectFrom('ludy_finance.misa_amis_match')
       .select(['id', 'legal_entity_id', 'catalogue_code', 'catalogue_id', 'checked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
@@ -369,9 +369,9 @@ export const misaAmisMatchConfirmName = defineCommand({
     // Bound to the row and its code, never to "the party's proposal", so a confirmation can only be of what was shown.
     if (!proposal || proposal.catalogue_code === null) throw new DomainError('MISA_AMIS_NAME_PROPOSAL_GONE', 409, 'Đề xuất này không còn; hãy xem lại danh sách đề xuất');
     // The row is replaced, not updated: a result is never changed in place, and the candidate's name goes with the proposal row, so a confirmed row keeps the code and the entry's id only.
-    await ctx.trx.deleteFrom('crove_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('id', '=', proposal.id).execute();
+    await ctx.trx.deleteFrom('ludy_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('id', '=', proposal.id).execute();
     await ctx.trx
-      .insertInto('crove_finance.misa_amis_match')
+      .insertInto('ludy_finance.misa_amis_match')
       .values({
         org_id: ctx.orgId,
         connection_id: input.connectionId,
@@ -390,7 +390,7 @@ export const misaAmisMatchConfirmName = defineCommand({
     // A check that is waiting or running read the confirmed names before this one existed, so it cannot say whether this code is still in the catalogue; moving its request time (always forward, even by a millisecond) makes that run's record a no-op
     // and the next run, which the worker starts when it sees the record dropped, verifies the new confirmation (the same step erasure takes). A done or failed check is left as it is.
     await ctx.trx
-      .updateTable('crove_finance.misa_amis_match_check')
+      .updateTable('ludy_finance.misa_amis_match_check')
       .set({ requested_at: sql<Date>`GREATEST(${ctx.now}::timestamptz, requested_at + interval '1 millisecond')` })
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
@@ -412,7 +412,7 @@ export const misaAmisMatchRejectName = defineCommand({
     await lockedConnection(ctx, input.connectionId);
     // The proposal is deleted with the name of the candidate it holds; the party stays blocked, and a later check may propose the same entry again.
     const deleted = await ctx.trx
-      .deleteFrom('crove_finance.misa_amis_match')
+      .deleteFrom('ludy_finance.misa_amis_match')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.proposalId)
       .where('connection_id', '=', input.connectionId)
@@ -435,7 +435,7 @@ export const misaAmisMatchProposalsQuery = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input): Promise<MisaAmisNameProposal[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match')
+      .selectFrom('ludy_finance.misa_amis_match')
       .select(['id', 'match_key', 'catalogue_code', 'candidate_name', 'checked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
@@ -470,11 +470,11 @@ export const misaAmisMatchUnitsQuery = defineQuery({
   input: zMisaAmisUnitsAsk,
   access: MANAGERS,
   handler: async (ctx, input): Promise<MisaAmisUnitRow[]> => {
-    const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['unit_aliases']).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    const connection = await ctx.trx.selectFrom('ludy_finance.misa_amis_connection').select(['unit_aliases']).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     if (!connection) return [];
     const aliases = aliasesOf(connection.unit_aliases);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_match')
+      .selectFrom('ludy_finance.misa_amis_match')
       .select(['match_key', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)

@@ -49,19 +49,19 @@ interface Target {
   nextRunAt: string | null;
 }
 
-// A page of the active ad accounts of active orgs after a key (crove_ads.ads_due, the worker login's alone), for the
+// A page of the active ad accounts of active orgs after a key (ludy_ads.ads_due, the worker login's alone), for the
 // hourly sweep.
 export const ADS_DUE_PAGE = 1000;
 export async function adsDue(workerDb: Db, after: { orgId: string; connectionId: string } | null): Promise<Array<{ orgId: string; connectionId: string; provider: string }>> {
   const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-    SELECT org_id, connection_id, provider FROM crove_ads.ads_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${ADS_DUE_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, connection_id, provider FROM ludy_ads.ads_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${ADS_DUE_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
 }
 
-// Removes the sync runs older than ADS_SYNC_RUN_DAYS, for every org (crove_ads.sync_runs_prune, the worker login's alone).
+// Removes the sync runs older than ADS_SYNC_RUN_DAYS, for every org (ludy_ads.sync_runs_prune, the worker login's alone).
 export async function pruneAdsRuns(workerDb: Db, now: Date): Promise<number> {
   const before = new Date(now.getTime() - ADS_SYNC_RUN_DAYS * 86_400_000);
-  const { rows } = await sql<{ n: string }>`SELECT crove_ads.sync_runs_prune(${before}::timestamptz) AS n`.execute(workerDb);
+  const { rows } = await sql<{ n: string }>`SELECT ludy_ads.sync_runs_prune(${before}::timestamptz) AS n`.execute(workerDb);
   return Number(rows[0]?.n ?? 0);
 }
 

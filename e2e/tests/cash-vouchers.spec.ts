@@ -124,12 +124,12 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
     const rows = sql<{ code: string; amount: string; lines: string; aal: string }>(
       `SELECT v.voucher_type || '-' || v.number AS code, v.amount::text AS amount,
               (SELECT string_agg(l.account_code || ':' || l.debit::text || ':' || l.credit::text, ',' ORDER BY l.line_no)
-                 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines,
+                 FROM ludy_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines,
               (SELECT a.detail->>'aal' FROM ludy_kernel.audit_event a
                 WHERE a.org_id = v.org_id AND a.command = 'kernel.proposal.approve' AND a.outcome = 'ok' AND a.target_id = v.proposal_id) AS aal
-         FROM crove_finance.cash_voucher v
+         FROM ludy_finance.cash_voucher v
          JOIN ludy_kernel.tenant t ON t.org_id = v.org_id
-         JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
+         JOIN ludy_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
         WHERE t.slug = :'slug'`,
       { slug },
     );

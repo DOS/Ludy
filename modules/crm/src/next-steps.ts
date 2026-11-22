@@ -54,14 +54,14 @@ const dayOf = (value: Date | string): string => (typeof value === 'string' ? val
 
 // The org's N: the setting, or the product's default while it has none.
 export async function staleDays(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<DealSetting> {
-  const row = await ctx.trx.selectFrom('crove_crm.deal_setting').select('stale_days').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_crm.deal_setting').select('stale_days').where('org_id', '=', ctx.orgId).executeTakeFirst();
   return row ? { staleDays: row.stale_days, isDefault: false } : { staleDays: DEAL_STALE_DAYS_DEFAULT, isDefault: true };
 }
 
 // Closes the open next step of a deal whose own change made it moot, in the transaction of the command that changed it.
 export async function closeNextSteps(ctx: CommandContext, dealId: string, reason: 'deal_edited' | 'deal_moved' | 'deal_closed'): Promise<void> {
   await ctx.trx
-    .updateTable('crove_crm.deal_next_step')
+    .updateTable('ludy_crm.deal_next_step')
     .set({ status: 'closed', closed_reason: reason, resolved_at: ctx.now, snoozed_until: null })
     .where('org_id', '=', ctx.orgId)
     .where('deal_id', '=', dealId)
@@ -69,7 +69,7 @@ export async function closeNextSteps(ctx: CommandContext, dealId: string, reason
     .execute();
 }
 
-// The daily rule in one org (the definer crove_crm.deal_stale_orgs lists the orgs): the system context shows this org's rows alone. Counts only
+// The daily rule in one org (the definer ludy_crm.deal_stale_orgs lists the orgs): the system context shows this org's rows alone. Counts only
 // in the audit row.
 export const nextStepRaise = defineCommand({
   name: 'crm.next_step.raise',
@@ -83,23 +83,23 @@ export const nextStepRaise = defineCommand({
     const today = vietnamToday(ctx.now);
     const quietSince = new Date(ctx.now.getTime() - days * DAY_MS);
     const closedRows = await ctx.trx
-      .updateTable('crove_crm.deal_next_step')
+      .updateTable('ludy_crm.deal_next_step')
       .set({ status: 'closed', closed_reason: 'deal_closed', resolved_at: ctx.now, snoozed_until: null })
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'open')
-      .where('deal_id', 'in', ctx.trx.selectFrom('crove_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('closed_at', 'is not', null))
+      .where('deal_id', 'in', ctx.trx.selectFrom('ludy_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('closed_at', 'is not', null))
       .returning('id')
       .execute();
     // A deal being edited right now is skipped (its edit sets updated_at); a deal read here cannot be edited until this commits, so the step
     // raised for it is never one for a deal that just changed.
     const candidates = await ctx.trx
-      .selectFrom('crove_crm.deal as d')
+      .selectFrom('ludy_crm.deal as d')
       .select(['d.id', 'd.owner_user_id', 'd.expected_close', 'd.updated_at', sql<string | null>`(SELECT m.role FROM ludy_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id)`.as('owner_role')])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.closed_at', 'is', null)
       .where((eb) => eb.or([eb('d.expected_close', '<', today), eb('d.updated_at', '<=', quietSince)]))
       .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${quietSince}))`,
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${quietSince}))`,
       )
       .orderBy('d.updated_at')
       .orderBy('d.id')
@@ -110,7 +110,7 @@ export const nextStepRaise = defineCommand({
     let raised = 0;
     if (candidates.length > 0) {
       const inserted = await ctx.trx
-        .insertInto('crove_crm.deal_next_step')
+        .insertInto('ludy_crm.deal_next_step')
         .values(
           candidates.map((d) => {
             const overdue = d.expected_close !== null && dayOf(d.expected_close) < today;
@@ -146,12 +146,12 @@ export const nextStepRaise = defineCommand({
 // quote_decided. A deal gets a step only when it has none open and none resolved in the last 7 days, as for a stale deal, so "done" does not raise it again tomorrow.
 async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ raised: number; closed: number }> {
   const decided = await ctx.trx
-    .updateTable('crove_crm.deal_next_step')
+    .updateTable('ludy_crm.deal_next_step')
     .set({ status: 'closed', closed_reason: 'quote_decided', resolved_at: ctx.now, snoozed_until: null })
     .where('org_id', '=', ctx.orgId)
     .where('status', '=', 'open')
     .where('reason', 'in', ['quote_unanswered', 'quote_expiring'])
-    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_crm.quote q WHERE q.org_id = deal_next_step.org_id AND q.deal_id = deal_next_step.deal_id AND q.status = 'sent')`)
+    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_crm.quote q WHERE q.org_id = deal_next_step.org_id AND q.deal_id = deal_next_step.deal_id AND q.status = 'sent')`)
     .returning('id')
     .execute();
   const resolvedSince = new Date(ctx.now.getTime() - 7 * DAY_MS);
@@ -164,18 +164,18 @@ async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ ra
            (SELECT m.role FROM ludy_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id) AS owner_role,
            CASE WHEN ${soon} THEN 'quote_expiring' ELSE 'quote_unanswered' END AS reason,
            CASE WHEN ${soon} THEN q.valid_until ELSE (coalesce(q.sent_at, q.created_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date END AS since_on
-    FROM crove_crm.quote q
-    JOIN crove_crm.deal d ON d.org_id = q.org_id AND d.id = q.deal_id
+    FROM ludy_crm.quote q
+    JOIN ludy_crm.deal d ON d.org_id = q.org_id AND d.id = q.deal_id
     WHERE q.org_id = ${ctx.orgId}::uuid AND q.status = 'sent' AND d.closed_at IS NULL
       AND q.valid_until >= ${today}::date
       AND (${soon} OR coalesce(q.sent_at, q.created_at) <= ${new Date(ctx.now.getTime() - quoteDays * DAY_MS)})
-      AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${resolvedSince}))
+      AND NOT EXISTS (SELECT 1 FROM ludy_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${resolvedSince}))
     ORDER BY d.id, (CASE WHEN ${soon} THEN 0 ELSE 1 END), q.valid_until, q.id
     LIMIT ${RAISE_LIMIT}`.execute(ctx.trx);
   let raised = 0;
   if (found.rows.length > 0) {
     const inserted = await ctx.trx
-      .insertInto('crove_crm.deal_next_step')
+      .insertInto('ludy_crm.deal_next_step')
       .values(
         found.rows.map((r) => ({
           org_id: ctx.orgId,
@@ -208,7 +208,7 @@ export const nextStepDone = defineCommand({
     const open = await lockOpen(ctx, input.nextStepIds);
     if (open.length > 0) {
       await ctx.trx
-        .updateTable('crove_crm.deal_next_step')
+        .updateTable('ludy_crm.deal_next_step')
         .set({ status: 'done', resolved_at: ctx.now, resolved_by: userId, snoozed_until: null })
         .where('org_id', '=', ctx.orgId)
         .where('status', '=', 'open')
@@ -233,7 +233,7 @@ export const nextStepSnooze = defineCommand({
     const open = await lockOpen(ctx, input.nextStepIds);
     if (open.length > 0) {
       await ctx.trx
-        .updateTable('crove_crm.deal_next_step')
+        .updateTable('ludy_crm.deal_next_step')
         .set({ snoozed_until: new Date(ctx.now.getTime() + input.days * DAY_MS) })
         .where('org_id', '=', ctx.orgId)
         .where('status', '=', 'open')
@@ -249,7 +249,7 @@ export const nextStepSnooze = defineCommand({
 // The open ones among the ids, locked in id order (two bulk actions on overlapping rows cannot wait on each other).
 async function lockOpen(ctx: CommandContext, ids: readonly string[]): Promise<string[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_crm.deal_next_step')
+    .selectFrom('ludy_crm.deal_next_step')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('status', '=', 'open')
@@ -271,10 +271,10 @@ function mineSql(ctx: Pick<QueryContext, 'actor' | 'role'>) {
 // One page of the list, the longest quiet first. The Home read (today.ts) takes the same rows through the same rule.
 export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cursor: { sinceOn: string; id: string } | null | undefined, limit: number, partyId?: string): Promise<{ items: NextStep[]; next: { sinceOn: string; id: string } | null }> {
   let q = ctx.trx
-    .selectFrom('crove_crm.deal_next_step as n')
-    .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'n.org_id').onRef('d.id', '=', 'n.deal_id'))
+    .selectFrom('ludy_crm.deal_next_step as n')
+    .innerJoin('ludy_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'n.org_id').onRef('d.id', '=', 'n.deal_id'))
     .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+    .innerJoin('ludy_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
     .select(['n.id', 'n.deal_id', 'n.reason', 'n.since_on', 'n.raised_at', 'n.assignee_user_id', 'd.title', 'd.party_id', 'd.amount', 'd.expected_close', 'p.name as party_name', 's.name as stage_name'])
     .where('n.org_id', '=', ctx.orgId)
     .where(shownSql);
@@ -305,7 +305,7 @@ export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cu
 export async function countNextSteps(ctx: QueryContext): Promise<{ mine: number; all: number }> {
   const counted = await sql<{ mine: number; all: number }>`
     SELECT (count(*) FILTER (WHERE ${mineSql(ctx)}))::int AS mine, count(*)::int AS "all"
-    FROM crove_crm.deal_next_step n WHERE n.org_id = ${ctx.orgId}::uuid AND ${shownSql}`.execute(ctx.trx);
+    FROM ludy_crm.deal_next_step n WHERE n.org_id = ${ctx.orgId}::uuid AND ${shownSql}`.execute(ctx.trx);
   const counts = counted.rows[0] ?? { mine: 0, all: 0 };
   return { mine: counts.mine, all: counts.all };
 }
@@ -338,7 +338,7 @@ export const dealSettingSet = defineCommand({
   handler: async (ctx, input): Promise<DealSetting> => {
     const userId = userOf(ctx.actor);
     await ctx.trx
-      .insertInto('crove_crm.deal_setting')
+      .insertInto('ludy_crm.deal_setting')
       .values({ org_id: ctx.orgId, stale_days: input.staleDays, set_by: userId, created_at: ctx.now, updated_at: ctx.now })
       .onConflict((oc) => oc.column('org_id').doUpdateSet({ stale_days: input.staleDays, set_by: userId, updated_at: ctx.now }))
       .execute();

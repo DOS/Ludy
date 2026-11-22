@@ -32,7 +32,7 @@ export const householdS2d = defineQuery({
     if (w.profile.pitMethod !== 'income') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2d trong kỳ đã chọn');
 
     const items = await ctx.trx
-      .selectFrom('crove_finance.stock_item')
+      .selectFrom('ludy_finance.stock_item')
       .select(['id', 'code', 'name', 'unit', 'active'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', w.entity)
@@ -48,7 +48,7 @@ export const householdS2d = defineQuery({
     const docIds = [...new Set(moves.filter((m) => m.move_date >= monthStart && m.document_id !== null).map((m) => m.document_id as string))];
     const refs = new Map<string, string>();
     if (docIds.length > 0) {
-      const docs = await ctx.trx.selectFrom('crove_finance.purchase_document').select(['id', 'invoice_series', 'invoice_number']).where('org_id', '=', ctx.orgId).where('id', 'in', docIds).execute();
+      const docs = await ctx.trx.selectFrom('ludy_finance.purchase_document').select(['id', 'invoice_series', 'invoice_number']).where('org_id', '=', ctx.orgId).where('id', 'in', docIds).execute();
       for (const d of docs) if (d.invoice_number) refs.set(d.id, `${d.invoice_series ? `${d.invoice_series}-` : ''}${d.invoice_number}`);
     }
 
@@ -100,7 +100,7 @@ export const householdS2d = defineQuery({
     };
 
     const unconfirmed: HouseholdS2d['unconfirmed'] = [];
-    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2d').where('effective_from', '<=', w.to).execute();
+    const formRows = await ctx.trx.selectFrom('ludy_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2d').where('effective_from', '<=', w.to).execute();
     const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
     const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
     if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2d ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });

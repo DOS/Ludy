@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Lean time tracking and billable hours (#2600, docs/plan/projects-v2.md section 5.2).
-// One write path via crove_projects.time_entry; deterministic decimal.js arithmetic; zero auto-posting to Finance or HR.
+// One write path via ludy_projects.time_entry; deterministic decimal.js arithmetic; zero auto-posting to Finance or HR.
 import { sql } from 'kysely';
 import {
   DEFAULT_TIME_ZONE,
@@ -51,7 +51,7 @@ import {
 } from './shared.ts';
 
 const TABLES = projectsManifest.tables;
-const TIME_ENTRY = TABLES.crove_projects.time_entry;
+const TIME_ENTRY = TABLES.ludy_projects.time_entry;
 
 const TIME_ENTRY_ALL_COLUMNS = [
   'org_id',
@@ -245,7 +245,7 @@ async function loadTimeProject(
   } catch (err) {
     if (err instanceof DomainError && err.code === 'PROJECT_NOT_FOUND') {
       const tmpl = await trx
-        .selectFrom('crove_projects.project')
+        .selectFrom('ludy_projects.project')
         .select('id')
         .where('org_id', '=', orgId)
         .where('id', '=', projectId)
@@ -266,7 +266,7 @@ function assertTimeProjectWritable(project: ProjectRow): void {
 async function validateProjectTask(trx: Trx, orgId: string, projectId: string, taskId: string): Promise<{ id: string; title: string }> {
   const { rows } = await sql<{ id: string; title: string }>`
     SELECT t.id, t.title
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
       JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id
        AND t.id = pt.task_id
@@ -296,7 +296,7 @@ async function fetchTimeEntryById(trx: Trx, orgId: string, entryId: string, lock
       te.note,
       te.created_at,
       te.updated_at
-    FROM crove_projects.time_entry te
+    FROM ludy_projects.time_entry te
     LEFT JOIN ludy_kernel.task t
       ON t.org_id = te.org_id
      AND t.id = te.task_id
@@ -324,7 +324,7 @@ async function fetchActiveTimerRow(trx: Trx, orgId: string, userId: string, lock
       te.note,
       te.created_at,
       te.updated_at
-    FROM crove_projects.time_entry te
+    FROM ludy_projects.time_entry te
     LEFT JOIN ludy_kernel.task t
       ON t.org_id = te.org_id
      AND t.id = te.task_id
@@ -514,7 +514,7 @@ export const projectTimeStart = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'time_entry', [...TIME_ENTRY_ALL_COLUMNS])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'time_entry', [...TIME_ENTRY_ALL_COLUMNS])],
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectTimeStartResult> => {
     const userId = userOf(ctx.actor);
@@ -522,7 +522,7 @@ export const projectTimeStart = defineCommand({
     const note = normalizeNoteInput(input.note) ?? null;
 
     const peekRunning = await ctx.trx
-      .selectFrom('crove_projects.time_entry')
+      .selectFrom('ludy_projects.time_entry')
       .select(['id', 'project_id'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -572,7 +572,7 @@ export const projectTimeStart = defineCommand({
       // Allow stopExisting to close an older running timer even if that prior project was archived.
       const stoppedTiming = computeStoppedTimeEntry(existingRunning.started_at, ctx.now);
       const updatedOld = await ctx.trx
-        .updateTable('crove_projects.time_entry')
+        .updateTable('ludy_projects.time_entry')
         .set({
           ended_at: stoppedTiming.endedAt,
           duration_minutes: stoppedTiming.durationMinutes,
@@ -621,7 +621,7 @@ export const projectTimeStart = defineCommand({
     let insertedId: string;
     try {
       const inserted = await ctx.trx
-        .insertInto('crove_projects.time_entry')
+        .insertInto('ludy_projects.time_entry')
         .values({
           org_id: ctx.orgId,
           project_id: targetProject.id,
@@ -681,7 +681,7 @@ export const projectTimeStop = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'time_entry', ['ended_at', 'duration_minutes', 'note', 'billable', 'hourly_rate', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'time_entry', ['ended_at', 'duration_minutes', 'note', 'billable', 'hourly_rate', 'updated_at'])],
   target: (input) => (input.projectId ? { type: 'projects.project', id: input.projectId } : null),
   handler: async (ctx, input): Promise<ProjectTimeStopResult> => {
     const userId = userOf(ctx.actor);
@@ -692,7 +692,7 @@ export const projectTimeStop = defineCommand({
     let peekProjectId: string | undefined;
     if (input.entryId !== undefined) {
       const candidate = await ctx.trx
-        .selectFrom('crove_projects.time_entry')
+        .selectFrom('ludy_projects.time_entry')
         .select(['id', 'project_id', 'ended_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.entryId)
@@ -706,7 +706,7 @@ export const projectTimeStop = defineCommand({
       peekProjectId = candidate.project_id;
     } else {
       let q = ctx.trx
-        .selectFrom('crove_projects.time_entry')
+        .selectFrom('ludy_projects.time_entry')
         .select(['id', 'project_id'])
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', userId)
@@ -753,7 +753,7 @@ export const projectTimeStop = defineCommand({
     const timing = computeStoppedTimeEntry(existing.started_at, ctx.now);
 
     await ctx.trx
-      .updateTable('crove_projects.time_entry')
+      .updateTable('ludy_projects.time_entry')
       .set({
         ended_at: timing.endedAt,
         duration_minutes: timing.durationMinutes,
@@ -798,7 +798,7 @@ export const projectTimeLog = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'time_entry', [...TIME_ENTRY_ALL_COLUMNS])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'time_entry', [...TIME_ENTRY_ALL_COLUMNS])],
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
   handler: async (ctx, input): Promise<ProjectTimeMutateResult> => {
     const userId = userOf(ctx.actor);
@@ -814,7 +814,7 @@ export const projectTimeLog = defineCommand({
     const note = normalizeNoteInput(input.note) ?? null;
 
     const inserted = await ctx.trx
-      .insertInto('crove_projects.time_entry')
+      .insertInto('ludy_projects.time_entry')
       .values({
         org_id: ctx.orgId,
         project_id: project.id,
@@ -863,7 +863,7 @@ export const projectTimeUpdate = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'time_entry', ['task_id', 'started_at', 'ended_at', 'duration_minutes', 'billable', 'hourly_rate', 'note', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'time_entry', ['task_id', 'started_at', 'ended_at', 'duration_minutes', 'billable', 'hourly_rate', 'note', 'updated_at'])],
   target: (input) => (input.projectId ? { type: 'projects.project', id: input.projectId } : null),
   handler: async (ctx, input): Promise<ProjectTimeMutateResult> => {
     const userId = userOf(ctx.actor);
@@ -872,7 +872,7 @@ export const projectTimeUpdate = defineCommand({
     if (hintedProject) assertTimeProjectWritable(hintedProject);
 
     const peek = await ctx.trx
-      .selectFrom('crove_projects.time_entry')
+      .selectFrom('ludy_projects.time_entry')
       .select(['id', 'project_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.entryId)
@@ -946,7 +946,7 @@ export const projectTimeUpdate = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_projects.time_entry')
+      .updateTable('ludy_projects.time_entry')
       .set({
         task_id: nextTaskId,
         started_at: nextStartedAt,
@@ -992,7 +992,7 @@ export const projectTimeDelete = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'time_entry', ['org_id', 'id'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'time_entry', ['org_id', 'id'])],
   target: (input) => (input.projectId ? { type: 'projects.project', id: input.projectId } : null),
   handler: async (ctx, input): Promise<ProjectTimeDeleteResult> => {
     const userId = userOf(ctx.actor);
@@ -1001,7 +1001,7 @@ export const projectTimeDelete = defineCommand({
     if (hintedProject) assertTimeProjectWritable(hintedProject);
 
     const peek = await ctx.trx
-      .selectFrom('crove_projects.time_entry')
+      .selectFrom('ludy_projects.time_entry')
       .select(['id', 'project_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.entryId)
@@ -1025,7 +1025,7 @@ export const projectTimeDelete = defineCommand({
     }
 
     await ctx.trx
-      .deleteFrom('crove_projects.time_entry')
+      .deleteFrom('ludy_projects.time_entry')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
       .execute();
@@ -1155,7 +1155,7 @@ export const projectTimeSummary = defineQuery({
     const [{ rows: countRows }, { rows: groupRows }, { rows: entryRows }, activeRow] = await Promise.all([
       sql<{ total_entries: number }>`
         SELECT pg_catalog.count(*)::int AS total_entries
-          FROM crove_projects.time_entry te
+          FROM ludy_projects.time_entry te
          WHERE ${whereClause}`.execute(ctx.trx),
       sql<RawAggregateGroupRow>`
         SELECT
@@ -1175,7 +1175,7 @@ export const projectTimeSummary = defineQuery({
             ),
             0
           )::text AS billable_amount
-        FROM crove_projects.time_entry te
+        FROM ludy_projects.time_entry te
         LEFT JOIN ludy_kernel.task t
           ON t.org_id = te.org_id
          AND t.id = te.task_id
@@ -1199,7 +1199,7 @@ export const projectTimeSummary = defineQuery({
           te.note,
           te.created_at,
           te.updated_at
-        FROM crove_projects.time_entry te
+        FROM ludy_projects.time_entry te
         LEFT JOIN ludy_kernel.task t
           ON t.org_id = te.org_id
          AND t.id = te.task_id
@@ -1364,7 +1364,7 @@ export const projectTimeExportCsv = defineQuery({
         te.note,
         te.created_at,
         te.updated_at
-      FROM crove_projects.time_entry te
+      FROM ludy_projects.time_entry te
       LEFT JOIN ludy_kernel.task t
         ON t.org_id = te.org_id
        AND t.id = te.task_id
@@ -1448,7 +1448,7 @@ export async function queryProjectWeeklyTimeSummary(
         ),
         0
       )::text AS billable_amount
-    FROM crove_projects.time_entry te
+    FROM ludy_projects.time_entry te
     WHERE te.org_id = ${orgId}::uuid
       AND te.project_id = ${projectId}::uuid
       AND te.ended_at IS NOT NULL

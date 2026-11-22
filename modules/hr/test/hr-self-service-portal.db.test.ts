@@ -444,7 +444,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       await adminClient.query('BEGIN');
       await adminClient.query('SET LOCAL session_replication_role = replica');
       await adminClient.query(
-        `UPDATE crove_hr.payroll_employee
+        `UPDATE ludy_hr.payroll_employee
             SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
           WHERE id = $1`,
         [empC],
@@ -455,7 +455,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     }
     await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: empC }, asMfa(o.owner));
     const clearedRow = await adminPool.query<{ user_id: string | null }>(
-      `SELECT user_id FROM crove_hr.payroll_employee WHERE id = $1`,
+      `SELECT user_id FROM ludy_hr.payroll_employee WHERE id = $1`,
       [empC],
     );
     expect(clearedRow.rows[0]?.user_id).toBeNull();
@@ -686,10 +686,10 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       note: 'QL đồng ý bước 1 trước xóa',
     });
     await expect(
-      adminPool.query(`UPDATE crove_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subPendingForErase.requestId]),
+      adminPool.query(`UPDATE ludy_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subPendingForErase.requestId]),
     ).rejects.toMatchObject({ code: '42501' });
     await expect(
-      adminPool.query(`UPDATE crove_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subApproved.requestId]),
+      adminPool.query(`UPDATE ludy_hr.leave_request SET reason = 'Tamper' WHERE id = $1`, [subApproved.requestId]),
     ).rejects.toMatchObject({ code: '42501' });
 
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empStaff, endedOn: '2026-08-31' });
@@ -698,7 +698,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
       await adminClient.query('BEGIN');
       await adminClient.query('SET LOCAL session_replication_role = replica');
       await adminClient.query(
-        `UPDATE crove_hr.payroll_employee
+        `UPDATE ludy_hr.payroll_employee
             SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
           WHERE id = $1`,
         [empStaff],
@@ -716,7 +716,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     expect(erased.cleared).toContain('leave request notes');
 
     const dbNotes = await adminPool.query<{ id: string; status: string; reason: string | null; decision_note: string | null }>(
-      `SELECT id, status, reason, decision_note FROM crove_hr.leave_request WHERE employee_id = $1`,
+      `SELECT id, status, reason, decision_note FROM ludy_hr.leave_request WHERE employee_id = $1`,
       [empStaff],
     );
     expect(dbNotes.rows).toHaveLength(5);
@@ -748,7 +748,7 @@ suite('HR self-service portal & multi-level leave approval (#4300)', () => {
     ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
 
     const dbNotesAfterGuards = await adminPool.query<{ id: string; reason: string | null; decision_note: string | null }>(
-      `SELECT id, reason, decision_note FROM crove_hr.leave_request WHERE employee_id = $1`,
+      `SELECT id, reason, decision_note FROM ludy_hr.leave_request WHERE employee_id = $1`,
       [empStaff],
     );
     for (const row of dbNotesAfterGuards.rows) {
