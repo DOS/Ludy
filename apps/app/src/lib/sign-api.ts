@@ -9,6 +9,8 @@ import {
   type SignDrafterProposeResult,
   type SignDrafterRenderPdfResult,
   type SignEnvelopeObligationRecordContract,
+  type SignKycAttachmentSlotContract,
+  type SignKycListResultContract,
   type SignObligationProposalContract,
   type SignObligationRenewalListItem,
   type SignPlaybookAiOutcome,
@@ -715,10 +717,67 @@ export const signApi = {
     verdict: SignPlaybookVerdictContract;
     manualNote?: string | null;
   }) => client.sign.playbook.override_finding({ ...input, idempotencyKey: crypto.randomUUID() }),
+  listKycChecks: (envelopeId: string) => client.sign.kyc.list({ envelopeId }),
+  runKycDeterministic: (input: {
+    envelopeId: string;
+    fieldId: string;
+    expectedEntityName?: string | null;
+    expectedTaxCode?: string | null;
+    expectedSignerName?: string | null;
+    attachmentPages?: ReadonlyArray<{ page: number; text: string }>;
+  }) =>
+    client.sign.kyc.run_deterministic({
+      envelopeId: input.envelopeId,
+      fieldId: input.fieldId,
+      ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+      ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+      ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+      ...(input.attachmentPages ? { attachmentPages: [...input.attachmentPages] } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+  analyzeKycWithVy: (input: {
+    envelopeId: string;
+    fieldId: string;
+    expectedEntityName?: string | null;
+    expectedTaxCode?: string | null;
+    expectedSignerName?: string | null;
+    attachmentPages?: ReadonlyArray<{ page: number; text: string }>;
+  }) =>
+    client.sign.kyc.analyze({
+      envelopeId: input.envelopeId,
+      fieldId: input.fieldId,
+      ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+      ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+      ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+      ...(input.attachmentPages && input.attachmentPages.length > 0
+        ? { attachmentPages: [...input.attachmentPages] }
+        : {}),
+    }),
+  confirmKycCheck: (input: {
+    envelopeId: string;
+    fieldId: string;
+    status: 'matched' | 'mismatch' | 'needs_review';
+    manualNote?: string | null;
+    expectedEntityName?: string | null;
+    expectedTaxCode?: string | null;
+    expectedSignerName?: string | null;
+  }) =>
+    client.sign.kyc.confirm({
+      envelopeId: input.envelopeId,
+      fieldId: input.fieldId,
+      status: input.status,
+      ...(input.manualNote !== undefined ? { manualNote: input.manualNote } : {}),
+      ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+      ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+      ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    }),
 };
 
 export type {
   SignEnvelopeObligationRecordContract,
+  SignKycAttachmentSlotContract,
+  SignKycListResultContract,
   SignObligationProposalContract,
   SignObligationRenewalListItem,
   SignVaultAskResult,

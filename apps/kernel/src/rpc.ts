@@ -96,6 +96,7 @@ import {
   compareSignPdfVersions,
   evaluateEnvelopePlaybook,
   proposeEnvelopeAnalysis,
+  proposeEnvelopeKycCheck,
   proposeEnvelopeObligations,
   proposeSignContractDraftClauses,
   signAi,
@@ -639,6 +640,7 @@ export function createRpcHandler(
     signAiReader ?? null,
     new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
     new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+    new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }),
   );
   const signAcceptanceCoworker = signAcceptanceAi(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
@@ -5284,6 +5286,29 @@ export function createRpcHandler(
           ),
         ),
         override_finding: os.sign.playbook.override_finding.handler(signCommand('sign.playbook.override_finding')),
+      },
+      kyc: {
+        list: os.sign.kyc.list.handler(signQuery('sign.kyc.list')),
+        run_deterministic: os.sign.kyc.run_deterministic.handler(signCommand('sign.kyc.run_deterministic')),
+        analyze: os.sign.kyc.analyze.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeKycCheck({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              fieldId: input.fieldId,
+              ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+              ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+              ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+              ...(input.attachmentPages ? { attachmentPages: input.attachmentPages } : {}),
+              meter: aiMeter ? aiMeter(actor) : 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        confirm: os.sign.kyc.confirm.handler(signCommand('sign.kyc.confirm')),
       },
     },
   });

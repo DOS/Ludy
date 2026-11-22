@@ -189,6 +189,7 @@ export interface CroveSignSchema {
   'crove_sign.envelope': SignEnvelopeTable;
   'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
+  'crove_sign.kyc_check': SignKycCheckTable;
   'crove_sign.member_signature': SignMemberSignatureTable;
   'crove_sign.org_stamp': SignOrgStampTable;
   'crove_sign.playbook_check': SignPlaybookCheckTable;
@@ -4213,6 +4214,23 @@ export interface SignFieldTable {
   attachment_content_type: string | null;
   attachment_size_bytes: number | null;
   attachment_sha256: string | null;
+}
+
+/** crove_sign.kyc_check */
+export interface SignKycCheckTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  field_id: string;
+  file_id: string;
+  file_sha256: string;
+  status: Generated<string>;
+  mode: string;
+  findings_json: ColumnType<unknown, string | undefined, string>;
+  checked_by: string | null;
+  checked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_sign.member_signature */

@@ -167,6 +167,8 @@ export const AI_FEATURES = {
   'sign.vault_qa': 'sign',
   // Vy (the general manager) checking extracted eSign PDF contract pages against the org's SME playbook rules and proposing grounded redline suggestions (#4442): one call over bounded page text and active rules per ask, every cited finding verified deterministically against the PDF and marked tainted for human review.
   'sign.playbook_check': 'sign',
+  // Vy (the general manager) checking extracted signer KYC attachment text (CCCD, enterprise registration MST, power of attorney) against expected contract party details for a workspace member (#4443): zero tools, every finding pinned to a verbatim quote and marked tainted for human confirmation, never auto-rejecting.
+  'sign.kyc_check': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

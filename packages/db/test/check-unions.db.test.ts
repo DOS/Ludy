@@ -289,6 +289,8 @@ import {
   SIGN_OBLIGATION_STATUSES,
   SIGN_PLAYBOOK_MODES,
   SIGN_PLAYBOOK_SEVERITIES,
+  SIGN_KYC_CHECK_STATUSES,
+  SIGN_KYC_CHECK_MODES,
   type Database,
 } from '../src/schema.ts';
 
@@ -449,6 +451,8 @@ const UNIONS = unions({
   'crove_sign.ca_signing_request.retry_safety': SIGN_CA_RETRY_SAFETIES,
   'crove_sign.ca_signing_request.sub_filter': SIGN_CA_SUBFILTERS,
   'crove_sign.envelope_obligation.status': SIGN_OBLIGATION_STATUSES,
+  'crove_sign.kyc_check.status': SIGN_KYC_CHECK_STATUSES,
+  'crove_sign.kyc_check.mode': SIGN_KYC_CHECK_MODES,
   'crove_sign.member_signature.kind': SIGN_MEMBER_SIGNATURE_KINDS,
   'crove_sign.member_signature.signature_kind': SIGN_SIGNATURE_KINDS,
   'crove_sign.org_stamp.stamp_kind': SIGN_ORG_STAMP_KINDS,

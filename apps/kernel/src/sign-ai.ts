@@ -28,12 +28,16 @@ import {
   type SignDrafterProposeResult,
   type SignEnvelopeObligationRecordContract,
   type SignEnvelopePlaybookCheckRecord,
+  type SignKycAiOutcomeContract,
+  type SignKycAnalyzeResult,
+  type SignKycCheckRecordContract,
+  type SignKycListResultContract,
   type SignObligationAiOutcome,
+  type SignPlaybookAiOutcome,
+  type SignPlaybookEvaluateResult,
   type SignVaultAskInput,
   type SignVaultAskResult,
   type SignVaultSearchResult,
-  type SignPlaybookAiOutcome,
-  type SignPlaybookEvaluateResult,
 } from '@ludy/kernel-contract';
 import {
   DomainError,
@@ -51,6 +55,7 @@ import {
   type SignAiRiskClause,
   type SignAiSource,
   type SignDiffSourceResult,
+  type SignKycSource,
   type SignObligationSource,
   type SignPlaybookSource,
 } from '@ludy/mod-sign';
@@ -66,6 +71,7 @@ export type SignAiReaderPort = Pick<SignAiReader, 'proposeFields' | 'summarizeRi
       | 'extractObligations'
       | 'answerVaultQuestion'
       | 'checkPlaybook'
+      | 'checkKycAttachment'
     >
   >;
 
@@ -73,17 +79,20 @@ export interface SignAi {
   reader: SignAiReaderPort | null;
   budget: DraftBudget;
   obligationBudget?: DraftBudget;
+  kycBudget?: DraftBudget;
 }
 
 export function signAi(
   reader: SignAi['reader'],
   budget: DraftBudget,
   obligationBudget?: DraftBudget,
+  kycBudget?: DraftBudget,
 ): SignAi {
   return {
     reader,
     budget,
     ...(obligationBudget ? { obligationBudget } : {}),
+    ...(kycBudget ? { kycBudget } : {}),
   };
 }
 
@@ -1124,6 +1133,203 @@ export async function evaluateEnvelopePlaybook(
     }
     console.error('[sign-ai] playbook check failed', error instanceof Error ? error.name : typeof error);
     return recordDeterministicFallback('failed', false);
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface ProposeEnvelopeKycCheckParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'execute' | 'query'>;
+  orgId: string;
+  actor: UserActor;
+  envelopeId: string;
+  fieldId: string;
+  expectedEntityName?: string | null | undefined;
+  expectedTaxCode?: string | null | undefined;
+  expectedSignerName?: string | null | undefined;
+  attachmentPages?: readonly SignAiPageInput[] | undefined;
+  inspectAttachmentPages?: ((source: SignKycSource) => Promise<readonly SignAiPageInput[]>) | undefined;
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions | undefined;
+  promptVersion?: string | undefined;
+}
+
+function kycOutcome(
+  ai: Exclude<SignKycAiOutcomeContract, 'used'>,
+  existing: SignKycCheckRecordContract | null = null,
+): SignKycAnalyzeResult {
+  return {
+    ai,
+    status: ai,
+    check: existing,
+  };
+}
+
+export async function proposeEnvelopeKycCheck(
+  params: ProposeEnvelopeKycCheckParams,
+): Promise<SignKycAnalyzeResult> {
+  const { ai, runtime, orgId, actor, envelopeId, fieldId } = params;
+  if (actor.type !== 'user') {
+    throw new DomainError('FORBIDDEN', 403, 'Only authenticated workspace members can run KYC attachment checks');
+  }
+
+  const source = await runtime.query<SignKycSource>(
+    'sign.kyc.source',
+    { envelopeId, fieldId },
+    { actor, orgId },
+  );
+
+  const safeExisting = async (): Promise<SignKycCheckRecordContract | null> => {
+    try {
+      const list = await runtime.query<SignKycListResultContract>(
+        'sign.kyc.list',
+        { envelopeId },
+        { actor, orgId },
+      );
+      return list.items.find((i) => i.fieldId === fieldId)?.check ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  if (!ai.reader?.checkKycAttachment || source.aiStopped) {
+    return kycOutcome('off', await safeExisting());
+  }
+  if (!source.sha256Verified) {
+    return kycOutcome('not_ready', await safeExisting());
+  }
+
+  const fallbackStoredPages: SignAiPageInput[] =
+    source.storedTextPreview && source.storedTextPreview.trim().length > 0
+      ? [{ page: 1, text: source.storedTextPreview }]
+      : [];
+
+  if (
+    source.contentType !== 'application/pdf' &&
+    (!params.attachmentPages || params.attachmentPages.every((p) => p.text.trim().length === 0)) &&
+    !params.inspectAttachmentPages &&
+    fallbackStoredPages.length === 0
+  ) {
+    return kycOutcome('no_text', await safeExisting());
+  }
+
+  const rateBudget = ai.kycBudget ?? ai.budget;
+  const ticket = rateBudget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return kycOutcome('busy', await safeExisting());
+  }
+
+  const promptVersion = params.promptVersion ?? SIGN_AI_PROMPT_VERSION;
+  const checkKycAttachment = ai.reader.checkKycAttachment.bind(ai.reader);
+
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<SignKycSource>(
+      'sign.kyc.source',
+      { envelopeId, fieldId },
+      { actor, orgId },
+    );
+    return latest.aiStopped;
+  };
+
+  const runScoped = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const baseMeter =
+      params.meter === 'runtime'
+        ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+        : params.meter;
+    const guardedMeter: AiMeter = {
+      admit: async (call) => {
+        if (await isAiStopped()) {
+          throw new SignAiStoppedError();
+        }
+        return baseMeter.admit(call);
+      },
+      record: (call, usage) => baseMeter.record(call, usage),
+    };
+    return withAiScope({ orgId, meter: guardedMeter }, fn);
+  };
+
+  try {
+    const rawPages =
+      params.attachmentPages ??
+      (params.inspectAttachmentPages
+        ? await params.inspectAttachmentPages(source)
+        : fallbackStoredPages);
+    const maxPage = Math.max(
+      source.storedPageCount ?? 0,
+      ...rawPages.map((p) => (Number.isInteger(p.page) && p.page >= 1 ? p.page : 0)),
+      1,
+    );
+    const extractedPages: SignAiExtractedPage[] = rawPages
+      .filter((p) => Number.isInteger(p.page) && p.page >= 1 && p.page <= maxPage)
+      .map((p) => ({ page: p.page, text: p.text }));
+
+    if (extractedPages.every((p) => p.text.trim().length === 0)) {
+      return kycOutcome('no_text', await safeExisting());
+    }
+
+    const expectedEntityName =
+      params.expectedEntityName !== undefined
+        ? params.expectedEntityName
+        : source.obligationCounterpartyName;
+    const expectedSignerName = params.expectedSignerName?.trim() ? params.expectedSignerName.trim() : source.signerName;
+
+    const kycResult = await runScoped(() =>
+      checkKycAttachment({
+        envelopeTitle: source.envelopeTitle,
+        fieldLabel: source.fieldLabel,
+        signerName: expectedSignerName,
+        signerRoleLabel: source.signerRoleLabel,
+        expectedEntityName: expectedEntityName ?? null,
+        expectedTaxCode: params.expectedTaxCode ?? null,
+        pageCount: maxPage,
+        pages: extractedPages,
+      }),
+    );
+
+    if (await isAiStopped()) {
+      throw new SignAiStoppedError();
+    }
+
+    if (kycResult.kind === 'none' || !kycResult.proposal) {
+      return kycOutcome(kycResult.code === 'REFUSED' ? 'failed' : 'empty', await safeExisting());
+    }
+
+    const saved = await runtime.execute<SignKycCheckRecordContract>(
+      'sign.kyc.propose_ai',
+      {
+        envelopeId,
+        fieldId,
+        promptVersion,
+        ...(params.expectedEntityName !== undefined ? { expectedEntityName: params.expectedEntityName } : {}),
+        ...(params.expectedTaxCode !== undefined ? { expectedTaxCode: params.expectedTaxCode } : {}),
+        ...(params.expectedSignerName !== undefined ? { expectedSignerName: params.expectedSignerName } : {}),
+        extractedPages,
+        proposal: kycResult.proposal,
+      },
+      { actor, orgId },
+    );
+
+    return {
+      ai: 'used',
+      status: saved.status,
+      check: saved,
+    };
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError || (error instanceof DomainError && error.code === 'SIGN_AI_DISABLED')) {
+      return kycOutcome('off', await safeExisting());
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return kycOutcome('budget', await safeExisting());
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+    console.error('[sign-ai] kyc check failed', error instanceof Error ? error.name : typeof error);
+    return kycOutcome('failed', await safeExisting());
   } finally {
     ticket.release();
   }

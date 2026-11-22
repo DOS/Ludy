@@ -76,6 +76,7 @@ import {
   sweepSignPreExpiryReminders,
   type SignCaReconcileJob,
   type SignEnvelopeJob,
+  type SignKycAttachmentInspectJob,
   type SignPdfInspectJob,
   type SignTemplateInspectJob,
 } from './sign-worker.ts';
@@ -455,6 +456,24 @@ async function enqueueSignTemplateInspect(boss: JobSender, orgId: string, templa
     { orgId, targetKind: 'template', templateId } satisfies SignTemplateInspectJob,
     {
       singletonKey: jobKey(orgId, QUEUES.signPdfInspect, `tpl-${templateId}`),
+      retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
+}
+
+async function enqueueSignKycAttachmentInspect(
+  boss: JobSender,
+  orgId: string,
+  envelopeId: string,
+  fieldId: string,
+): Promise<void> {
+  await boss.send(
+    QUEUES.signPdfInspect,
+    { orgId, targetKind: 'kyc_attachment', envelopeId, fieldId } satisfies SignKycAttachmentInspectJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signPdfInspect, `kyc-${fieldId}`),
       retryLimit: SIGN_JOB_RETRY_LIMIT,
       retryDelay: 20,
       retryBackoff: true,
@@ -3181,6 +3200,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               if (sign && row.type === 'sign.template.inspect_queued') {
                 await enqueueSignTemplateInspect(boss, row.org_id, String(row.payload.templateId));
+              }
+              if (sign && row.type === 'sign.kyc.inspect_queued') {
+                await enqueueSignKycAttachmentInspect(
+                  boss,
+                  row.org_id,
+                  String(row.payload.envelopeId),
+                  String(row.payload.fieldId),
+                );
               }
               if (sign && row.type === 'sign.envelope.seal_queued') {
                 await enqueueSignSeal(boss, row.org_id, String(row.payload.envelopeId));

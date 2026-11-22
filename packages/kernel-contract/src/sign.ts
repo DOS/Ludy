@@ -2569,3 +2569,207 @@ export const zSignPlaybookOverrideFindingInput = z.strictObject({
   idempotencyKey: zId.optional(),
 });
 export type SignPlaybookOverrideFindingInput = z.infer<typeof zSignPlaybookOverrideFindingInput>;
+
+// ---------------------------------------------------------------------------
+// Slice 5e (#4443): Sender-side Signer KYC Attachment Verification Check
+// ---------------------------------------------------------------------------
+
+export const SIGN_KYC_CHECK_STATUSES = ['pending', 'matched', 'mismatch', 'needs_review'] as const;
+export type SignKycCheckStatusContract = (typeof SIGN_KYC_CHECK_STATUSES)[number];
+export const zSignKycCheckStatus = z.enum(SIGN_KYC_CHECK_STATUSES);
+
+export const SIGN_KYC_CHECK_MODES = ['deterministic', 'ai', 'manual'] as const;
+export type SignKycCheckModeContract = (typeof SIGN_KYC_CHECK_MODES)[number];
+export const zSignKycCheckMode = z.enum(SIGN_KYC_CHECK_MODES);
+
+export const SIGN_KYC_DOC_KINDS = ['cccd', 'dkkd', 'poa', 'other'] as const;
+export type SignKycDocKindContract = (typeof SIGN_KYC_DOC_KINDS)[number];
+export const zSignKycDocKind = z.enum(SIGN_KYC_DOC_KINDS);
+
+export const SIGN_KYC_ITEM_STATUSES = ['matched', 'mismatch', 'needs_review'] as const;
+export type SignKycItemStatusContract = (typeof SIGN_KYC_ITEM_STATUSES)[number];
+export const zSignKycItemStatus = z.enum(SIGN_KYC_ITEM_STATUSES);
+
+export const SIGN_KYC_FINDING_CATEGORIES = [
+  'file_integrity',
+  'tax_code',
+  'national_id',
+  'entity_name',
+  'authorized_signer',
+  'authority_scope',
+  'validity_date',
+] as const;
+export type SignKycFindingCategoryContract = (typeof SIGN_KYC_FINDING_CATEGORIES)[number];
+export const zSignKycFindingCategory = z.enum(SIGN_KYC_FINDING_CATEGORIES);
+
+export const SIGN_KYC_AI_CATEGORIES = [
+  'entity_name',
+  'tax_code',
+  'national_id',
+  'authorized_signer',
+  'authority_scope',
+  'validity_date',
+] as const;
+export type SignKycAiCategoryContract = (typeof SIGN_KYC_AI_CATEGORIES)[number];
+export const zSignKycAiCategory = z.enum(SIGN_KYC_AI_CATEGORIES);
+
+export const SIGN_KYC_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'not_ready',
+  'no_text',
+  'empty',
+  'failed',
+] as const;
+export type SignKycAiOutcomeContract = (typeof SIGN_KYC_AI_OUTCOMES)[number];
+export const zSignKycAiOutcome = z.enum(SIGN_KYC_AI_OUTCOMES);
+
+export const zSignKycDeterministicItem = z.strictObject({
+  category: zSignKycFindingCategory,
+  status: zSignKycItemStatus,
+  extractedValue: z.string().nullable(),
+  expectedValue: z.string().nullable(),
+  detail: z.string(),
+});
+export type SignKycDeterministicItemContract = z.infer<typeof zSignKycDeterministicItem>;
+
+export const zSignKycAiDiscrepancy = z.strictObject({
+  category: zSignKycAiCategory,
+  assessment: z.enum(['match', 'mismatch', 'unclear']),
+  extractedValue: z.string().nullable(),
+  expectedValue: z.string().nullable(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string(),
+  explanation: z.string(),
+  proposedByAi: z.literal(true),
+});
+export type SignKycAiDiscrepancyContract = z.infer<typeof zSignKycAiDiscrepancy>;
+
+export const zSignKycAiProposal = z.strictObject({
+  suggestedStatus: z.enum(['matched', 'mismatch', 'needs_review']),
+  summaryNote: z.string().nullable(),
+  findings: z.array(zSignKycAiDiscrepancy),
+  promptVersion: z.string(),
+  proposedByAi: z.literal(true),
+});
+export type SignKycAiProposalContract = z.infer<typeof zSignKycAiProposal>;
+
+export const zSignKycFindings = z.strictObject({
+  documentKind: zSignKycDocKind,
+  mimeType: z.string(),
+  sizeBytes: z.number().int().min(0),
+  sha256Verified: z.boolean(),
+  pageCount: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  inspectState: z.enum(['pending', 'inspected', 'image_metadata_only', 'failed']),
+  inspectError: z.string().nullable(),
+  expectedSignerName: z.string().nullable(),
+  expectedEntityName: z.string().nullable(),
+  expectedTaxCode: z.string().nullable(),
+  extractedTaxCodes: z.array(z.string()),
+  extractedNationalIds: z.array(z.string()),
+  extractedTextPreview: z.string().nullable(),
+  deterministicChecks: z.array(zSignKycDeterministicItem),
+  aiProposal: zSignKycAiProposal.nullable(),
+  manualNote: z.string().nullable(),
+});
+export type SignKycFindingsContract = z.infer<typeof zSignKycFindings>;
+
+export const zSignKycCheckRecord = z.strictObject({
+  id: zId,
+  envelopeId: zId,
+  fieldId: zId,
+  fileId: zId,
+  fileSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN),
+  status: zSignKycCheckStatus,
+  mode: zSignKycCheckMode,
+  findings: zSignKycFindings,
+  checkedBy: zId.nullable(),
+  checkedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignKycCheckRecordContract = z.infer<typeof zSignKycCheckRecord>;
+
+export const zSignKycAttachmentSlot = z.strictObject({
+  fieldId: zId,
+  signerId: zId,
+  signerName: z.string(),
+  signerEmail: z.string().nullable(),
+  signerRoleLabel: z.string(),
+  fieldLabel: z.string().nullable(),
+  fileId: zId,
+  filename: z.string(),
+  contentType: zSignAttachmentContentType,
+  sizeBytes: z.number().int().min(0),
+  fileSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN),
+  filledAt: z.string().nullable(),
+  obligationCounterpartyName: z.string().nullable(),
+  check: zSignKycCheckRecord.nullable(),
+});
+export type SignKycAttachmentSlotContract = z.infer<typeof zSignKycAttachmentSlot>;
+
+export const zSignKycListResult = z.strictObject({
+  envelopeId: zId,
+  canWrite: z.boolean(),
+  items: z.array(zSignKycAttachmentSlot),
+});
+export type SignKycListResultContract = z.infer<typeof zSignKycListResult>;
+
+export const zSignKycPageTextInput = z.strictObject({
+  page: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  text: z.string().max(250_000),
+});
+
+export const zSignKycRunDeterministicInput = z.strictObject({
+  envelopeId: zId,
+  fieldId: zId,
+  expectedEntityName: z.string().trim().max(300).nullable().optional(),
+  expectedTaxCode: z.string().trim().max(32).nullable().optional(),
+  expectedSignerName: z.string().trim().max(200).nullable().optional(),
+  attachmentPages: z.array(zSignKycPageTextInput).max(SIGN_MAX_PAGES).optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignKycRunDeterministicInput = z.infer<typeof zSignKycRunDeterministicInput>;
+
+export const zSignKycAnalyzeInput = z.strictObject({
+  envelopeId: zId,
+  fieldId: zId,
+  expectedEntityName: z.string().trim().max(300).nullable().optional(),
+  expectedTaxCode: z.string().trim().max(32).nullable().optional(),
+  expectedSignerName: z.string().trim().max(200).nullable().optional(),
+  attachmentPages: z.array(zSignKycPageTextInput).max(SIGN_MAX_PAGES).optional(),
+});
+export type SignKycAnalyzeInput = z.infer<typeof zSignKycAnalyzeInput>;
+
+export const zSignKycAnalyzeResult = z.strictObject({
+  ai: zSignKycAiOutcome,
+  status: z.enum([
+    'needs_review',
+    'matched',
+    'mismatch',
+    'pending',
+    'off',
+    'budget',
+    'busy',
+    'not_ready',
+    'no_text',
+    'empty',
+    'failed',
+  ]),
+  check: zSignKycCheckRecord.nullable(),
+});
+export type SignKycAnalyzeResult = z.infer<typeof zSignKycAnalyzeResult>;
+
+export const zSignKycConfirmInput = z.strictObject({
+  envelopeId: zId,
+  fieldId: zId,
+  status: z.enum(['matched', 'mismatch', 'needs_review']),
+  manualNote: z.string().trim().max(1000).nullable().optional(),
+  expectedEntityName: z.string().trim().max(300).nullable().optional(),
+  expectedTaxCode: z.string().trim().max(32).nullable().optional(),
+  expectedSignerName: z.string().trim().max(200).nullable().optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignKycConfirmInput = z.infer<typeof zSignKycConfirmInput>;

@@ -15,6 +15,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import { EnvelopeKycCard } from '../components/sign/envelope-kyc-card.tsx';
 import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
@@ -1388,6 +1389,14 @@ export function SignEnvelopeDetailPage() {
                   : (pdfQuery.data ?? null)
               }
               onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+            />
+          ) : null}
+
+          {!isDraft ? (
+            <EnvelopeKycCard
+              envelopeId={envelope.id}
+              hasUploadedAttachments={Boolean(detailQuery.data?.fields.some((fItem) => Boolean(fItem.attachmentFileId)))}
+              onDownloadAttachment={(fileId, filename) => handleDownload(fileId, filename)}
             />
           ) : null}
 
