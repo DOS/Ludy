@@ -49,9 +49,11 @@ import {
   normalizeChoiceOptions,
   nudgeFieldBox,
   planDetectedTagsForTemplateRoles,
+  planInitialAllPrecedingPages,
   resizeFieldBox,
   signerChipStyle,
   type DraftFieldPlacement,
+  type InitialAllPosition,
   type SignDeliveryMode,
   type SignFieldType,
   type SignRoutingMode,
@@ -161,7 +163,9 @@ export function canAutoSendTemplate(detail: SignTemplateDetail): boolean {
   if (fields.some((f) => isChoiceFieldType(f.fieldType) && normalizeChoiceOptions(f.options).length === 0)) {
     return false;
   }
-  const sigRoles = new Set(fields.filter((f) => f.fieldType === 'signature').map((f) => f.templateRoleId));
+  const sigRoles = new Set(
+    fields.filter((f) => f.fieldType === 'signature' || f.fieldType === 'stamp').map((f) => f.templateRoleId),
+  );
   return nonCc.every((r) => r.signerRole !== 'signer' || sigRoles.has(r.id));
 }
 
@@ -966,6 +970,7 @@ export function SignTemplatesPage() {
   const [metaMessage, setMetaMessage] = useState('');
   const [rolesDraft, setRolesDraft] = useState<EditableTemplateRole[]>([]);
   const [fieldsDraft, setFieldsDraft] = useState<DraftFieldPlacement[]>([]);
+  const [initialAllPosition, setInitialAllPosition] = useState<InitialAllPosition>('bottom-right');
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [activeRoleId, setActiveRoleId] = useState<string>('');
   const [pageNumber, setPageNumber] = useState(1);
@@ -1481,6 +1486,38 @@ export function SignTemplatesPage() {
     setSelectedFieldId(next.localId);
   };
 
+  const handleInitialAllPrecedingPages = () => {
+    if (!fieldsEditable || !activeRoleId || effectivePageCount < 2) return;
+    const plan = planInitialAllPrecedingPages({
+      signerId: activeRoleId,
+      pageCount: effectivePageCount,
+      existingFields: fieldsDraft,
+      position: initialAllPosition,
+    });
+    if (plan.added.length === 0) {
+      toast(tSign('fields.initialAllAlreadyPlacedToast'));
+      return;
+    }
+    const placed: DraftFieldPlacement[] = plan.added.map((item) => ({
+      localId: `tpl-field-${crypto.randomUUID()}`,
+      signerId: item.signerId,
+      fieldType: 'initials',
+      pageNumber: item.pageNumber,
+      xNorm: item.xNorm,
+      yNorm: item.yNorm,
+      wNorm: item.wNorm,
+      hNorm: item.hNorm,
+      label: item.label,
+      required: item.required,
+      proposedByAi: false,
+      fontSizePt: null,
+    }));
+    updateFieldsDraft((prev) => [...prev, ...placed]);
+    setSelectedFieldId(placed[0]!.localId);
+    setPageNumber(placed[0]!.pageNumber);
+    toast(tSign('fields.initialAllAddedToast', { count: String(placed.length) }));
+  };
+
   const handleCopy = async (value: string) => {
     const ok = await copyTextToClipboard(value);
     if (ok) toast(t('copiedToast'));
@@ -1974,6 +2011,37 @@ export function SignTemplatesPage() {
                                 + {tSign(`fields.types.${ft}`)}
                               </Button>
                             ))}
+                          </div>
+                        ) : null}
+                        {editable && effectivePageCount >= 2 ? (
+                          <div
+                            className="flex flex-wrap items-center gap-2"
+                            data-testid="sign-tpl-initial-all-row"
+                          >
+                            <NativeSelect
+                              aria-label={tSign('fields.initialAllPositionLabel')}
+                              className="min-h-11 w-auto text-xs"
+                              value={initialAllPosition}
+                              onChange={(e) => setInitialAllPosition(e.target.value as InitialAllPosition)}
+                              data-testid="sign-tpl-initial-all-position"
+                            >
+                              <NativeSelectOption value="bottom-right">
+                                {tSign('fields.initialAllBottomRight')}
+                              </NativeSelectOption>
+                              <NativeSelectOption value="bottom-left">
+                                {tSign('fields.initialAllBottomLeft')}
+                              </NativeSelectOption>
+                            </NativeSelect>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="min-h-11"
+                              disabled={!fieldsEditable || !activeRoleId}
+                              onClick={handleInitialAllPrecedingPages}
+                              data-testid="sign-tpl-initial-all-pages"
+                            >
+                              {tSign('fields.initialAllPages')}
+                            </Button>
                           </div>
                         ) : null}
                       </div>

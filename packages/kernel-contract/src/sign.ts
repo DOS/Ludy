@@ -107,7 +107,7 @@ export interface SignPublicAttachmentUploadResult {
 
 export interface SignPublicField {
   id: string;
-  fieldType: 'signature' | 'initials' | 'date' | 'text' | 'checkbox' | 'dropdown' | 'radio' | 'attachment';
+  fieldType: (typeof SIGN_FIELD_TYPES)[number];
   pageNumber: number;
   xNorm: string;
   yNorm: string;
@@ -428,7 +428,21 @@ export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
 export const SIGN_DELIVERY_MODES = ['link', 'email'] as const;
 export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox', 'dropdown', 'radio', 'attachment'] as const;
+export const SIGN_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'stamp',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
+export const SIGN_MEMBER_SIGNATURE_KINDS = ['signature', 'initials'] as const;
+export const SIGN_ORG_STAMP_KINDS = ['company', 'title', 'custom'] as const;
+export const SIGN_ORG_STAMP_STATUSES = ['active', 'archived'] as const;
+export const SIGN_MAX_ORG_STAMPS = 50;
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export const SIGN_AI_SEVERITIES = ['low', 'medium', 'high'] as const;
 export const SIGN_AI_OUTCOME_STATES = ['used', 'off', 'budget', 'busy', 'not_ready', 'not_draft', 'no_text', 'failed'] as const;
@@ -443,6 +457,9 @@ export const zSignDeliveryMode = z.enum(SIGN_DELIVERY_MODES);
 export const zSignSignerStatus = z.enum(SIGN_SIGNER_STATUSES);
 export const zSignSignatureKind = z.enum(SIGN_SIGNATURE_KINDS);
 export const zSignFieldType = z.enum(SIGN_FIELD_TYPES);
+export const zSignMemberSignatureKind = z.enum(SIGN_MEMBER_SIGNATURE_KINDS);
+export const zSignOrgStampKind = z.enum(SIGN_ORG_STAMP_KINDS);
+export const zSignOrgStampStatus = z.enum(SIGN_ORG_STAMP_STATUSES);
 export const zSignAiAnalysisStatus = z.enum(SIGN_AI_ANALYSIS_STATUSES);
 export const zSignAiSeverity = z.enum(SIGN_AI_SEVERITIES);
 export const zSignAiOutcomeState = z.enum(SIGN_AI_OUTCOME_STATES);
@@ -1910,3 +1927,126 @@ export const zSignObligationCompleteItemInput = z.strictObject({
   completed: z.boolean().default(true),
   idempotencyKey: zId.optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Slice 4a (#3817): Saved member signatures/initials and org stamps
+// ---------------------------------------------------------------------------
+
+export type SignMemberSignatureKind = z.infer<typeof zSignMemberSignatureKind>;
+export type SignOrgStampKind = z.infer<typeof zSignOrgStampKind>;
+export type SignOrgStampStatus = z.infer<typeof zSignOrgStampStatus>;
+
+export const zSignMemberSignatureRecord = z.strictObject({
+  id: zId,
+  kind: zSignMemberSignatureKind,
+  signatureKind: zSignSignatureKind,
+  signatureTypedText: z.string().nullable(),
+  signaturePngBase64: z.string(),
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignMemberSignatureRecord = z.infer<typeof zSignMemberSignatureRecord>;
+
+export const zSignMemberSignatureListInput = z.strictObject({});
+export const zSignMemberSignatureListResult = z.strictObject({
+  items: z.array(zSignMemberSignatureRecord),
+});
+export type SignMemberSignatureListResult = z.infer<typeof zSignMemberSignatureListResult>;
+
+export const zSignMemberSignatureUpsertInput = z.strictObject({
+  kind: zSignMemberSignatureKind,
+  signatureKind: zSignSignatureKind,
+  signatureTypedText: z.string().trim().min(1).max(200).nullable().optional(),
+  signaturePngBase64: z.string().min(60).max(380_000),
+  idempotencyKey: zId.optional(),
+});
+export type SignMemberSignatureUpsertInput = z.infer<typeof zSignMemberSignatureUpsertInput>;
+
+export const zSignMemberSignatureUpsertResult = z.strictObject({
+  id: zId,
+  kind: zSignMemberSignatureKind,
+  signatureKind: zSignSignatureKind,
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  updatedAt: z.string(),
+});
+export type SignMemberSignatureUpsertResult = z.infer<typeof zSignMemberSignatureUpsertResult>;
+
+export const zSignMemberSignatureDeleteInput = z.strictObject({
+  kind: zSignMemberSignatureKind,
+  idempotencyKey: zId.optional(),
+});
+export type SignMemberSignatureDeleteInput = z.infer<typeof zSignMemberSignatureDeleteInput>;
+
+export const zSignMemberSignatureDeleteResult = z.strictObject({
+  deleted: z.boolean(),
+});
+export type SignMemberSignatureDeleteResult = z.infer<typeof zSignMemberSignatureDeleteResult>;
+
+export const zSignOrgStampRecord = z.strictObject({
+  id: zId,
+  name: z.string(),
+  stampKind: zSignOrgStampKind,
+  fileId: zId.nullable(),
+  stampPngBase64: z.string(),
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  status: zSignOrgStampStatus,
+  archivedAt: z.string().nullable(),
+  createdBy: zId,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignOrgStampRecord = z.infer<typeof zSignOrgStampRecord>;
+
+export const zSignOrgStampListInput = z.strictObject({
+  status: zSignOrgStampStatus.optional(),
+});
+export type SignOrgStampListInput = z.infer<typeof zSignOrgStampListInput>;
+
+export const zSignOrgStampListResult = z.strictObject({
+  items: z.array(zSignOrgStampRecord),
+  canManage: z.boolean(),
+});
+export type SignOrgStampListResult = z.infer<typeof zSignOrgStampListResult>;
+
+export const zSignOrgStampCreateInput = z.strictObject({
+  name: z.string().trim().min(1).max(120),
+  stampKind: zSignOrgStampKind.default('company'),
+  fileId: zId.nullable().optional(),
+  stampPngBase64: z.string().min(60).max(380_000),
+  idempotencyKey: zId.optional(),
+});
+export type SignOrgStampCreateInput = z.infer<typeof zSignOrgStampCreateInput>;
+
+export const zSignOrgStampCreateResult = z.strictObject({
+  id: zId,
+  name: z.string(),
+  stampKind: zSignOrgStampKind,
+  fileId: zId.nullable(),
+  imageSha256: z.string(),
+  widthPx: z.number().int(),
+  heightPx: z.number().int(),
+  status: zSignOrgStampStatus,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignOrgStampCreateResult = z.infer<typeof zSignOrgStampCreateResult>;
+
+export const zSignOrgStampArchiveInput = z.strictObject({
+  stampId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignOrgStampArchiveInput = z.infer<typeof zSignOrgStampArchiveInput>;
+
+export const zSignOrgStampArchiveResult = z.strictObject({
+  stampId: zId,
+  status: z.literal('archived'),
+  archivedAt: z.string(),
+});
+export type SignOrgStampArchiveResult = z.infer<typeof zSignOrgStampArchiveResult>;

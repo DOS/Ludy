@@ -46,8 +46,10 @@ import {
   normalizeChoiceOptions,
   nudgeFieldBox,
   planDetectedTagsForSigners,
+  planInitialAllPrecedingPages,
   resizeFieldBox,
   type DraftFieldPlacement,
+  type InitialAllPosition,
   type NormalizedBox,
   type SignDeliveryMode,
   type SignFieldType,
@@ -126,6 +128,7 @@ export function SignEnvelopeDetailPage() {
   const [detectedPages, setDetectedPages] = useState<number | null>(null);
   const [activeSignerId, setActiveSignerId] = useState<string | null>(null);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [initialAllPosition, setInitialAllPosition] = useState<InitialAllPosition>('bottom-right');
   const [draftFields, setDraftFields] = useState<DraftFieldPlacement[]>([]);
   const [fieldsDirty, setFieldsDirty] = useState(false);
   const [dirtyMetaFields, setDirtyMetaFields] = useState<
@@ -714,6 +717,37 @@ export function SignEnvelopeDetailPage() {
     setSelectedFieldId(localId);
   };
 
+  const handleInitialAllPrecedingPages = () => {
+    if (!isDraft || !activeSignerId || effectivePageCount < 2) return;
+    const plan = planInitialAllPrecedingPages({
+      signerId: activeSignerId,
+      pageCount: effectivePageCount,
+      existingFields: draftFields,
+      position: initialAllPosition,
+    });
+    if (plan.added.length === 0) {
+      toast(t('fields.initialAllAlreadyPlacedToast'));
+      return;
+    }
+    const placed: DraftFieldPlacement[] = plan.added.map((item) => ({
+      localId: `draft-${globalThis.crypto.randomUUID()}`,
+      signerId: item.signerId,
+      fieldType: 'initials',
+      pageNumber: item.pageNumber,
+      xNorm: item.xNorm,
+      yNorm: item.yNorm,
+      wNorm: item.wNorm,
+      hNorm: item.hNorm,
+      label: item.label,
+      required: item.required,
+      proposedByAi: false,
+    }));
+    updateDraftFields((prev) => [...prev, ...placed]);
+    setSelectedFieldId(placed[0]!.localId);
+    setPageNumber(placed[0]!.pageNumber);
+    toast(t('fields.initialAllAddedToast', { count: String(placed.length) }));
+  };
+
   const handleUpdateFieldBox = (localId: string, nextBox: NormalizedBox) => {
     updateDraftFields((prev) =>
       prev.map((item) => (item.localId === localId ? { ...item, ...clampFieldBox(nextBox) } : item)),
@@ -1248,6 +1282,33 @@ export function SignEnvelopeDetailPage() {
                     </Button>
                   ))}
                 </div>
+                {effectivePageCount >= 2 ? (
+                  <div
+                    className="flex flex-wrap items-center gap-2 border-t border-border pt-2"
+                    data-testid="palette-initial-all-row"
+                  >
+                    <NativeSelect
+                      aria-label={t('fields.initialAllPositionLabel')}
+                      className="min-h-11 w-auto text-xs"
+                      value={initialAllPosition}
+                      onChange={(e) => setInitialAllPosition(e.target.value as InitialAllPosition)}
+                      data-testid="palette-initial-all-position"
+                    >
+                      <NativeSelectOption value="bottom-right">{t('fields.initialAllBottomRight')}</NativeSelectOption>
+                      <NativeSelectOption value="bottom-left">{t('fields.initialAllBottomLeft')}</NativeSelectOption>
+                    </NativeSelect>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="min-h-11"
+                      disabled={!activeSignerId}
+                      onClick={handleInitialAllPrecedingPages}
+                      data-testid="palette-initial-all-pages"
+                    >
+                      {t('fields.initialAllPages')}
+                    </Button>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}

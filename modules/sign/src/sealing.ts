@@ -145,6 +145,21 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
         });
         break;
       }
+      case 'stamp': {
+        if (!f.signature_png_base64) {
+          throw new Error(`Stamp field ${f.id} requires signature_png_base64 before sealing`);
+        }
+        out.push({
+          type: 'stamp',
+          page: f.page_number,
+          xNorm,
+          yNorm,
+          wNorm,
+          hNorm,
+          imagePngBase64: f.signature_png_base64,
+        });
+        break;
+      }
       case 'initials': {
         if (!f.signature_png_base64 && f.value_text === null) {
           throw new Error(`Initials field ${f.id} requires image or text before sealing`);

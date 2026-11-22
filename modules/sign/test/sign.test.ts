@@ -366,6 +366,8 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'envelope',
       'envelope_obligation',
       'field',
+      'member_signature',
+      'org_stamp',
       'signer',
       'signing_event',
       'signing_otp',

@@ -159,6 +159,8 @@ function normalizeTagType(raw: string): PdfDetectedTagFieldType | null {
     case 'initial':
     case 'initials':
       return 'initials';
+    case 'stamp':
+      return 'stamp';
     case 'date':
       return 'date';
     case 'text':
@@ -400,6 +402,11 @@ function computeTargetTagBox(
     case 'initials': {
       rawW = Math.max(tagWNorm, Math.min(0.3, Math.max(0.1, 68 / safePageW)));
       rawH = Math.max(tagHNorm, Math.min(0.14, Math.max(0.036, 28 / safePageH)));
+      break;
+    }
+    case 'stamp': {
+      rawW = Math.max(tagWNorm, Math.min(0.32, Math.max(0.14, 96 / safePageW)));
+      rawH = Math.max(tagHNorm, Math.min(0.22, Math.max(0.08, 72 / safePageH)));
       break;
     }
     case 'date': {
