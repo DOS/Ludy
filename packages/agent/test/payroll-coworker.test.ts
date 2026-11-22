@@ -5,17 +5,21 @@ import { describe, expect, it } from 'vitest';
 import {
   PayrollCoworker,
   PayrollPromptLeakError,
+  checkDiffNarration,
   checkExplanation,
   checkFlagSentences,
   checkPrepareProposals,
   dependentsCountedOf,
+  diffFactsText,
   explainFactsText,
   findAnomalies,
   findSignals,
   payrollFiguresOf,
   promptLeaks,
+  pseudonymizePayrollDiff,
   pseudonymizeSheet,
   restoreAliases,
+  restoreDiffAliases,
   type PayrollFigures,
   type PayrollSheetLine,
 } from '../src/index.ts';
@@ -474,5 +478,115 @@ describe('PayrollCoworker', () => {
     expect(factsVi).toContain('Khoản trừ do nghỉ thai sản hưởng BHXH');
     expect(factsVi).toContain('20%');
     expect(factsVi).toContain('tổng số ngày nghỉ thai sản hưởng BHXH và nghỉ không lương từ 14 ngày làm việc trở lên');
+  });
+
+  it('narrates What-Changed diff over P1/P2 pseudonymized rows and drops ungrounded numbers, links, or bad aliases', async () => {
+    const { sheet, aliases } = pseudonymizePayrollDiff(
+      {
+        language: 'vi',
+        hasPrior: true,
+        headcount: 3,
+        priorHeadcount: 2,
+        headcountDelta: 1,
+        grossDelta: '18000000',
+        employeeDeductionDelta: '1900000',
+        netDelta: '16100000',
+        employerStatutoryDelta: '3870000',
+        employerCostDelta: '21870000',
+        rows: [
+          {
+            employeeId: 'emp-1',
+            reasons: ['new_hire'],
+            grossDelta: '16000000',
+            employeeDeductionDelta: '1700000',
+            netDelta: '14300000',
+            employerStatutoryDelta: '3440000',
+            employerCostDelta: '19440000',
+            priorLeaveDays: null,
+            currentLeaveDays: '0',
+            hasRefused: false,
+            hasFlags: false,
+          },
+          {
+            employeeId: 'emp-2',
+            reasons: ['salary_change'],
+            grossDelta: '2000000',
+            employeeDeductionDelta: '200000',
+            netDelta: '1800000',
+            employerStatutoryDelta: '430000',
+            employerCostDelta: '2430000',
+            priorLeaveDays: '0',
+            currentLeaveDays: '0',
+            hasRefused: false,
+            hasFlags: false,
+          },
+        ],
+      },
+      { random: () => 0 }, // deterministic Fisher-Yates swap test
+    );
+    expect([...aliases.keys()]).toEqual(['P1', 'P2']);
+    expect(new Set(aliases.values())).toEqual(new Set(['emp-1', 'emp-2']));
+    const facts = diffFactsText(sheet);
+    expect(facts).not.toContain('338'); // never emit 338 account digits in prompt facts
+    expect(facts).not.toContain('emp-1');
+    expect(facts).not.toContain('0 -> 0');
+
+    // Grounded sentence with exact numbers & P1/P2 aliases passes and restores names cleanly
+    const goodCw = new PayrollCoworker(CONFIG, {
+      diffExplain: async () => ({
+        output: { text: 'Tổng chi phí người sử dụng lao động tăng 21.870.000 đồng (tăng 1 người), chủ yếu do P2 tuyển mới.' },
+      }),
+    });
+    const ok = await goodCw.explainDiff(sheet);
+    expect(ok).toEqual({
+      kind: 'text',
+      text: 'Tổng chi phí người sử dụng lao động tăng 21.870.000 đồng (tăng 1 người), chủ yếu do P2 tuyển mới.',
+    });
+    if (ok.kind === 'text') {
+      const names = new Map<string, string>([
+        ['P1', 'Nguyễn Văn A'],
+        ['P2', 'Trần Thị B'],
+      ]);
+      expect(restoreDiffAliases(ok.text, names)).toContain('Trần Thị B');
+    }
+
+    // Reject ungrounded number, invalid P9 alias, E1 alias, and URLs
+    expect(checkDiffNarration(sheet, { text: 'Tổng chi phí tăng 99.000.000 đồng do P1.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkDiffNarration(sheet, { text: 'P9 tăng lương làm tổng chi phí tăng 21.870.000 đồng.' })).toEqual({ kind: 'none', code: 'ALIAS' });
+    expect(checkDiffNarration(sheet, { text: 'E1 tăng lương làm tổng chi phí tăng 21.870.000 đồng.' })).toEqual({ kind: 'none', code: 'ALIAS' });
+    expect(checkDiffNarration(sheet, { text: 'Xem chi tiết tại https://example.com nhé.' })).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkDiffNarration(sheet, { text: '   ' })).toEqual({ kind: 'none', code: 'EMPTY' });
+
+    // Quiet diff skips model call entirely
+    let quietCalled = false;
+    const quietCw = new PayrollCoworker(CONFIG, {
+      diffExplain: async () => {
+        quietCalled = true;
+        return { output: { text: 'should not run' } };
+      },
+    });
+    const quietRes = await quietCw.explainDiff({
+      language: 'vi',
+      hasPrior: true,
+      headcount: 2,
+      priorHeadcount: 2,
+      headcountDelta: 0,
+      grossDelta: '0',
+      employeeDeductionDelta: '0',
+      netDelta: '0',
+      employerStatutoryDelta: '0',
+      employerCostDelta: '0',
+      rows: [],
+    });
+    expect(quietRes).toEqual({ kind: 'none', code: 'QUIET' });
+    expect(quietCalled).toBe(false);
+
+    // Raw name passed in alias field is rejected by guardDiffSheet before prompt reaches model
+    await expect(
+      quietCw.explainDiff({
+        ...sheet,
+        rows: [{ ...sheet.rows[0]!, alias: 'Nguyễn Văn Thử' }],
+      }),
+    ).rejects.toThrow(PayrollPromptLeakError);
   });
 });

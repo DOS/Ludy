@@ -462,3 +462,140 @@ export const zPayrollSettlement = z.strictObject({
   }),
 });
 export type PayrollSettlement = z.infer<typeof zPayrollSettlement>;
+
+// Continuous pre-lock payroll fluctuation preview and What-Changed diff (#4445, Stage 5E):
+// compares a draft run, finalized run, or current-month projected snapshot against the immediately
+// preceding approved/paid/closed run of the same legal entity. Read-only, owners and admins only.
+export const HR_PAYROLL_PREVIEW_MODES = ['draft_run', 'finalized_run', 'projected'] as const;
+export type HrPayrollPreviewMode = (typeof HR_PAYROLL_PREVIEW_MODES)[number];
+export const HR_PAYROLL_DIFF_REASONS = [
+  'new_hire',
+  'terminated',
+  'salary_change',
+  'leave_change',
+  'allowance_change',
+  'deduction_change',
+] as const;
+export type HrPayrollDiffReason = (typeof HR_PAYROLL_DIFF_REASONS)[number];
+
+const zPreviewTargetRef = {
+  runId: zId.optional(),
+  month: zHrMonth.optional(),
+  legalEntityId: zId.optional(),
+};
+
+export const zHrPayrollPreviewDiffAsk = z
+  .strictObject({
+    ...zPreviewTargetRef,
+    includeUnchanged: z.boolean().default(false),
+  })
+  .refine((v) => v.runId === undefined || (v.month === undefined && v.legalEntityId === undefined), {
+    message: 'runId cannot be combined with month or legalEntityId',
+    path: ['runId'],
+  });
+export type HrPayrollPreviewDiffAsk = z.input<typeof zHrPayrollPreviewDiffAsk>;
+
+export const zHrPayrollPreviewLineFigures = z.object({
+  gross: z.string(),
+  employeeInsurance: z.string(),
+  pit: z.string(),
+  otherDeductions: z.string(),
+  employeeDeductions: z.string(),
+  net: z.string(),
+  employerInsurance: z.string(),
+  unionFee: z.string(),
+  employerStatutory: z.string(),
+  employerCost: z.string(),
+  taxableIncome: z.string(),
+});
+export type HrPayrollPreviewLineFigures = z.infer<typeof zHrPayrollPreviewLineFigures>;
+
+export const zHrPayrollPreviewFigures = zHrPayrollPreviewLineFigures.extend({
+  headcount: z.number().int(),
+});
+export type HrPayrollPreviewFigures = z.infer<typeof zHrPayrollPreviewFigures>;
+
+export const zHrPayrollPreviewDeltas = z.object({
+  headcountDelta: z.number().int(),
+  grossDelta: z.string(),
+  employeeInsuranceDelta: z.string(),
+  pitDelta: z.string(),
+  otherDeductionDelta: z.string(),
+  employeeDeductionDelta: z.string(),
+  netDelta: z.string(),
+  employerInsuranceDelta: z.string(),
+  unionFeeDelta: z.string(),
+  employerStatutoryDelta: z.string(),
+  employerCostDelta: z.string(),
+  taxableIncomeDelta: z.string(),
+});
+export type HrPayrollPreviewDeltas = z.infer<typeof zHrPayrollPreviewDeltas>;
+
+export const zHrPayrollPreviewEmployeeDiff = z.object({
+  employeeId: zId,
+  employeeName: z.string(),
+  erased: z.boolean(),
+  changed: z.boolean(),
+  reasons: z.array(z.enum(HR_PAYROLL_DIFF_REASONS)),
+  prior: zHrPayrollPreviewLineFigures.nullable(),
+  current: zHrPayrollPreviewLineFigures.nullable(),
+  grossDelta: z.string(),
+  employeeInsuranceDelta: z.string(),
+  pitDelta: z.string(),
+  otherDeductionDelta: z.string(),
+  employeeDeductionDelta: z.string(),
+  netDelta: z.string(),
+  employerInsuranceDelta: z.string(),
+  unionFeeDelta: z.string(),
+  employerStatutoryDelta: z.string(),
+  employerCostDelta: z.string(),
+  priorLeaveDays: z.string().nullable(),
+  currentLeaveDays: z.string().nullable(),
+  hasRefused: z.boolean(),
+  hasFlags: z.boolean(),
+});
+export type HrPayrollPreviewEmployeeDiff = z.infer<typeof zHrPayrollPreviewEmployeeDiff>;
+
+export const zHrPayrollPreviewRunInfo = z.object({
+  runId: zId.nullable(),
+  month: zHrMonth,
+  status: z.enum(HR_RUN_STATUSES).nullable(),
+  approvedAt: z.string().nullable(),
+  headcount: z.number().int(),
+  refusedCount: z.number().int(),
+  flaggedCount: z.number().int(),
+});
+export type HrPayrollPreviewRunInfo = z.infer<typeof zHrPayrollPreviewRunInfo>;
+
+export const zHrPayrollPreviewDiff = z.object({
+  mode: z.enum(HR_PAYROLL_PREVIEW_MODES),
+  legalEntityId: zId,
+  legalEntityName: z.string(),
+  month: zHrMonth,
+  current: zHrPayrollPreviewRunInfo,
+  prior: zHrPayrollPreviewRunInfo.nullable(),
+  totals: zHrPayrollPreviewFigures,
+  priorTotals: zHrPayrollPreviewFigures.nullable(),
+  deltas: zHrPayrollPreviewDeltas,
+  unchangedCount: z.number().int(),
+  rows: z.array(zHrPayrollPreviewEmployeeDiff),
+});
+export type HrPayrollPreviewDiff = z.infer<typeof zHrPayrollPreviewDiff>;
+
+export const zHrPayrollDiffExplainAsk = z
+  .strictObject({
+    ...zPreviewTargetRef,
+    lang: z.enum(['vi', 'en']).optional(),
+  })
+  .refine((v) => v.runId === undefined || (v.month === undefined && v.legalEntityId === undefined), {
+    message: 'runId cannot be combined with month or legalEntityId',
+    path: ['runId'],
+  });
+export type HrPayrollDiffExplainAsk = z.input<typeof zHrPayrollDiffExplainAsk>;
+
+export const zHrPayrollDiffExplained = z.object({
+  ai: z.enum(HR_COWORKER_STATES),
+  text: z.string().nullable(),
+  deterministicText: z.string(),
+});
+export type HrPayrollDiffExplained = z.infer<typeof zHrPayrollDiffExplained>;

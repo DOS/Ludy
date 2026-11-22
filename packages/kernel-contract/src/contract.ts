@@ -324,7 +324,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zHrLeaveBalanceAsk,
@@ -1323,16 +1323,19 @@ export const contract = {
       },
       // Where the posting and the payments of an approved month stand, for its card (#2532): from the books and the open proposals, no person and no amount; owners and admins.
       settlement: oc.input(zPayrollSettlementRef).output(zPayrollSettlement),
+      // Continuous payroll fluctuation preview and What-Changed diff (#4445, Stage 5E): read-only, owners and admins, compares draft or projected month against prior finalized run.
+      previewDiff: oc.input(zHrPayrollPreviewDiffAsk).output(zHrPayrollPreviewDiff),
       lines: {
         setInputs: oc.input(zHrLineInputsSet).output(zHrRunWritten),
         adjust: oc.input(zHrLineAdjust).output(zHrRunWritten),
         payslip: oc.input(zHrPayslipRef).output(zHrPayslip),
       },
-      // The finance coworker's part (#2534): prepare the month, flag anomalies, explain a payslip, on a pseudonymized sheet. Read-only, owners and admins, AI off or spent: `ai` says so.
+      // The finance coworker's part (#2534, #4445): prepare the month, flag anomalies, explain a payslip, narrate a What-Changed diff, on pseudonymized sheets. Read-only, owners and admins, AI off or spent: `ai` says so.
       coworker: {
         prepare: oc.input(zHrCoworkerAsk).output(zHrCoworkerPrepared),
         flag: oc.input(zHrCoworkerAsk).output(zHrCoworkerFlagged),
         explain: oc.input(zHrCoworkerPayslipAsk).output(zHrCoworkerExplained),
+        explainDiff: oc.input(zHrPayrollDiffExplainAsk).output(zHrPayrollDiffExplained),
       },
     },
     // Lightweight recruiting (#3425, Stage 3 slice 3b-2): openings, candidate pipeline, calendar interviews,

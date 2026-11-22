@@ -15,27 +15,45 @@
 import {
   AiBudgetExhaustedError,
   PAYROLL_ANOMALY_KINDS,
+  PAYROLL_SHEET_LINES_MAX,
   PAYROLL_SIGNAL_KINDS,
+  amountText,
   dependentsCountedOf,
   findAnomalies,
   findSignals,
   payrollFiguresOf,
+  pseudonymizePayrollDiff,
   pseudonymizeSheet,
   restoreAliases,
+  restoreDiffAliases,
   type InboxReader,
+  type PayrollDiffFactRow,
   type PayrollSheetLine,
 } from '@ludy/agent';
 import { Decimal } from '@ludy/l10n-vn';
-import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@ludy/kernel-contract';
+import type {
+  HrCoworkerExplained,
+  HrCoworkerFlagged,
+  HrCoworkerPrepared,
+  HrLineView,
+  HrPayrollDiffExplainAsk,
+  HrPayrollDiffExplained,
+  HrPayrollPreviewDiff,
+  HrPayrollPreviewDiffAsk,
+  HrPayslip,
+  HrRunSheet,
+  HrRunSummary,
+} from '@ludy/kernel-contract';
 import { DomainError } from '@ludy/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface PayrollAi {
-  reader: Pick<InboxReader, 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'> | null;
+  reader: (Pick<InboxReader, 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'> & Partial<Pick<InboxReader, 'payrollDiffExplain'>>) | null;
   budget: DraftBudget;
   prepareBudget?: DraftBudget;
   flagBudget?: DraftBudget;
   explainBudget?: DraftBudget;
+  diffBudget?: DraftBudget;
 }
 
 /** The owner/admin access check and the audited reads the coworker is built on, each run in the member's own authority. */
@@ -44,6 +62,7 @@ export interface PayrollReads {
   sheet(runId: string): Promise<HrRunSheet>;
   runs(legalEntityId: string): Promise<HrRunSummary[]>;
   payslip(lineId: string): Promise<HrPayslip>;
+  previewDiff?: (input: HrPayrollPreviewDiffAsk) => Promise<HrPayrollPreviewDiff>;
 }
 
 const monthBefore = (month: string, back: number): string => {
@@ -295,6 +314,170 @@ export async function explainPayslip(ai: PayrollAi, reads: PayrollReads, orgId: 
       return none('failed');
     }
     return { ai: 'used', text: answer.value.text };
+  } finally {
+    ticket.release();
+  }
+}
+
+const isPreviewQuiet = (diff: HrPayrollPreviewDiff): boolean =>
+  diff.rows.every((r) => !r.changed) &&
+  diff.deltas.headcountDelta === 0 &&
+  new Decimal(diff.deltas.grossDelta).isZero() &&
+  new Decimal(diff.deltas.employeeDeductionDelta).isZero() &&
+  new Decimal(diff.deltas.netDelta).isZero() &&
+  new Decimal(diff.deltas.employerCostDelta).isZero();
+
+const signedSummaryDelta = (value: string, language: 'vi' | 'en'): string => {
+  const d = new Decimal(value);
+  if (d.isZero()) return language === 'vi' ? 'không đổi' : 'unchanged';
+  const dir = d.isPositive() ? (language === 'vi' ? 'tăng' : 'up') : language === 'vi' ? 'giảm' : 'down';
+  const unit = language === 'vi' ? 'đồng' : 'dong';
+  return `${dir} ${amountText(d.abs().toFixed(), language)} ${unit}`;
+};
+
+export function deterministicDiffSummary(diff: HrPayrollPreviewDiff, language: 'vi' | 'en'): string {
+  const changed = diff.rows.filter((r) => r.changed);
+  if (diff.prior === null) {
+    if (diff.current.headcount === 0) {
+      return language === 'vi' ? 'Chưa có nhân sự hoặc số liệu trong kỳ.' : 'No employees or figures in this period yet.';
+    }
+    return language === 'vi'
+      ? `Kỳ lương đầu tiên (${diff.current.headcount} người): tổng chi phí công ty ${amountText(diff.totals.employerCost, 'vi')} đồng, thực nhận ${amountText(diff.totals.net, 'vi')} đồng.`
+      : `First payroll period (${diff.current.headcount} people): employer cost ${amountText(diff.totals.employerCost, 'en')} dong, net pay ${amountText(diff.totals.net, 'en')} dong.`;
+  }
+  if (isPreviewQuiet(diff)) {
+    return language === 'vi'
+      ? 'Không có biến động so với kỳ lương đã duyệt gần nhất.'
+      : 'No payroll fluctuations compared with the immediately preceding finalized run.';
+  }
+  const hcText =
+    diff.deltas.headcountDelta === 0
+      ? ''
+      : diff.deltas.headcountDelta > 0
+        ? language === 'vi'
+          ? `, tăng ${diff.deltas.headcountDelta} người`
+          : `, up ${diff.deltas.headcountDelta} headcount`
+        : language === 'vi'
+          ? `, giảm ${Math.abs(diff.deltas.headcountDelta)} người`
+          : `, down ${Math.abs(diff.deltas.headcountDelta)} headcount`;
+  const drivers = changed
+    .slice(0, 2)
+    .map((r) => r.employeeName)
+    .join(', ');
+  const driverSuffix =
+    drivers.length > 0
+      ? language === 'vi'
+        ? `; biến động chính ở ${drivers}.`
+        : `; top movers: ${drivers}.`
+      : '.';
+  return language === 'vi'
+    ? `Tổng chi phí công ty ${signedSummaryDelta(diff.deltas.employerCostDelta, 'vi')}, thực nhận ${signedSummaryDelta(diff.deltas.netDelta, 'vi')}${hcText}${driverSuffix}`
+    : `Employer cost ${signedSummaryDelta(diff.deltas.employerCostDelta, 'en')}, net pay ${signedSummaryDelta(diff.deltas.netDelta, 'en')}${hcText}${driverSuffix}`;
+}
+
+export async function explainPayrollDiff(
+  ai: PayrollAi,
+  reads: PayrollReads,
+  orgId: string,
+  userId: string,
+  input: HrPayrollDiffExplainAsk,
+): Promise<HrPayrollDiffExplained> {
+  await reads.authorize?.();
+  if (!reads.previewDiff) {
+    throw new DomainError('INTERNAL', 500, 'Thiếu hàm đọc biến động bảng lương');
+  }
+  const language = input.lang ?? 'vi';
+  const queryArg: HrPayrollPreviewDiffAsk = {
+    ...(input.runId !== undefined
+      ? { runId: input.runId }
+      : {
+          ...(input.month !== undefined ? { month: input.month } : {}),
+          ...(input.legalEntityId !== undefined ? { legalEntityId: input.legalEntityId } : {}),
+        }),
+    includeUnchanged: false,
+  };
+  const reader = ai.reader;
+  if (!reader?.payrollDiffExplain) {
+    const diff = await reads.previewDiff(queryArg);
+    const deterministicText = deterministicDiffSummary(diff, language);
+    return { ai: isPreviewQuiet(diff) ? 'quiet' : 'off', text: null, deterministicText };
+  }
+
+  const ticket = (ai.diffBudget ?? ai.budget).take(orgId, userId);
+  if (!ticket.allowed) {
+    return { ai: 'busy', text: null, deterministicText: '' };
+  }
+  try {
+    let diff: HrPayrollPreviewDiff;
+    try {
+      diff = await reads.previewDiff(queryArg);
+    } catch (error: unknown) {
+      if (isForbiddenError(error)) ticket.refund?.();
+      throw error;
+    }
+    const deterministicText = deterministicDiffSummary(diff, language);
+    if (isPreviewQuiet(diff)) {
+      ticket.refund?.();
+      return { ai: 'quiet', text: null, deterministicText };
+    }
+    const changed = diff.rows.filter((r) => r.changed);
+    const promptRows: PayrollDiffFactRow[] =
+      changed.length <= PAYROLL_SHEET_LINES_MAX
+        ? changed.map((r) => ({
+            employeeId: r.employeeId,
+            reasons: r.reasons,
+            grossDelta: r.grossDelta,
+            employeeDeductionDelta: r.employeeDeductionDelta,
+            netDelta: r.netDelta,
+            employerStatutoryDelta: r.employerStatutoryDelta,
+            employerCostDelta: r.employerCostDelta,
+            priorLeaveDays: r.priorLeaveDays,
+            currentLeaveDays: r.currentLeaveDays,
+            hasRefused: r.hasRefused,
+            hasFlags: r.hasFlags,
+          }))
+        : [];
+    const { sheet, aliases } = pseudonymizePayrollDiff({
+      language,
+      hasPrior: diff.prior !== null,
+      headcount: diff.current.headcount,
+      priorHeadcount: diff.prior?.headcount ?? null,
+      headcountDelta: diff.deltas.headcountDelta,
+      grossDelta: diff.deltas.grossDelta,
+      employeeDeductionDelta: diff.deltas.employeeDeductionDelta,
+      netDelta: diff.deltas.netDelta,
+      employerStatutoryDelta: diff.deltas.employerStatutoryDelta,
+      employerCostDelta: diff.deltas.employerCostDelta,
+      rows: promptRows,
+    });
+    const rowByEmployeeId = new Map(changed.map((r) => [r.employeeId, r]));
+    const namesByAlias = new Map<string, string>();
+    for (const [alias, employeeId] of aliases) {
+      const row = rowByEmployeeId.get(employeeId);
+      if (row) namesByAlias.set(alias, row.employeeName);
+    }
+    const forbidden = [
+      diff.legalEntityName,
+      ...changed.filter((r) => !r.erased).map((r) => r.employeeName),
+    ].filter((v) => v.trim() !== '');
+
+    const answer = await runModel('diff', () => reader.payrollDiffExplain!(sheet, { forbidden }));
+    if ('state' in answer) {
+      return { ai: answer.state, text: null, deterministicText };
+    }
+    if (answer.value.kind === 'none') {
+      if (answer.value.code === 'QUIET') {
+        ticket.refund?.();
+        return { ai: 'quiet', text: null, deterministicText };
+      }
+      console.error(`[payroll-coworker-ai] diff refused: ${answer.value.code}`);
+      return { ai: 'failed', text: null, deterministicText };
+    }
+    return {
+      ai: 'used',
+      text: restoreDiffAliases(answer.value.text, namesByAlias),
+      deterministicText,
+    };
   } finally {
     ticket.release();
   }
