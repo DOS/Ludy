@@ -85,6 +85,15 @@ describe('checkCashForecastSentence', () => {
     expect(vi('Số dư thấp nhất dự kiến còn 2,5 triệu đồng.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
+  it('refuses a dropped minus sign: "còn 2.500.000" against a negative low point, and a whole date', () => {
+    const negative: CashForecastFacts = { ...FACTS, low: { date: '2026-12-18', balance: '-2500000' } };
+    expect(checkCashForecastSentence(negative, { sentence: 'Số dư thấp nhất dự kiến còn 2.500.000 đồng.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkCashForecastSentence(negative, { sentence: 'Số dư thấp nhất dự kiến vào ngày 2026-12-18, âm 2.500.000 đồng.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    // In words nothing numeric is stated, and the card shows the figure with its minus sign.
+    const text = 'Số dư thấp nhất dự kiến xuống dưới mức không sau khoản phải trả người bán lớn nhất.';
+    expect(checkCashForecastSentence(negative, { sentence: text })).toEqual({ kind: 'sentence', text });
+  });
+
   it('refuses a number in words, a scaled number, a month or day by name, and an invisible character', () => {
     expect(vi('Số dư thấp nhất dự kiến giảm hai mươi phần trăm.')).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(en('The lowest balance is expected to be about two million.')).toEqual({ kind: 'none', code: 'FIGURES' });
@@ -110,6 +119,40 @@ describe('checkCashForecastSentence', () => {
       expect(vi(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
     }
     for (const text of ['The lowest balance is expected after a payment to a supplier; make sure the receipts come in.', 'The lowest balance is expected after a payment to a supplier; keep an eye on the receipts.', 'The lowest balance is expected after a payment; it may want to be watched, worth a look.']) {
+      expect(en(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
+    }
+  });
+
+  it('does not take a plain word for advice or a promise: "nên" as "so", a bank transfer, "unavoidable", a hedge', () => {
+    for (const text of [
+      'Khoản phải trả người bán lớn, nên số dư thấp nhất dự kiến đến ngay sau đó.',
+      'Số dư thấp nhất dự kiến đến sau khoản phải trả người bán lớn nhất; các khoản thu chuyển khoản về muộn hơn.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, điều này không tránh khỏi theo các số liệu hiện có.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, dù không chắc chắn về các khoản thu.',
+    ]) {
+      expect(vi(text), text).toEqual({ kind: 'sentence', text });
+    }
+    for (const text of ['The lowest balance is expected after a payment to a supplier, though the receipts are not certain.', 'The lowest balance is expected after a payment to a supplier, a certain amount of which is already approved.']) {
+      expect(en(text), text).toEqual({ kind: 'sentence', text });
+    }
+  });
+
+  it('refuses the advice a model drifts to and the first lists missed: postponing, contacting, preparing money, planning ahead', () => {
+    for (const text of [
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, nên cân nhắc dời thời điểm thanh toán.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả; liên hệ khách hàng sớm hơn.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, cần chuẩn bị thêm tiền.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả, cần bổ sung tiền.',
+      'Số dư thấp nhất dự kiến đến sau một khoản phải trả; nên lên kế hoạch trước.',
+    ]) {
+      expect(vi(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
+    }
+    for (const text of [
+      'The lowest balance is expected after a payment to a supplier; plan ahead.',
+      'The lowest balance is expected after a payment to a supplier, so you might want to talk to customers.',
+      'The lowest balance is expected after a payment to a supplier; line up some funds.',
+      'The lowest balance is expected after a payment to a supplier; reach out to the customers.',
+    ]) {
       expect(en(text), text).toEqual({ kind: 'none', code: 'ADVICE' });
     }
   });

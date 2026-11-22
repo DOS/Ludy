@@ -23,7 +23,7 @@ import {
 import type { VatFilingPeriod } from '@ludy/kernel-contract';
 import { taxDuesOf } from '@ludy/kernel';
 import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
-import { Decimal, PAYABLE_ACCOUNT } from '@ludy/l10n-vn';
+import { Decimal, PAYABLE_ACCOUNT, type DecimalValue } from '@ludy/l10n-vn';
 import { buildCashForecast, allocatePayable, type ApprovedPayment } from './domain/cash-forecast.ts';
 import { addDays, type SaleInvoice } from './domain/payment-reminder.ts';
 import { canonical } from './domain/money.ts';
@@ -35,27 +35,31 @@ import { balances } from './statements.ts';
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const CASH_PREFIXES = ['111', '112'];
 
-// The booked 111 + 112 of the entity up to and including `today`: the same summed balances finance.overview reads, so it equals B01's cash line 110.
+// The booked cash of the entity up to and including `today`, by the rule of B01 line 110 (the overview's cash card): the summed balance of EACH account of 111 and 112 (an account is read as a whole,
+// whatever the party or the reversal), counted only when it is a debit balance. So an account overdrawn on its own (a credit balance of 112) adds nothing here, as it adds nothing to the card, and
+// the opening cash equals `finance.overview`'s cash figure for the same day (a DB test pins that).
 async function openingCash(ctx: QueryContext, entity: string, today: string): Promise<string> {
   const rows = await balances(ctx, entity, null, today, false)
     .where((eb) => eb.or(CASH_PREFIXES.map((prefix) => eb('l.account_code', 'like', `${prefix}%`))))
     .execute();
-  return canonical(rows.reduce((total, r) => total.plus(r.debit ?? '0').minus(r.credit ?? '0'), new Decimal(0)));
+  const net = new Map<string, DecimalValue>();
+  for (const r of rows) net.set(r.account_code, (net.get(r.account_code) ?? new Decimal(0)).plus(r.debit ?? '0').minus(r.credit ?? '0'));
+  return canonical([...net.values()].reduce((total, v) => (v.greaterThan(0) ? total.plus(v) : total), new Decimal(0)));
 }
 
 interface PayableParty {
-  // null: lines of 331 that name no party (a manual journal): nothing to lay them over, so all of it is "no invoice covers".
-  partyId: string | null;
+  partyId: string;
   balance: string;
 }
 
 // Who the entity owes on 331 as of `today`: the credit minus the debit per supplier (a party and the parties marked as its duplicates are one), positive balances only, the largest first, at most `limit`.
+// Lines that name no party are not here: see partylessPayables.
 async function payableParties(ctx: QueryContext, entity: string, today: string, limit: number): Promise<PayableParty[]> {
-  const kept = sql<string | null>`coalesce(x.duplicate_of, x.id)`;
+  const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
     .selectFrom('crove_finance.journal_line as l')
     .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-    .leftJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
+    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select(sql<string>`sum(l.credit - l.debit)`.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
@@ -69,6 +73,22 @@ async function payableParties(ctx: QueryContext, entity: string, today: string, 
     .limit(limit)
     .execute();
   return rows.map((r) => ({ partyId: r.party_id, balance: r.balance }));
+}
+
+// The 331 lines that name no party (a manual journal), netted: credit minus debit, a decimal string that may be negative. A credit is a debt no invoice can cover (counted on day 0); a debit is a payment
+// already made (the cash has left), so it lowers what is owed to the suppliers, the largest first (the books do not say which one it paid).
+async function partylessPayables(ctx: QueryContext, entity: string, today: string): Promise<string> {
+  const row = await ctx.trx
+    .selectFrom('crove_finance.journal_line as l')
+    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .select(sql<string | null>`sum(l.credit - l.debit)`.as('balance'))
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.legal_entity_id', '=', entity)
+    .where('l.account_code', 'like', `${PAYABLE_ACCOUNT}%`)
+    .where('l.party_id', 'is', null)
+    .where('j.entry_date', '<=', today)
+    .executeTakeFirst();
+  return canonical(new Decimal(row?.balance ?? '0'));
 }
 
 // The purchase invoices still in the books (not voided) of these suppliers, newest first, at most `limit`.
@@ -115,14 +135,15 @@ async function approvedPayments(ctx: QueryContext, entity: string, today: string
   return rows.map((r) => ({ partyId: r.party_id, documentId: r.purchase_document_id, amount: r.amount, payableOn: r.payable_on !== null && r.payable_on > today ? r.payable_on : today }));
 }
 
-// The tax due dates of the horizon as markers with no amount; none when the org has not set its VAT filing period (no calendar then).
-async function taxMarkers(ctx: QueryContext, today: string): Promise<CashForecastTaxMarker[]> {
+// The tax due dates of the horizon as markers with no amount: the tax calendar's own window (the next 30 days, so fewer than the 90 days), of this entity; none when the org has not set its VAT filing period.
+async function taxMarkers(ctx: QueryContext, entity: string, today: string): Promise<CashForecastTaxMarker[]> {
   const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const kind = (org?.vat_filing_period as VatFilingPeriod | null | undefined) ?? null;
   if (kind === null) return [];
   const last = addDays(today, CASH_FORECAST_DAYS);
   return (await taxDuesOf(ctx, kind, today))
-    .filter((d) => d.dueDate >= today && d.dueDate <= last)
+    // Of this entity (an obligation every other entity has marked done is not its marker), within the horizon.
+    .filter((d) => d.dueDate >= today && d.dueDate <= last && d.openEntities.some((e) => e.id === entity))
     .map((d) => ({ obligation: d.obligation, period: String(d.period), dueDate: d.dueDate }));
 }
 
@@ -136,8 +157,9 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
   const any = await ctx.trx.selectFrom('crove_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
 
   // Receipts: the customers' open invoices, dated by their terms. One read more than the bound tells whether the bound was hit.
-  const customers = await loadCustomers(ctx, entity, today, undefined, { customers: CASH_FORECAST_PARTIES_MAX + 1, entriesTo: today });
-  if (customers.length > CASH_FORECAST_PARTIES_MAX) truncated = true;
+  const seen = { documents: 0 };
+  const customers = await loadCustomers(ctx, entity, today, undefined, { customers: CASH_FORECAST_PARTIES_MAX + 1, documents: CASH_FORECAST_DOCUMENTS_MAX, entriesTo: today, seen });
+  if (customers.length > CASH_FORECAST_PARTIES_MAX || seen.documents > CASH_FORECAST_DOCUMENTS_MAX) truncated = true;
   const owed = customers.slice(0, CASH_FORECAST_PARTIES_MAX);
   const receivables = owed.flatMap((c) => c.receivable.open.map((i) => ({ dueDate: i.dueDate, amountDue: i.amountDue })));
   const unlinkedReceivables = owed.reduce((total, c) => total.plus(c.receivable.other), new Decimal(0));
@@ -145,8 +167,15 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
   // Payments: the 331 balance of each supplier laid over its purchase invoices, the approved payments taken out first.
   const found = await payableParties(ctx, entity, today, CASH_FORECAST_PARTIES_MAX + 1);
   if (found.length > CASH_FORECAST_PARTIES_MAX) truncated = true;
-  const suppliers = found.slice(0, CASH_FORECAST_PARTIES_MAX);
-  const supplierIds = suppliers.flatMap((s) => (s.partyId === null ? [] : [s.partyId]));
+  // A payment that names no supplier lowers what is owed, the largest supplier first; a debt that names none is counted on day 0 with the rest no invoice covers.
+  const partyless = new Decimal(await partylessPayables(ctx, entity, today));
+  let unnamedPaid = partyless.isNegative() ? partyless.negated() : new Decimal(0);
+  const suppliers = found.slice(0, CASH_FORECAST_PARTIES_MAX).map((supplier) => {
+    const take = Decimal.min(unnamedPaid, supplier.balance);
+    unnamedPaid = unnamedPaid.minus(take);
+    return { partyId: supplier.partyId, balance: new Decimal(supplier.balance).minus(take).toFixed() };
+  });
+  const supplierIds = suppliers.map((s) => s.partyId);
   const probed = await purchaseDocuments(ctx, entity, today, supplierIds, CASH_FORECAST_DOCUMENTS_MAX + 1);
   if (probed.length > CASH_FORECAST_DOCUMENTS_MAX) truncated = true;
   const documents = probed.slice(0, CASH_FORECAST_DOCUMENTS_MAX);
@@ -154,12 +183,8 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
   if (approved.length > CASH_FORECAST_PAYMENTS_MAX) truncated = true;
   const payables: Array<{ dueDate: string; amountDue: string }> = [];
   const counted: ApprovedPayment[] = [];
-  let unlinkedPayables = new Decimal(0);
+  let unlinkedPayables = partyless.greaterThan(0) ? partyless : new Decimal(0);
   for (const supplier of suppliers) {
-    if (supplier.partyId === null) {
-      unlinkedPayables = unlinkedPayables.plus(supplier.balance);
-      continue;
-    }
     const mine = documents.filter((d) => d.partyId === supplier.partyId);
     const pool = allocatePayable(mine, supplier.balance, approved.slice(0, CASH_FORECAST_PAYMENTS_MAX).filter((a) => a.partyId === supplier.partyId), today);
     payables.push(...pool.open.map((i) => ({ dueDate: i.dueDate, amountDue: i.amountDue })));
@@ -177,7 +202,7 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
     payables,
     unlinkedPayables: unlinkedPayables.toFixed(),
     approvedPayments: counted,
-    taxMarkers: await taxMarkers(ctx, today),
+    taxMarkers: await taxMarkers(ctx, entity, today),
     truncated,
   });
 }

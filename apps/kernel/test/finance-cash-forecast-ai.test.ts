@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, type CashForecastFacts, type CashForecastSentenceResult } from '@ludy/agent';
 import type { CashForecast } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { CASH_FORECAST_KEEP_MS, cashForecastAi, cashForecastFacts, explainCashForecast, type CashForecastAi } from '../src/finance-cash-forecast-ai.ts';
+import { CASH_FORECAST_FAILED_KEEP_MS, CASH_FORECAST_KEEP_MS, cashForecastAi, cashForecastFacts, explainCashForecast, type CashForecastAi } from '../src/finance-cash-forecast-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -108,6 +108,34 @@ describe('explainCashForecast', () => {
     await explainCashForecast(ai, ORG, USER, { ...FORECAST, legalEntityId: '0192f0aa-2222-7222-8333-944445555777' }, 'vi', () => at);
     await explainCashForecast(ai, ORG, USER, { ...FORECAST, low: { date: '2026-12-19', balance: '2400000' } }, 'vi', () => at);
     expect(asked).toHaveLength(6);
+  });
+
+  it('keeps a refused text by its facts too, so the 60-second reads over unchanged figures do not pay for it again, and tries a failed call again sooner', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let at = 1_000;
+    const refused = setup(async () => ({ kind: 'none', code: 'ADVICE' }));
+    for (let i = 0; i < 5; i++) expect(await explainCashForecast(refused.ai, ORG, USER, FORECAST, 'vi', () => at + i * 60_000)).toEqual({ ai: 'failed', text: null });
+    expect(refused.asked).toHaveLength(1);
+    at += CASH_FORECAST_KEEP_MS + 1;
+    await explainCashForecast(refused.ai, ORG, USER, FORECAST, 'vi', () => at);
+    expect(refused.asked).toHaveLength(2);
+    // Other figures are another key, so a refusal of one reading does not silence the next.
+    await explainCashForecast(refused.ai, ORG, USER, { ...FORECAST, low: { date: '2026-12-19', balance: '1' } }, 'vi', () => at);
+    expect(refused.asked).toHaveLength(3);
+    // A failed call (not a refused text) is kept for the shorter time.
+    let calls = 0;
+    const broken = setup(async () => {
+      calls++;
+      throw new Error('down');
+    });
+    let now = 5_000;
+    await explainCashForecast(broken.ai, ORG, USER, FORECAST, 'vi', () => now);
+    now += CASH_FORECAST_FAILED_KEEP_MS - 1;
+    await explainCashForecast(broken.ai, ORG, USER, FORECAST, 'vi', () => now);
+    expect(calls).toBe(1);
+    now += 2;
+    await explainCashForecast(broken.ai, ORG, USER, FORECAST, 'vi', () => now);
+    expect(calls).toBe(2);
   });
 
   it('says busy when the member asks too often, and budget when the org\'s AI budget is spent', async () => {

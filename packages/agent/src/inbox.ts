@@ -664,8 +664,8 @@ export class InboxReader {
   }
 
   /** The accounting coworker's note on the 30/60/90-day cash forecast (#4391) from its computed figures and dates, or why there is none: when nothing is expected in the 90 days the model is not
-   * asked, and its text is refused when it states a number or date the facts do not hold, a link, advice about money, or a promise (cash-forecast.ts). onUsage gets the tokens the call used, for the
-   * org's AI cost limit. */
+   * asked, and its text is refused when it holds any digit (the note states no figure and no date: the card beside it carries them, so none can sit on the wrong label), a month or day name, a number in words, a link,
+   * advice about money, or a promise (cash-forecast.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
   async cashForecastSentence(facts: CashForecastFacts, onUsage?: (usage: AiUsage) => void): Promise<CashForecastSentenceResult> {
     if (cashForecastQuiet(facts)) return { kind: 'none', code: 'QUIET' };
     const { output, usage } = await this.generateCashForecast({ system: cashForecastInstructions(facts.language), prompt: cashForecastPrompt(facts) });

@@ -408,7 +408,7 @@ export const vi = {
     retry: 'Thử lại',
     opening: 'Tiền trong sổ ngày {date}: {amount}',
     low: 'Số dư thấp nhất dự kiến: {amount} vào ngày {date}',
-    lowNegative: 'Số dư dự kiến sẽ xuống dưới 0.',
+    lowNegative: 'Số dư dự kiến xuống dưới 0.',
     table: {
       caption: 'Số dư dự kiến sau 30, 60 và 90 ngày, cùng các khoản thu và chi',
       after: 'Sau',
@@ -424,7 +424,7 @@ export const vi = {
     estimates: 'Khoản thu được xếp theo kỳ hạn thanh toán của từng khách hàng. Hóa đơn của nhà cung cấp không ghi hạn thanh toán nên được tính sau ngày hóa đơn {days} ngày, hóa đơn đã quá ngày đó được tính vào hôm nay. Các ngày này là ước tính.',
     overdue: '{amount} hóa đơn bán đã quá hạn thanh toán. Khoản này không được tính ở đây.',
     unlinked: '{amount} khách hàng còn nợ không gắn với hóa đơn bán nào và không được tính ở đây.',
-    taxMarkers: 'Ngày đến hạn thuế trong kỳ này (không tính số tiền):',
+    taxMarkers: 'Ngày đến hạn thuế trong 30 ngày tới (không tính số tiền):',
     truncated: 'Sổ có nhiều khách hàng hoặc hóa đơn hơn mức một lần dự báo đọc, nên các con số này chưa đầy đủ.',
     notIncluded: {
       line: 'Chưa có trong các con số này: {items}.',

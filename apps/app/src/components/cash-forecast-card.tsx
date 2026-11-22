@@ -123,7 +123,7 @@ export function CashForecastCard({ legalEntityId, ready }: { legalEntityId: stri
       <section className="mt-8">
         <ErrorText>
           {errorMessage(query.error)}{' '}
-          <button type="button" className="underline" onClick={() => void query.refetch()}>
+          <button type="button" className="min-h-11 underline" onClick={() => void query.refetch()}>
             {t('retry')}
           </button>
         </ErrorText>

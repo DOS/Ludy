@@ -86,7 +86,7 @@ describe('CashForecastView', () => {
     expect(html).toContain('Not in these figures: payroll, social insurance, tax payments, rent, loans, other recurring costs.');
     expect(html).toContain('30 days after the invoice date');
     expect(html).toContain('These dates are estimates.');
-    expect(html).toMatch(/Tax due dates in this period \(no amount is counted\):.*VAT return/);
+    expect(html).toMatch(/Tax due dates in the next 30 days \(no amount is counted\):.*VAT return/);
     expect(html).toMatch(/4,000,000.* of sales invoices are already past their due date/);
   });
 
@@ -103,7 +103,7 @@ describe('CashForecastView', () => {
   it('draws no line for an overdue or unlinked amount of zero, and no tax list without a marker', () => {
     const html = card({ ...FORECAST, overdueReceiptsNotCounted: '0', taxMarkers: [] });
     expect(html).not.toContain('already past their due date');
-    expect(html).not.toContain('Tax due dates in this period');
+    expect(html).not.toContain('Tax due dates in the next 30 days');
   });
 
   it('keeps the Vietnamese and English texts in step and writes the Vietnamese card', () => {

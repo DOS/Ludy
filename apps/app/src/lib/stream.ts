@@ -34,7 +34,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
   switch (hint.type) {
     case 'proposal':
       // files.batch: the intake list's files whose proposal still waits (#2009), so their chips follow its decision.
-      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id);
+      // financeCashForecast: approving a supplier payment (a proposal) moves what the cash forecast counts as going out (#4391); a cancelled one is read again by the card's own 60-second read.
+      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id) || (path === 'financeCashForecast.get' || path === 'financeCashForecast.explain');
     case 'file':
     case 'extraction':
       // extraction carries the id of the file whose reading changed. files.batch: a re-read of a file the intake list

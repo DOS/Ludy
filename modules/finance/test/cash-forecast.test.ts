@@ -172,6 +172,23 @@ describe('allocatePayable', () => {
     expect(forecast.series[90]?.balance).toBe('1000');
   });
 
+  it('takes only what a partial approved payment pays off its invoice, and lays the rest of the invoice over the balance', () => {
+    const approved: ApprovedPayment[] = [{ documentId: '2', amount: '200', payableOn: day(3) }];
+    const pool = allocatePayable(docs, '1000', approved, TODAY);
+    expect(pool.approved).toEqual(approved);
+    // 800 of the balance is left for the invoices: invoice 2 (500, less the 200 paid) is open for 300 and invoice 1 for 500.
+    expect(pool.open.map((o) => [o.id, o.amountDue])).toEqual([['1', 500], ['2', 300]].map(([id, a]) => [id, String(a)]));
+    expect(pool.unlinked).toBe('0');
+    const forecast = buildCashForecast(input({ openingCash: '2000', payables: pool.open, unlinkedPayables: pool.unlinked, approvedPayments: pool.approved }));
+    expect(forecast.checkpoints[2]?.payments).toBe('1000');
+  });
+
+  it('counts an approved payment of a supplier with no positive balance for nothing', () => {
+    const approved: ApprovedPayment[] = [{ documentId: '2', amount: '500', payableOn: day(3) }];
+    expect(allocatePayable(docs, '0', approved, TODAY).approved).toEqual([]);
+    expect(allocatePayable(docs, '-50', approved, TODAY).approved).toEqual([]);
+  });
+
   it('caps what approved payments count for at the balance, so a payment already booked by hand leaves once', () => {
     const approved: ApprovedPayment[] = [{ documentId: '2', amount: '500', payableOn: day(3) }, { documentId: '1', amount: '500', payableOn: day(1) }];
     const pool = allocatePayable(docs, '600', approved, TODAY);

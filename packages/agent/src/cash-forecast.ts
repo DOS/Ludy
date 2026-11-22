@@ -110,18 +110,23 @@ export function cashForecastPrompt(facts: CashForecastFacts): string {
 // A month or a day of the week by name is a date the facts may not hold ("in December", "on Friday"); with the digits it keeps the note free of any date.
 const DATE_WORDS = /(?<![\p{L}])(?:january|february|march|april|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|yesterday|hôm qua|ngày mai|chủ nhật|thứ hai|thứ ba|thứ tư|thứ năm|thứ sáu|thứ bảy)(?![\p{L}])/iu;
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
-// Advice to do something with money or with a payment, in either language: telling the owner to act, to move or transfer money, to borrow, to delay, chase or collect, to cut, to avoid. A word that
-// only describes the figures ("lowest", "thấp nhất") is not here. Matched on whole words, case folded; a hit refuses the sentence.
+// Advice to do something with money or with a payment, in either language: telling the owner to act, to move or transfer money, to borrow, to delay or postpone, to chase, collect or contact, to prepare, to
+// cut, to avoid. A word that only describes the figures ("lowest", "thấp nhất") is not here. Matched on whole words, case folded; a hit refuses the sentence. Some Vietnamese words are advice in one use and a
+// plain word in another, so they are cut by what follows or precedes them: "nên" is "so" before a noun of the figures ("..., nên số dư giảm"), "tránh khỏi" is "unavoidable", "khoản vay" is the loans the
+// forecast leaves out, and "chuyển khoản" is a bank transfer as a noun (the verb is "chuyển tiền").
 const ADVICE = [
-  // "khoản vay" (a loan) names what the forecast leaves out, so "vay" counts only when it is not that noun.
-  /(?<![\p{L}])(?:nên|hãy|đừng|khuyên|khuyến nghị|đề nghị|đề xuất|gợi ý|cần|cần phải|xem xét|cân nhắc|chuẩn bị|huy động|thương lượng|bổ sung|giảm chi|hoãn|trì hoãn|tránh|cắt giảm|đòi nợ|thu hồi|đẩy nhanh|chuyển tiền|chuyển khoản|xoay)(?![\p{L}])/iu,
+  /(?<![\p{L}])nên(?![\p{L}])(?!\s+(?:số dư|dòng tiền|tiền|khoản|các khoản|dự báo|điểm thấp|mức|việc)(?![\p{L}]))/iu,
+  /(?<![\p{L}])(?:hãy|đừng|khuyên|khuyến nghị|đề nghị|đề xuất|gợi ý|cần|xem xét|cân nhắc|chuẩn bị|huy động|thương lượng|bổ sung|giảm chi|hoãn|trì hoãn|dời|lùi|cắt giảm|đòi nợ|thu hồi|đẩy nhanh|liên hệ|liên lạc|chuyển tiền|xoay|lên kế hoạch|theo dõi)(?![\p{L}])/iu,
+  /(?<![\p{L}])tránh(?![\p{L}])(?!\s+khỏi)/iu,
   /(?<!khoản\s)(?<![\p{L}])vay(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:should|shouldn't|must|recommend|recommends|recommended|suggest|suggests|suggested|advise|advises|advised|consider|try to|need to|needs to|ought to|borrow|borrowing|borrow more|take out a loan|transfer|transferring|delay|delaying|postpone|postponing|defer|deferring|chase|chasing|collect|collecting|reduce|cut|avoid|top up|make sure|prepare|plan to|may want to|worth|accelerate|speed up|negotiate|keep an eye|monitor|move money|pay later|pay earlier)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:should|shouldn't|must|recommend|recommends|recommended|suggest|suggests|suggested|advise|advises|advised|consider|try to|need to|needs to|ought to|borrow|borrowing|borrow more|take out a loan|transfer|transferring|delay|delaying|postpone|postponing|defer|deferring|chase|chasing|collect|collecting|reduce|cut|avoid|top up|make sure|prepare|plan to|plan ahead|might want to|may want to|worth|line up|reach out|get in touch|follow up|accelerate|speed up|negotiate|keep an eye|monitor|move money|pay later|pay earlier)(?![\p{L}])/iu,
 ];
-// A promise or a certainty about the future: "will", "sẽ", "chắc chắn", "guaranteed". A forecast is expected, never promised.
+// A promise or a certainty about the future: "will", "sẽ", "chắc chắn", "guaranteed". A forecast is expected, never promised. A hedge is not one: "không chắc chắn", "not certain".
 const PROMISE = [
-  /(?<![\p{L}])(?:sẽ|chắc chắn|chắc là|nhất định|đảm bảo|bảo đảm|cam kết|hứa)(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:will|won't|going to|guarantee|guarantees|guaranteed|certain|certainly|definitely|surely|promise|promises|promised|assure|assured|ensure|ensures|no doubt)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:sẽ|chắc là|nhất định|đảm bảo|bảo đảm|cam kết|hứa)(?![\p{L}])/iu,
+  /(?<!không\s)(?<![\p{L}])chắc chắn(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:will|won't|going to|guarantee|guarantees|guaranteed|certainly|definitely|surely|promise|promises|promised|assure|assured|ensure|ensures|no doubt|certain to)(?![\p{L}])/iu,
+  /(?<!not\s)(?<![\p{L}])(?:is|are|be)\s+certain(?![\p{L}])/iu,
 ];
 
 /** The note the model gave, or why there is none. Pure: the model call is the caller's. */

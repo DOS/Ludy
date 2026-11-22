@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { vietnamToday, type CashForecast } from '@ludy/kernel-contract';
+import { CASH_FORECAST_PARTIES_MAX, vietnamToday, type CashForecast, type FinanceOverview } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -256,6 +256,119 @@ suite('the cash-flow forecast (#4391)', () => {
     expect(other.openingCash).toBe('7000000');
     expect(other.legalEntityId).toBe(branch);
   });
+
+  it('opens with the same cash as the overview card: an account of 111 or 112 overdrawn on its own adds nothing, as B01 line 110 reads it', async () => {
+    const o = await org();
+    await entry(o, day(-30), [{ account: '1121', debit: '700000' }, { account: '411', credit: '700000' }]);
+    // 1122 is overdrawn by 300,000 (a credit balance): the card does not subtract it from the cash, so neither does the forecast.
+    await entry(o, day(-20), [{ account: '6422', debit: '300000' }, { account: '1122', credit: '300000' }]);
+    await entry(o, day(-10), [{ account: '111', debit: '50000' }, { account: '411', credit: '50000' }]);
+    const card = await rt.query<FinanceOverview>('finance.overview', { range: 'last_30_days', asOf: TODAY }, { actor: asUser(o.owner), orgId: o.orgId });
+    const f = await forecast(o);
+    expect(card.cash.amount).toBe('750000');
+    expect(f.openingCash).toBe(card.cash.amount);
+    // The same on an earlier day.
+    const before = await rt.query<FinanceOverview>('finance.overview', { range: 'last_30_days', asOf: day(-15) }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect((await forecast(o, { asOf: day(-15) })).openingCash).toBe(before.cash.amount);
+  });
+
+  it('takes from what an approved payment pays off its invoice only that part, and lays the rest of the invoice over the balance', async () => {
+    const o = await org();
+    const s = await party(o, 'Nhà cung cấp Kim Long');
+    await cash(o, day(-60), '10000000');
+    const doc = await purchase(o, s, 'P1', day(-5), '1000000');
+    await approvedPayment(o, s, doc as string, '400000', { payableAfter: new Date(Date.parse(`${day(3)}T05:00:00Z`)).toISOString() });
+    const f = await forecast(o);
+    expect(at(f, day(2))).toBe('10000000');
+    expect(at(f, day(3))).toBe('9600000');
+    expect(at(f, day(24))).toBe('9600000');
+    // The 600,000 left of the invoice falls due 25 days from today (dated 5 days ago, 30-day terms).
+    expect(at(f, day(25))).toBe('9000000');
+    expect(f.checkpoints[2]).toMatchObject({ payments: '1000000', balance: '9000000' });
+  });
+
+  it('counts an approved payment of a supplier with nothing left to pay for nothing', async () => {
+    const o = await org();
+    const s = await party(o, 'Nhà cung cấp Lạc Hồng');
+    await cash(o, day(-60), '3000000');
+    const doc = await purchase(o, s, 'Q1', day(-5), '800000');
+    await entry(o, day(-1), [{ account: '331', debit: '800000', party: s }, { account: '112', credit: '800000' }]);
+    await approvedPayment(o, s, doc as string, '800000');
+    const f = await forecast(o);
+    expect(f.openingCash).toBe('2200000');
+    expect(f.series.every((d) => d.balance === '2200000')).toBe(true);
+    expect(f.topItems).toEqual([]);
+  });
+
+  it('lowers what is owed by a 331 payment that names no supplier, so the cash that left is not counted twice', async () => {
+    const o = await org();
+    const s = await party(o, 'Nhà cung cấp Mai Linh');
+    await cash(o, day(-60), '5000000');
+    await purchase(o, s, 'N1', day(-10), '2000000');
+    await entry(o, day(-1), [{ account: '331', debit: '500000' }, { account: '112', credit: '500000' }]);
+    const f = await forecast(o);
+    expect(f.openingCash).toBe('4500000');
+    // The supplier is owed 1,500,000 after the unnamed payment, due 20 days from today (dated 10 days ago, 30-day terms).
+    expect(at(f, day(19))).toBe('4500000');
+    expect(at(f, day(20))).toBe('3000000');
+    expect(f.topItems.map((i) => [i.kind, i.amount])).toEqual([['payable', '1500000']]);
+  });
+
+  it('lists the tax due dates of the entity as markers with no amount once the org has set its VAT filing period', async () => {
+    const o = await org();
+    expect((await forecast(o)).taxMarkers).toEqual([]);
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET vat_filing_period = 'month' WHERE org_id = $1", [o.orgId]));
+    const f = await forecast(o);
+    expect(f.taxMarkers.length).toBeGreaterThan(0);
+    expect(f.taxMarkers[0]).toMatchObject({ obligation: 'vat_return' });
+    for (const m of f.taxMarkers) {
+      expect(m.dueDate >= TODAY && m.dueDate <= day(90)).toBe(true);
+      expect(Object.keys(m).sort()).toEqual(['dueDate', 'obligation', 'period']);
+    }
+    expect((await forecast(o, {}, o.viewer)).taxMarkers).toEqual(f.taxMarkers);
+  });
+
+  it('refuses an entity a member may not see (403) and answers a limited member for the one entity they see', async () => {
+    const o = await org();
+    const branch = await secondEntity(o);
+    const limited = await identity('limited');
+    await admin(async (c) => {
+      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+      await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+    });
+    await cash(o, day(-10), '1000000');
+    await cash(o, day(-10), '7000000', branch);
+    await expect(forecast(o, { legalEntityId: o.entity }, limited)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED', status: 403 });
+    // Without a choice, the one entity the member sees answers, and it holds only its own entries.
+    const mine = await forecast(o, {}, limited);
+    expect(mine).toMatchObject({ legalEntityId: branch, openingCash: '7000000' });
+  });
+
+  it('says the forecast is partial when the books hold more customers than one forecast reads', async () => {
+    const o = await org();
+    await cash(o, day(-60), '1000000');
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      for (let i = 0; i <= CASH_FORECAST_PARTIES_MAX; i++) {
+        const p = randomUUID();
+        const e = randomUUID();
+        await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [o.orgId, p, `Khách ${i}`]);
+        await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'bulk', 'finance.journal_voucher', $4, $5)", [o.orgId, e, day(-5), randomUUID(), o.entity]);
+        await c.query(
+          "INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)",
+          [o.orgId, e, 1000 + i, p, o.entity],
+        );
+      }
+      await c.query('COMMIT');
+    });
+    const f = await forecast(o);
+    expect(f.truncated).toBe(true);
+    // The others stay whole: the cash and the series are still there, and the forecast is not an error.
+    expect(f.openingCash).toBe('1000000');
+    expect(f.series).toHaveLength(91);
+    // Few customers: not partial.
+    expect((await forecast(await org())).truncated).toBe(false);
+  }, 120_000);
 
   it('writes nothing: a forecast leaves no journal entry, document or audit row behind', async () => {
     const o = await org();

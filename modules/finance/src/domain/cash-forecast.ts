@@ -44,25 +44,28 @@ export interface PayablePool {
 }
 
 // Lays one supplier's 331 balance (credit minus debit, a decimal string) over its purchase invoices, after taking its approved payments out: the payments count first, in the order of their day, up to the
-// balance, and their invoices leave the allocation. A balance at or below zero (nothing owed, or overpaid) counts nothing. Invoice dates are the document's own; the date of each open one is the invoice date + PAYABLE_TERMS_DAYS.
+// balance, and what each counts for comes off its own invoice (the whole invoice leaves the allocation only when the payment covers all of it; a partial payment leaves the rest of the invoice to be laid
+// over). A balance at or below zero (nothing owed, or overpaid) counts nothing, and neither does an approved payment of a supplier with no positive balance. Invoice dates are the document's own; the date
+// of each open one is the invoice date + PAYABLE_TERMS_DAYS.
 export function allocatePayable(documents: readonly SaleInvoice[], balance: string, approved: readonly ApprovedPayment[], today: string): PayablePool {
   let left = Decimal.max(new Decimal(balance), 0);
   const counted: ApprovedPayment[] = [];
-  const settledDocuments = new Set<string>();
+  const paidOn = new Map<string, DecimalValue>();
   for (const payment of [...approved].sort((a, b) => a.payableOn.localeCompare(b.payableOn) || a.documentId.localeCompare(b.documentId))) {
     if (left.lessThanOrEqualTo(0)) break;
     const amount = Decimal.min(new Decimal(payment.amount), left);
     if (amount.lessThanOrEqualTo(0)) continue;
     left = left.minus(amount);
     counted.push({ ...payment, amount: amount.toFixed() });
-    settledDocuments.add(payment.documentId);
+    paidOn.set(payment.documentId, (paidOn.get(payment.documentId) ?? new Decimal(0)).plus(amount));
   }
-  const rest = allocateReceivable(
-    documents.filter((d) => !settledDocuments.has(d.id)),
-    left.toFixed(),
-    today,
-    PAYABLE_TERMS_DAYS,
-  );
+  const remaining = documents.flatMap((d) => {
+    const paid = paidOn.get(d.id);
+    if (!paid) return [d];
+    const rest = new Decimal(d.total).minus(paid);
+    return rest.greaterThan(0) ? [{ ...d, total: rest.toFixed() }] : [];
+  });
+  const rest = allocateReceivable(remaining, left.toFixed(), today, PAYABLE_TERMS_DAYS);
   return { open: rest.open, unlinked: rest.other, approved: counted };
 }
 

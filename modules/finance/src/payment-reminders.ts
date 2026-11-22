@@ -84,8 +84,11 @@ export interface Customer {
 export interface CustomerBounds {
   // The balance counts only the entries, and the invoices laid under it only the ones, dated up to this day (the cash forecast reads the books as of its day 0); left out, everything counts.
   entriesTo?: string;
-  // At most this many customers are read, the largest balances first (the cash forecast bounds its reads); their invoices are all read.
+  // At most this many customers are read, the largest balances first, and at most `documents` of their invoices, newest first (the cash forecast bounds its reads). `seen.documents` is
+  // set to how many invoice rows the read found (the limit is one more than `documents`, so a caller can tell the bound was hit); only `documents` of them are laid under the balances.
   customers: number;
+  documents: number;
+  seen?: { documents: number };
 }
 
 // The customers of one legal entity with a positive balance on 131, their sales invoices laid under it (domain/payment-reminder.ts),
@@ -117,7 +120,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
   if (owed.length === 0) return [];
   const ids = owed.map((r) => r.party_id);
   const parties = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
-  const invoices = await ctx.trx
+  const invoiceRows = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
     .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
     .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
@@ -129,7 +132,16 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     .where('v.document_id', 'is', null)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
     .$if(bounds?.entriesTo !== undefined, (q) => q.where('d.invoice_date', '<=', bounds?.entriesTo ?? ''))
+    .$if(bounds !== undefined, (q) => q.orderBy('d.invoice_date', 'desc').orderBy('d.id').limit((bounds?.documents ?? 0) + 1))
     .execute();
+  if (bounds?.seen) bounds.seen.documents = invoiceRows.length;
+  // Grouped once by customer (not filtered per customer), and cut to the bound.
+  const invoices = new Map<string, typeof invoiceRows>();
+  for (const row of bounds ? invoiceRows.slice(0, bounds.documents) : invoiceRows) {
+    const mine = invoices.get(row.party_id);
+    if (mine) mine.push(row);
+    else invoices.set(row.party_id, [row]);
+  }
   const byParty = new Map(parties.map((p) => [p.id, p]));
   // What the org and each customer set (#2488, slice 3): the terms date the invoices, a pause keeps the customer out of the list, the draft and the send.
   const org = await readCollectionSetting(ctx);
@@ -155,7 +167,7 @@ export async function loadCustomers(ctx: QueryContext, entity: string, today: st
     const set = own.get(o.party_id);
     const termsDays = set?.terms_days ?? org.termsDays;
     const receivable = allocateReceivable(
-      invoices.filter((i) => i.party_id === o.party_id).map((i) => ({ id: i.id, series: i.invoice_series, number: i.invoice_number, date: i.invoice_date, total: i.total, currency: i.currency })),
+      (invoices.get(o.party_id) ?? []).map((i) => ({ id: i.id, series: i.invoice_series, number: i.invoice_number, date: i.invoice_date, total: i.total, currency: i.currency })),
       o.balance,
       today,
       termsDays,

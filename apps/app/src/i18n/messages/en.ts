@@ -426,7 +426,7 @@ export const en = {
     estimates: 'Money coming in is dated by each customer\'s payment terms. A supplier invoice has no due date, so it is counted {days} days after the invoice date, and one already past that date counts today. These dates are estimates.',
     overdue: '{amount} of sales invoices are already past their due date. They are not counted here.',
     unlinked: '{amount} of what customers owe belongs to no sales invoice and is not counted here.',
-    taxMarkers: 'Tax due dates in this period (no amount is counted):',
+    taxMarkers: 'Tax due dates in the next 30 days (no amount is counted):',
     truncated: 'The books hold more customers or invoices than one forecast reads, so these figures are partial.',
     notIncluded: {
       line: 'Not in these figures: {items}.',
