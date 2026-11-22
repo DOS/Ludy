@@ -97,7 +97,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
   'packages/kernel/src/queries.ts': {
     modules: ['sign'],
-    why: 'kernel.file.get checks crove_sign.can_read_sign_file for sign_document, sign_sealed and sign_certificate rows (#3553) whatever is installed now, so a confidential HR contract PDF or certificate stored by an earlier install of sign stays restricted to owners, admins and its creator even when sign is off',
+    why: 'kernel.file.get checks crove_sign.can_read_sign_file for sign_document, sign_sealed, sign_certificate and sign_attachment rows (#3553, #3818) whatever is installed now, so a confidential HR contract PDF, certificate or signer attachment stored by an earlier install of sign stays restricted to owners, admins and its creator even when sign is off',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
@@ -135,6 +135,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
   'apps/kernel/src/sign-direct-link.ts': { modules: ['sign'], why: 'the orgless public direct eSign link ceremony resolvers (crove_sign.public_direct_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-link.ts': { modules: ['sign'], why: 'the orgless public eSign link and verification resolvers (crove_sign.public_* definers), registered only when sign is installed (http.ts)' },
+  'apps/kernel/src/sign-public-hub.ts': { modules: ['sign'], why: 'the orgless public self-service eSign template hub resolvers (crove_sign.public_hub_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/worker.ts': {
     modules: ['ads', 'social'],
     why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise); the agent sweep, a schedule with no egress, also wipes the sealed copies of closed ads tokens past their age through a worker-only definer (crove_ads.token_revoke_expire), whether or not ads is installed: the hold is a trigger of the database, so a copy can exist with the module switched off and must not outlive its seven days (#2296)',

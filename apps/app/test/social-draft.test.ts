@@ -29,7 +29,7 @@ describe('unsaved Social edits kept in the browser (#634)', () => {
     saveDraft('cong-ty', 'new', null, { body: 'Cũ' }, new Date('2026-10-01T00:00:00Z'));
     expect(loadDraft('cong-ty', 'new', Date.parse('2026-10-01T00:00:00Z') + DRAFT_TTL_MS + 1)).toBeNull();
     expect(store.size).toBe(0);
-    store.set('crove.social.draft:cong-ty:new', '{not json');
+    store.set('ludy.social.draft:cong-ty:new', '{not json');
     expect(loadDraft('cong-ty', 'new')).toBeNull();
   });
 

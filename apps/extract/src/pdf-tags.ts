@@ -9,7 +9,9 @@ import type { PageRotation } from './fonts.ts';
 const NORM_MICRO_SCALE = 1_000_000;
 const MIN_FIELD_W_MICRO = 20_000; // 0.020000
 const MIN_FIELD_H_MICRO = 15_000; // 0.015000
-const MAX_TAG_INNER_CHARS = 160;
+const MAX_TAG_INNER_CHARS = 1200;
+const MAX_TAG_OPTIONS = 50;
+const MAX_TAG_OPTION_CHARS = 200;
 const MAX_LINE_SCAN_CHARS = 8_192;
 const MAX_PAGE_TAG_SCAN_CHARS = 250_000;
 
@@ -39,6 +41,7 @@ export interface ParsedTagSpec {
   readonly roleKey: string;
   readonly required: boolean;
   readonly label: string | null;
+  readonly options?: readonly string[] | undefined;
 }
 
 interface Vec2 {
@@ -163,6 +166,14 @@ function normalizeTagType(raw: string): PdfDetectedTagFieldType | null {
     case 'checkbox':
     case 'check':
       return 'checkbox';
+    case 'dropdown':
+    case 'select':
+      return 'dropdown';
+    case 'radio':
+      return 'radio';
+    case 'attachment':
+    case 'file':
+      return 'attachment';
     default:
       return null;
   }
@@ -194,7 +205,7 @@ function sliceWithoutSplittingSurrogatePair(value: string, maxUnits: number): st
   return end <= 0 ? '' : value.slice(0, end);
 }
 
-function sanitizeTagLabel(raw: string): string | null {
+function sanitizeTagBoundedText(raw: string, maxChars: number): string | null {
   if (hasLoneSurrogate(raw)) return null;
   const normalized = raw.normalize('NFC');
   if (hasLoneSurrogate(normalized)) return null;
@@ -206,10 +217,30 @@ function sanitizeTagLabel(raw: string): string | null {
     cleaned += ch;
   }
   const collapsed = cleaned.replace(/\s+/g, ' ').trim();
-  if (collapsed.length === 0 || collapsed.length > EXTRACT_LIMITS.maxPdfDetectedTagLabelChars) {
+  if (collapsed.length === 0 || collapsed.length > maxChars) {
     return null;
   }
   return collapsed;
+}
+
+function sanitizeTagLabel(raw: string): string | null {
+  return sanitizeTagBoundedText(raw, EXTRACT_LIMITS.maxPdfDetectedTagLabelChars);
+}
+
+function parsePipeOptions(raw: string): string[] | null {
+  const parts = raw.split('|');
+  if (parts.length === 0 || parts.length > MAX_TAG_OPTIONS) return null;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    const clean = sanitizeTagBoundedText(part, MAX_TAG_OPTION_CHARS);
+    if (clean === null) return null;
+    if (!seen.has(clean)) {
+      seen.add(clean);
+      out.push(clean);
+    }
+  }
+  return out.length >= 1 && out.length <= MAX_TAG_OPTIONS ? out : null;
 }
 
 export function parseDeterministicTagToken(rawInner: string): ParsedTagSpec | null {
@@ -232,20 +263,76 @@ export function parseDeterministicTagToken(rawInner: string): ParsedTagSpec | nu
   }
   const roleKey = `r${roleOrder}`;
 
+  const isChoice = fieldType === 'dropdown' || fieldType === 'radio';
   const rawTail = roleMatch[2];
   if (!rawTail) {
-    return { fieldType, roleOrder, roleKey, required: true, label: null };
+    return isChoice ? null : { fieldType, roleOrder, roleKey, required: true, label: null };
   }
 
   const sep = rawTail[0];
   if (sep !== ':' && sep !== ',') return null;
-  const segments = rawTail.slice(1).split(sep);
-  if (segments.length === 0 || segments.length > 2) return null;
+  const rawSegments = rawTail.slice(1).split(sep);
+
+  if (isChoice) {
+    const expanded: string[] = [];
+    for (let i = 0; i < rawSegments.length; i += 1) {
+      const seg = rawSegments[i] ?? '';
+      if (sep === ',' && i === rawSegments.length - 1) {
+        const pipeIdx = seg.indexOf('|');
+        const colonIdx = seg.indexOf(':');
+        if (colonIdx > 0 && (pipeIdx === -1 || colonIdx < pipeIdx)) {
+          expanded.push(seg.slice(0, colonIdx), seg.slice(colonIdx + 1));
+          continue;
+        }
+      }
+      expanded.push(seg);
+    }
+    if (expanded.length === 0 || expanded.length > 3) return null;
+
+    const trimmedSegs = expanded.map((s) => s.trim());
+    if (trimmedSegs.some((s) => s.length === 0)) return null;
+
+    let seenRequiredFlag: boolean | null = null;
+    const remaining: string[] = [];
+    for (const seg of trimmedSegs) {
+      const lower = seg.toLowerCase();
+      if ((lower === 'optional' || lower === 'required') && !seg.includes('|') && trimmedSegs.length > 1) {
+        const flagVal = lower === 'required';
+        if (seenRequiredFlag !== null && seenRequiredFlag !== flagVal) return null;
+        seenRequiredFlag = flagVal;
+      } else {
+        remaining.push(seg);
+      }
+    }
+    if (remaining.length === 0 || remaining.length > 2) return null;
+
+    const rawOptionsSeg = remaining[remaining.length - 1]!;
+    const options = parsePipeOptions(rawOptionsSeg);
+    if (!options) return null;
+
+    let label: string | null = null;
+    if (remaining.length === 2) {
+      const cleanLabel = sanitizeTagLabel(remaining[0]!);
+      if (cleanLabel === null) return null;
+      label = cleanLabel;
+    }
+
+    return {
+      fieldType,
+      roleOrder,
+      roleKey,
+      required: seenRequiredFlag ?? true,
+      label,
+      options,
+    };
+  }
+
+  if (rawSegments.length === 0 || rawSegments.length > 2) return null;
 
   let seenRequiredFlag: boolean | null = null;
   let label: string | null = null;
 
-  for (const rawSeg of segments) {
+  for (const rawSeg of rawSegments) {
     const trimmed = rawSeg.trim();
     if (trimmed.length === 0) return null;
     const lower = trimmed.toLowerCase();
@@ -328,6 +415,21 @@ function computeTargetTagBox(
     case 'checkbox': {
       rawW = Math.min(0.12, Math.max(0.024, 16 / safePageW));
       rawH = Math.min(0.12, Math.max(0.022, 16 / safePageH));
+      break;
+    }
+    case 'dropdown': {
+      rawW = Math.max(tagWNorm, Math.min(0.45, Math.max(0.18, 128 / safePageW)));
+      rawH = Math.max(tagHNorm, Math.min(0.1, Math.max(0.028, 22 / safePageH)));
+      break;
+    }
+    case 'radio': {
+      rawW = Math.max(tagWNorm, Math.min(0.45, Math.max(0.16, 112 / safePageW)));
+      rawH = Math.max(tagHNorm, Math.min(0.1, Math.max(0.028, 22 / safePageH)));
+      break;
+    }
+    case 'attachment': {
+      rawW = Math.max(tagWNorm, Math.min(0.45, Math.max(0.18, 128 / safePageW)));
+      rawH = Math.max(tagHNorm, Math.min(0.12, Math.max(0.032, 24 / safePageH)));
       break;
     }
   }
@@ -499,6 +601,7 @@ function scanLineBufferForTags(
       roleKey: spec.roleKey,
       required: spec.required,
       label: spec.label,
+      ...(spec.options ? { options: [...spec.options] } : {}),
       ...coords,
     });
   }

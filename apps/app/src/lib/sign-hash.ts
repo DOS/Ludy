@@ -3,9 +3,19 @@
 // The signing link carries its credential strictly in the URL fragment (#token) so the token
 // never travels in HTTP query strings, server access logs, or Referer headers.
 
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
+export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+export function hasInPersonQueryFlag(search = typeof window !== 'undefined' ? window.location.search : ''): boolean {
+  if (!search) return false;
+  const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
+  const flag = params.get('in_person');
+  return flag === '1' || flag === 'true';
+}
 
 export function readSignTokenFromHash(hash = typeof window !== 'undefined' ? window.location.hash : ''): string | null {
   const outerTrimmed = hash.trim();
@@ -14,8 +24,10 @@ export function readSignTokenFromHash(hash = typeof window !== 'undefined' ? win
   return SIGN_TOKEN_PATTERN.test(trimmed) ? trimmed : null;
 }
 
-const SIGN_TOKEN_SESSION_KEY = 'crove.sign.ceremony.token';
-const SIGN_DIRECT_TOKEN_SESSION_KEY = 'crove.sign.direct.token';
+const SIGN_TOKEN_SESSION_KEY = 'ludy.sign.ceremony.token';
+const LEGACY_SIGN_TOKEN_SESSION_KEY = 'crove.sign.ceremony.token';
+const SIGN_DIRECT_TOKEN_SESSION_KEY = 'ludy.sign.direct.token';
+const LEGACY_SIGN_DIRECT_TOKEN_SESSION_KEY = 'crove.sign.direct.token';
 const SIGN_TOKEN_SESSION_TTL_MS = 15 * 60 * 1000;
 
 interface StoredSignToken {
@@ -23,22 +35,22 @@ interface StoredSignToken {
   savedAt: number;
 }
 
-function writeSessionSignToken(storageKey: string, token: string): void {
+function writeSessionSignToken(storageKey: string, legacyKey: string, token: string): void {
   if (typeof window === 'undefined' || !SIGN_TOKEN_PATTERN.test(token)) return;
   try {
     const payload: StoredSignToken = { token, savedAt: Date.now() };
-    window.sessionStorage.setItem(storageKey, JSON.stringify(payload));
+    writeMigratedItem(window.sessionStorage, storageKey, legacyKey, JSON.stringify(payload));
   } catch {
     // Ignore storage quota or private browsing restrictions.
   }
 }
 
-function readSessionSignToken(storageKey: string): string | null {
+function readSessionSignToken(storageKey: string, legacyKey: string): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.sessionStorage.getItem(storageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<StoredSignToken> | null;
+    const entry = readLegacyAwareItem(window.sessionStorage, storageKey, legacyKey);
+    if (!entry) return null;
+    const parsed = JSON.parse(entry.value) as Partial<StoredSignToken> | null;
     if (
       !parsed ||
       typeof parsed.token !== 'string' ||
@@ -47,13 +59,14 @@ function readSessionSignToken(storageKey: string): string | null {
       !Number.isFinite(parsed.savedAt) ||
       Date.now() - parsed.savedAt > SIGN_TOKEN_SESSION_TTL_MS
     ) {
-      window.sessionStorage.removeItem(storageKey);
+      removeMigratedItem(window.sessionStorage, storageKey, legacyKey);
       return null;
     }
+    if (entry.fromLegacy) promoteMigratedItem(window.sessionStorage, storageKey, legacyKey, entry.value);
     return parsed.token;
   } catch {
     try {
-      window.sessionStorage.removeItem(storageKey);
+      removeMigratedItem(window.sessionStorage, storageKey, legacyKey);
     } catch {
       // Ignore storage access failures.
     }
@@ -61,10 +74,10 @@ function readSessionSignToken(storageKey: string): string | null {
   }
 }
 
-function clearSessionSignToken(storageKey: string): void {
+function clearSessionSignToken(storageKey: string, legacyKey: string): void {
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.removeItem(storageKey);
+    removeMigratedItem(window.sessionStorage, storageKey, legacyKey);
   } catch {
     // Ignore storage access failures.
   }
@@ -77,27 +90,27 @@ export function scrubSignTokenHash(): void {
 }
 
 export function rememberSignToken(token: string): void {
-  writeSessionSignToken(SIGN_TOKEN_SESSION_KEY, token);
+  writeSessionSignToken(SIGN_TOKEN_SESSION_KEY, LEGACY_SIGN_TOKEN_SESSION_KEY, token);
 }
 
 export function pendingSignToken(): string | null {
-  return readSessionSignToken(SIGN_TOKEN_SESSION_KEY);
+  return readSessionSignToken(SIGN_TOKEN_SESSION_KEY, LEGACY_SIGN_TOKEN_SESSION_KEY);
 }
 
 export function forgetSignToken(): void {
-  clearSessionSignToken(SIGN_TOKEN_SESSION_KEY);
+  clearSessionSignToken(SIGN_TOKEN_SESSION_KEY, LEGACY_SIGN_TOKEN_SESSION_KEY);
 }
 
 export function rememberDirectSignToken(token: string): void {
-  writeSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY, token);
+  writeSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY, LEGACY_SIGN_DIRECT_TOKEN_SESSION_KEY, token);
 }
 
 export function pendingDirectSignToken(): string | null {
-  return readSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY);
+  return readSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY, LEGACY_SIGN_DIRECT_TOKEN_SESSION_KEY);
 }
 
 export function forgetDirectSignToken(): void {
-  clearSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY);
+  clearSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY, LEGACY_SIGN_DIRECT_TOKEN_SESSION_KEY);
 }
 
 export function subscribeToHash(onStoreChange: () => void): () => void {
@@ -114,6 +127,16 @@ export function buildSigningUrl(token: string, origin = typeof window !== 'undef
 export function buildDirectSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
   const cleanToken = token.trim();
   return `${origin}${SIGN_DIRECT_PAGE_PATH}#${cleanToken}`;
+}
+
+export function buildInPersonSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+  const cleanToken = token.trim();
+  return `${origin}${SIGN_PAGE_PATH}?in_person=1#${cleanToken}`;
+}
+
+export function buildPublicHubUrl(orgSlug: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+  const cleanSlug = encodeURIComponent(orgSlug.trim().toLowerCase());
+  return `${origin}${SIGN_PUBLIC_HUB_PAGE_PREFIX}/${cleanSlug}`;
 }
 
 // Computes lowercase hex SHA-256 directly in the browser without uploading file bytes.

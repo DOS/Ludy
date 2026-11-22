@@ -5,7 +5,8 @@ export const THEMES = ['system', 'light', 'dark'] as const;
 export type ThemeSetting = (typeof THEMES)[number];
 export type Theme = 'light' | 'dark';
 
-export const THEME_STORAGE_KEY = 'crove-theme';
+export const THEME_STORAGE_KEY = 'ludy-theme';
+export const LEGACY_THEME_STORAGE_KEY = 'crove-theme';
 
 // Light until the user picks something else (the owner's call, 2026-10-19).
 export const DEFAULT_THEME: ThemeSetting = 'light';

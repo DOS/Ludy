@@ -1,6 +1,6 @@
 // Browser push on the notification settings (#1238). The e2e stack has no VAPID keys, so the option is hidden there;
 // the second test answers the push status as a deployment with keys would and stands in for the browser's push
-// service (headless Chromium has none), so the real service worker registers under the real CSP through the crove-sw
+// service (headless Chromium has none), so the real service worker registers under the real CSP through the ludy-sw
 // Trusted Types policy, the subscription reaches the API and turning it off removes it. The sending side (encryption,
 // VAPID, the worker job) is covered by apps/kernel/test/web-push.test.ts and social-push.db.test.ts.
 import { expect, test, type Page, type Route } from '@playwright/test';
@@ -54,7 +54,7 @@ async function fakePushService(page: Page) {
   );
 }
 
-test('a member turns push on for this device and off again; the worker registers through the crove-sw policy', async ({ page, context }) => {
+test('a member turns push on for this device and off again; the worker registers through the ludy-sw policy', async ({ page, context }) => {
   const violations = await collectCspViolations(page);
   await signInNewUser(page, newEmail('social-push-on'));
   const slug = await createOrg(page, 'Công ty Đẩy');
@@ -101,7 +101,7 @@ test('a member turns push on for this device and off again; the worker registers
   expect(
     await page.evaluate(() => {
       const tt = (window as unknown as { trustedTypes: { createPolicy(name: string, rules: object): unknown } }).trustedTypes;
-      return ['crove-sw', 'other'].map((name) => {
+      return ['ludy-sw', 'other'].map((name) => {
         try {
           tt.createPolicy(name, {});
           return 'created';

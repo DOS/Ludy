@@ -78,6 +78,7 @@ import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   compareSignPdfVersions,
   proposeEnvelopeAnalysis,
+  proposeEnvelopeObligations,
   proposeSignContractDraftClauses,
   signAi,
   type SignAi,
@@ -572,7 +573,11 @@ export function createRpcHandler(
     conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
     suggestionBudget(),
   );
-  const signCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }));
+  const signCoworker = signAi(
+    signAiReader ?? null,
+    new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+    new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+  );
   const signAcceptanceCoworker = signAcceptanceAi(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
     suggestionBudget(),
@@ -3651,6 +3656,16 @@ export function createRpcHandler(
           }),
         ),
       },
+      // The VAT method and rate of an entity's marketplace sales (#4303 S3a): dated rows. Every role reads; the command checks owner or admin itself (R1, audited).
+      vatRates: {
+        list: os.marketplace.vatRates.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_vat_rate.list', input, { actor, orgId }))),
+        set: os.marketplace.vatRates.set.handler(({ context, input }) =>
+          inFinance(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('finance.marketplace_vat_rate.set', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+      },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
       facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),
@@ -4567,6 +4582,7 @@ export function createRpcHandler(
         reorder: os.sign.signer.reorder.handler(signCommand('sign.signer.reorder')),
         create_link: os.sign.signer.create_link.handler(signNoIdempotencyCommand('sign.signer.create_link')),
         correct_recipient: os.sign.signer.correct_recipient.handler(signNoIdempotencyCommand('sign.signer.correct_recipient')),
+        start_in_person: os.sign.signer.start_in_person.handler(signNoIdempotencyCommand('sign.signer.start_in_person')),
       },
       field: {
         set: os.sign.field.set.handler(signCommand('sign.field.set')),
@@ -4762,6 +4778,27 @@ export function createRpcHandler(
         ),
         list_requests: os.sign.ca.list_requests.handler(signQuery('sign.ca.requests.by_envelope')),
         initiate_request: os.sign.ca.initiate_request.handler(signCommand('sign.ca.request.initiate')),
+      },
+      obligation: {
+        get: os.sign.obligation.get.handler(signQuery('sign.obligation.get')),
+        renewals_list: os.sign.obligation.renewals_list.handler(signQuery('sign.obligation.renewals_list')),
+        extract: os.sign.obligation.extract.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeObligations({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              ...(input.pages ? { pages: input.pages } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        upsert: os.sign.obligation.upsert.handler(signCommand('sign.obligation.upsert')),
+        dismiss_proposal: os.sign.obligation.dismiss_proposal.handler(signCommand('sign.obligation.dismiss_proposal')),
+        complete_item: os.sign.obligation.complete_item.handler(signCommand('sign.obligation.complete_item')),
       },
     },
   });

@@ -215,7 +215,7 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
@@ -548,6 +548,10 @@ export type HouseholdProfileTable = Refine<
   { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; vat_cut_eligible: ColumnType<HouseholdVatCutAnswer | null, HouseholdVatCutAnswer | null, G.NotGranted>; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// The VAT method of an entity's marketplace sales (#4303 S3a): `deduction` carries a rate, `none` carries no output VAT line.
+export const MARKETPLACE_VAT_METHODS = ['deduction', 'none'] as const;
+export type MarketplaceVatMethod = (typeof MARKETPLACE_VAT_METHODS)[number];
+export type MarketplaceVatRateTable = Refine<G.FinanceMarketplaceVatRateTable, { method: MarketplaceVatMethod; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;
 // The 2026 reductions as dated law rows (#3710): `kind` is the tax the cut applies to.
 export const HOUSEHOLD_REDUCTION_KINDS = ['vat', 'pit'] as const;
@@ -1391,7 +1395,14 @@ export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'complete
 export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
 export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
 export type SignRoutingMode = (typeof SIGN_ROUTING_MODES)[number];
-export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract', 'project_acceptance'] as const;
+export const SIGN_SOURCE_KINDS = [
+  'standalone',
+  'crm_quote',
+  'crm_order',
+  'hr_contract',
+  'project_acceptance',
+  'meeting_minutes',
+] as const;
 export type SignSourceKind = (typeof SIGN_SOURCE_KINDS)[number];
 export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
 export type SignInspectStatus = (typeof SIGN_INSPECT_STATUSES)[number];
@@ -1405,12 +1416,48 @@ export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', '
 export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
 export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
 export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
-export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox', 'dropdown', 'radio', 'attachment'] as const;
 export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
+export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
+export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
 export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
 export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
 export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
 export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
+export const SIGN_EVENT_TYPES = [
+  'envelope_created',
+  'document_inspected',
+  'document_inspect_failed',
+  'envelope_updated',
+  'envelope_shared_summary_updated',
+  'signer_added',
+  'signer_removed',
+  'signers_reordered',
+  'fields_set',
+  'envelope_sent',
+  'link_created',
+  'in_person_session_started',
+  'signer_reminded',
+  'signer_pre_expiry_reminded',
+  'signer_corrected',
+  'signer_delegated',
+  'signer_viewed',
+  'signer_otp_verified',
+  'attachment_uploaded',
+  'signer_signed',
+  'in_person_signed',
+  'signer_declined',
+  'envelope_decline_acknowledged',
+  'envelope_completed',
+  'envelope_voided',
+  'envelope_expired',
+  'envelope_sealed',
+  'envelope_seal_failed',
+  'ca_requested',
+  'ca_completed',
+  'ca_failed',
+] as const;
+export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
 export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
 export const SIGN_CA_PROVIDERS = ['sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign'] as const;
@@ -1433,6 +1480,8 @@ export const SIGN_CA_RETRY_SAFETIES = ['reconcile_only'] as const;
 export type SignCaRetrySafety = (typeof SIGN_CA_RETRY_SAFETIES)[number];
 export const SIGN_CA_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached'] as const;
 export type SignCaSubFilter = (typeof SIGN_CA_SUBFILTERS)[number];
+export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+export type SignObligationStatus = (typeof SIGN_OBLIGATION_STATUSES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1455,7 +1504,13 @@ export type SignSignerTable = Refine<
   }
 >;
 
-export type SignFieldTable = Refine<G.SignFieldTable, { field_type: SignFieldType }>;
+export type SignFieldTable = Refine<
+  G.SignFieldTable,
+  {
+    field_type: SignFieldType;
+    attachment_content_type: SignAttachmentContentType | null;
+  }
+>;
 export type SignAiAnalysisTable = Refine<G.SignAiAnalysisTable, { status: Generated<SignAiAnalysisStatus> }>;
 export type SignSigningEventTable = Refine<G.SignSigningEventTable, { actor_type: SignActorType }>;
 export type SignTemplateTable = Refine<
@@ -1482,6 +1537,10 @@ export type SignCaSigningRequestTable = Refine<
     retry_safety: Generated<SignCaRetrySafety>;
     sub_filter: SignCaSubFilter | null;
   }
+>;
+export type SignEnvelopeObligationTable = Refine<
+  G.SignEnvelopeObligationTable,
+  { status: Generated<SignObligationStatus> }
 >;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
@@ -1534,6 +1593,7 @@ type Refined = Tables<{
   'crove_sign.ai_analysis': SignAiAnalysisTable;
   'crove_sign.ca_signing_request': SignCaSigningRequestTable;
   'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.envelope_obligation': SignEnvelopeObligationTable;
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
@@ -1618,6 +1678,7 @@ type Refined = Tables<{
   'crove_finance.channel_settlement_line': ChannelSettlementLineTable;
   'crove_finance.stock_alias': StockAliasTable;
   'crove_finance.household_profile': HouseholdProfileTable;
+  'crove_finance.marketplace_vat_rate': MarketplaceVatRateTable;
   'crove_finance.household_threshold': HouseholdThresholdTable;
   'crove_finance.household_trade_rate': HouseholdTradeRateTable;
   'crove_finance.household_tax_reduction': HouseholdTaxReductionTable;

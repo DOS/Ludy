@@ -173,7 +173,7 @@ export const planExport = defineCommand({
     ctx.audit({ format, days: Math.round((to.getTime() - from.getTime()) / DAY_MS), rows: plan.length, truncated, channels: connections.length, labels: labels.length });
     const month = planTime(input.from, input.timeZone).slice(0, 7);
     return {
-      filename: `crove-ke-hoach-${month}.csv`,
+      filename: `ludy-ke-hoach-${month}.csv`,
       csv: format === 'csv' ? planCsv(plan, input.timeZone) : null,
       rows: format === 'print' ? plan : null,
       truncated,

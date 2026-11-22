@@ -28,7 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (feeCode = '331'): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense), outputVat: c(base.outputVat) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.') && !name.startsWith('finance.marketplace_fee_clearing.');
 
@@ -80,6 +80,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
+    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
     if (household) {
       await withAdmin(async (c) => {
@@ -357,7 +359,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
   });
 
   it('is retired in the shipped set: both the request and the approval are refused with 409 (MARKETPLACE_FEE_CLEARING_RETIRED), whatever the map, and nothing is written', async () => {
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // The payout rows stay commentary (only the sales path is applied, #4303 S3b), and the retired clearing is refused whatever the map.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
     const { o, party } = await paid();
     const doc = await invoice(o, party);
     await expect(askFee(o, doc, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
@@ -366,7 +369,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
     expect(await clearingsOf(o, doc)).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
-    expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+    // The payout rows stay commentary (only the sales path is applied, #4303 S3b), and the retired clearing is refused whatever the map.
+    expect(MARKETPLACE_POSTING_MAPS.tt133?.cash.status).toBe('commentary');
   });
 
   it('holds the voucher shape in the database: no other source on a clearing voucher, and a proposal', async () => {

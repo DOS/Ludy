@@ -10,6 +10,7 @@
 //   report does not explain (above zero), or tax withheld from a seller that is no household, is listed in `adjustable`: the person classifies it when asking (#4303 S4);
 // - invoices to clear: the platform's posted fee invoices that still have something to clear while fees wait on 1388, with what a clearing would take now.
 // `postingConfirmed` is false while the accountant has not confirmed the account map of an entity in view (#2520): every request would be refused, so the screen shows the actions disabled.
+// `salesPostingConfirmed` is the same read for the sales path alone: the settlement entries need no other path (finance.marketplace_settlement.record gates on 'sales'), so its rows follow it, not the payout and fee paths (#4303 S3b).
 import { sql } from 'kysely';
 import { MARKETPLACE_FEE_CLEARING_COMMAND, MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX, zMarketplaceBalanceInput, type MarketplaceWorklist } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
@@ -22,7 +23,9 @@ import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type Marketpl
 import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
 import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
+import type { SettlementVatRate } from './marketplace-settlement-posting.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
+import { offeredMonths, separateReturnOn } from './marketplace-settlement-vat.ts';
 import { booksOn } from './payroll-posting.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -64,15 +67,15 @@ const pendingOf = (ctx: QueryContext, command: string, key: string, id: string) 
     .execute(ctx.trx)
     .then((r) => r.rows[0]?.id ?? null);
 
-// Whether the account map of every entity in view is confirmed, on the chart the entity keeps today.
-async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undefined, maps: Maps): Promise<boolean> {
+// Whether the account map of every entity in view is confirmed for `paths`, on the chart the entity keeps today.
+async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undefined, maps: Maps, paths: Parameters<typeof requireConfirmedMarketplaceMap>[2]): Promise<boolean> {
   const entities = (await sql<{ id: string }>`SELECT id FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid AND (${legalEntityId ?? null}::uuid IS NULL OR id = ${legalEntityId ?? null}::uuid)`.execute(ctx.trx)).rows;
   if (entities.length === 0) return false;
   const today = await databaseToday(ctx.trx);
   for (const entity of entities) {
     try {
       // The paths every entity uses; the household tax path is gated at the request itself (refused as unconfirmed), so it does not lock the other buttons.
-      requireConfirmedMarketplaceMap((await booksOn(ctx, entity.id, today)).regime, maps, ['sales', 'payout', 'fee_accrual']);
+      requireConfirmedMarketplaceMap((await booksOn(ctx, entity.id, today)).regime, maps, paths);
     } catch {
       return false;
     }
@@ -80,7 +83,7 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
   return true;
 }
 
-// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (the map and the payout rows are `commentary`, so the gate reads closed).
+// The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (the sales path is confirmed, #4303 S3b, but the payout and fee accrual rows are still `commentary`, so the gate that reads all three stays closed).
 // `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
 // lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
 export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean; today?: string | (() => string) } = {}) =>
@@ -106,8 +109,15 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       ).rows;
       const monthsOf = await settlementMonthsFor(ctx, standingRows.map((s) => ({ id: s.id, periodEnd: s.period_end })));
       const settlements: MarketplaceWorklist['settlements'] = [];
+      // The VAT rate of each delivery day, asked of the rate table once per entity and day for the whole list.
+      const vatMemo = new Map<string, SettlementVatRate | null>();
       for (const s of standingRows) {
-        const m = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
+        const stored = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
+        // The months with something to post, known with the VAT rates (a month of pieces at different rates can net to zero while 33311 is not); a settlement whose sales have a delivery day but no VAT rate row for
+        // it waits too (#4303 S3b): the months it waits for, nothing to ask for.
+        const offered = stored.waiting > 0 ? { months: [], gaps: [] } : await offeredMonths(ctx, s.legal_entity_id, stored.months, await separateReturnOn(ctx, s.legal_entity_id, s.period_end, options.maps ?? MARKETPLACE_POSTING_MAPS), vatMemo);
+        const m = { months: offered.months, waiting: stored.waiting };
+        const vatGaps = offered.gaps;
         if (m.months.length === 0 && m.waiting === 0) continue;
         settlements.push({
           id: s.id,
@@ -119,7 +129,8 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
           months: m.waiting > 0 ? [] : m.months.map((x) => x.month),
           net: m.waiting > 0 ? '0' : toMoney(sum(m.months.map((x) => x.net))),
           waitingLines: m.waiting,
-          proposalId: m.waiting > 0 ? null : await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
+          waitingVatMonths: vatGaps,
+          proposalId: m.waiting > 0 || vatGaps.length > 0 ? null : await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
         });
       }
 
@@ -234,7 +245,17 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       const accruals: MarketplaceWorklist['accruals'] = offers.accruals.map((a) => ({ ...a, platformName: platformPartyName(a.platform) }));
       const accrualReversals: MarketplaceWorklist['accrualReversals'] = offers.reversals.map((r) => ({ ...r, platformName: platformPartyName(r.platform) }));
 
-      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices, halfReversed, accruals, accrualReversals };
+      const maps = options.maps ?? MARKETPLACE_POSTING_MAPS;
+      return {
+        postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, maps, ['sales', 'payout', 'fee_accrual']),
+        salesPostingConfirmed: await postingConfirmed(ctx, input.legalEntityId, maps, ['sales']),
+        settlements,
+        payouts,
+        invoices,
+        halfReversed,
+        accruals,
+        accrualReversals,
+      };
     },
   });
 

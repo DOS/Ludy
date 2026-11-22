@@ -10,7 +10,7 @@
 //   differs from it. Then, in the same transaction, it records the voucher with the settlement and the bank line on it (one voucher per settlement and one per line: unique indexes hold it,
 //   20261231150000) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded, 20261231160000).
 // The 131 and 331 lines (and the 1388 line of tax withheld by mistake) name the platform's party, the one the settlement's posting created (the Sàn read of #3096 matches lines by it). The commands are made by createMarketplacePayoutCommands so a
-// test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, whose map and payout rows are `commentary` (only the three adjustment rows are `confirmed`), so it refuses. No model call is made: everything here is deterministic over stored facts.
+// test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, whose payout rows are still `commentary` (the sales path and the three adjustment rows are `confirmed`, #4303 S3b and S4), so it refuses. No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutProposal, zMarketplacePayoutRequest, type JournalVoucherProposal, type MarketplacePayoutAdjustment, type MarketplacePayoutProposal } from '@ludy/kernel-contract';
@@ -139,7 +139,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .executeTakeFirst();
   if (!link) throw notPostable('Không tìm thấy đối tượng của sàn mà kỳ đối soát đã tạo khi ghi sổ', { reason: 'PARTY' });
   // The tax the settlement's vouchers credited to 3331 and 3335 (a household seller): the payout debits exactly that, or none when it credited none.
-  const taxPosted = await postedSettlementTax(ctx, settlement.id, map.vatPayable.code, map.pitPayable.code);
+  const taxPosted = await postedSettlementTax(ctx, settlement.id, map.vatPayable.code, map.pitPayable.code, map.outputVat.code);
   const proposal = payoutProposal(
     {
       regime: map.regime,
