@@ -118,4 +118,18 @@ describe('migration lint: concurrent index builds (#1791)', () => {
     expect(hotIndexRuleApplies('supabase/migrations/20261104120001_crove_kernel_x.sql', false)).toBe(true);
     expect(hotIndexRuleApplies('20261013120000_crove_kernel_bootstrap.sql', true)).toBe(true);
   });
+
+  it('accepts -- ludy:concurrent-index and flags hot tables in ludy_kernel and ludy_jobs (#3969)', () => {
+    const LUDY_FILE = 'supabase/migrations/20270210000000_ludy_kernel_idx.sql';
+    const goodLudy = '-- ludy:concurrent-index\n\nCREATE INDEX CONCURRENTLY IF NOT EXISTS audit_event_y_idx ON ludy_kernel.audit_event (org_id);\n';
+    expect(lintMigration(LUDY_FILE, goodLudy, { hotIndexRule: true })).toEqual([]);
+    expect(
+      lintMigration(LUDY_FILE, 'CREATE INDEX IF NOT EXISTS audit_event_y_idx ON ludy_kernel.audit_event (org_id);', { hotIndexRule: true }).map((f: Finding) => f.rule),
+    ).toEqual(['hot-index-concurrently', 'hot-table-retry']);
+    expect(
+      lintMigration(LUDY_FILE, 'REINDEX SCHEMA ludy_kernel;\nREINDEX SCHEMA ludy_jobs;', { hotIndexRule: true })
+        .filter((f: Finding) => f.rule === 'hot-index-concurrently')
+        .map((f: Finding) => f.line),
+    ).toEqual([1, 2]);
+  });
 });

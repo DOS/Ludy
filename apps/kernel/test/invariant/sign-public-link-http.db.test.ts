@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import type { ExtractClient } from '@ludy/extract-contract';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
@@ -40,6 +40,7 @@ import { RateLimiter } from '../../src/rate-limit.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { runSignPdfSealJob } from '../../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -124,6 +125,7 @@ suite('eSign Slice 1b HTTP edge security invariants (#3324)', () => {
   const dbName = `crove_test_sign_http_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let tmpWebDist = '';
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool | undefined;
   let workerPool: pg.Pool | undefined;
   let workerDb!: Db;
@@ -141,7 +143,7 @@ suite('eSign Slice 1b HTTP edge security invariants (#3324)', () => {
   const asSystem = { type: 'system' as const, component: 'sign-worker' };
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -313,11 +315,12 @@ suite('eSign Slice 1b HTTP edge security invariants (#3324)', () => {
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'http-app-pw', crove_worker: 'http-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'http-app-pw', crove_worker: 'http-worker-pw' }, dbIds);
 
     const login = (u: string, pw: string) => {
       const url = new URL(adminUrl);
-      url.username = u;
+      url.username = dbIds ? dbIds.roleName(u) : u;
       url.password = pw;
       return url.toString();
     };
@@ -325,8 +328,8 @@ suite('eSign Slice 1b HTTP edge security invariants (#3324)', () => {
     const appUrl = login('crove_app', 'http-app-pw');
     const workerUrl = login('crove_worker', 'http-worker-pw');
 
-    pool = createPool({ connectionString: appUrl, max: 6 });
-    workerPool = createPool({ connectionString: workerUrl, max: 3 });
+    pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
+    workerPool = createDbPool({ connectionString: workerUrl, max: 3 }, dbIds);
 
     const appDb = createDb(pool);
     workerDb = createDb(workerPool);
@@ -862,7 +865,7 @@ suite('eSign Slice 1b HTTP edge security invariants (#3324)', () => {
 
   function appPoolUrl(): string {
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     u.password = 'http-app-pw';
     return u.toString();
   }

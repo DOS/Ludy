@@ -212,4 +212,19 @@ describe('migration lint: contract-header', () => {
     expect(breakingRulesApply('20261103090001_crove_kernel_x.sql', false)).toBe(true);
     expect(breakingRulesApply('20261013120000_crove_kernel_bootstrap.sql', true)).toBe(true);
   });
+
+  it('accepts -- ludy:contract headers alongside -- crove:contract headers (#3969)', () => {
+    const LUDY_FILE = 'supabase/migrations/20270210000000_ludy_social_sample.sql';
+    const ludyAdrs = new Set(['0028', '0054']);
+    const sql = [
+      '-- ludy:contract adr=0054',
+      'ALTER SCHEMA crove_social RENAME TO ludy_social;',
+      '-- ludy:contract adr=54',
+      'ALTER TABLE ludy_social.sample SET SCHEMA ludy_social;',
+    ].join('\n');
+    expect(lintMigration(LUDY_FILE, sql, { adrs: ludyAdrs, breakingRules: true })).toEqual([]);
+    expect(
+      lintMigration(LUDY_FILE, 'ALTER SCHEMA crove_social RENAME TO ludy_social;', { adrs: ludyAdrs, breakingRules: true }).map((f: Finding) => f.rule),
+    ).toEqual(['contract-header']);
+  });
 });

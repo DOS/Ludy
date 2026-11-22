@@ -14,12 +14,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -35,11 +36,12 @@ const suite = ADMIN ? describe : describe.skip;
 suite('the org purge alone deletes task comments and post approvals (#1032, #2011)', () => {
   const dbName = `crove_test_purgeappend_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let runtime: Runtime;
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -143,11 +145,12 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
-    pool = createPool({ connectionString: app.toString(), max: 2 });
+    pool = createDbPool({ connectionString: app.toString(), max: 2 }, dbIds);
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   }, 120_000);
 
@@ -217,8 +220,8 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
       ).rows;
       return { guarded, truncate, shape };
     });
-    expect(guarded).toEqual(GUARDED.map((t) => `${t} append_only_row`).sort());
-    expect(truncate).toEqual([...GUARDED].sort());
+    expect([...guarded].sort()).toEqual(GUARDED.map((t) => `${t} append_only_row`).sort());
+    expect([...truncate].sort()).toEqual([...GUARDED].sort());
     expect(shape).toEqual([{ definer: false, config: ['search_path=pg_catalog, pg_temp'], public: false }]);
 
     const org = await seeded('offboarding');

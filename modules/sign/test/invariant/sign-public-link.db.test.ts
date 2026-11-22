@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { migrate } from '@ludy/db/migrate';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
@@ -32,6 +32,7 @@ import {
   verifyEventChain,
   type SigningEventChainRow,
 } from '../../src/index.ts';
+import { resolveDbIdentifiers, roleUrl, setActiveRolePasswords, wrapPool } from './fixtures/db-identifiers.ts';
 
 type Pool = ReturnType<typeof createPool>;
 
@@ -240,18 +241,12 @@ suite('eSign Slice 1b public link & OTP PostgreSQL security invariants (#3324)',
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'inv-app-pw', crove_worker: 'inv-worker-pw' });
+    const ids = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'inv-app-pw', crove_worker: 'inv-worker-pw' }, ids);
 
-    const loginUrl = (user: string, pw: string) => {
-      const u = new URL(adminUrl);
-      u.username = user;
-      u.password = pw;
-      return u.toString();
-    };
-
-    adminPool = createPool({ connectionString: adminUrl, max: 2 });
-    appPool = createPool({ connectionString: loginUrl('crove_app', 'inv-app-pw'), max: 6 });
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'inv-worker-pw'), max: 3 });
+    adminPool = wrapPool(createPool({ connectionString: adminUrl, max: 2 }), ids);
+    appPool = wrapPool(createPool({ connectionString: roleUrl(adminUrl, 'crove_app', 'inv-app-pw', ids), max: 6 }), ids);
+    workerPool = wrapPool(createPool({ connectionString: roleUrl(adminUrl, 'crove_worker', 'inv-worker-pw', ids), max: 3 }), ids);
 
     const manifests = [kernelManifest.tables, signManifest.tables];
     const appDb = createDb(appPool);

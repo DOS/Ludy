@@ -7,13 +7,14 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, createPool } from "@ludy/db";
-import { migrate, setRolePasswords } from "@ludy/db/migrate";
+import { createDb } from "@ludy/db";
+import { migrate } from "@ludy/db/migrate";
 import { createOrg, kernelCommands, upsertIdentity } from "@ludy/kernel";
 import { Runtime } from "@ludy/kernel-runtime";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
@@ -28,6 +29,7 @@ const FN = "crove_kernel.member_vy_run_finish(uuid,text,text)";
 suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   const dbName = `crove_test_member_vy_fin_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = "";
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = "";
   let workerUrl = "";
   const pools: pg.Pool[] = [];
@@ -39,7 +41,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   let agentId = "";
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -53,7 +55,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     fn: (c: pg.Client) => Promise<T>,
     commit = false,
   ): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query("BEGIN");
@@ -153,20 +155,21 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
     FEAT = await admin((c) => aiRunFeature(c));
-    await setRolePasswords(adminUrl, {
+    await setActiveRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",
-    });
+    }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login("crove_app", "test-app-pw");
     workerUrl = login("crove_worker", "test-worker-pw");
-    const pool = createPool({ connectionString: appUrl, max: 2 });
+    const pool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({

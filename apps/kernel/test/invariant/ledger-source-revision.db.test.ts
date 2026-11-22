@@ -13,12 +13,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@ludy/db';
-import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -38,13 +39,14 @@ const suite = ADMIN ? describe : describe.skip;
 suite('idempotent posting under concurrency (#1283)', () => {
   const dbName = `crove_test_source_lock_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let pool: pg.Pool;
   let userId = '';
   let orgId = '';
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -70,11 +72,11 @@ suite('idempotent posting under concurrency (#1283)', () => {
   // waits on it. Each client commits as soon as its call returns. Returns each call's id or error.
   async function race(sourceId: string, linesFor: (i: number) => Line[]): Promise<Array<{ id: string } | { error: { code?: string; message: string } }>> {
     const clients: pg.Client[] = [];
-    const gate = new pg.Client({ connectionString: adminUrl });
+    const gate = createDbClient({ connectionString: adminUrl }, dbIds);
     await gate.connect();
     try {
       for (let i = 0; i < CLIENTS; i++) {
-        const c = new pg.Client({ connectionString: appUrl });
+        const c = createDbClient({ connectionString: appUrl }, dbIds);
         await c.connect();
         clients.push(c);
         await c.query('BEGIN');
@@ -124,12 +126,13 @@ suite('idempotent posting under concurrency (#1283)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    pool = createPool({ connectionString: appUrl, max: 1 });
+    pool = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: 'source-lock', email: 'lock@source.test', name: null });
@@ -332,7 +335,7 @@ suite('idempotent posting under concurrency (#1283)', () => {
       { fn: 'crove_finance.journal_payload_sha256(date,text,uuid,jsonb)', owner: expect.any(String), definer: false, config: ['search_path=pg_catalog, pg_temp'], public: false },
       { fn: POST_7, owner: 'crove_definer_tenant', definer: true, config: ['search_path=pg_catalog, pg_temp'], public: false },
     ]);
-    const app = new pg.Client({ connectionString: appUrl });
+    const app = createDbClient({ connectionString: appUrl }, dbIds);
     await app.connect();
     try {
       await expect(app.query(`SELECT crove_finance.journal_payload_sha256(current_date, 'VND', NULL, '[]'::jsonb)`)).rejects.toThrow(/permission denied/);
