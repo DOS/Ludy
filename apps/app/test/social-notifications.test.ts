@@ -10,6 +10,11 @@ describe('social notifications (#637)', () => {
     expect(notificationTarget({ kind: 'comment', postId: null })).toBeNull();
   });
 
+  it('opens the posts that need a person for the late posts a long switch-off failed together (#3462), and still the post for one', () => {
+    expect(notificationTarget({ kind: 'failed', postId: null })).toEqual({ to: 'attention' });
+    expect(notificationTarget({ kind: 'failed', postId: '0190a3c4-0000-7000-8000-000000000001' })).toEqual({ to: 'post', postId: '0190a3c4-0000-7000-8000-000000000001' });
+  });
+
   it('opens a new post for the channel whose queue runs low (#1079), or the channels page without one', () => {
     const channelId = '0190a3c4-0000-7000-8000-000000000002';
     expect(notificationTarget({ kind: 'queue_low', postId: null, connectionId: channelId })).toEqual({ to: 'compose', channelId });

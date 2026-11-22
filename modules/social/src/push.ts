@@ -157,6 +157,7 @@ export function pushLine(kind: SocialNotificationKind, detail: Readonly<Record<s
     case 'decided':
       return detail.decision === 'approved' ? 'Bài của bạn đã được duyệt' : detail.decision === 'rejected' ? 'Bài của bạn bị từ chối' : 'Người duyệt đề nghị sửa bài của bạn';
     case 'failed':
+      if (detail.late && detail.count) return `${String(detail.count)} bài đăng không thành công vì đã quá giờ hẹn`;
       return detail.removal === 'scheduled' ? 'Chưa tự gỡ được một bài đã hẹn giờ gỡ' : 'Một bài đăng không thành công';
     case 'needs_attention':
       return 'Một bài đăng cần bạn xử lý';

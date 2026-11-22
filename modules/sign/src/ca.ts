@@ -305,7 +305,6 @@ export const caConnectionSave = defineCommand({
     keyId: z.string().min(1).max(128),
     secretEnvelope: z.string().min(1).max(16384),
   }),
-  noIdempotency: true,
   risk: 'R2',
   sideEffect: 'internal',
   access: MANAGERS,
@@ -339,7 +338,6 @@ export const caConnectionSave = defineCommand({
 export const caConnectionDisable = defineCommand({
   name: 'sign.ca.connection.disable',
   input: z.strictObject({ connectionId: zId }),
-  noIdempotency: true,
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
@@ -382,7 +380,6 @@ export const caConnectionRecordTest = defineCommand({
     connectionId: zId,
     state: z.enum(SIGN_CA_TEST_STATES),
   }),
-  noIdempotency: true,
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
