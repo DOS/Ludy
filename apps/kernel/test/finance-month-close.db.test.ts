@@ -296,7 +296,7 @@ suite('the month-close checklist', () => {
     expect(count(await close('2026-06'), 'proposals')).toBe(2);
 
     // A payout voucher settles its settlement and its bank line: neither is counted any more, in the marketplace item or the bank item.
-    const paid = await settlement('tiktok', '2026-06-13', '2026-06-14');
+    const paid = await settlement('tiktok_shop', '2026-06-13', '2026-06-14');
     await voucherOf(paid);
     expect(count(await close('2026-06'), 'marketplace')).toBe(3);
     const payoutLine = await bankLineId('2026-06-18');
@@ -370,7 +370,7 @@ suite('the month-close checklist', () => {
   });
 
   // A settlement of one line with a delivery day, so its entry is known: sales, refund and net as given; a reversal of another settlement when `reversalOf` names it.
-  async function deliveredSettlement(platform: string, start: string, end: string, line: { sales: number; refund: number; net: number }, reversalOf: string | null = null): Promise<string> {
+  async function deliveredSettlement(platform: string, start: string, end: string, line: { sales: number; refund?: number; commission?: number; other?: number }, reversalOf: string | null = null): Promise<string> {
     return admin(async (a) => {
       await a.query('BEGIN');
       const id = randomUUID();
@@ -380,12 +380,16 @@ suite('the month-close checklist', () => {
         await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, defaultEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
         await a.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, order, start]);
       }
-      // A reversal mirrors its original line for line, marked as an adjustment; only its report net is the negative.
+      // A reversal mirrors its original line for line, marked as an adjustment; only its report net is the negative. A line's net is its sales less its deductions plus its other amount.
+      const refund = line.refund ?? 0;
+      const commission = line.commission ?? 0;
+      const other = line.other ?? 0;
+      const net = line.sales - commission - refund + other;
       const sign = reversalOf ? -1 : 1;
-      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, defaultEntity, platform, start, end, sign * line.net, reversalOf]);
+      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, defaultEntity, platform, start, end, sign * net, reversalOf]);
       await a.query(
-        'INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-        [o.orgId, randomUUID(), defaultEntity, id, order, 'L1', line.sales, line.refund, line.net, reversalOf !== null],
+        'INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, commission, other, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+        [o.orgId, randomUUID(), defaultEntity, id, order, 'L1', line.sales, refund, commission, other, net, reversalOf !== null],
       );
       await a.query('COMMIT');
       return id;
@@ -394,24 +398,24 @@ suite('the month-close checklist', () => {
 
   it('does not count a settlement that posts nothing, a payout the payout command would refuse, or a settlement that was reversed', async () => {
     await admin((c) => c.query(`INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none') ON CONFLICT DO NOTHING`, [o.orgId, defaultEntity]));
-    // A settlement whose sales equal its refund nets to nothing: there is no entry to post, so there is nothing to ask for.
-    await deliveredSettlement('shopee', '2026-09-01', '2026-09-10', { sales: 10000, refund: 10000, net: 0 });
+    // A settlement whose sales equal its refund (and no other amount) nets to nothing: there is no entry to post, so there is nothing to ask for.
+    await deliveredSettlement('shopee', '2026-09-01', '2026-09-10', { sales: 10000, refund: 10000 });
     expect(count(await close('2026-09'), 'marketplace')).toBe(0);
     // One with money in it is still to post.
-    const real = await deliveredSettlement('shopee', '2026-09-11', '2026-09-20', { sales: 10000, refund: 0, net: 9000 });
+    const real = await deliveredSettlement('shopee', '2026-09-11', '2026-09-20', { sales: 10000, commission: 1000 });
     expect(count(await close('2026-09'), 'marketplace')).toBe(1);
     // Posted, its payout is still to record; posted with nothing received (net 0) or nothing to clear (sales equal to the refund) it is not, as the payout command refuses both.
     await voucherOf(real);
     expect(count(await close('2026-09'), 'marketplace')).toBe(1);
-    const noCash = await deliveredSettlement('lazada', '2026-09-21', '2026-09-25', { sales: 10000, refund: 0, net: 0 });
+    const noCash = await deliveredSettlement('lazada', '2026-09-21', '2026-09-25', { sales: 10000, commission: 10000 });
     await voucherOf(noCash);
-    const noReceivable = await deliveredSettlement('lazada', '2026-09-26', '2026-09-30', { sales: 5000, refund: 5000, net: 4000 });
+    const noReceivable = await deliveredSettlement('lazada', '2026-09-26', '2026-09-30', { sales: 5000, refund: 5000, other: 4000 });
     await voucherOf(noReceivable);
     expect(count(await close('2026-09'), 'marketplace')).toBe(1);
     // A settlement and its reversal both drop out of the count.
-    const wrong = await deliveredSettlement('tiktok', '2026-09-05', '2026-09-06', { sales: 10000, refund: 0, net: 9000 });
+    const wrong = await deliveredSettlement('tiktok_shop', '2026-09-05', '2026-09-06', { sales: 10000, commission: 1000 });
     expect(count(await close('2026-09'), 'marketplace')).toBe(2);
-    await deliveredSettlement('tiktok', '2026-09-05', '2026-09-06', { sales: 10000, refund: 0, net: 9000 }, wrong);
+    await deliveredSettlement('tiktok_shop', '2026-09-05', '2026-09-06', { sales: 10000, commission: 1000 }, wrong);
     expect(count(await close('2026-09'), 'marketplace')).toBe(1);
   });
 });
