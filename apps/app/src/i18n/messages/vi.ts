@@ -16324,6 +16324,7 @@ export const vi = {
           get: 'Xem địa chỉ nhận báo thức của các ứng dụng AI',
           line_check: 'Kiểm tra các sự kiện của từng ứng dụng đã gửi báo thức',
           line_plan: 'Đọc những gì một báo thức cần trước khi các ứng dụng đọc cho nó',
+          minutes_targets: 'Tìm các ứng dụng AI cần báo thức khi biên bản cuộc họp được công bố',
           queued: 'Ghi nhận một lần báo thức đã chuyển vào hàng đợi',
           record: 'Ghi kết quả một lần gửi báo thức',
           rotate_secret: 'Đổi khóa bí mật báo thức của một ứng dụng AI',
