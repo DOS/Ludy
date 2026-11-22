@@ -246,6 +246,7 @@ export interface CroveProjectsSchema {
   'crove_projects.project': ProjectsProjectTable;
   'crove_projects.project_member': ProjectsProjectMemberTable;
   'crove_projects.project_task': ProjectsProjectTaskTable;
+  'crove_projects.task_dependency': ProjectsTaskDependencyTable;
 }
 
 export interface CroveSignSchema {
@@ -3808,6 +3809,17 @@ export interface ProjectsProjectTaskTable {
   recurrence_last_due: string | null;
   recurrence_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   recurrence_source_task_id: string | null;
+}
+
+/** crove_projects.task_dependency */
+export interface ProjectsTaskDependencyTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  blocker_task_id: string;
+  blocked_task_id: string;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_sign.ai_analysis */

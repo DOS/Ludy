@@ -4,7 +4,7 @@
 // crove_kernel.task_comment. Never reads crove_notes and never writes or persists anything.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@ludy/db';
+import type { MemberRole, TaskStatus } from '@ludy/db';
 import {
   PROJECT_WEEKLY_STATUS_BUCKET_LIMIT,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
@@ -16,6 +16,7 @@ import {
   zProjectWeeklyStatusSendMailInput,
   zProjectWeeklyStatusShareNoteInput,
   type ProjectStatus,
+  type ProjectWeeklyStatusBottleneck,
   type ProjectWeeklyStatusCounts,
   type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
@@ -59,6 +60,7 @@ export interface ProjectWeeklyStatusSource {
   };
   counts: ProjectWeeklyStatusCounts;
   tasks: ProjectWeeklyStatusTasks;
+  bottlenecks?: ProjectWeeklyStatusBottleneck[];
   hiddenByEntityCount: number;
   truncated: boolean;
   aiAllowed: boolean;
@@ -369,6 +371,40 @@ export const projectWeeklyStatusSource = defineQuery({
       dueNextWeek: mapBucket(dueNextWeekRes.rows, commentCounts, latestComments),
     };
 
+    const { rows: bottleneckRows } = await sql<{
+      id: string;
+      title: string;
+      status: string;
+      due: Date | string | null;
+      blocked_count: number;
+    }>`
+      SELECT
+        bt.id,
+        bt.title,
+        bt.status,
+        bt.due,
+        pg_catalog.count(*)::int AS blocked_count
+      FROM crove_projects.task_dependency d
+      JOIN crove_kernel.task bt
+        ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
+      JOIN crove_kernel.task dt
+        ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
+      WHERE d.org_id = ${ctx.orgId}::uuid
+        AND d.project_id = ${project.id}::uuid
+        AND bt.status NOT IN ('done', 'cancelled')
+        AND dt.status NOT IN ('done', 'cancelled')
+      GROUP BY bt.id, bt.title, bt.status, bt.due
+      ORDER BY blocked_count DESC, bt.due ASC NULLS LAST, bt.id ASC
+      LIMIT 5`.execute(ctx.trx);
+
+    const bottlenecks: ProjectWeeklyStatusBottleneck[] = bottleneckRows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      status: row.status as TaskStatus,
+      due: row.due === null ? null : row.due instanceof Date ? row.due.toISOString() : row.due,
+      blockedCount: Number(row.blocked_count),
+    }));
+
     const truncated =
       counts.doneThisWeek > tasks.doneThisWeek.length ||
       counts.overdue > tasks.overdue.length ||
@@ -380,6 +416,7 @@ export const projectWeeklyStatusSource = defineQuery({
       window: { from, to, nextFrom, nextTo, timeZone: VIETNAM_TIME_ZONE },
       counts,
       tasks,
+      bottlenecks,
       hiddenByEntityCount,
       truncated,
       aiAllowed,

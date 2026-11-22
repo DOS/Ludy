@@ -367,6 +367,22 @@ export function ProjectWeeklyStatus({
             ))}
           </div>
 
+          {(data.bottlenecks ?? []).length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/15 p-3" data-testid="project-weekly-status-bottlenecks">
+              <p className="mb-2 text-xs font-semibold text-foreground">{t('bottlenecksTitle')}</p>
+              <ul className="space-y-1.5">
+                {(data.bottlenecks ?? []).map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-medium text-foreground">{item.title}</span>
+                    <Badge variant="warning" className="h-5 shrink-0 px-1.5 text-[11px] tabular-nums">
+                      {t('bottlenecksBlockedCount', { count: item.blockedCount })}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {data.hiddenByEntityCount > 0 && (
             <p className="text-xs text-subtle-foreground" data-testid="project-weekly-status-hidden-notice">
               {t('hiddenNotice', { count: String(data.hiddenByEntityCount) })}

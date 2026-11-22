@@ -368,4 +368,28 @@ describe('projects.today pure projection (#2596)', () => {
       href: '/projects',
     });
   });
+
+  it('surfaces open bottleneck blockers sorted by descending blockedCount after overdue (#2601)', () => {
+    const overdueDue = new Date(NOW.getTime() - 86_400_000);
+    const items = projectsTodayItemsOf(
+      [
+        row({ taskId: taskId(1), status: 'in_progress', blockedCount: 1 }),
+        row({ taskId: taskId(2), status: 'todo', blockedCount: 4 }),
+        row({ taskId: taskId(3), status: 'todo', due: overdueDue }),
+      ],
+      { userId: ME, role: 'member', now: NOW },
+    );
+    expect(items.map((i) => i.id)).toEqual([
+      `overdue:${taskId(3)}`,
+      `bottleneck:${taskId(2)}`,
+      `bottleneck:${taskId(1)}`,
+    ]);
+    expect(items[1]).toMatchObject({
+      kind: 'flag',
+      app: 'projects',
+      id: `bottleneck:${taskId(2)}`,
+      title: { key: 'projects.blockingTasks', params: { count: 4 } },
+      severity: 'warn',
+    });
+  });
 });

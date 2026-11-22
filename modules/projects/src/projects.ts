@@ -412,7 +412,11 @@ export const projectTaskRemove = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id'])],
+  writes: [
+    tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
+    // Removing a task from a project cascades ON DELETE CASCADE to crove_projects.task_dependency.
+    tableWrite(TABLES, 'crove_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; removed: boolean }> => {
     userOf(ctx.actor);
@@ -962,15 +966,44 @@ export const projectBoard = defineQuery({
     const totalVisible = truncated ? Number((await countQuery.executeTakeFirstOrThrow()).n) : page.length;
 
     const commentCounts = new Map<string, number>();
+    const openBlockerCounts = new Map<string, number>();
+    const blockingCounts = new Map<string, number>();
     if (page.length > 0) {
       const taskIds = page.map((t) => t.id);
-      const { rows: counts } = await sql<{ task_id: string; n: string }>`
-        SELECT task_id, pg_catalog.count(*)::text AS n
-          FROM crove_kernel.task_comment
-         WHERE org_id = ${ctx.orgId}::uuid
-           AND task_id = ANY(${taskIds}::uuid[])
-         GROUP BY task_id`.execute(ctx.trx);
+      const [{ rows: counts }, { rows: blockerRows }, { rows: blockingRows }] = await Promise.all([
+        sql<{ task_id: string; n: string }>`
+          SELECT task_id, pg_catalog.count(*)::text AS n
+            FROM crove_kernel.task_comment
+           WHERE org_id = ${ctx.orgId}::uuid
+             AND task_id = ANY(${taskIds}::uuid[])
+           GROUP BY task_id`.execute(ctx.trx),
+        sql<{ task_id: string; n: string }>`
+          SELECT d.blocked_task_id AS task_id, pg_catalog.count(*)::text AS n
+            FROM crove_projects.task_dependency d
+            JOIN crove_kernel.task bt
+              ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
+           WHERE d.org_id = ${ctx.orgId}::uuid
+             AND d.project_id = ${row.id}::uuid
+             AND d.blocked_task_id = ANY(${taskIds}::uuid[])
+             AND bt.status NOT IN ('done', 'cancelled')
+           GROUP BY d.blocked_task_id`.execute(ctx.trx),
+        sql<{ task_id: string; n: string }>`
+          SELECT d.blocker_task_id AS task_id, pg_catalog.count(*)::text AS n
+            FROM crove_projects.task_dependency d
+            JOIN crove_kernel.task bt
+              ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
+            JOIN crove_kernel.task dt
+              ON dt.org_id = d.org_id AND dt.id = d.blocked_task_id
+           WHERE d.org_id = ${ctx.orgId}::uuid
+             AND d.project_id = ${row.id}::uuid
+             AND d.blocker_task_id = ANY(${taskIds}::uuid[])
+             AND bt.status NOT IN ('done', 'cancelled')
+             AND dt.status NOT IN ('done', 'cancelled')
+           GROUP BY d.blocker_task_id`.execute(ctx.trx),
+      ]);
       for (const c of counts) commentCounts.set(c.task_id, Number(c.n));
+      for (const b of blockerRows) openBlockerCounts.set(b.task_id, Number(b.n));
+      for (const b of blockingRows) blockingCounts.set(b.task_id, Number(b.n));
     }
 
     const tasks: ProjectTaskCard[] = page.map((t) => ({
@@ -991,6 +1024,8 @@ export const projectBoard = defineQuery({
       recurrenceLastDue: t.recurrence_last_due,
       recurrenceNextAt: t.recurrence_next_at === null ? null : new Date(t.recurrence_next_at).toISOString(),
       recurrenceSourceTaskId: t.recurrence_source_task_id,
+      openBlockerCount: openBlockerCounts.get(t.id) ?? 0,
+      blockingCount: blockingCounts.get(t.id) ?? 0,
     }));
 
     return {

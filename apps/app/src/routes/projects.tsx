@@ -657,6 +657,7 @@ export function ProjectDetailPage() {
         projectId={project.id}
         canWrite={project.canWrite}
         task={editingTask ? (board.tasks.find((item) => item.id === editingTask.id) ?? editingTask) : null}
+        projectTasks={positionId || applied.all.length > 0 ? undefined : board.tasks}
         seats={seats}
         open={editingTask !== null}
         onOpenChange={(next) => {

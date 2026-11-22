@@ -2,7 +2,7 @@
 // Manifest, column classification and command/query contract checks for @ludy/mod-projects (#2591).
 import { MODULE_SCREENS } from '@ludy/kernel-contract';
 import { describe, expect, it } from 'vitest';
-import { projectsCommands, projectsManifest, projectsQueries } from '../src/index.ts';
+import { hasDependencyPath, projectsCommands, projectsManifest, projectsQueries } from '../src/index.ts';
 
 describe('@ludy/mod-projects (#2591)', () => {
   it('registers manifest tables, column classes, entity metadata and screen definitions', () => {
@@ -12,6 +12,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'project',
       'project_member',
       'project_task',
+      'task_dependency',
     ]);
     expect(projectsManifest.tables.crove_projects.project.name).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
@@ -21,6 +22,8 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.project_member.user_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.task_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.recurrence).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.task_dependency.blocker_task_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.task_dependency.blocked_task_id).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
     ]);
@@ -28,8 +31,10 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 23 commands and 13 queries with consistent module prefix', () => {
+  it('exports all 25 commands and 14 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
+      'projects.dependency.add',
+      'projects.dependency.remove',
       'projects.member.add',
       'projects.member.remove',
       'projects.project.archive',
@@ -56,6 +61,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     ]);
     expect(projectsQueries.map((q) => q.name).sort()).toEqual([
       'projects.board',
+      'projects.dependency.list',
       'projects.project.get',
       'projects.project.list',
       'projects.task.recurrence.get',
@@ -93,5 +99,29 @@ describe('@ludy/mod-projects (#2591)', () => {
     for (const query of projectsQueries) {
       expect(query.name.startsWith('projects.')).toBe(true);
     }
+  });
+
+  it('detects direct and transitive dependency cycles while allowing diamond DAGs (#2601)', () => {
+    const A = '01900000-0000-7000-8000-000000000001';
+    const B = '01900000-0000-7000-8000-000000000002';
+    const C = '01900000-0000-7000-8000-000000000003';
+    const D = '01900000-0000-7000-8000-000000000004';
+    const chain = [
+      { blocker_task_id: A, blocked_task_id: B },
+      { blocker_task_id: B, blocked_task_id: C },
+    ];
+    // Self-loop and direct 2-cycle and transitive A->B->C->A all close a cycle.
+    expect(hasDependencyPath(chain, A, A)).toBe(true);
+    expect(hasDependencyPath(chain, A, B)).toBe(true);
+    expect(hasDependencyPath(chain, A, C)).toBe(true);
+    // Reverse C->D or adding D->A or diamond A->C, B->D->E stay acyclic.
+    expect(hasDependencyPath(chain, C, A)).toBe(false);
+    const diamond = [
+      { blocker_task_id: A, blocked_task_id: B },
+      { blocker_task_id: A, blocked_task_id: C },
+      { blocker_task_id: B, blocked_task_id: D },
+    ];
+    expect(hasDependencyPath(diamond, D, C)).toBe(false);
+    expect(hasDependencyPath(diamond, B, A)).toBe(false);
   });
 });
