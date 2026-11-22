@@ -319,6 +319,16 @@ export const en = {
         obligationDueSoon: 'A contract obligation is due in {days, plural, one {# day} other {# days}}',
         obligationMore: '{count, plural, one {# more contract renewal or obligation needs} other {# more contract renewals or obligations need}} your review',
       },
+      hr: {
+        probationEnding: '{count, plural, one {# employee finishes probation within 7 days} other {# employees finish probation within 7 days}}',
+        contractsExpiring: '{count, plural, one {# fixed-term labor contract expires within 30 days} other {# fixed-term labor contracts expire within 30 days}}',
+        contractsExpired: '{count, plural, one {# active employee has an expired fixed-term contract} other {# active employees have expired fixed-term contracts}}',
+        workPermitsExpiring: '{count, plural, one {# foreign work permit expires within 60 days} other {# foreign work permits expire within 60 days}}',
+        workPermitsExpired: '{count, plural, one {# active foreign work permit is past its expiry date} other {# active foreign work permits are past their expiry dates}}',
+        laborReport01Pli: 'Report 01/PLI on labor changes for {period} is due by {date}',
+        leaveApprovalsPending: '{count, plural, one {# leave request is waiting for approval} other {# leave requests are waiting for approval}}',
+        deptLeave: '{count, plural, one {# department leave request is waiting for your review} other {# department leave requests are waiting for your review}}',
+      },
       ads: {
         paceOrg:'At this pace the org passes its monthly spend cap',
         paceAccount: 'At this pace {account} passes its monthly spend cap',
@@ -16704,6 +16714,7 @@ export const en = {
       },
     },
     hr: {
+      today: 'List HR compliance alerts and leave approvals needing your attention today',
       department: {
         add: 'Add a new department for a legal entity',
         archive: 'Archive a department',

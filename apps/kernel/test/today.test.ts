@@ -40,12 +40,12 @@ const run = (reads: Reads, options: { reads?: readonly string[]; absent?: readon
 
 describe('kernel.today', () => {
   it('names the reads the lines agreed to expose and the cross-app rules of the kernel', () => {
-    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'sign.obligations.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
+    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'sign.obligations.today', 'hr.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
   });
 
   it('shows nothing when no read is registered yet, and when the modules are off', async () => {
     expect(await run({})).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
-    expect(await run({}, { absent: ['finance', 'crm', 'projects', 'social', 'ads', 'sign'] })).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
+    expect(await run({}, { absent: ['finance', 'crm', 'projects', 'social', 'ads', 'sign', 'hr'] })).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
   });
 
   it('merges the reads that are registered, flags first, and skips the ones that are not', async () => {

@@ -13,7 +13,7 @@ export type TodayKind = (typeof TODAY_KINDS)[number];
 // The app whose read returned the item (`conversations` is the Service inbox of the conversation core, a code id that
 // stays whatever the app is called on screen). Each line's read returns only what the member could open there, so an app
 // the member cannot see, or one with no read yet, simply adds no items.
-export const TODAY_APPS = ['finance', 'crm', 'notes', 'projects', 'social', 'ads', 'conversations', 'sign'] as const;
+export const TODAY_APPS = ['finance', 'crm', 'notes', 'projects', 'social', 'ads', 'conversations', 'sign', 'hr'] as const;
 export type TodayApp = (typeof TODAY_APPS)[number];
 
 export const TODAY_SEVERITIES = ['info', 'warn', 'block'] as const;
