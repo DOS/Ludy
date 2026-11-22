@@ -55,6 +55,33 @@ describe('checkMonthCloseNote: the note', () => {
     }
   });
 
+  it('refuses "one", the ordinals from the fourth up and "once" or "twice", but keeps "no one", "this one", first and second', () => {
+    for (const text of ['Do one thing first.', 'Start with the twentieth item.', 'This is the fourth step.', 'Check it once before you start.', 'Check it twice.', 'The eleventh item waits.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+    for (const text of ['Start with this one, then the bank lines.', 'No one step depends on the others.', 'Start with the first, then the second.']) {
+      expect(check(text).kind, text).toBe('note');
+    }
+  });
+
+  it('refuses a numeric character of any script or style: circled, dingbat, Ethiopic, Hangzhou', () => {
+    for (const text of ['Start with ❶ proposal.', 'Start with ➂ proposals.', 'Start with ፫ proposals.', 'Start with 〥 proposals.', 'Start with ½ of them.', 'Start with Ⅷ items.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+  });
+
+  it('refuses a deadline said as "by the end of", and a done claim that is a bare participle or "rồi"', () => {
+    expect(check('Finish by the end of the month.')).toEqual({ kind: 'none', code: 'DATE' });
+    expect(check('Hoàn thiện trước cuối tháng.')).toEqual({ kind: 'none', code: 'DATE' });
+    for (const text of ['Posted.', 'All the bank lines are posted.', 'Duyệt rồi.', 'Các đề xuất được duyệt rồi.', 'Khóa sổ rồi.']) {
+      expect(check(text), text).toEqual({ kind: 'none', code: 'PROMISE' });
+    }
+    // "rồi" in the middle of a clause is "then", and a participle after "not yet" or "to be" says what is left.
+    expect(check('Xử lý các đề xuất rồi mới khóa sổ.').kind).toBe('note');
+    expect(check('The VAT return is not yet filed.').kind).toBe('note');
+    expect(check('The bank lines still to be booked come next.').kind).toBe('note');
+  });
+
   it('refuses a look-alike letter of another script and an invisible filler, which could hide a word', () => {
     expect(check('Start with the bаnk lines.')).toEqual({ kind: 'none', code: 'FORMAT' });
     expect(check('Start with the ㅤ bank lines.')).toEqual({ kind: 'none', code: 'FORMAT' });

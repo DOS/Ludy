@@ -34,7 +34,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
   switch (hint.type) {
     case 'proposal':
       // files.batch: the intake list's files whose proposal still waits (#2009), so their chips follow its decision.
-      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id);
+      // financeMonthClose: the month-close checklist counts the proposals that still wait.
+      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || path === 'financeMonthClose.get' || path === 'financeMonthClose.explain' || (path === 'inbox.get' && inputId(query) === id);
     case 'file':
     case 'extraction':
       // extraction carries the id of the file whose reading changed. files.batch: a re-read of a file the intake list
@@ -54,7 +55,10 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         path === 'parties.customers' ||
         // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
         path === 'financeOverview.get' ||
-        path === 'financeOverview.explain'
+        path === 'financeOverview.explain' ||
+        // The month-close checklist counts bank lines settled by vouchers, settlements and payouts recorded, and the period lock, all of which are entries.
+        path === 'financeMonthClose.get' ||
+        path === 'financeMonthClose.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;

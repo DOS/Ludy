@@ -25,11 +25,12 @@ export function monthBounds(month: string): MonthBounds {
   return { month, from: `${month}-01`, next: `${nextYear}-${two(nextMonth)}-01`, last: `${month}-${two(lastDay)}` };
 }
 
-// The VAT periods whose tax-portal lists the month's invoices are reconciled in: the month's own (the portal exports a month at a time), and, for an entity that files quarterly and
-// only in the last month of its quarter, the quarter's. Nothing else: a list of another period says nothing about this month.
+// The VAT periods whose tax-portal lists the month's invoices are reconciled in, the one to read first first: for an entity that files quarterly, in the last month of its quarter, the
+// quarter's (which holds the month's invoices too) and then the month's own; otherwise the month's own (the portal exports a month at a time). Nothing else: a list of another period
+// says nothing about this month. The reader takes the first of them that has a list, so one invoice is never counted from the quarter's list and the month's.
 export function portalPeriods(month: string, kind: VatFilingPeriod | null): string[] {
   const [year, m] = month.split('-').map(Number) as [number, number];
-  return kind === 'quarter' && m % 3 === 0 ? [month, `${year}-Q${m / 3}`] : [month];
+  return kind === 'quarter' && m % 3 === 0 ? [`${year}-Q${m / 3}`, month] : [month];
 }
 
 // The VAT period whose return the checklist asks about, or null when this month does not end one: a monthly filer (the default for an org that never set its period) files for every

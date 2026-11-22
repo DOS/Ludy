@@ -47,9 +47,9 @@ describe('the VAT period of a month', () => {
     expect(vatMarkPeriod('2026-09', 'quarter')).toBe('2026-Q3');
   });
 
-  it('reads the portal lists of the month, and of the quarter too in its last month for a quarterly filer', () => {
+  it('reads the portal lists of the month, and for a quarterly filer in the last month of its quarter the quarter\'s first, so one invoice is never counted twice', () => {
     expect(portalPeriods('2026-10', 'quarter')).toEqual(['2026-10']);
-    expect(portalPeriods('2026-12', 'quarter')).toEqual(['2026-12', '2026-Q4']);
+    expect(portalPeriods('2026-12', 'quarter')).toEqual(['2026-Q4', '2026-12']);
   });
 });
 

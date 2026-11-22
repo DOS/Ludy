@@ -17,7 +17,7 @@ vi.mock('../src/lib/api.ts', async () => {
   const node = (path: string[]): unknown =>
     new Proxy(() => undefined, {
       get: (_t, prop: string) => {
-        if (prop === 'queryOptions') return () => ({ queryKey: path, queryFn: () => Promise.reject(new Error('not fetched')) });
+        if (prop === 'queryOptions') return () => ({ queryKey: path, queryFn: () => Promise.reject(new Error('not fetched')), retryOnMount: false });
         return node([...path, prop]);
       },
     });
@@ -112,6 +112,28 @@ describe('the month-close checklist card', () => {
     // The select is the wrapper's child: the wrapper carries the rule that makes it 44 px.
     expect(html).toMatch(/class="[^"]*\[&amp;_select\]:min-h-11[^"]*"[^>]*data-slot="native-select-wrapper"/);
     expect(html.match(/inline-flex min-h-11 min-w-16/g)).toHaveLength(7);
+  });
+
+  it('shows a retry button 44 px high when the checklist cannot be read', async () => {
+    cache.current.clear();
+    cache.current
+      .getQueryCache()
+      .build(cache.current, { queryKey: ['financeMonthClose', 'get'] })
+      .setState({ status: 'error', error: new Error('boom'), data: undefined, dataUpdatedAt: 0, errorUpdatedAt: 1, errorUpdateCount: 1, fetchFailureCount: 1, fetchFailureReason: null, fetchStatus: 'idle' } as never);
+    const root = createRootRoute({
+      component: () => (
+        <QueryClientProvider client={cache.current}>
+          <IntlProvider locale="en" messages={catalog('en')} timeZone="Asia/Ho_Chi_Minh">
+            <MonthCloseCard slug="demo" today={TODAY} />
+          </IntlProvider>
+        </QueryClientProvider>
+      ),
+    });
+    const router = createRouter({ routeTree: root, history: createMemoryHistory({ initialEntries: ['/'] }) });
+    await router.load();
+    const html = renderToString(<RouterProvider router={router} />);
+    expect(html).toMatch(/<button[^>]*class="[^"]*min-h-11[^"]*"[^>]*>Try again<\/button>/);
+    expect(rowKeys(html)).toEqual([]);
   });
 
   it('shows the coworker note and sorts the open items by its order, naming the coworker through the roster', async () => {

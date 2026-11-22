@@ -3331,6 +3331,8 @@ export function createRpcHandler(
       explain: os.financeMonthClose.explain.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
           const { lang, ...ask } = input;
+          // With no model there is nothing to ask, so the checklist is not counted a second time for a note that cannot come.
+          if (!financeMonthCloseAi.reader) return { ai: 'off' as const, text: null, order: [] };
           const checklist = await runtime.query<MonthClose>('finance.month_close', ask, { actor, orgId });
           return explainMonthClose(financeMonthCloseAi, orgId, actor.userId, checklist, lang ?? 'vi');
         }),

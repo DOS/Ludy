@@ -80,13 +80,23 @@ const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u
 // vague quantity ("một số", "nhiều", "vài") is no figure and stays allowed.
 const VI_NUMBER = /(?<![\p{L}])(?:hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|trăm|nghìn|ngàn|triệu|tỷ|một(?!\s+(?:số|chút|cách|khi|lần\s+nữa)))(?![\p{L}])/iu;
 // English number words the shared check stops short of (it ends at twelve and twenty): every exact number is refused here, as the note is given no figure at all.
-const EN_NUMBER = /(?<![\p{L}])(?:zero|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?![\p{L}])/iu;
+const EN_NUMBER = [
+  /(?<![\p{L}])(?:zero|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?![\p{L}])/iu,
+  // "one" is a number too, except where it stands for a thing ("no one", "this one", "one of them", "one by one"), as "một" is allowed before "số" and "chút" above.
+  /(?<!\b(?:no|any|every|the|this|that|each|another)\s)(?<![\p{L}])one(?!\s+(?:of|another|by)\b)(?![\p{L}])/iu,
+  // The ordinals from the fourth up (first, second and third only put things in order), and the counts of times.
+  /(?<![\p{L}])(?:fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|(?:thir|four|fif|six|seven|eigh|nine)teenth|(?:twen|thir|for|fif|six|seven|eigh|nine)tieth|hundredth|thousandth|twice|thrice)(?![\p{L}])/iu,
+  // "once" as a count ("check it once"), not as "once they are booked" (a pronoun or a determiner follows).
+  /(?<![\p{L}])once(?!\s+(?:they|it|the|all|each|every|that|you|we|this|these|those|a|an|there|he|she|their|your|its|our|any|no)(?![\p{L}]))(?![\p{L}])/iu,
+];
 // Only Latin letters (Vietnamese included), digits, punctuation and spaces: a look-alike letter of another script or an invisible filler could hide a word the checks look for.
 const FOREIGN_SCRIPT = /[^\p{Script=Latin}\p{Script=Common}\p{M}]/u;
 // A date or a day: a month name, a weekday, or a word that names a day. A number in digits is already refused by the figures check; these are the dates said in words.
 const DATE_WORDS = [
   /(?<![\p{L}])(?:tháng\s+(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|giêng|chạp)|thứ\s+(?:hai|ba|tư|năm|sáu|bảy)|chủ\s+nhật|hôm\s+nay|hôm\s+qua|ngày\s+mai|ngày\s+kia|tối\s+nay|sáng\s+mai|cuối\s+tuần|tuần\s+(?:sau|tới|trước)|năm\s+(?:ngoái|nay|sau))(?![\p{L}])/iu,
   /(?<![\p{L}])(?:january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tonight|tomorrow|yesterday|weekend)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:by|before)\s+(?:the\s+)?end\s+of(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:cuối\s+(?:ngày|quý|năm)|trước\s+cuối)(?![\p{L}])/iu,
 ];
 // A promise, or a claim that a step was done: what the note must never say, in either language ("chưa xong" is refused with "xong": say what to do, not how far it is).
 const PROMISE_WORDS = [
@@ -96,6 +106,9 @@ const PROMISE_WORDS = [
 ];
 // A step said to be in a done state ("is filed", "has been posted"); "not yet filed" and "to be booked" say what is left, so they stay allowed.
 const DONE_STATE = /(?<![\p{L}])(?:has|have|had|was|were|is|are|been|just|now)\s+(?:been\s+)?(?:posted|filed|locked|sent|approved|submitted|resolved|fixed|cleared|reconciled|booked|recorded|closed|rejected)(?![\p{L}])/iu;
+// A clause that ends in a bare participle ("Posted.", "All the lines are posted") or in "rồi" (Vietnamese for "already, done": "Duyệt rồi.", "được duyệt rồi") says a step is done. "not yet
+// filed", "still booked" and "to be booked" end the same way but say what is left, so a word before it that negates or marks the future spares it.
+const DONE_FINAL = /(?<!(?:^|[^\p{L}])(?:not|yet|still|never|be|being|to)\s)(?<![\p{L}])(?:posted|filed|locked|sent|approved|submitted|resolved|fixed|cleared|reconciled|booked|recorded|closed|rejected|rồi)\s*$/iu;
 // A done-state word after a condition or a time word ("once they are booked", "before the return is filed") says what must come first, not that a step was done, so the done-state
 // check skips it; the promise words (will, sẽ, đã, done, ...) are refused in every clause.
 const CONDITIONAL = /(?<![\p{L}])(?:once|before|after|until|when|if|unless|while|as soon as|sau khi|trước khi|khi|nếu|cho đến khi)(?![\p{L}])/iu;
@@ -103,7 +116,7 @@ function promised(read: string): boolean {
   if (PROMISE_WORDS.some((word) => word.test(read))) return true;
   // The done-state words count only where no condition or time word comes before them in their own clause.
   return read.split(/[,;:.!?]\s*/u).some((clause) => {
-    const done = DONE_STATE.exec(clause);
+    const done = DONE_STATE.exec(clause) ?? DONE_FINAL.exec(clause);
     return done !== null && !CONDITIONAL.test(clause.slice(0, done.index));
   });
 }
@@ -119,9 +132,11 @@ export function checkMonthCloseNote(facts: MonthCloseFacts, output: { note?: str
   const problem = statedFiguresProblem(text, []);
   if (problem) return { kind: 'none', code: problem };
   const read = text.normalize('NFKC');
+  // Any numeric character of any script or style (circled, dingbat, Ethiopic, Hangzhou, ...), which the shared digit check does not all see.
+  if (/\p{N}/u.test(text) || /\p{N}/u.test(read)) return { kind: 'none', code: 'FIGURES' };
   if (draftLinksOutside(read, []).length > 0 || /@|\bwww\b|\b[a-z0-9-]+\.(?:com|vn|net|org|io|ai|gov)\b/i.test(read)) return { kind: 'none', code: 'LINK' };
   if (DATE_WORDS.some((word) => word.test(read))) return { kind: 'none', code: 'DATE' };
-  if (VI_NUMBER.test(read) || EN_NUMBER.test(read)) return { kind: 'none', code: 'FIGURES' };
+  if (VI_NUMBER.test(read) || EN_NUMBER.some((word) => word.test(read))) return { kind: 'none', code: 'FIGURES' };
   if (promised(read)) return { kind: 'none', code: 'PROMISE' };
   if (FORMATTED.test(text) || FOREIGN_SCRIPT.test(read)) return { kind: 'none', code: 'FORMAT' };
   // The order is exactly the open keys, each once: the model neither adds an item nor drops one nor repeats one.
