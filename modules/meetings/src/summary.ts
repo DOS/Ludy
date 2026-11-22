@@ -13,7 +13,7 @@ import { attendeeNames, draftLabels } from './speaker.ts';
 import { dayAfter, vnDay } from './retention.ts';
 import { CHAPTERS_FEATURE } from './chapters-run.ts';
 import { SUMMARY_FEATURE as FEATURE, isSummaryEnabled } from './summary-run.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
 export { plainName };
 
@@ -138,9 +138,18 @@ export const summaryCopyResult = defineCommand({
     if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its summary');
+    // Lock the meeting row first (the order redact and personal_erase take), before reading the private result, so a concurrent
+    // redaction drops the private result before it can be read and a template change serializes (#4415, #3578).
+    const row = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     const body = await readRunResult(ctx, input.meetingId, input.runId, ctx.now);
     // The meeting's day and who may be named: the recorder and the attendees, by the names the org knows them by (member_profiles answers for members only).
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
     const meetingDay = vnDay(row.started_at ?? new Date());
     // A4 (#3162): a run was asked for one template; if the recorder picked another since, its sections would not fit the headings they now type under, so it is not copied.
     // #3578: on a custom template the run is tied to the copy of the sections it was asked to fill (its hash), so another org template, or the same one edited and picked again, is refused too.
@@ -311,6 +320,9 @@ export const chaptersCopyResult = defineCommand({
     if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its chapters');
+    // The meeting row is held first (before reading the private result), so a copy, a save, a publish, a redaction and an erase of the same meeting
+    // serialize, and a concurrent redaction drops the private result before it can be read (#4415).
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const raw = await readRunBody(ctx, input.meetingId, input.runId, ctx.now, CHAPTERS_FEATURE);
     let body: { chapters: Array<{ title: string; startSeconds: number }>; dropped: number };
     try {
@@ -318,8 +330,6 @@ export const chaptersCopyResult = defineCommand({
     } catch {
       throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The chapters result cannot be read');
     }
-    // The meeting row is held, so a copy, a save and a publish of the same meeting are one after the other, and a delete or an erase waits for this copy.
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     const already = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
     if (already) throw new DomainError('CHAPTERS_ALREADY_COPIED', 409, 'These chapters were already copied into the draft');
     // The anchors again, against the transcript as it is at the copy.
