@@ -2,6 +2,7 @@
 // The Ludy extension's sign-in request: what the page accepts, where it sends the code, and how long it keeps a request
 // while the member signs in (#2582, ADR-0047 point 10).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DESKTOP_CLIENT_ID } from '@ludy/kernel-contract';
 import { PENDING_CONNECT_TTL_MS, connectRedirect, filterScopesForModules, forgetConnect, parseConnectRequest, pendingConnect, rememberConnect } from '../src/lib/extension-connect.ts';
 
 const EXTENSION = 'abcdefghijklmnopabcdefghijklmnop';
@@ -18,7 +19,7 @@ const query = (over: Record<string, string | undefined> = {}) => {
 
 describe('parseConnectRequest', () => {
   it('accepts the extension\'s request and tidies its device name', () => {
-    expect(parseConnectRequest(query(), ALLOWED)).toEqual({ extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: REDIRECT, state: 'st_1-A', scopes: ['meetings'], deviceName: 'Chrome trên máy bàn' });
+    expect(parseConnectRequest(query(), ALLOWED)).toEqual({ client: 'extension', extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: REDIRECT, state: 'st_1-A', scopes: ['meetings'], deviceName: 'Chrome trên máy bàn' });
     expect(parseConnectRequest(query({ scope: undefined }), ALLOWED)?.scopes).toEqual(['meetings']);
     // The agenda scope (B2) rides with meetings: both is fine, agenda alone is not a request.
     expect(parseConnectRequest(query({ scope: 'meetings agenda' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings']);
@@ -123,5 +124,60 @@ describe('the request kept while the member signs in', () => {
     expect(pendingConnect(ALLOWED, now + 1000)).toEqual(request);
     expect(store.has('ludy-pending-extension-connect')).toBe(true);
     expect(store.has('crove-pending-extension-connect')).toBe(false);
+  });
+});
+
+describe('Ludy Desktop sign-in (ADR-0055 slice 2, #4515)', () => {
+  const LOOPBACK = 'http://127.0.0.1:49152/ludy-desktop/callback';
+  const desktop = (over: Record<string, string | undefined> = {}) => query({ client: 'desktop', redirect_uri: LOOPBACK, scope: undefined, device: 'Ludy Desktop, Windows', ...over });
+
+  it('accepts a loopback request with no scope, bound to the reserved desktop id, whatever the extension list holds', () => {
+    expect(parseConnectRequest(desktop(), [])).toEqual({
+      client: 'desktop',
+      extensionId: DESKTOP_CLIENT_ID,
+      codeChallenge: CHALLENGE,
+      redirect: LOOPBACK,
+      state: 'st_1-A',
+      scopes: [],
+      deviceName: 'Ludy Desktop, Windows',
+    });
+    // Least privilege: it holds no scope until slice 3 needs one, so a request that asks for any is refused.
+    for (const scope of ['meetings', 'agenda', 'notes', 'meetings agenda', 'crm']) expect(parseConnectRequest(desktop({ scope }), []), scope).toBeNull();
+  });
+
+  it('refuses a redirect that is not exactly the loopback callback, and any other client', () => {
+    for (const redirect of [
+      'http://127.0.0.1:49152/other',
+      'http://127.0.0.1:49152/ludy-desktop/callback?x=1',
+      'http://localhost:49152/ludy-desktop/callback',
+      'http://127.0.0.2:49152/ludy-desktop/callback',
+      'https://127.0.0.1:49152/ludy-desktop/callback',
+      'http://127.0.0.1/ludy-desktop/callback',
+      'http://127.0.0.1:80/ludy-desktop/callback',
+      'http://127.0.0.1:65536/ludy-desktop/callback',
+      'http://user@127.0.0.1:49152/ludy-desktop/callback',
+      'http://127.0.0.1:49152@evil.example/ludy-desktop/callback',
+      'https://evil.example/ludy-desktop/callback',
+      REDIRECT,
+    ]) {
+      expect(parseConnectRequest(desktop({ redirect_uri: redirect }), []), redirect).toBeNull();
+    }
+    expect(parseConnectRequest(desktop({ client: 'mobile' }), [])).toBeNull();
+    expect(parseConnectRequest(desktop({ code_challenge_method: 'plain' }), [])).toBeNull();
+    expect(parseConnectRequest(desktop({ state: '' }), [])).toBeNull();
+    // A loopback redirect without the desktop marker is not an extension's request.
+    expect(parseConnectRequest(query({ redirect_uri: LOOPBACK }), ALLOWED)).toBeNull();
+  });
+
+  it('sends the code back to the loopback address and keeps the marker while the member signs in', () => {
+    const request = parseConnectRequest(desktop(), [])!;
+    expect(connectRedirect(request, { code: 'crc_x', org: 'acme' })).toBe(`${LOOPBACK}?code=crc_x&org=acme&state=st_1-A`);
+    const store = new Map<string, string>();
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) },
+    });
+    rememberConnect(request, 1_700_000_000_000);
+    expect(pendingConnect([], 1_700_000_000_500)).toEqual(request);
   });
 });

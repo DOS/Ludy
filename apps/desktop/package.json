@@ -1,0 +1,18 @@
+{
+  "name": "@ludy/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Ludy Desktop (ADR-0055 slice 2): an Electron tray shell for Windows. Signs in as the member with the extension's PKCE flow, keeps the token in the OS key store and updates itself. No capture.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@electron/packager": "catalog:",
+    "electron": "catalog:",
+    "electron-winstaller": "catalog:"
+  }
+}

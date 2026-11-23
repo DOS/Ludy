@@ -62,7 +62,7 @@ const CLOCK_TOLERANCE_S = 30;
 export function actorOf(user: AuthUser): UserActor {
   // An extension token has no session and no second factor; the runtime checks the token itself in each transaction.
   if (user.extension) {
-    return { type: 'user', userId: user.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: user.extension.tokenId, scopes: user.extension.scopes } };
+    return { type: 'user', userId: user.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: user.extension.tokenId, scopes: user.extension.scopes, client: user.extension.client ?? 'extension' } };
   }
   const actor: UserActor = { type: 'user', userId: user.userId, aal: user.aal, sessionId: user.sessionId, mfaAt: user.mfaAt };
   if (user.confirmLive) actor.confirmLive = user.confirmLive;
