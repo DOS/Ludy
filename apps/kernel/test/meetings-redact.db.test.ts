@@ -600,7 +600,8 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
   it('refuses a redaction whose marks would push a field past its cap, whole, and cuts nothing', async () => {
     const meetingId = await seedMeeting({ readers: ['attendee'] });
     // 72 characters (the cap of a speaker label is 80) holding five phone numbers: each mark is 10 characters longer than its number.
-    const label = [PHONE_PII, '0912 345 679', '0912 345 680', '0912 345 681', '0912 345 682'].join(' / ');
+    // Made-up numbers only (the PII scan refuses a plausible one): sequences and repeated digits.
+    const label = [PHONE_PII, TITLE_PHONE, '0911 111 222', '0922 222 111', '0933 333 444'].join(' / ');
     expect(label.length).toBeLessThanOrEqual(80);
     await exec('recorder', 'meetings.transcript.draft_store', {
       meetingId,
