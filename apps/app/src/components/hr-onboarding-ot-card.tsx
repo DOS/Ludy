@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Modular self-service onboarding checklist and 2-level overtime (OT) request cards for /hr/my (#4448 Stage 5B).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_OVERTIME_DAY_TYPES,
@@ -368,25 +368,26 @@ export function HrSelfOvertimeCard({
   const t = useTranslations('hrMy.overtime');
   const f = useFormat();
   const today = vietnamToday();
-  const [workDate, setWorkDate] = useState(today);
-  const [hours, setHours] = useState('2');
-  const [dayType, setDayType] = useState<HrOvertimeDayType>('weekday');
-  const [isNight, setIsNight] = useState(false);
-  const [reason, setReason] = useState('');
-  const [aiDrafted, setAiDrafted] = useState(false);
-  const [appliedPrefillVersion, setAppliedPrefillVersion] = useState(0);
+  const [workDate, setWorkDate] = useState(prefill?.workDate ?? today);
+  const [hours, setHours] = useState(prefill?.hours ?? '2');
+  const [dayType, setDayType] = useState<HrOvertimeDayType>(prefill?.dayType ?? 'weekday');
+  const [isNight, setIsNight] = useState(prefill?.isNight ?? false);
+  const [reason, setReason] = useState(prefill?.reason ?? '');
+  const [aiDrafted, setAiDrafted] = useState(Boolean(prefill));
+  const appliedPrefillRef = useRef(prefill?.version ?? 0);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [lastSubmit, setLastSubmit] = useState<HrSelfOvertimeSubmitResult | null>(null);
 
-  if (prefill && prefill.version !== appliedPrefillVersion) {
-    setAppliedPrefillVersion(prefill.version);
+  useEffect(() => {
+    if (!prefill || prefill.version === appliedPrefillRef.current) return;
+    appliedPrefillRef.current = prefill.version;
     setWorkDate(prefill.workDate);
     setHours(prefill.hours);
     setDayType(prefill.dayType);
     setIsNight(prefill.isNight);
     setReason(prefill.reason);
     setAiDrafted(true);
-  }
+  }, [prefill]);
 
   const q = useQuery({
     ...orpc.hr.self.overtime.list.queryOptions({ input: { month: workDate.slice(0, 7), limit: 100 } }),
