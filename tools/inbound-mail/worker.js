@@ -4,7 +4,7 @@
 // message can call relay() the same way.
 //
 // Settings, from the worker's variables and secrets only:
-//   KERNEL_URL      the deployment's PUBLIC_URL, such as https://crove.example.com (https, or http on loopback for tests)
+//   KERNEL_URL      the deployment's PUBLIC_URL, such as https://ludy.example.com (https, or http on loopback for tests)
 //   INBOUND_SECRET  the same value as the kernel's INBOUND_SECRET (a secret, never a plain variable)
 //
 // The kernel's answer decides what happens to the message:

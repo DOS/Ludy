@@ -98,7 +98,9 @@ Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow
 | Name | Kind | Value |
 |---|---|---|
 | `DEPLOY_MODULES_ENVIRONMENT` | variable | the opt-in: the name of the environment (`pilot`) |
-| `DEPLOY_CROVE_MODULES` | variable | comma-separated module names to write as `CROVE_MODULES` (for example `finance,crm,social,sign`) |
+| `DEPLOY_LUDY_MODULES` (or legacy `DEPLOY_CROVE_MODULES`) | variable | comma-separated module names to write as `LUDY_MODULES` (for example `finance,crm,social,sign`) |
+
+Prefer `DEPLOY_LUDY_MODULES`; `.github/workflows/deploy.yml` keeps reading `DEPLOY_CROVE_MODULES` as a fallback until the pilot cuts over per [brand-phase3-pilot-cutover.md](brand-phase3-pilot-cutover.md).
 
 If `DEPLOY_MODULES_ENVIRONMENT` does not equal the target environment, `DEPLOY_CROVE_MODULES` is ignored with a notice and the host env file is left untouched. If `DEPLOY_MODULES_ENVIRONMENT` matches the environment while `DEPLOY_CROVE_MODULES` is empty or multiline, the workflow fails fast before connecting to the host.
 
