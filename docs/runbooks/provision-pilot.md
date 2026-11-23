@@ -2,6 +2,8 @@
 
 How to set up the one server that runs the pilot (backlog item M1-5, issue #306): the same `docker compose` stack self-hosters run, behind a TLS reverse proxy, with files in an S3-compatible bucket and mail through a transactional provider. It ends where [deploy.md](deploy.md) takes over (releases, rollback) and [pilot-readiness.md](pilot-readiness.md) checks the result.
 
+> **Upgrading an existing pilot provisioned with `CROVE_*` / `/opt/crove`:** Follow [brand-phase3-pilot-cutover.md](brand-phase3-pilot-cutover.md) (`#3972`) to move `.env`, Cloudflare Email Worker, S3 lifecycle rules, and pgBackRest `WAL_STANZA` to `ludy_*` before runtime compatibility fallbacks are removed.
+
 ## Before you start
 
 | Input | Who | Issue |
