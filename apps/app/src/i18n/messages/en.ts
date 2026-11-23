@@ -18033,6 +18033,14 @@ export const en = {
         get: 'Read the approval policy',
         save: 'Save the approval policy',
       },
+      push: {
+        devices: 'List push devices',
+        pending: 'Find the notifications to push after an event',
+        record: 'Record the outcome of a push notification',
+        subscribe: 'Turn on push notifications on a device',
+        targets: 'Read the push targets of a notification',
+        unsubscribe: 'Turn off push notifications on a device',
+      },
       projects_roadmap: {
         otp_cleanup: 'Remove expired public roadmap OTP codes (system)',
       },
@@ -19035,11 +19043,7 @@ export const en = {
         release: 'Resume publishing',
       },
       push: {
-        devices: 'List push devices',
-        record: 'Record a push notification',
-        subscribe: 'Turn on push notifications on a device',
         targets: 'Read push notification targets',
-        unsubscribe: 'Turn off push notifications on a device',
       },
       queue: {
         check_low: 'Check for a queue running low',

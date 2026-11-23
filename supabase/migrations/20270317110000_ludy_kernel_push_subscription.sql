@@ -54,7 +54,7 @@ BEGIN
 END $$;
 
 -- One job per notification (singleton key: the notification's id). create_queue skips a queue that exists.
-SELECT ludy_jobs.create_queue('kernel-push', '{"policy":"standard"}'::jsonb);
+SELECT ludy_jobs.create_queue('kernel-push', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 
 -- The org purge deletes ludy_kernel.push_subscription with the org's other kernel rows. The function is the body of the newest org purge with only that table added to v_kernel_first.
 -- migration-lint: cross-module the org purge restated: ludy_kernel.push_subscription added (issue #3736).

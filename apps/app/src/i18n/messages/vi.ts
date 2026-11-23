@@ -18033,6 +18033,14 @@ export const vi = {
         get: 'Xem quy định duyệt đề xuất',
         save: 'Lưu quy định duyệt đề xuất',
       },
+      push: {
+        devices: 'Xem thiết bị nhận thông báo đẩy',
+        pending: 'Tìm thông báo cần gửi đẩy sau một sự kiện',
+        record: 'Ghi kết quả gửi thông báo đẩy',
+        subscribe: 'Bật thông báo đẩy trên thiết bị',
+        targets: 'Đọc nơi nhận thông báo đẩy của một thông báo',
+        unsubscribe: 'Tắt thông báo đẩy trên thiết bị',
+      },
       projects_roadmap: {
         otp_cleanup: 'Dọn dẹp các mã OTP hết hạn của bảng lộ trình công khai (hệ thống)',
       },
@@ -19035,11 +19043,7 @@ export const vi = {
         release: 'Tiếp tục đăng bài',
       },
       push: {
-        devices: 'Xem thiết bị nhận thông báo',
-        record: 'Ghi kết quả gửi thông báo đẩy',
-        subscribe: 'Bật thông báo đẩy trên thiết bị',
         targets: 'Đọc nơi nhận thông báo đẩy',
-        unsubscribe: 'Tắt thông báo đẩy trên thiết bị',
       },
       queue: {
         check_low: 'Kiểm tra hàng đợi sắp hết bài',
