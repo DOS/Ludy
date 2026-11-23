@@ -149,14 +149,14 @@ export function OrgLayout() {
   const notesOn = installedModules().includes('notes');
   const canQuickCapture = notesOn && me.isSuccess && Boolean(org) && roleHere !== 'viewer';
   const canCreateTeamTask = me.isSuccess && Boolean(org) && agentPermissions(roleHere).tasks;
-  const recentScope = useMemo(
-    () => ({ orgId: org?.orgId, userId: me.data?.userId }),
-    [org?.orgId, me.data?.userId],
-  );
-  const recentItems = useRecentItems(slug, recentScope);
-  const suppressedPathnameRef = useRef<string | null>(null);
   const orgIdHere = org?.orgId;
   const userIdHere = me.data?.userId;
+  const recentScope = useMemo(
+    () => ({ orgId: orgIdHere, userId: userIdHere }),
+    [orgIdHere, userIdHere],
+  );
+  const recentItems = useRecentItems(me.isSuccess && orgIdHere ? slug : '', recentScope);
+  const suppressedPathnameRef = useRef<string | null>(null);
 
   useEffect(() => {
     const suppressed = suppressedPathnameRef.current;
@@ -173,22 +173,21 @@ export function OrgLayout() {
       const name = currentScreenName()?.trim();
       if (!name || name === recordedLabel) return;
       recordedLabel = name;
-      const detailKey = detailSectionKeyForPath(relativePath);
+      const isDetailRecord = detailSectionKeyForPath(relativePath) !== null;
       recordRecentItem(
         slug,
         {
           id: relativePath,
           path: relativePath,
           label: name,
-          ...(detailKey ? { detail: t(detailKey) } : {}),
-          kind: detailKey ? 'record' : 'screen',
+          kind: isDetailRecord ? 'record' : 'screen',
         },
         { orgId: orgIdHere, userId: userIdHere },
       );
     };
     tryRecord();
     return subscribeScreenName(tryRecord);
-  }, [slug, orgIdHere, userIdHere, me.isSuccess, resolvedPathname, modulesVersion, managerHere, hrMemberHere, showAiConnections, t]);
+  }, [slug, orgIdHere, userIdHere, me.isSuccess, resolvedPathname, modulesVersion, managerHere, hrMemberHere, showAiConnections]);
 
   const [paletteQuery, setPaletteQuery] = useState('');
   const typed = (financeOn || notesOn) && paletteOpen ? searchTerm(paletteQuery) : null;

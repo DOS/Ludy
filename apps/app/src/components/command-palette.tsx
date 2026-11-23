@@ -34,6 +34,7 @@ export function CommandPalette({
   const [active, setActive] = useState(0);
   const [submenuId, setSubmenuId] = useState<string | null>(null);
   const activeSubmenu = useMemo(() => findSubmenuEntry(entries, submenuId), [entries, submenuId]);
+  const activeSubmenuId = activeSubmenu?.id ?? null;
   const results = useMemo(() => resolvePaletteResults(entries, query, found, activeSubmenu), [entries, query, found, activeSubmenu]);
 
   useEffect(() => {
@@ -53,8 +54,8 @@ export function CommandPalette({
 
   useEffect(() => {
     setActive(0);
-    onQueryChange?.(activeSubmenu ? '' : query);
-  }, [query, activeSubmenu, onQueryChange]);
+    onQueryChange?.(activeSubmenuId ? '' : query);
+  }, [query, activeSubmenuId, onQueryChange]);
   // A refresh of the pending proposals can shorten the results under the same query: keep the active one in range.
   useEffect(() => setActive((current) => Math.min(current, Math.max(results.length - 1, 0))), [results]);
 
@@ -130,8 +131,8 @@ export function CommandPalette({
             variant="outline"
             size="xs"
             onClick={exitSubmenu}
-            aria-label={t('back')}
-            title={t('back')}
+            aria-label={`${t('back')}: ${activeSubmenu.label}`}
+            title={`${t('back')}: ${activeSubmenu.label}`}
             data-testid="palette-back"
             className="shrink-0"
           >
@@ -177,7 +178,7 @@ export function CommandPalette({
                       aria-selected={selected}
                       onMouseMove={() => setActive(index)}
                       onClick={() => run(entry)}
-                      className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                      className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm max-md:min-h-11 ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-medium text-foreground">{entry.label}</div>

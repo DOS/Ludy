@@ -140,8 +140,11 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
 
     await page.keyboard.press('Control+k');
     await expect(palette).toBeVisible();
+    const secondRecentGroup = palette.getByRole('group', { name: 'Gần đây' });
+    await expect(secondRecentGroup).toContainText('Tổng quan');
+    await expect(secondRecentGroup).not.toContainText('Sổ sách');
+    await expect(secondRecentGroup).not.toContainText('Tổng quan tài chính');
     await expect(palette).not.toContainText('Sổ sách');
-    await expect(palette).not.toContainText('Tổng quan tài chính');
     await page.keyboard.press('Escape');
   });
 

@@ -68,14 +68,17 @@ export function findSubmenuEntry<T extends PaletteItem & { children?: readonly T
   return entry && entry.children && entry.children.length > 0 ? entry : null;
 }
 
-// Resolves visible palette results at root or inside an inline submenu.
+// Resolves visible palette results at root or inside an inline submenu (without capping submenu children at 8).
 export function resolvePaletteResults<T extends PaletteItem & { children?: readonly T[] | undefined }>(
   entries: readonly T[],
   query: string,
   found: readonly T[],
   submenu: T | null,
 ): T[] {
-  if (submenu) return filterPalette(submenu.children ?? [], query);
+  if (submenu) {
+    const children = submenu.children ?? [];
+    return filterPalette(children, query, Math.max(children.length, 1));
+  }
   return withFound(filterPalette(entries, query), found);
 }
 

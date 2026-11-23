@@ -72,6 +72,7 @@ describe('CommandPalette with search results', () => {
     expect(viHtml).toContain('role="listbox"');
     expect(viHtml).toContain(`role="group" aria-label="${t.groups.recent}"`);
     expect(viHtml).toContain('role="option" aria-selected="true"');
+    expect(viHtml).toContain('max-md:min-h-11');
     expect(viHtml).toContain('aria-activedescendant="');
     expect(viHtml).toContain('›');
 

@@ -174,5 +174,18 @@ describe('recent group and inline submenus (#4525)', () => {
     expect(resolvePaletteResults(entries, '', found, submenu).map((e) => e.id)).toEqual(['theme:light', 'theme:dark']);
     expect(resolvePaletteResults(entries, 'dark', found, submenu).map((e) => e.id)).toEqual(['theme:dark']);
     expect(resolvePaletteResults(entries, 'so sach', found, null).map((e) => e.id)).toEqual(['go:ledger', 'party:1']);
+
+    // Submenus with > 8 items keep all options visible without truncating trailing actions.
+    const manyOrgsEntry: PaletteEntry = {
+      id: 'action:switch-org',
+      group: 'actions',
+      label: 'Đổi tổ chức',
+      run: none,
+      children: [
+        ...Array.from({ length: 9 }, (_, i) => ({ id: `org:${i}`, group: 'orgs' as const, label: `Org ${i}`, run: none })),
+        { id: 'switch-org:add', group: 'orgs' as const, label: 'Thêm tổ chức', run: none },
+      ],
+    };
+    expect(resolvePaletteResults([manyOrgsEntry], '', found, manyOrgsEntry)).toHaveLength(10);
   });
 });
