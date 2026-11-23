@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
 import type { DealCursor, RoadmapSignalMatchResult, RoadmapSignalSourceType } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import {
@@ -502,7 +503,27 @@ export function RoadmapSignalModal({
             {t('signalInternalOnlyNotice')}
           </p>
 
-          {!fixedBoardId && !boardsQuery.isPending && boards.length === 0 ? (
+          {!fixedBoardId && boardsQuery.isError ? (
+            <Alert
+              variant="destructive"
+              className="flex flex-col gap-2 border-destructive/30 bg-destructive/10 sm:flex-row sm:items-center sm:justify-between"
+              data-testid="roadmap-signal-boards-error"
+            >
+              <AlertDescription className="text-xs">{t('signalBoardsLoadError')}</AlertDescription>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11 shrink-0"
+                data-testid="roadmap-signal-boards-retry"
+                onClick={() => {
+                  void boardsQuery.refetch();
+                }}
+              >
+                {t('signalRetryBtn')}
+              </Button>
+            </Alert>
+          ) : !fixedBoardId && !boardsQuery.isPending && boards.length === 0 ? (
             <p className="rounded-lg border border-border bg-muted p-3 text-sm text-foreground">
               {t('signalBoardEmpty')}
             </p>

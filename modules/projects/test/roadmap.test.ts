@@ -28,6 +28,7 @@ import {
   zMcpRoadmapDemandSummaryInput,
   zMcpRoadmapIdeasInput,
 } from '../src/roadmap-mcp.ts';
+import { formatMeetingTaskSource } from '../src/index.ts';
 import { computeSignalRollup } from '../src/roadmap-signals.ts';
 
 describe('projects roadmap embed origins and contracts (#4399)', () => {
@@ -286,5 +287,40 @@ describe('computeSignalRollup (#4492)', () => {
     expect(parsed.totalAmount).toBe('19999999999999999.98');
     expect(() => zRoadmapSignalValueByCurrency.parse({ currency: 'USD', totalAmount: '-1.00', signalCount: 1 })).toThrow();
     expect(() => zRoadmapSignalValueByCurrency.parse({ currency: 'USD', totalAmount: 'invalid', signalCount: 1 })).toThrow();
+  });
+
+  it('falls back to published meeting summary when draft summary and decisions are whitespace only', () => {
+    const formatted = formatMeetingTaskSource({
+      meeting: {
+        title: 'Customer Sync Q1',
+      } as Parameters<typeof formatMeetingTaskSource>[0]['meeting'],
+      results: {
+        meetingId: '00000000-0000-4000-8000-000000000010',
+        isRecorder: true,
+        draft: {
+          id: '00000000-0000-4000-8000-000000000011',
+          feature: 'manual',
+          stage: 'draft',
+          summary: '   \n  ',
+          decisions: ['   ', '\t'],
+          tainted: false,
+        },
+        published: {
+          id: '00000000-0000-4000-8000-000000000012',
+          feature: 'manual',
+          stage: 'published',
+          summary: 'Customers requested scheduled PDF reports.',
+          decisions: ['Prioritize weekly PDF digest'],
+          tainted: false,
+        },
+        items: [],
+      },
+      notes: null,
+      transcript: null,
+    });
+
+    expect(formatted.sourceTitle).toBe('Customer Sync Q1');
+    expect(formatted.sourceBody).toContain('Summary:\nCustomers requested scheduled PDF reports.');
+    expect(formatted.sourceBody).toContain('Decisions:\n- Prioritize weekly PDF digest');
   });
 });

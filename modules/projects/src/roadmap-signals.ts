@@ -536,8 +536,15 @@ export const roadmapSignalCreate = defineCommand({
       dealCurrency: row.deal_currency,
     });
 
+    const mapped = mapSignalRow(row);
+    // Do not persist or replay a meeting quote excerpt inside idempotency_key.response:
+    // meeting read access and retention can revoke after creation, while signal.list
+    // re-checks meetings.meeting.visible_ids on every read (#4492).
     return {
-      signal: mapSignalRow(row),
+      signal:
+        row.source_type === 'meetings.meeting'
+          ? { ...mapped, quoteExcerpt: null }
+          : mapped,
       alreadyLinked,
     };
   },
@@ -576,6 +583,26 @@ export const roadmapSignalDelete = defineCommand({
   target: (input) => ({ type: 'projects.roadmap_signal', id: input.signalId }),
   handler: async (ctx, input: RoadmapSignalDeleteInput): Promise<RoadmapSignalDeleteResult> => {
     userOf(ctx.actor);
+    const current = await ctx.trx
+      .selectFrom('ludy_projects.roadmap_signal')
+      .select(['roadmap_item_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.signalId)
+      .executeTakeFirst();
+
+    if (!current) {
+      throw new DomainError('ROADMAP_SIGNAL_NOT_FOUND', 404, 'Roadmap signal not found');
+    }
+
+    // Lock parent roadmap_item (FOR SHARE) before deleting, matching create and item.merge (FOR UPDATE).
+    await ctx.trx
+      .selectFrom('ludy_projects.roadmap_item')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', current.roadmap_item_id)
+      .forShare()
+      .execute();
+
     const deleted = await ctx.trx
       .deleteFrom('ludy_projects.roadmap_signal')
       .where('org_id', '=', ctx.orgId)

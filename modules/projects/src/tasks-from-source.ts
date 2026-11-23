@@ -58,7 +58,8 @@ export function formatMeetingTaskSource(parts: {
   if (parts.results) {
     const draftHasContent =
       parts.results.draft !== null &&
-      (parts.results.draft.summary.trim().length > 0 || parts.results.draft.decisions.length > 0);
+      (parts.results.draft.summary.trim().length > 0 ||
+        parts.results.draft.decisions.some((d) => d.trim().length > 0));
     const primary = draftHasContent ? parts.results.draft : parts.results.published;
     if (primary) {
       if (primary.summary.trim().length > 0) {

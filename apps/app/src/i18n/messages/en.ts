@@ -11921,6 +11921,7 @@ export const en = {
         signalSourceMeeting: 'Meeting',
         signalSourceUnavailable: 'Source unavailable',
         signalBoardEmpty: 'Create or activate a Public Roadmap board in Projects first to link signals.',
+        signalBoardsLoadError: 'Could not load roadmap boards. Try again.',
         signalInternalOnlyNotice: 'Internal demand data: quotes, account labels, and deal values stay private to your team and never appear on the public roadmap.',
       },
       public: {

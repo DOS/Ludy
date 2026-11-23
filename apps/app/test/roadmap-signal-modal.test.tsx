@@ -7,8 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'use-intl';
 import { catalog } from '../src/i18n/runtime.ts';
 
-const { rpcCalls } = vi.hoisted(() => ({
+const { rpcCalls, capturedButtons } = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ path: string; args: unknown }>,
+  capturedButtons: new Map<string, { onClick?: (() => void) | undefined }>(),
 }));
 
 function makeProxy(path: string[] = []): unknown {
@@ -17,7 +18,14 @@ function makeProxy(path: string[] = []): unknown {
       if (prop === 'queryOptions') {
         return (opts: { input?: unknown } = {}) => ({
           queryKey: ['orpc', ...path, opts.input ?? null],
-          queryFn: async () => null,
+          queryFn: async () => {
+            const joined = path.join('.');
+            rpcCalls.push({ path: joined, args: opts.input ?? null });
+            if (joined === 'projects.roadmap.boards') {
+              return { orgSlug: 'acme', boards: [], projects: [], seats: [], canWrite: true, canManageBoard: true };
+            }
+            return null;
+          },
         });
       }
       if (prop === 'infiniteOptions') {
@@ -63,6 +71,33 @@ vi.mock('../src/lib/org-modules.ts', () => ({
   installedModules: () => ['projects', 'crm', 'meetings'],
 }));
 
+vi.mock('@ludy/ui/components/dialog', () => ({
+  Dialog: ({ open, children }: { open?: boolean; children?: React.ReactNode }) => (open ? <div>{children}</div> : null),
+  DialogContent: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children?: React.ReactNode }) => <h2>{children}</h2>,
+  DialogDescription: ({ children }: { children?: React.ReactNode }) => <p>{children}</p>,
+  DialogFooter: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  DialogClose: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@ludy/ui/components/button', async () => {
+  const actual = await vi.importActual<typeof import('@ludy/ui/components/button')>('@ludy/ui/components/button');
+  const ActualButton = actual.Button;
+  return {
+    ...actual,
+    Button: (props: React.ComponentProps<typeof ActualButton> & { 'data-testid'?: string }) => {
+      if (props['data-testid']) {
+        capturedButtons.set(
+          props['data-testid'],
+          props.onClick ? { onClick: props.onClick as () => void } : {},
+        );
+      }
+      return <ActualButton {...props} />;
+    },
+  };
+});
+
 import { ExpandedItemSignals, ProjectRoadmapPanel } from '../src/components/project-roadmap-panel.tsx';
 import {
   buildRoadmapSignalAttempt,
@@ -92,6 +127,7 @@ describe('Omnichannel roadmap signals UI (#4492)', () => {
   afterEach(() => {
     queryClient.clear();
     rpcCalls.length = 0;
+    capturedButtons.clear();
   });
 
   it('renders board-level and item-level stacked per-currency demand rollup pills with Add Signal button in moderation panel', async () => {
@@ -462,5 +498,59 @@ describe('Omnichannel roadmap signals UI (#4492)', () => {
     const zeroHtml = await renderWithProviders(<ProjectRoadmapPanel orgSlug="acme" />, 'en');
     expect(zeroHtml).not.toContain(`data-testid="roadmap-admin-signal-rollup-error"`);
     expect(zeroHtml).not.toContain(`data-testid="roadmap-admin-toggle-signals-${itemId}"`);
+  });
+
+  it('renders board load error with retry action instead of empty board notice when boardsQuery fails', async () => {
+    const en = catalog('en').projects.roadmap.admin;
+    const vi = catalog('vi').projects.roadmap.admin;
+    expect(en.signalBoardsLoadError).not.toMatch(/[—–]/);
+    expect(vi.signalBoardsLoadError).not.toMatch(/[—–]/);
+
+    const boardsOpts = orpc.projects.roadmap.boards.queryOptions({ input: {} });
+    queryClient
+      .getQueryCache()
+      .build(queryClient, { queryKey: boardsOpts.queryKey, queryFn: boardsOpts.queryFn })
+      .setState({
+        status: 'error',
+        error: new Error('Boards network error'),
+        fetchStatus: 'idle',
+        data: undefined,
+        errorUpdateCount: 1,
+      });
+
+    const html = await renderWithProviders(
+      <RoadmapSignalModal
+        open={true}
+        onOpenChange={() => undefined}
+        prefillSource={{ sourceType: 'crm.deal', sourceId: '00000000-0000-4000-8000-000000000030' }}
+      />,
+      'en',
+    );
+
+    expect(html).toContain(`data-testid="roadmap-signal-boards-error"`);
+    expect(html).toContain(`data-testid="roadmap-signal-boards-retry"`);
+    expect(html).toContain('min-h-11');
+    expect(html).toContain(en.signalBoardsLoadError);
+    expect(html).toContain(en.signalRetryBtn);
+    expect(html).not.toContain(en.signalBoardEmpty);
+    expect(html).not.toContain(en.signalSubmitBtn);
+
+    const htmlVi = await renderWithProviders(
+      <RoadmapSignalModal
+        open={true}
+        onOpenChange={() => undefined}
+        prefillSource={{ sourceType: 'crm.deal', sourceId: '00000000-0000-4000-8000-000000000030' }}
+      />,
+      'vi',
+    );
+    expect(htmlVi).toContain(vi.signalBoardsLoadError);
+    expect(htmlVi).toContain(vi.signalRetryBtn);
+
+    const retryBtn = capturedButtons.get('roadmap-signal-boards-retry');
+    expect(retryBtn?.onClick).toBeTypeOf('function');
+    const callsBefore = rpcCalls.length;
+    retryBtn?.onClick?.();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rpcCalls.slice(callsBefore).some((c) => c.path === 'projects.roadmap.boards')).toBe(true);
   });
 });

@@ -2146,6 +2146,7 @@ export const personalDataErase = defineCommand({
       const signalQuoteMatch = freeTextMatch(probe, sql.ref('s.quote_excerpt'));
       const { rows: roadmapSignals } = await sql<{
         signal_id: string;
+        source_type: string;
         next_account_label: string | null;
         next_quote_excerpt: string | null;
         account_label: boolean;
@@ -2170,6 +2171,7 @@ export const personalDataErase = defineCommand({
          WHERE o.org_id = s.org_id AND o.id = s.id AND s.org_id = ${ctx.orgId}::uuid
            AND ((s.account_label IS NOT NULL AND ${signalAccountMatch}) OR coalesce(${signalQuoteMatch}, false))
          RETURNING s.id AS signal_id,
+                   s.source_type AS source_type,
                    s.account_label AS next_account_label,
                    s.quote_excerpt AS next_quote_excerpt,
                    (o.account_label IS NOT NULL AND coalesce(${freeTextMatch(probe, sql.ref('o.account_label'))}, false)) AS account_label,
@@ -2179,7 +2181,7 @@ export const personalDataErase = defineCommand({
       if (roadmapSignals.length > 0) {
         const ids = roadmapSignals.map((r) => r.signal_id);
         const nextAccounts = roadmapSignals.map((r) => r.next_account_label);
-        const nextQuotes = roadmapSignals.map((r) => r.next_quote_excerpt);
+        const nextQuotes = roadmapSignals.map((r) => (r.source_type === 'meetings.meeting' ? null : r.next_quote_excerpt));
         await sql`
           UPDATE ludy_kernel.idempotency_key k
              SET response = pg_catalog.jsonb_set(
@@ -2190,7 +2192,11 @@ export const personalDataErase = defineCommand({
                      false
                    ),
                    '{value,signal,quoteExcerpt}',
-                   coalesce(pg_catalog.to_jsonb(u.next_quote_excerpt), 'null'::jsonb),
+                   CASE
+                     WHEN k.response -> 'value' -> 'signal' ->> 'sourceType' = 'meetings.meeting'
+                       THEN 'null'::jsonb
+                     ELSE coalesce(pg_catalog.to_jsonb(u.next_quote_excerpt), 'null'::jsonb)
+                   END,
                    false
                  )
             FROM ROWS FROM (

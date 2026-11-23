@@ -1187,14 +1187,25 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     expect(shortIdemRow.rows[0]?.resp_text).not.toContain('Cong ty So Ngan 9 Chu So');
     expect(shortIdemRow.rows[0]?.resp_text).not.toContain(ERASED_PARTY_NAME);
 
-    // Free-text PII idempotency replay redaction
+    // Free-text PII idempotency replay redaction (non-meeting signal preserves redacted quote, while meeting signal keeps quoteExcerpt = null)
     const replayEmail = 'replay.pii@p4492.test';
+    const textPartyRes = await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, 'Cong ty Text Replay 4492', 'organization') RETURNING id`,
+      [org2.orgId],
+    );
+    const textPartyId = textPartyRes.rows[0]!.id;
+    const textDeal = await exec2<Deal>(alice2.userId, 'crm.deal.create', {
+      partyId: textPartyId,
+      title: 'Free Text Replay Deal',
+      amount: '1500000',
+      expectedClose: null,
+    });
     const textIdemKey = randomUUID();
     const textCreatePayload = {
       boardId: board2.id,
       roadmapItemId: item2C.id,
-      sourceType: 'meetings.meeting' as const,
-      sourceId: pubMeetingId,
+      sourceType: 'crm.deal' as const,
+      sourceId: textDeal.id,
       accountLabel: replayEmail,
       quoteExcerpt: `Send quote to ${replayEmail}`,
     };
@@ -1224,6 +1235,43 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       [org2.orgId, textIdemKey],
     );
     expect(textIdemRow.rows[0]?.resp_text).not.toContain(replayEmail);
+
+    const meetingEraseEmail = 'meeting.erase.pii@p4492.test';
+    const meetingSecretQuote = 'CONFIDENTIAL_MEETING_QUOTE_DO_NOT_REPLAY_4492';
+    const meetingTextKey = randomUUID();
+    const meetingTextPayload = {
+      boardId: board2.id,
+      roadmapItemId: item2C.id,
+      sourceType: 'meetings.meeting' as const,
+      sourceId: privMeetingId,
+      accountLabel: meetingEraseEmail,
+      quoteExcerpt: meetingSecretQuote,
+    };
+    await exec2<RoadmapSignalCreateResult>(
+      alice2.userId,
+      'projects.roadmap.signal.create',
+      meetingTextPayload,
+      meetingTextKey,
+    );
+    await rt.execute(
+      'kernel.personal_data.erase',
+      { value: meetingEraseEmail },
+      { actor: asMfa(owner2.userId), orgId: org2.orgId, idempotencyKey: randomUUID() },
+    );
+    const meetingTextReplay = await exec2<RoadmapSignalCreateResult>(
+      alice2.userId,
+      'projects.roadmap.signal.create',
+      meetingTextPayload,
+      meetingTextKey,
+    );
+    expect(meetingTextReplay.signal.accountLabel).toBeNull();
+    expect(meetingTextReplay.signal.quoteExcerpt).toBeNull();
+    const meetingIdemAfterErase = await sqlAdmin<{ resp_text: string }>(
+      `SELECT response::text AS resp_text FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND key = $2 AND command = 'projects.roadmap.signal.create'`,
+      [org2.orgId, meetingTextKey],
+    );
+    expect(meetingIdemAfterErase.rows[0]?.resp_text).not.toContain(meetingEraseEmail);
+    expect(meetingIdemAfterErase.rows[0]?.resp_text).not.toContain(meetingSecretQuote);
 
     // Documented party retains account_label and reports it in kept[]
     const docEmail = 'documented.party@p4492.test';
@@ -1282,8 +1330,10 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
   it('scrubs accountLabel and quoteExcerpt from idempotency_key.response on signal delete and item merge (#4492)', async () => {
     const owner3 = await person('owner-scrub');
     const alice3 = await person('alice-scrub');
+    const bob3 = await person('bob-scrub');
     const org3 = await createOrg(rt, asUser(owner3.userId), 'Cong ty Delta 4492');
     await inviteAndJoin(org3.orgId, owner3.userId, alice3, 'member');
+    await inviteAndJoin(org3.orgId, owner3.userId, bob3, 'member');
 
     const exec3 = <T>(userId: string, cmd: string, input: unknown, idempotencyKey?: string) =>
       rt.execute<T>(cmd, input, {
@@ -1291,6 +1341,8 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
         orgId: org3.orgId,
         ...(idempotencyKey ? { idempotencyKey } : {}),
       });
+    const query3 = <T>(userId: string, qName: string, input: unknown) =>
+      rt.query<T>(qName, input, { actor: asUser(userId), orgId: org3.orgId });
 
     const { board: board3 } = await exec3<{ board: RoadmapBoardSummary }>(owner3.userId, 'projects.roadmap.board.create', {
       title: 'Scrub Regression Board',
@@ -1315,15 +1367,23 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       category: null,
     });
 
-    const { meetingId: meeting1 } = await exec3<{ meetingId: string }>(alice3.userId, 'meetings.meeting.create', {
-      title: 'Scrub Regression Meeting 1',
-      consentMethod: 'told_at_start',
-      visibility: 'org',
+    await exec3(owner3.userId, 'crm.pipeline.setup', {});
+    const partyScrubRes = await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, 'Scrub Party 4492', 'organization') RETURNING id`,
+      [org3.orgId],
+    );
+    const partyScrubId = partyScrubRes.rows[0]!.id;
+    const dealScrub1 = await exec3<Deal>(alice3.userId, 'crm.deal.create', {
+      partyId: partyScrubId,
+      title: 'Scrub Regression Deal 1',
+      amount: '1000000',
+      expectedClose: null,
     });
-    const { meetingId: meeting2 } = await exec3<{ meetingId: string }>(alice3.userId, 'meetings.meeting.create', {
-      title: 'Scrub Regression Meeting 2',
-      consentMethod: 'told_at_start',
-      visibility: 'org',
+    const dealScrub2 = await exec3<Deal>(alice3.userId, 'crm.deal.create', {
+      partyId: partyScrubId,
+      title: 'Scrub Regression Deal 2',
+      amount: '2000000',
+      expectedClose: null,
     });
 
     type IdemSignalRow = {
@@ -1338,8 +1398,8 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     const delPayload = {
       boardId: board3.id,
       roadmapItemId: itemDel.id,
-      sourceType: 'meetings.meeting' as const,
-      sourceId: meeting1,
+      sourceType: 'crm.deal' as const,
+      sourceId: dealScrub1.id,
       accountLabel: delPiiAccount,
       quoteExcerpt: delPiiQuote,
     };
@@ -1382,8 +1442,8 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     await exec3(alice3.userId, 'projects.roadmap.signal.create', {
       boardId: board3.id,
       roadmapItemId: itemMergeDst.id,
-      sourceType: 'meetings.meeting',
-      sourceId: meeting1,
+      sourceType: 'crm.deal',
+      sourceId: dealScrub1.id,
     });
 
     const mergeSrcIdemKey = randomUUID();
@@ -1392,8 +1452,8 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     const mergeSrcPayload = {
       boardId: board3.id,
       roadmapItemId: itemMergeSrc.id,
-      sourceType: 'meetings.meeting' as const,
-      sourceId: meeting1,
+      sourceType: 'crm.deal' as const,
+      sourceId: dealScrub1.id,
       accountLabel: mergePiiAccount,
       quoteExcerpt: mergePiiQuote,
     };
@@ -1413,8 +1473,8 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       {
         boardId: board3.id,
         roadmapItemId: itemMergeSrc.id,
-        sourceType: 'meetings.meeting',
-        sourceId: meeting2,
+        sourceType: 'crm.deal',
+        sourceId: dealScrub2.id,
         accountLabel: keepAccount,
         quoteExcerpt: keepQuote,
       },
@@ -1458,5 +1518,67 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     );
     expect(keptRow.rows[0]?.response?.value?.signal?.accountLabel).toBe(keepAccount);
     expect(keptRow.rows[0]?.response?.value?.signal?.quoteExcerpt).toBe(keepQuote);
+
+    // 3. Meeting signals omit quoteExcerpt in signal.create & idempotency_key cache so access revocation never leaks via replay
+    const { meetingId: privMeeting } = await exec3<{ meetingId: string }>(alice3.userId, 'meetings.meeting.create', {
+      title: 'Confidential Signal Meeting',
+      consentMethod: 'told_at_start',
+      visibility: 'attendees',
+    });
+    await exec3(alice3.userId, 'meetings.reader.add', { meetingId: privMeeting, userId: bob3.userId });
+
+    const meetIdemKey = randomUUID();
+    const meetQuoteCanary = 'MEETING_QUOTE_REVOKE_CANARY_4492';
+    const meetPayload = {
+      boardId: board3.id,
+      roadmapItemId: itemDel.id,
+      sourceType: 'meetings.meeting' as const,
+      sourceId: privMeeting,
+      accountLabel: 'Meeting Client 4492',
+      quoteExcerpt: meetQuoteCanary,
+    };
+    const meetCreated = await exec3<RoadmapSignalCreateResult>(
+      bob3.userId,
+      'projects.roadmap.signal.create',
+      meetPayload,
+      meetIdemKey,
+    );
+    expect(meetCreated.signal.quoteExcerpt).toBeNull();
+
+    const meetIdemRow = await sqlAdmin<IdemSignalRow>(
+      `SELECT response, response::text AS resp_text FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND key = $2 AND command = 'projects.roadmap.signal.create'`,
+      [org3.orgId, meetIdemKey],
+    );
+    expect(meetIdemRow.rows[0]?.response?.value?.signal?.quoteExcerpt).toBeNull();
+    expect(meetIdemRow.rows[0]?.resp_text).not.toContain(meetQuoteCanary);
+
+    const listBobBefore = await query3<RoadmapSignalListResult>(bob3.userId, 'projects.roadmap.signal.list', {
+      boardId: board3.id,
+      roadmapItemId: itemDel.id,
+    });
+    expect(listBobBefore.signals.find((s) => s.id === meetCreated.signal.id)?.quoteExcerpt).toBe(meetQuoteCanary);
+
+    await exec3(alice3.userId, 'meetings.reader.remove', { meetingId: privMeeting, userId: bob3.userId });
+
+    const meetReplayAfterRevoke = await exec3<RoadmapSignalCreateResult>(
+      bob3.userId,
+      'projects.roadmap.signal.create',
+      meetPayload,
+      meetIdemKey,
+    );
+    expect(meetReplayAfterRevoke.signal.id).toBe(meetCreated.signal.id);
+    expect(meetReplayAfterRevoke.signal.quoteExcerpt).toBeNull();
+
+    const listBobAfter = await query3<RoadmapSignalListResult>(bob3.userId, 'projects.roadmap.signal.list', {
+      boardId: board3.id,
+      roadmapItemId: itemDel.id,
+    });
+    expect(listBobAfter.signals.find((s) => s.id === meetCreated.signal.id)?.quoteExcerpt).toBeNull();
+
+    const listAlice = await query3<RoadmapSignalListResult>(alice3.userId, 'projects.roadmap.signal.list', {
+      boardId: board3.id,
+      roadmapItemId: itemDel.id,
+    });
+    expect(listAlice.signals.find((s) => s.id === meetCreated.signal.id)?.quoteExcerpt).toBe(meetQuoteCanary);
   }, 60_000);
 });

@@ -4931,7 +4931,7 @@ export function createRpcHandler(
                   throw err;
                 }
               };
-              const [results, notes] = await Promise.all([
+              const [resultsSettled, notesSettled] = await Promise.allSettled([
                 optionalQuery(() =>
                   runtime.query<MeetingResults>('meetings.result.get', { meetingId: input.sourceId }, { actor, orgId }),
                 ),
@@ -4941,20 +4941,37 @@ export function createRpcHandler(
                     )
                   : Promise.resolve(null),
               ]);
+              if (resultsSettled.status === 'rejected') {
+                throw resultsSettled.reason;
+              }
+              const results = resultsSettled.value;
+              const notes = notesSettled.status === 'fulfilled' ? notesSettled.value : null;
               const primaryResult =
                 results?.draft !== null &&
                 results?.draft !== undefined &&
                 (results.draft.summary.trim().length > 0 || results.draft.decisions.some((d) => d.trim().length > 0))
                   ? results.draft
                   : results?.published;
-              const hasUsableContent =
+              const hasUsableResult =
                 Boolean(
                   primaryResult &&
                     (primaryResult.summary.trim().length > 0 ||
                       primaryResult.decisions.some((d) => d.trim().length > 0)),
-                ) ||
-                Boolean(results?.items.some((i) => i.title.trim().length > 0)) ||
-                Boolean(notes?.body.trim());
+                ) || Boolean(results?.items.some((i) => i.title.trim().length > 0));
+              if (notesSettled.status === 'rejected') {
+                const notesErr = notesSettled.reason;
+                const isAuthError =
+                  notesErr instanceof DomainError &&
+                  (notesErr.status === 401 || notesErr.code === 'AUTH_UNAVAILABLE');
+                if (isAuthError || !hasUsableResult) {
+                  throw notesErr;
+                }
+                console.error(
+                  '[project-roadmap-ai] optional notes.get failed, falling back to result',
+                  notesErr instanceof Error ? notesErr.name : typeof notesErr,
+                );
+              }
+              const hasUsableContent = hasUsableResult || Boolean(notes?.body.trim());
               const transcript = hasUsableContent
                 ? null
                 : await optionalQuery(() =>
