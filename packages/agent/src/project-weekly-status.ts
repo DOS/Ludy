@@ -4,6 +4,8 @@
 // number outside its structured input (summaryNumbersOutside, #1237), invisible format characters, disallowed links or an
 // out-of-range sentence count refuses the entire summary so deterministic counts stand alone. Nothing is stored or sent.
 import { draftLinksOutside } from './conversation.ts';
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
+import { hasAddress, hasNumberWords } from './reminder.ts';
 import { summaryNumbersOutside, type SummaryFigure, type SummaryRequest } from './summary.ts';
 import { sentencesOf } from './today.ts';
 
@@ -347,7 +349,6 @@ function buildAllowedSummaryInput(facts: ProjectWeeklyStatusFacts): {
     if (task.latestComment?.trim()) {
       const snippet = oneLine(task.latestComment, PROJECT_WEEKLY_STATUS_COMMENT_CHARS);
       channels.push(snippet);
-      trustedTexts.push(snippet);
     }
   }
 
@@ -389,7 +390,7 @@ export function checkProjectWeeklyStatus(
   const maxRawLength = PROJECT_WEEKLY_STATUS_SENTENCES_MAX * PROJECT_WEEKLY_STATUS_SENTENCE_MAX;
   for (const item of rawList) {
     if (item.length > maxRawLength) return { kind: 'none', code: 'TOO_LONG' };
-    if (INVISIBLE_FORMAT.test(item)) return { kind: 'none', code: 'FORMAT' };
+    if (INVISIBLE_FORMAT.test(item) || hasPromptMarkupLeak(item)) return { kind: 'none', code: 'FORMAT' };
     if (hasMarkdownNoise(item)) return { kind: 'none', code: 'FORMAT' };
   }
 
@@ -400,7 +401,7 @@ export function checkProjectWeeklyStatus(
   }
 
   for (const s of sentences) {
-    if (INVISIBLE_FORMAT.test(s)) return { kind: 'none', code: 'FORMAT' };
+    if (INVISIBLE_FORMAT.test(s) || hasStealthControls(s) || hasPromptMarkupLeak(s)) return { kind: 'none', code: 'FORMAT' };
     if (hasMarkdownNoise(s)) return { kind: 'none', code: 'FORMAT' };
     if (s.length > PROJECT_WEEKLY_STATUS_SENTENCE_MAX) return { kind: 'none', code: 'TOO_LONG' };
   }
@@ -410,9 +411,13 @@ export function checkProjectWeeklyStatus(
   if (draftLinksOutside(joined, trustedTexts).length > 0) {
     return { kind: 'none', code: 'LINK' };
   }
+  const untrustedRemainder = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), joined);
+  if (hasAddress(untrustedRemainder) || hasObfuscatedContactOrLink(untrustedRemainder) || hasAutonomousActionDirective(joined)) {
+    return { kind: 'none', code: 'LINK' };
+  }
 
   const outside = summaryNumbersOutside(joined, summaryInput);
-  if (outside.length > 0) {
+  if (outside.length > 0 || hasNumberWords(untrustedRemainder)) {
     return { kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: outside };
   }
 

@@ -5,8 +5,10 @@
 // 2. `projects.roadmap_changelog_draft`: drafts customer release notes from selected shipped items inside <<< >>> fences.
 //    Deterministically refuses ungrounded numbers/metrics/dates (summaryNumbersOutside) and foreign URLs (draftLinksOutside).
 import { z } from 'zod';
-import { draftLinksOutside } from './conversation.ts';
+import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
+import { hasAddress, hasNumberWords } from './reminder.ts';
 import { summaryNumbersOutside, type SummaryFigure, type SummaryRequest } from './summary.ts';
 
 export const ROADMAP_DEDUPE_MAX_SUGGESTIONS = 10;
@@ -119,10 +121,18 @@ export function checkRoadmapDedupe(
     if (tgt.moderationStatus !== 'published') {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
     }
-    if (INVISIBLE_FORMAT.test(s.reason) || hasMarkdownNoise(s.reason)) {
+    if (INVISIBLE_FORMAT.test(s.reason) || hasStealthControls(s.reason) || hasMarkdownNoise(s.reason) || hasPromptMarkupLeak(s.reason)) {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
     }
-    if (draftLinksOutside(s.reason, trustedTexts).length > 0) {
+    const reasonUntrusted = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), s.reason);
+    if (
+      draftLinksOutside(s.reason, trustedTexts).length > 0 ||
+      hasAddress(reasonUntrusted) ||
+      hasObfuscatedContactOrLink(reasonUntrusted) ||
+      hasAutonomousActionDirective(s.reason) ||
+      draftFiguresOutside(s.reason, trustedTexts).length > 0 ||
+      hasNumberWords(reasonUntrusted)
+    ) {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
     }
     const cleanReason = oneLine(s.reason, ROADMAP_DEDUPE_REASON_MAX);
@@ -249,7 +259,7 @@ export function checkRoadmapChangelogDraft(
   if (title.length > ROADMAP_CHANGELOG_TITLE_MAX || bodyMd.length > ROADMAP_CHANGELOG_BODY_MAX) {
     return { kind: 'none', code: 'TOO_LONG' };
   }
-  if (INVISIBLE_FORMAT.test(title) || INVISIBLE_FORMAT.test(bodyMd) || hasMarkdownNoise(title)) {
+  if (INVISIBLE_FORMAT.test(title) || INVISIBLE_FORMAT.test(bodyMd) || hasStealthControls(title) || hasStealthControls(bodyMd) || hasMarkdownNoise(title) || hasPromptMarkupLeak(title) || hasPromptMarkupLeak(bodyMd)) {
     return { kind: 'none', code: 'FORMAT' };
   }
   // Refuse HTML tags or dangerous scripts in Markdown draft.
@@ -258,12 +268,20 @@ export function checkRoadmapChangelogDraft(
   }
 
   const { summaryInput, trustedTexts } = buildChangelogAllowedNumbersInput(facts);
-  if (draftLinksOutside(title, trustedTexts).length > 0 || draftLinksOutside(bodyMd, trustedTexts).length > 0) {
+  const combinedChangelog = `${title}\n${bodyMd}`;
+  const untrustedChangelog = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), combinedChangelog);
+  if (
+    draftLinksOutside(title, trustedTexts).length > 0 ||
+    draftLinksOutside(bodyMd, trustedTexts).length > 0 ||
+    hasAddress(untrustedChangelog) ||
+    hasObfuscatedContactOrLink(untrustedChangelog) ||
+    hasAutonomousActionDirective(combinedChangelog)
+  ) {
     return { kind: 'none', code: 'LINK' };
   }
 
-  const outside = summaryNumbersOutside(`${title}\n${bodyMd}`, summaryInput);
-  if (outside.length > 0) {
+  const outside = summaryNumbersOutside(combinedChangelog, summaryInput);
+  if (outside.length > 0 || hasNumberWords(untrustedChangelog)) {
     return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
   }
 

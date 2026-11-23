@@ -10,6 +10,7 @@
 // that tried to state "1.000.000 đồng, hạn ngày 5" cannot put a figure the books do not hold in front of a customer: the facts are the table's, and the words
 // hold none.
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
 
 export type ReminderLevel = 1 | 2 | 3;
 
@@ -70,7 +71,7 @@ export function reminderPrompt(request: ReminderWordsRequest): string {
 // magnitude words alone, the number words only before a unit of time or money ("ba mươi ngày", "hai trăm"), and "mùng"/"mồng" (a day of the month); the plain "thứ hai",
 // "hai bên", "một lần nữa" stay allowed.
 const NUMBER_WORD = new RegExp(
-  '(?<![\\p{L}])(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion|dozen|half|grand|percent|dollars?|usd|euros?|eur|vnd|vnđ|trăm|nghìn|nghin|ngàn|ngan|triệu|trieu|tỷ|vạn|mùng|mồng|nửa)(?![\\p{L}])',
+  '(?<![\\p{L}])(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion|dozen|half|grand|percent|dollars?|usd|euros?|eur|vnd|vnđ|trăm|nghìn|nghin|ngàn|ngan|triệu|trieu|tỷ|vạn|mươi|muoi|mùng|mồng|nửa)(?![\\p{L}])',
   'iu',
 );
 const VI_NUMBER_BEFORE_UNIT = new RegExp(
@@ -97,10 +98,11 @@ export function hasAddress(text: string): boolean {
 // What a text may hold: no figure, number word, currency or address, except the org's own name as a whole (a name such as "Công ty 3T" or "shop.vn" is the sender's
 // own). The name is cut out of the text first, so a number the name happens to hold ("Acme 2026") cannot be reused on its own ("pay before 2026").
 export function reminderTextProblem(text: string, orgName: string): 'FIGURES' | 'LINK' | null {
+  if (hasStealthControls(text)) return 'FIGURES';
   const name = orgName.trim();
   const rest = (name === '' ? text : text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), ' ')).normalize('NFKC').replace(/\p{Cf}/gu, '');
   if (draftFiguresOutside(rest, []).length > 0 || NUMBER_WORD.test(rest) || VI_NUMBER_BEFORE_UNIT.test(rest) || CURRENCY_SIGN.test(rest)) return 'FIGURES';
-  if (ADDRESS.test(rest) || draftLinksOutside(rest, []).length > 0) return 'LINK';
+  if (ADDRESS.test(rest) || draftLinksOutside(rest, []).length > 0 || hasPromptMarkupLeak(text) || hasObfuscatedContactOrLink(rest) || hasAutonomousActionDirective(rest)) return 'LINK';
   return null;
 }
 

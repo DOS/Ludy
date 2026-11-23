@@ -4,6 +4,14 @@
 // Every output sentence is validated deterministically with summaryNumbersOutside and draftLinksOutside before return.
 import { draftLinksOutside } from './conversation.ts';
 import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
+import { hasAddress } from './reminder.ts';
+import {
   PROJECT_WEEKLY_STATUS_COMMENT_CHARS,
   PROJECT_WEEKLY_STATUS_SENTENCES_MAX,
   PROJECT_WEEKLY_STATUS_SENTENCES_MIN,
@@ -21,6 +29,9 @@ import { sentencesOf } from './today.ts';
 export const PROJECT_CYCLE_SUMMARY_TASKS_MAX = 15;
 const PROJECT_CYCLE_GOAL_PROMPT_CHARS = 300;
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
+// Reject ungrounded tens/hundreds/scales/currencies and multi-word Vietnamese number phrases while leaving "one"/"two" English pronouns intact.
+const CYCLE_NUMBER_WORDS_RE =
+  /(?<![\p{L}])(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion|dozen|half|grand|percent|dollars?|usd|euros?|eur|vnd|vnđ|trăm|nghìn|nghin|ngàn|ngan|triệu|trieu|tỷ|tỉ|vạn|mươi|muoi|nửa|phần\s+trăm)(?![\p{L}])|(?<![\p{L}])(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười)\s+(?:mươi|mốt|lăm|ngày|tuần|tháng|quý|năm|đồng|đô|giờ|phút|việc|điểm)(?![\p{L}])/iu;
 const oneLine = (value: string, max: number) => Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
 const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
 const INVISIBLE_FORMAT = /\p{Cf}/u;
@@ -159,7 +170,6 @@ function buildAllowedCycleSummaryInput(facts: ProjectCycleSummaryFacts): {
     if (task.latestComment?.trim()) {
       const snippet = oneLine(task.latestComment, PROJECT_WEEKLY_STATUS_COMMENT_CHARS);
       channels.push(snippet);
-      trustedTexts.push(snippet);
     }
   }
 
@@ -191,7 +201,7 @@ export function checkProjectCycleSummary(
   const maxRawLength = PROJECT_WEEKLY_STATUS_SENTENCES_MAX * PROJECT_WEEKLY_STATUS_SENTENCE_MAX;
   for (const item of rawList) {
     if (item.length > maxRawLength) return { kind: 'none', code: 'TOO_LONG' };
-    if (INVISIBLE_FORMAT.test(item)) return { kind: 'none', code: 'FORMAT' };
+    if (INVISIBLE_FORMAT.test(item) || hasPromptMarkupLeak(item)) return { kind: 'none', code: 'FORMAT' };
     if (hasMarkdownNoise(item)) return { kind: 'none', code: 'FORMAT' };
   }
 
@@ -202,7 +212,7 @@ export function checkProjectCycleSummary(
   }
 
   for (const s of sentences) {
-    if (INVISIBLE_FORMAT.test(s)) return { kind: 'none', code: 'FORMAT' };
+    if (INVISIBLE_FORMAT.test(s) || hasStealthControls(s) || hasPromptMarkupLeak(s)) return { kind: 'none', code: 'FORMAT' };
     if (hasMarkdownNoise(s)) return { kind: 'none', code: 'FORMAT' };
     if (s.length > PROJECT_WEEKLY_STATUS_SENTENCE_MAX) return { kind: 'none', code: 'TOO_LONG' };
   }
@@ -212,9 +222,13 @@ export function checkProjectCycleSummary(
   if (draftLinksOutside(joined, trustedTexts).length > 0) {
     return { kind: 'none', code: 'LINK' };
   }
+  const untrustedRemainder = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), joined);
+  if (hasAddress(untrustedRemainder) || hasObfuscatedContactOrLink(untrustedRemainder, trustedTexts) || hasAutonomousActionDirective(joined)) {
+    return { kind: 'none', code: 'LINK' };
+  }
 
   const outside = summaryNumbersOutside(joined, summaryInput);
-  if (outside.length > 0) {
+  if (outside.length > 0 || hasUngroundedMoneyOrScaleWords(untrustedRemainder) || CYCLE_NUMBER_WORDS_RE.test(untrustedRemainder.normalize('NFKC'))) {
     return { kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: outside };
   }
 

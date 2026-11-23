@@ -6,7 +6,9 @@
 // kind is not a commitment or a decision, or its text is empty after cleaning, longer than 200 characters, carries a link, an email address, a phone number, a run of 8 or more digits or a figure the
 // cited transcript line does not say, or repeats an earlier line of that speaker. The answer has no field for talk time, tone or any judgment of a person. Nothing here reads a database, names a table or command,
 // or persists anything (the boundary test pins that); the lines go back to the recorder's browser as plain text and are not stored.
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak } from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
+import { hasNumberWords } from '../reminder.ts';
 import { foldTitleText } from './meeting-chapters.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -101,6 +103,7 @@ export function checkCommitments(raw: string, segments: readonly SummarySegment[
     bySecond.set(second, figures);
     secondsOf.set(label, bySecond);
   }
+  const transcriptHasNumberWords = hasNumberWords(segments.map((s) => s.text).join('\n'));
   const kept = new Map<string, { lines: CommitmentLine[]; seen: Set<string> }>();
   let dropped = 0;
   const drop = () => {
@@ -130,6 +133,11 @@ export function checkCommitments(raw: string, segments: readonly SummarySegment[
         text.length < COMMITMENT_LIMITS.minChars ||
         text.length > COMMITMENT_LIMITS.textChars ||
         hasContact(text) ||
+        hasObfuscatedContactOrLink(text) ||
+        hasPromptMarkupLeak(line.text) ||
+        hasPromptMarkupLeak(text) ||
+        hasAutonomousActionDirective(text) ||
+        (!transcriptHasNumberWords && hasNumberWords(text)) ||
         text.includes('@') ||
         /\p{Nd}{8}/u.test(text.normalize('NFKC')) ||
         numbersIn(text).some((n) => !bySecond.get(line.second as number)?.has(n)) ||

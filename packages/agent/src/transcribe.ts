@@ -22,6 +22,7 @@
 //   JSON list in the chat mode under a fixed line that says so. No terms, no change: the request is what it was.
 //
 // Nothing here logs or returns the audio, a transcript or a provider's body: errors carry a kind and an HTTP status only.
+import { stripStealthControls } from './injection-guards.ts';
 import { metered, type AiUsageSink } from './meter.ts';
 
 // How one chunk is sent: `audio_transcriptions` (the default) posts the file to `/audio/transcriptions`; `chat_input_audio` posts
@@ -94,7 +95,7 @@ function isDropped(code: number): boolean {
 // Tab, newline and carriage return are whitespace (collapsed to a space below), so they are kept here.
 function withoutControls(text: string): string {
   let out = '';
-  for (const char of text) if (!isDropped(char.codePointAt(0)!)) out += char;
+  for (const char of stripStealthControls(text)) if (!isDropped(char.codePointAt(0)!)) out += char;
   return out;
 }
 const tidy = (text: string) => withoutControls(text).replace(LONE_SURROGATE, '\uFFFD').replace(/\s+/g, ' ').trim();

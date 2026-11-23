@@ -4,9 +4,35 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
+import { draftLinksOutside } from './conversation.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { metered } from './meter.ts';
 import { ProofreadChangedError, proofreadChanges } from './proofread.ts';
+import { hasAddress } from './reminder.ts';
 import { SUMMARY_MAX, SummaryFigureError, summaryAsk, summaryNumbersOutside, type SummaryRequest } from './summary.ts';
+
+function withoutTrustedTexts(text: string, trusted: readonly string[]): string {
+  return trusted.reduce((acc, item) => (item ? acc.split(item).join(' ') : acc), text);
+}
+
+function isUnsafeSocialText(text: string, trustedLinks: readonly string[], trustedFigures?: readonly string[]): boolean {
+  if (hasStealthControls(text) || hasPromptMarkupLeak(text) || hasAutonomousActionDirective(text)) return true;
+  if (draftLinksOutside(text, trustedLinks).length > 0) return true;
+  if (hasObfuscatedContactOrLink(withoutTrustedTexts(text, trustedLinks), trustedLinks)) return true;
+  if (trustedFigures !== undefined) {
+    const bare = withoutTrustedTexts(text, trustedFigures);
+    if (hasUngroundedMoneyOrIdToken(bare, trustedFigures)) return true;
+    if (hasUngroundedMoneyOrScaleWords(bare)) return true;
+  }
+  return false;
+}
 
 // What the writer is told about a channel: its name and the limits the domain checks afterwards.
 export interface WriterChannel {
@@ -298,6 +324,21 @@ export class SocialWriter {
       .join('\n\n');
     const output = await this.generate({ system: instructions(request), prompt, ...(images.length > 0 ? { images } : {}) });
     if (!output || !output.body.trim()) return null;
+    const trustedLinks = [brief, request.source?.url ?? ''].filter(Boolean);
+    const trustedFigures =
+      images.length > 0
+        ? [brief].filter(Boolean)
+        : [
+            brief,
+            request.source?.title ?? '',
+            request.source?.description ?? '',
+            request.source?.text ?? '',
+            request.mail?.subject ?? '',
+            request.mail?.text ?? '',
+          ].filter(Boolean);
+    const body = output.body.trim().slice(0, MAX_BODY);
+    const title = output.title?.trim() ? output.title.trim().slice(0, MAX_TITLE) : null;
+    if (isUnsafeSocialText([body, title ?? ''].join('\n'), trustedLinks, trustedFigures)) return null;
     const keys = new Set(request.channels.map((c) => c.key));
     const seen = new Set<string>();
     const variants = output.variants
@@ -307,8 +348,8 @@ export class SocialWriter {
         return true;
       })
       .map((v) => ({ key: v.key, body: v.body?.trim() ? v.body.trim().slice(0, MAX_BODY) : null, title: v.title?.trim() ? v.title.trim().slice(0, MAX_TITLE) : null }))
-      .filter((v) => v.body !== null || v.title !== null);
-    return { body: output.body.trim().slice(0, MAX_BODY), title: output.title?.trim() ? output.title.trim().slice(0, MAX_TITLE) : null, variants };
+      .filter((v) => (v.body !== null || v.title !== null) && !isUnsafeSocialText([v.body ?? '', v.title ?? ''].join('\n'), trustedLinks, trustedFigures));
+    return { body, title, variants };
   }
 
   // A description of one image for its alt text (#817, #1121), within altTextLimit(request.maxChars); null when the
@@ -326,6 +367,9 @@ export class SocialWriter {
     const output = await this.generateDescription({ system, prompt: 'Write the alt text for this image.', image: request.image, mime: request.mime });
     const text = output?.altText.replace(/\s+/g, ' ').trim();
     if (!text) return null;
+    if (isUnsafeSocialText(text, [], []) || hasAddress(text)) {
+      return null;
+    }
     return Array.from(text).slice(0, max).join('');
   }
 
@@ -390,6 +434,9 @@ export class SocialWriter {
       if (seen.has(key)) continue;
       seen.add(key);
       const note = idea.note ? clipUnits(idea.note.normalize('NFC').trim(), IDEA_NOTE_MAX) : '';
+      if (isUnsafeSocialText([title, note].filter(Boolean).join('\n'), [], []) || hasAddress([title, note].join('\n'))) {
+        continue;
+      }
       out.push({ title, note: note || null });
       if (out.length === count) break;
     }
@@ -407,6 +454,10 @@ export class SocialWriter {
     if (!text) return null;
     const outside = summaryNumbersOutside(text, request);
     if (outside.length > 0) throw new SummaryFigureError(outside.slice(0, 10));
+    const bare = withoutTrustedTexts(text, request.channels);
+    if (isUnsafeSocialText(text, request.channels) || hasUngroundedMoneyOrScaleWords(bare)) {
+      throw new SummaryFigureError(['unsafe']);
+    }
     return text;
   }
 
@@ -422,8 +473,12 @@ export class SocialWriter {
     if (!next || (next === text && !proofread)) return null;
     const title = request.title === null ? null : output?.title?.trim() ? output.title.trim().slice(0, MAX_TITLE) : request.title;
     if (proofread) {
+      if (hasStealthControls(next) || hasStealthControls(title ?? '')) throw new ProofreadChangedError(['wording']);
       const changed = proofreadChanges([text, request.title ?? ''], [next, title ?? '']);
       if (changed.length > 0) throw new ProofreadChangedError(changed);
+    } else {
+      const trusted = [text, request.title ?? ''].filter(Boolean);
+      if (isUnsafeSocialText([next, title ?? ''].join('\n'), trusted, trusted)) return null;
     }
     return { text: next, title };
   }

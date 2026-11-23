@@ -6,6 +6,13 @@ import { generateText, Output } from 'ai';
 import { Decimal, isValidCalendarDate, toMoney, type DecimalValue } from '@ludy/l10n-vn';
 import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { metered, type AiUsage, type AiUsageSink } from './meter.ts';
 
 export const SIGN_AI_PROMPT_VERSION = 'v1';
@@ -606,7 +613,7 @@ const zKycCheckModelOutput = z.strictObject({
 });
 
 const PLAYBOOK_VERDICT_SET: ReadonlySet<string> = new Set(SIGN_PLAYBOOK_AI_VERDICTS);
-const SCHEME_OR_WEB_RE = /(?:https?:\/\/|mailto:|tel:|www\.)\S+/giu;
+const SCHEME_OR_WEB_RE = /(?:hxxps?:\/\/|https?:\/\/|mailto:|tel:|www\.)\S+/giu;
 const ADDRESS_CHUNK_RE = /[^\s<>()[\]]+/gu;
 const DOMAIN_RE =
   /(?<![@.\w\p{L}-])(?:[\p{L}0-9](?:[\p{L}0-9-]{0,61}[\p{L}0-9])?\.)+(?:xn--[a-z0-9]{2,}|[\p{L}]{2,24})(?:[/:?#]\S*)?/giu;
@@ -929,7 +936,7 @@ const UNIT_KIND_MODIFIER_MAP: Readonly<Record<string, string>> = {
 };
 const FIELD_TYPE_SET: ReadonlySet<string> = new Set(SIGN_AI_FIELD_TYPES);
 const SEVERITY_SET: ReadonlySet<string> = new Set(SIGN_CLAUSE_SEVERITIES);
-const FORMAT_CONTROL_RE = /\p{Cf}+/gu;
+const FORMAT_CONTROL_RE = /(?![\t\n\r])\p{Cc}|\p{Cf}/gu;
 
 function stripFormatControl(text: string): string {
   return text.replace(FORMAT_CONTROL_RE, '');
@@ -1520,6 +1527,15 @@ function hasUnsourcedLinkOrEmail(candidateText: string, sourceAddresses: Readonl
   return false;
 }
 
+function isUnsafeSignOutputText(text: string, trusted: readonly string[]): boolean {
+  const withoutTrusted = trusted.reduce<string>((acc, item) => (item ? acc.split(item).join(' ') : acc), text);
+  return (
+    hasPromptMarkupLeak(text) ||
+    hasAutonomousActionDirective(text) ||
+    hasObfuscatedContactOrLink(withoutTrusted, trusted)
+  );
+}
+
 export function signFieldProposeInstructions(): string {
   return [
     'You are Vy, the general manager coworker reviewing a PDF contract to suggest where signing fields belong.',
@@ -1598,6 +1614,13 @@ export function checkSignProposedFields(
     lowerRoles.set(lower, lowerRoles.has(lower) ? null : key);
   }
 
+  const combinedSourceRaw = [
+    ...boundedPages.map((p) => p.text),
+    ...request.signerRoles.map((r) => `${r.roleKey} ${r.roleLabel}`),
+  ].join('\n');
+  const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedSourceRaw)));
+  const sourceNumbers = buildSourceNumberContext(combinedSourceRaw);
+
   const fields: SignProposedField[] = [];
   const seen = new Set<string>();
   let droppedCount = 0;
@@ -1628,6 +1651,20 @@ export function checkSignProposedFields(
       continue;
     }
 
+    const cleanLabel = typeof candidate.label === 'string' ? oneLine(candidate.label, 120) : '';
+    if (
+      cleanLabel.length > 0 &&
+      (hasPromptMarkupLeak(candidate.label as string) ||
+        hasUnsourcedLinkOrEmail(cleanLabel, sourceAddresses) ||
+        hasInventedNumbers(cleanLabel, sourceNumbers, request.pageCount) ||
+        hasUngroundedMoneyOrScaleWords(cleanLabel) ||
+        hasUngroundedMoneyOrIdToken(cleanLabel, []) ||
+        isUnsafeSignOutputText(cleanLabel, [combinedSourceRaw]))
+    ) {
+      droppedCount += 1;
+      continue;
+    }
+
     const dedupeKey = `${candidate.pageNumber}:${canonicalRoleKey}:${fieldType}:${box.xNorm}:${box.yNorm}`;
     if (seen.has(dedupeKey) || fields.length >= SIGN_PROPOSED_FIELDS_MAX) {
       droppedCount += 1;
@@ -1635,7 +1672,6 @@ export function checkSignProposedFields(
     }
     seen.add(dedupeKey);
 
-    const cleanLabel = typeof candidate.label === 'string' ? oneLine(candidate.label, 120) : '';
     const cleanConfidence =
       typeof candidate.confidence === 'number' && Number.isFinite(candidate.confidence)
         ? round6(clamp(candidate.confidence, 0, 1))
@@ -1727,10 +1763,14 @@ export function checkSignClauseSummary(
     }
 
     if (
+      hasPromptMarkupLeak(item.title as string) ||
+      hasPromptMarkupLeak(item.explanation as string) ||
       hasUnsourcedLinkOrEmail(title, sourceAddresses) ||
       hasUnsourcedLinkOrEmail(explanation, sourceAddresses) ||
       hasInventedNumbers(title, sourceNumbers, request.pageCount) ||
-      hasInventedNumbers(explanation, sourceNumbers, request.pageCount)
+      hasInventedNumbers(explanation, sourceNumbers, request.pageCount) ||
+      isUnsafeSignOutputText(title, [combinedSourceRaw]) ||
+      isUnsafeSignOutputText(explanation, [combinedSourceRaw])
     ) {
       droppedClauseCount += 1;
       continue;
@@ -1755,8 +1795,10 @@ export function checkSignClauseSummary(
     const cleanedSummary = cut(raw.summaryText, SIGN_SUMMARY_MAX_CHARS);
     if (cleanedSummary.length > 0) {
       if (
+        hasPromptMarkupLeak(raw.summaryText) ||
         hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) ||
-        hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount)
+        hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount) ||
+        isUnsafeSignOutputText(cleanedSummary, [combinedSourceRaw])
       ) {
         summaryDropped = true;
       } else {
@@ -1937,10 +1979,14 @@ export function checkSignVersionDiffSummary(
     }
 
     if (
+      hasPromptMarkupLeak(item.title as string) ||
+      hasPromptMarkupLeak(item.explanation as string) ||
       hasUnsourcedLinkOrEmail(title, sourceAddresses) ||
       hasUnsourcedLinkOrEmail(explanation, sourceAddresses) ||
       hasInventedNumbers(title, sourceNumbers, maxPageCount) ||
-      hasInventedNumbers(explanation, sourceNumbers, maxPageCount)
+      hasInventedNumbers(explanation, sourceNumbers, maxPageCount) ||
+      isUnsafeSignOutputText(title, [combinedSourceRaw]) ||
+      isUnsafeSignOutputText(explanation, [combinedSourceRaw])
     ) {
       droppedDeltaCount += 1;
       continue;
@@ -1969,8 +2015,10 @@ export function checkSignVersionDiffSummary(
     const cleanedSummary = cut(raw.summaryText, SIGN_SUMMARY_MAX_CHARS).replace(/[\u2013\u2014]/g, '-');
     if (cleanedSummary.length > 0) {
       if (
+        hasPromptMarkupLeak(raw.summaryText) ||
         hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) ||
-        hasInventedNumbers(cleanedSummary, sourceNumbers, maxPageCount)
+        hasInventedNumbers(cleanedSummary, sourceNumbers, maxPageCount) ||
+        isUnsafeSignOutputText(cleanedSummary, [combinedSourceRaw])
       ) {
         summaryDropped = true;
       } else {
@@ -2083,12 +2131,18 @@ export function checkSignContractDraftClauses(
     }
 
     if (
+      hasPromptMarkupLeak(item.heading as string) ||
+      hasPromptMarkupLeak(item.body as string) ||
+      (typeof item.rationale === 'string' && hasPromptMarkupLeak(item.rationale)) ||
       hasUnsourcedLinkOrEmail(heading, sourceAddresses) ||
       hasUnsourcedLinkOrEmail(body, sourceAddresses) ||
       (rationale !== null && hasUnsourcedLinkOrEmail(rationale, sourceAddresses)) ||
       hasInventedNumbers(heading, sourceNumbers, 15) ||
       hasInventedNumbers(body, sourceNumbers, 15) ||
-      (rationale !== null && hasInventedNumbers(rationale, sourceNumbers, 15))
+      (rationale !== null && hasInventedNumbers(rationale, sourceNumbers, 15)) ||
+      isUnsafeSignOutputText(heading, [sourceRaw]) ||
+      isUnsafeSignOutputText(body, [sourceRaw]) ||
+      (rationale !== null && isUnsafeSignOutputText(rationale, [sourceRaw]))
     ) {
       droppedCount += 1;
       continue;
@@ -2113,8 +2167,10 @@ export function checkSignContractDraftClauses(
     const cleanedNote = neutralizeSignTagBraces(oneLine(raw.summaryNote, 600));
     if (cleanedNote.length > 0) {
       if (
+        hasPromptMarkupLeak(raw.summaryNote) ||
         hasUnsourcedLinkOrEmail(cleanedNote, sourceAddresses) ||
-        hasInventedNumbers(cleanedNote, sourceNumbers, 15)
+        hasInventedNumbers(cleanedNote, sourceNumbers, 15) ||
+        isUnsafeSignOutputText(cleanedNote, [sourceRaw])
       ) {
         noteDropped = true;
       } else {
@@ -2405,7 +2461,10 @@ export function checkSignObligationExtract(
       cleaned.length > 0 &&
       cite &&
       normalizeContractText(cite.quoteExcerpt).includes(normalizeContractText(cleaned)) &&
-      !hasUnsourcedLinkOrEmail(cleaned, sourceAddresses)
+      !hasPromptMarkupLeak(raw.counterpartyName) &&
+      !hasUnsourcedLinkOrEmail(cleaned, sourceAddresses) &&
+      !hasInventedNumbers(cleaned, sourceNumbers, request.pageCount) &&
+      !isUnsafeSignOutputText(cleaned, [combinedSourceRaw])
     ) {
       counterpartyName = cleaned;
       keptCitations.push(cite);
@@ -2515,8 +2574,10 @@ export function checkSignObligationExtract(
       continue;
     }
     if (
+      hasPromptMarkupLeak(item.title as string) ||
       hasUnsourcedLinkOrEmail(title, sourceAddresses) ||
-      hasInventedNumbers(title, sourceNumbers, request.pageCount)
+      hasInventedNumbers(title, sourceNumbers, request.pageCount) ||
+      isUnsafeSignOutputText(title, [combinedSourceRaw])
     ) {
       droppedCount += 1;
       continue;
@@ -2866,8 +2927,10 @@ export function checkSignVaultAnswer(
   const sourceNumbers = buildSourceNumberContext(combinedCitedRaw);
 
   if (
+    hasPromptMarkupLeak(raw.answer) ||
     hasUnsourcedLinkOrEmail(cleanedAnswer, sourceAddresses) ||
-    hasInventedNumbers(cleanedAnswer, sourceNumbers, maxCitedPage)
+    hasInventedNumbers(cleanedAnswer, sourceNumbers, maxCitedPage) ||
+    isUnsafeSignOutputText(cleanedAnswer, [combinedCitedRaw])
   ) {
     return {
       kind: 'none',
@@ -2989,8 +3052,10 @@ export function checkSignPlaybookCheck(
     const rawRationale = typeof item.rationale === 'string' ? neutralizeSignTagBraces(oneLine(item.rationale, 600)) : '';
     if (
       !rawRationale ||
+      hasPromptMarkupLeak(item.rationale as string) ||
       hasUnsourcedLinkOrEmail(rawRationale, allowedAddresses) ||
-      hasInventedNumbers(rawRationale, allowedNumbers, request.pageCount)
+      hasInventedNumbers(rawRationale, allowedNumbers, request.pageCount) ||
+      isUnsafeSignOutputText(rawRationale, [combinedGroundingRaw])
     ) {
       droppedCount += 1;
       continue;
@@ -3026,8 +3091,10 @@ export function checkSignPlaybookCheck(
       );
       if (
         cleanedRedline.length > 0 &&
+        !hasPromptMarkupLeak(item.suggestedRedline) &&
         !hasUnsourcedLinkOrEmail(cleanedRedline, allowedAddresses) &&
-        !hasInventedNumbers(cleanedRedline, allowedNumbers, request.pageCount)
+        !hasInventedNumbers(cleanedRedline, allowedNumbers, request.pageCount) &&
+        !isUnsafeSignOutputText(cleanedRedline, [combinedGroundingRaw])
       ) {
         suggestedRedline = cleanedRedline;
       } else {
@@ -3170,8 +3237,10 @@ export function checkSignKycOutput(
     const explanation = typeof item.explanation === 'string' ? oneLine(item.explanation, 400) : '';
     if (
       !explanation ||
+      hasPromptMarkupLeak(item.explanation as string) ||
       hasUnsourcedLinkOrEmail(explanation, sourceAddresses) ||
-      hasInventedNumbers(explanation, sourceNumbers, request.pageCount)
+      hasInventedNumbers(explanation, sourceNumbers, request.pageCount) ||
+      isUnsafeSignOutputText(explanation, [combinedSourceRaw])
     ) {
       droppedCount += 1;
       continue;
@@ -3183,8 +3252,10 @@ export function checkSignKycOutput(
       if (
         !cleanedExt ||
         !isExtractedValueGroundedInQuote(cleanedExt, rawQuote) ||
+        hasPromptMarkupLeak(item.extractedValue) ||
         hasUnsourcedLinkOrEmail(cleanedExt, sourceAddresses) ||
-        hasInventedNumbers(cleanedExt, sourceNumbers, request.pageCount)
+        hasInventedNumbers(cleanedExt, sourceNumbers, request.pageCount) ||
+        isUnsafeSignOutputText(cleanedExt, [combinedSourceRaw])
       ) {
         droppedCount += 1;
         continue;
@@ -3197,8 +3268,10 @@ export function checkSignKycOutput(
       const cleanedExp = oneLine(item.expectedValue, 300);
       if (
         cleanedExp &&
+        !hasPromptMarkupLeak(item.expectedValue) &&
         !hasUnsourcedLinkOrEmail(cleanedExp, sourceAddresses) &&
-        !hasInventedNumbers(cleanedExp, sourceNumbers, request.pageCount)
+        !hasInventedNumbers(cleanedExp, sourceNumbers, request.pageCount) &&
+        !isUnsafeSignOutputText(cleanedExp, [combinedSourceRaw])
       ) {
         expectedValue = cleanedExp;
       }
@@ -3228,8 +3301,10 @@ export function checkSignKycOutput(
     const cleanedSummary = oneLine(raw.summaryNote, 500);
     if (
       cleanedSummary &&
+      !hasPromptMarkupLeak(raw.summaryNote) &&
       !hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) &&
-      !hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount)
+      !hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount) &&
+      !isUnsafeSignOutputText(cleanedSummary, [combinedSourceRaw])
     ) {
       summaryNote = cleanedSummary;
     } else {

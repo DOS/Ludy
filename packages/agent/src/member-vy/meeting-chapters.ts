@@ -5,7 +5,9 @@
 // phone number, a run of digits or a figure the transcript does not hold is dropped, and the title is cleaned of control, bidi and zero-width characters first. What is left is still
 // the model's text, so it stays private to the recorder and tainted until the recorder's own command copies it into a draft and a person reviews and publishes it. Nothing here reads a
 // database, names a table or command, or persists anything (the boundary test pins that).
+import { hasAutonomousActionDirective, hasPromptMarkupLeak } from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
+import { hasNumberWords } from '../reminder.ts';
 import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -126,6 +128,10 @@ export function checkChapters(raw: string, segments: readonly SummarySegment[], 
       !anchors.has(second) ||
       title === '' ||
       hasContact(title) ||
+      hasPromptMarkupLeak(entry.title) ||
+      hasPromptMarkupLeak(title) ||
+      hasAutonomousActionDirective(title) ||
+      (!hasNumberWords(segments.map((s) => s.text).join('\n')) && hasNumberWords(title)) ||
       title.includes('@') ||
       digits >= 8 ||
       figures.some((n) => !known.has(n)) ||

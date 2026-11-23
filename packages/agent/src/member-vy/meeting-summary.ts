@@ -8,7 +8,9 @@
 // Speaker names (#3502): when the caller hands over the attendees' names, the model may also suggest which attendee a speaker label is. The suggestion is only a
 // proposal too: code keeps it only when the label is one the transcript has, the name is exactly one of the attendees (and is then written as the attendee's own
 // spelling), and the line it cites is spoken by that label. The recorder accepts a suggestion with a click of their own; nothing is renamed by this run.
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
+import { hasNumberWords } from '../reminder.ts';
 import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -134,7 +136,14 @@ function hasPhone(text: string): boolean {
 /** Whether a text carries a way to reach someone off the page: a link, an email address or a phone number. */
 export function hasContact(text: string): boolean {
   const lower = text.toLowerCase();
-  return lower.includes('http://') || lower.includes('https://') || lower.includes('www.') || hasPhone(text) || lower.split(/\s+/).some((token) => hasEmail(token));
+  return (
+    lower.includes('http://') ||
+    lower.includes('https://') ||
+    lower.includes('www.') ||
+    hasPhone(text) ||
+    lower.split(/\s+/).some((token) => hasEmail(token)) ||
+    hasObfuscatedContactOrLink(text)
+  );
 }
 
 const oneLine = (value: string, max: number): string => value.replace(/\s+/g, ' ').trim().slice(0, max);
@@ -256,9 +265,17 @@ export function checkSummary(
 ): MeetingSummaryBody {
   const parsed = jsonObject(raw);
   if (!isRecord(parsed)) throw new SummaryError('SUMMARY_UNPARSABLE');
+  const transcriptText = segments.map((s) => s.text).join('\n');
   const known = new Set(segments.flatMap((s) => numbersIn(s.text)));
+  const transcriptHasNumberWords = hasNumberWords(transcriptText);
   const foreign = (text: string): boolean => numbersIn(text).some((n) => !known.has(n));
-  const bad = (text: string): boolean => foreign(text) || hasContact(text);
+  const bad = (text: string): boolean =>
+    foreign(text) ||
+    hasContact(text) ||
+    hasStealthControls(text) ||
+    hasPromptMarkupLeak(text) ||
+    hasAutonomousActionDirective(text) ||
+    (!transcriptHasNumberWords && hasNumberWords(text));
   const clean = (rawText: string, max: number): string => {
     const clipped = oneLine(rawText, max);
     return glossary.length === 0 ? clipped : oneLine(spellGlossary(clipped, glossary), max);
@@ -332,8 +349,22 @@ export function checkSummary(
     for (const entry of parsed.items) {
       if (!isRecord(entry) || typeof entry.title !== 'string') continue;
       const title = clean(entry.title, SUMMARY_LIMITS.titleChars);
-      // A foreign figure in the title refuses the item; a contact detail does not (it stays, flagged by the module's own check, for a person to read).
-      if (title === '' || foreign(title)) {
+      // A foreign figure, stealth control, prompt tag leak, action directive, invented number words, or non-email link/@handle/obfuscated contact refuses the item; a plain contact email is flagged by the module's own check.
+      const titleWithoutPlainEmails = title.replace(
+        /(?<![\p{L}\p{N}_.%+-])[\p{L}\p{N}_%+-]+(?:\.[\p{L}\p{N}_%+-]+)*@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?![\p{L}\p{N}-])/giu,
+        ' ',
+      );
+      if (
+        title === '' ||
+        foreign(title) ||
+        hasStealthControls(entry.title) ||
+        hasPromptMarkupLeak(entry.title) ||
+        hasPromptMarkupLeak(title) ||
+        hasAutonomousActionDirective(title) ||
+        (!transcriptHasNumberWords && hasNumberWords(title)) ||
+        hasObfuscatedContactOrLink(titleWithoutPlainEmails, [], [transcriptText]) ||
+        /(?:https?|hxxps?):\/\/|mailto:|tel:|www\./i.test(titleWithoutPlainEmails)
+      ) {
         dropped += 1;
         continue;
       }
@@ -547,7 +578,7 @@ export function checkEnhanced(raw: string, segments: readonly SummarySegment[], 
         }
         // Every line Vy adds rests on a real moment of the transcript, has no figure nobody said and no way to reach someone off the page.
         const real = typeof seconds === 'number' && Number.isInteger(seconds) && segments.some((s) => seconds >= Math.floor(s.startSeconds) && seconds <= Math.ceil(s.endSeconds));
-        if (!real || foreign(text) || hasContact(text) || addedCount >= ENHANCE_LIMITS.addedLines || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
+        if (!real || foreign(text) || hasContact(text) || hasStealthControls(text) || hasPromptMarkupLeak(text) || hasAutonomousActionDirective(text) || (!hasNumberWords(segments.map((s) => s.text).join('\n')) && hasNumberWords(text)) || addedCount >= ENHANCE_LIMITS.addedLines || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
           dropped += 1;
           continue;
         }

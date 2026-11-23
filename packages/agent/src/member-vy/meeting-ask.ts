@@ -7,7 +7,9 @@
 // The transcript text and the question are untrusted: an instruction inside a line is read as data and obeyed by nobody (the model has no tools, every line sits inside a JSON string between
 // tags named with a random value of the run, and nothing in the answer is acted on).
 // Nothing here reads a database, names a table or command, or persists anything (the boundary test pins that).
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
+import { hasNumberWords } from '../reminder.ts';
 import { numbersIn } from './meeting-summary.ts';
 import { contactsIn } from './meeting-translation.ts';
 import type { BoundPorts } from './ports.ts';
@@ -175,6 +177,7 @@ export function checkSentence(entry: unknown, lines: readonly { text: string }[]
   if (!isRecord(entry) || typeof entry.text !== 'string' || !Array.isArray(entry.cites)) return null;
   const text = entry.text.normalize('NFC').split(/\s+/u).filter((w) => w !== '').join(' ');
   if (text === '' || text.length > ASK_LIMITS.sentenceChars) return null;
+  if (hasStealthControls(entry.text) || hasPromptMarkupLeak(text) || hasAutonomousActionDirective(text)) return null;
   const cites: number[] = [];
   for (const raw of entry.cites as unknown[]) {
     if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1 || raw > lines.length || cites.includes(raw)) continue;
@@ -183,6 +186,8 @@ export function checkSentence(entry: unknown, lines: readonly { text: string }[]
   }
   if (cites.length === 0) return null;
   const cited = cites.map((n) => (lines[n - 1] as { text: string }).text);
+  const citedJoined = cited.join('\n');
+  if (!hasNumberWords(citedJoined) && hasNumberWords(text)) return null;
   const haystack = cited.map(squashSpaces);
   for (const phrase of quotedPhrases(text)) {
     if (phrase.length > ASK_LIMITS.quoteChars) return null;
@@ -192,6 +197,7 @@ export function checkSentence(entry: unknown, lines: readonly { text: string }[]
   const held = cited.flatMap(figuresIn);
   for (const figure of figuresIn(text)) if (!held.some((h) => sameFigure(h, figure))) return null;
   if (hasBareLink(text)) return null;
+  if (!hasObfuscatedContactOrLink(citedJoined) && hasObfuscatedContactOrLink(text)) return null;
   // A link is never in an answer, even one a line writes: a line's own instruction ("pay at this address") must not become a link the member can follow from Vy's words. An email address or a
   // phone number may be, when a cited line writes it (a person gave it in the meeting); the contact check treats the other kinds as links.
   const knownContacts = new Set(cited.flatMap((line) => [...contactsIn(line)]));

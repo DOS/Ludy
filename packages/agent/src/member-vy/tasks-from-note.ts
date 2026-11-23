@@ -2,6 +2,14 @@
 // Member-scoped Vy task proposal from a note (#2598): pure prompt + deterministic validation.
 // Model sees only the caller-readable note wrapped in nonce tags and active seats of project members.
 // Model output is untrusted: titles, seat ids and due dates are sanitized and checked before return.
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+  stripStealthControls,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -82,19 +90,34 @@ const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY_MS = 86_400_000;
 
+// Zero-width and bidi format controls (excluding C0 controls handled by stripTaskProposalControlChars).
+const STEALTH_FORMAT_CONTROL_RE = /[\u00AD\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/u;
+
 export function stripTaskProposalControlChars(raw: string): string {
+  const withoutStealth = stripStealthControls(raw);
   let out = '';
-  for (let i = 0; i < raw.length; i++) {
-    const code = raw.charCodeAt(i);
-    out += code < 0x20 || code === 0x7f ? ' ' : raw[i]!;
+  for (let i = 0; i < withoutStealth.length; i++) {
+    const code = withoutStealth.charCodeAt(i);
+    out += code < 0x20 || code === 0x7f ? ' ' : withoutStealth[i]!;
   }
   return out;
 }
 
 function sanitizeTitle(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
+  if (STEALTH_FORMAT_CONTROL_RE.test(raw) || hasPromptMarkupLeak(raw)) return null;
   const cleaned = stripTaskProposalControlChars(raw).replace(/\s+/g, ' ').trim();
   if (cleaned.length === 0) return null;
+  if (
+    hasPromptMarkupLeak(cleaned) ||
+    hasAutonomousActionDirective(cleaned) ||
+    /https?:\/\/|mailto:|tel:/i.test(cleaned) ||
+    hasObfuscatedContactOrLink(cleaned, []) ||
+    hasUngroundedMoneyOrScaleWords(cleaned) ||
+    hasUngroundedMoneyOrIdToken(cleaned, [])
+  ) {
+    return null;
+  }
   return cleaned.slice(0, TASKS_FROM_NOTE_LIMITS.maxTitleChars).trim();
 }
 

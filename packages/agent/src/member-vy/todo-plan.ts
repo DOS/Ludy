@@ -8,6 +8,13 @@ import {
   sanitizeNoteAiText,
   type NoteAiLanguage,
 } from './note-ai.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasStealthControls,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
 import { type BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -109,9 +116,18 @@ const BARE_URL_RE = /\b(?:https?:\/\/|javascript:|data:)[^\s)>\]]*/gi;
 
 function sanitizeReason(raw: string | undefined): { value: string; leaked: boolean } {
   if (!raw) return { value: '', leaked: false };
-  if (hasPromptTagLeak(raw)) return { value: '', leaked: true };
+  if (hasStealthControls(raw) || hasPromptTagLeak(raw)) return { value: '', leaked: true };
   const cleaned = sanitizeNoteAiText(raw.replace(BARE_URL_RE, ' '), TODO_PLAN_LIMITS.maxReasonChars);
-  if (hasPromptTagLeak(cleaned)) return { value: '', leaked: true };
+  if (
+    (raw.trim().length > 0 && cleaned.length === 0) ||
+    hasPromptTagLeak(cleaned) ||
+    hasAutonomousActionDirective(cleaned) ||
+    hasObfuscatedContactOrLink(cleaned, []) ||
+    hasUngroundedMoneyOrScaleWords(cleaned) ||
+    hasUngroundedMoneyOrIdToken(cleaned, [])
+  ) {
+    return { value: '', leaked: true };
+  }
   return { value: cleaned, leaked: false };
 }
 

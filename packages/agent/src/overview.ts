@@ -6,6 +6,7 @@
 // sentence, and the screen shows the figures alone. Nothing is cut or repaired. Amounts are decimal strings and go through decimal.js, never JS numbers.
 import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
 
 export const OVERVIEW_SENTENCE_MAX = 320;
 export const OVERVIEW_SENTENCES_MAX = 2;
@@ -123,8 +124,8 @@ export function checkOverviewSentence(facts: OverviewFacts, output: { sentence?:
 export function statedFiguresProblem(text: string, facts: readonly string[]): 'FIGURES' | 'LINK' | null {
   // Invisible format characters (a zero-width space inside a number word) could split a word the checks look for, so a text holding one is refused.
   const read = text.normalize('NFKC');
-  if (/\p{Cf}/u.test(read)) return 'FIGURES';
+  if (/\p{Cf}/u.test(read) || hasStealthControls(text)) return 'FIGURES';
   if (draftFiguresOutside(text, facts).length > 0 || SCALED.test(read) || NUMBER_IN_WORDS.some((word) => word.test(read))) return 'FIGURES';
-  if (draftLinksOutside(text, []).length > 0) return 'LINK';
+  if (draftLinksOutside(text, []).length > 0 || hasPromptMarkupLeak(text) || hasObfuscatedContactOrLink(text) || hasAutonomousActionDirective(text)) return 'LINK';
   return null;
 }
