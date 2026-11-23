@@ -640,7 +640,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           usage: zeroUsage,
         }),
       });
-      expect(await reader.rankCompanies(c.untrustedInput, 'khach@congty.vn', ['Cong ty A', 'Cong ty B']), `companyRank ${c.id}`).toEqual([1, 0]);
+      expect(await reader.rankCompanies(c.untrustedInput, 'khach@example.com', ['Cong ty A', 'Cong ty B']), `companyRank ${c.id}`).toEqual([1, 0]);
       const quoteRes = await reader.quoteLines(quoteReq);
       expect(quoteRes.kind, `quoteLines ${c.id}`).toBe('none');
       expect((await reader.crmFollowupWords({ reason: 'no_activity', hint: c.untrustedInput }, ['Lan'])).kind, `crmFollowup ${c.id}`).toBe('none');

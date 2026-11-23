@@ -925,14 +925,14 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     ),
     cleanCase('crm.company_rank.clean', 'crm.company_rank', 'vi', (rt) =>
       runCleanChecked(
-        () => unmetered(() => rt.inbox.rankCompanies('Cong ty Minh Anh', 'lan@minhanh.vn', ['Cong ty Minh Anh', 'Cong ty Hoa Sen'])),
+        () => unmetered(() => rt.inbox.rankCompanies('Cong ty Minh Anh', 'lan@example.com', ['Cong ty Minh Anh', 'Cong ty Hoa Sen'])),
         (out) => Array.isArray(out) && out.length === 2,
         'company_rank',
       ),
     ),
     injCase('crm.company_rank.inj.7', 'crm.company_rank', 'vi', (rt) =>
       runInjectionSafe(() =>
-        unmetered(() => rt.inbox.rankCompanies(corpusAt(7).untrustedInput, 'khach@congty.vn', ['Cong ty A', 'Cong ty B'])),
+        unmetered(() => rt.inbox.rankCompanies(corpusAt(7).untrustedInput, 'khach@example.com', ['Cong ty A', 'Cong ty B'])),
       ),
     ),
     cleanCase('crm.quote_suggest.clean', 'crm.quote_suggest', 'vi', (rt) =>

@@ -131,10 +131,18 @@ export function hasUngroundedMoneyOrIdToken(text: string, trusted: readonly stri
   return false;
 }
 
-// Prompt fence escapes, HTML script tags, or system/context tag leaks inside AI outputs.
-const PROMPT_LEAK_RE =
-  /<<<|>>>|\[\/?UNTRUSTED_[A-Z0-9_]+\]|<\/?(?:script|system)\b|<\/?(?:note-ctx|subject|memory|knowledge)-[a-z0-9-]+\b|<\/?[a-z]+-[0-9a-f]{4,}\b/i;
+// Prompt fence escapes or system/context tag leaks inside AI outputs (excluding HTML script tags stripped separately by note-ai).
+const PROMPT_TAG_OR_FENCE_LEAK_RE =
+  /<<<|>>>|\[\/?UNTRUSTED_[A-Z0-9_]+\]|<\/?system\b|<\/?(?:note-ctx|subject|memory|knowledge)-[a-z0-9-]+\b|<\/?[a-z]+-[0-9a-f]{4,}\b/i;
 
+const SCRIPT_TAG_LEAK_RE = /<\/?script\b/i;
+
+export function hasPromptTagOrFenceLeak(text: string): boolean {
+  return PROMPT_TAG_OR_FENCE_LEAK_RE.test(stripStealthControls(text));
+}
+
+// Prompt fence escapes, HTML script tags, or system/context tag leaks inside AI outputs.
 export function hasPromptMarkupLeak(text: string): boolean {
-  return PROMPT_LEAK_RE.test(stripStealthControls(text));
+  const stripped = stripStealthControls(text);
+  return SCRIPT_TAG_LEAK_RE.test(stripped) || PROMPT_TAG_OR_FENCE_LEAK_RE.test(stripped);
 }

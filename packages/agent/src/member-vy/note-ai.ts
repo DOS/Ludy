@@ -3,7 +3,13 @@
 // summarize a readable note and suggest personal to-dos from a readable note.
 // Pure module: zero runtime, database, or vendor SDK dependencies.
 import { z } from 'zod';
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls, stripStealthControls } from '../injection-guards.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptTagOrFenceLeak,
+  hasStealthControls,
+  stripStealthControls,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
 import { hasNumberWords } from '../reminder.ts';
 import { numbersIn } from './meeting-summary.ts';
@@ -360,7 +366,7 @@ export function hasPromptTagLeak(raw: string): boolean {
     lower.includes('<memory-') ||
     lower.includes('<knowledge-') ||
     /<\/?(?:system|note-ctx-[a-z0-9-]+)\b/.test(lower) ||
-    hasPromptMarkupLeak(raw.replace(/<\/?script\b[^>]*>/gi, ''))
+    hasPromptTagOrFenceLeak(raw)
   );
 }
 
