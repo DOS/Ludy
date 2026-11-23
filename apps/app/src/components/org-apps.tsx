@@ -89,7 +89,7 @@ export function OrgAppsCard() {
     return (
       <li
         key={row.id}
-        className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm max-md:py-1.5"
+        className="flex items-center justify-between gap-3 px-3 py-1.5 text-sm"
         data-testid={`org-app-${row.id}`}
       >
         <span className={cn('min-w-0 text-foreground', isSingle ? 'font-medium' : 'font-normal')}>{label}</span>
@@ -101,7 +101,7 @@ export function OrgAppsCard() {
             // Another row's change is under way: this one waits (its own stays enabled, so focus is not lost when the dialog closes).
             disabled={!canChange || !row.entitled || (set.isPending && set.variables?.module !== row.id)}
             aria-label={t('switchLabel', { app: label })}
-            aria-busy={set.isPending}
+            aria-busy={set.isPending && set.variables?.module === row.id ? true : undefined}
             onCheckedChange={(checked) => {
               // A change is under way: this row takes no second one (and opens no second confirmation).
               if (set.isPending) return;
@@ -137,7 +137,7 @@ export function OrgAppsCard() {
               aria-labelledby={labelId}
               className="overflow-hidden rounded-lg border"
             >
-              <p id={labelId} className="border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+              <p id={labelId} className="border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">
                 {tNav(`apps.${section.appId}`)}
               </p>
               <ul className="divide-y">{section.rows.map((row) => renderRow(row, false))}</ul>

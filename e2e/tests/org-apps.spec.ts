@@ -11,7 +11,7 @@ const streamUp = (page: Page) => page.waitForResponse((r) => /\/api\/stream(\?|$
 test('an owner switches Social off and on again from Settings', async ({ page }) => {
   await signUp(page, newEmail('org-apps'));
   const slug = await createOrg(page, 'Công ty chọn ứng dụng');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'apps');
 
   const social = page.getByTestId('org-app-social');
@@ -28,9 +28,15 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   const socialLabelBox = await social.locator(':scope > span').boundingBox();
   const financeSwitchBox = await financeSwitch.boundingBox();
   const socialSwitchBox = await socialSwitch.boundingBox();
-  expect(teamworkGroupBox && financeRowBox && financeRowBox.y > teamworkGroupBox.y + teamworkGroupBox.height).toBe(true);
-  expect(Math.abs((financeLabelBox?.x ?? 0) - (socialLabelBox?.x ?? 0))).toBeLessThanOrEqual(1);
-  expect(Math.abs((financeSwitchBox?.x ?? 0) - (socialSwitchBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(teamworkGroupBox).not.toBeNull();
+  expect(financeRowBox).not.toBeNull();
+  expect(financeLabelBox).not.toBeNull();
+  expect(socialLabelBox).not.toBeNull();
+  expect(financeSwitchBox).not.toBeNull();
+  expect(socialSwitchBox).not.toBeNull();
+  expect(financeRowBox!.y).toBeGreaterThan(teamworkGroupBox!.y + teamworkGroupBox!.height);
+  expect(Math.abs(financeLabelBox!.x - socialLabelBox!.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(financeSwitchBox!.x - socialSwitchBox!.x)).toBeLessThanOrEqual(1);
 
   // Turning off via keyboard asks first and says what is kept.
   await socialSwitch.focus();
@@ -48,14 +54,16 @@ test('an owner switches Social off and on again from Settings', async ({ page })
 
   // The status badge sits to the left of the switch without shifting the switch column.
   const socialSwitchOffBox = await socialSwitch.boundingBox();
-  expect(Math.abs((financeSwitchBox?.x ?? 0) - (socialSwitchOffBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(socialSwitchOffBox).not.toBeNull();
+  expect(Math.abs(financeSwitchBox!.x - socialSwitchOffBox!.x)).toBeLessThanOrEqual(1);
 
   // On a phone viewport, switches meet the 44px touch target without horizontal overflow.
   const desktopViewport = page.viewportSize();
   await page.setViewportSize({ width: 360, height: 780 });
   const mobileSwitchBox = await socialSwitch.boundingBox();
-  expect(mobileSwitchBox?.height ?? 0).toBeGreaterThanOrEqual(44);
-  expect(mobileSwitchBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+  expect(mobileSwitchBox).not.toBeNull();
+  expect(mobileSwitchBox!.height).toBeGreaterThanOrEqual(44);
+  expect(mobileSwitchBox!.width).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   if (desktopViewport) await page.setViewportSize(desktopViewport);
 
