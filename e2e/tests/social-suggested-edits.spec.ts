@@ -49,7 +49,7 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   await expect(writerPage).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const postId = postIdOf(writerPage);
   const postUrl = writerPage.url();
-  await expect.poll(() => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId })).toEqual([{ status: 'in_review' }]);
+  await expect.poll(() => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId })).toEqual([{ status: 'in_review' }]);
 
   // The owner reviews it: the panel says how to suggest; the words are selected from the keyboard.
   await page.goto(postUrl);
@@ -87,10 +87,10 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   await expect(suggestion.locator('ins')).toHaveText('giảm 25%');
   await expect(suggestion).toContainText('Khai trương cửa hàng mới,');
   await expect(page.getByText('Mức giảm đúng là 25%')).toBeVisible();
-  const row = () => sql<{ suggest_state: string; suggest_quote: string; suggest_text: string }>(`SELECT suggest_state, suggest_quote, suggest_text FROM crove_social.post_comment WHERE post_id = :'post'`, { post: postId });
+  const row = () => sql<{ suggest_state: string; suggest_quote: string; suggest_text: string }>(`SELECT suggest_state, suggest_quote, suggest_text FROM ludy_social.post_comment WHERE post_id = :'post'`, { post: postId });
   expect(row()).toEqual([{ suggest_state: 'open', suggest_quote: 'giảm 20%', suggest_text: 'giảm 25%' }]);
-  const versionsBefore = Number(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_social.post_version WHERE post_id = :'post'`, { post: postId })[0]?.n);
-  const revisionBefore = sql<{ revision: number }>(`SELECT revision FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId })[0]?.revision ?? 0;
+  const versionsBefore = Number(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_social.post_version WHERE post_id = :'post'`, { post: postId })[0]?.n);
+  const revisionBefore = sql<{ revision: number }>(`SELECT revision FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId })[0]?.revision ?? 0;
 
   // The writer accepts it from the keyboard.
   await writerPage.reload();
@@ -102,9 +102,9 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   await expect(theirs).toContainText('Đã nhận');
   await expect(writerPage.getByLabel('Nội dung chung')).toHaveValue('Khai trương cửa hàng mới, giảm 25% cả tuần.');
   // A new revision and version, and the channel back in review in a new round.
-  const after = sql<{ status: string; revision: number }>(`SELECT status, revision FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId });
+  const after = sql<{ status: string; revision: number }>(`SELECT status, revision FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId });
   expect(after).toEqual([{ status: 'in_review', revision: revisionBefore + 1 }]);
-  expect(Number(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_social.post_version WHERE post_id = :'post'`, { post: postId })[0]?.n)).toBeGreaterThan(versionsBefore);
+  expect(Number(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_social.post_version WHERE post_id = :'post'`, { post: postId })[0]?.n)).toBeGreaterThan(versionsBefore);
   expect(row()[0]?.suggest_state).toBe('accepted');
   await expect(writerPage.getByText('đã sửa nội dung').first()).toBeVisible();
 
@@ -126,7 +126,7 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   // Unsaved edits on the page hold back accepting a suggestion.
   await expect(writerPage.getByTestId('suggestion').filter({ hasText: 'cả tháng' }).getByRole('button', { name: 'Nhận', exact: true })).toBeDisabled();
   await writerPage.getByRole('button', { name: 'Lưu', exact: true }).first().click();
-  await expect.poll(() => sql<{ body: string }>(`SELECT body FROM crove_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ body: 'Khai trương cửa hàng mới, giảm 25% đến Chủ nhật.' }]);
+  await expect.poll(() => sql<{ body: string }>(`SELECT body FROM ludy_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ body: 'Khai trương cửa hàng mới, giảm 25% đến Chủ nhật.' }]);
   await writerPage.reload();
   const stale = writerPage.getByTestId('suggestion').filter({ hasText: 'cả tháng' });
   await expect(stale).toHaveAttribute('data-state', 'outdated');
@@ -135,6 +135,6 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   await stale.getByRole('button', { name: 'Bỏ qua', exact: true }).click();
   await expect(stale.getByText('Đã bỏ qua đề xuất.')).toBeVisible();
   await expect(writerPage.getByLabel('Nội dung chung')).toHaveValue('Khai trương cửa hàng mới, giảm 25% đến Chủ nhật.');
-  expect(sql<{ suggest_state: string }>(`SELECT suggest_state FROM crove_social.post_comment WHERE post_id = :'post' AND suggest_text = 'cả tháng'`, { post: postId })).toEqual([{ suggest_state: 'outdated' }]);
+  expect(sql<{ suggest_state: string }>(`SELECT suggest_state FROM ludy_social.post_comment WHERE post_id = :'post' AND suggest_text = 'cả tháng'`, { post: postId })).toEqual([{ suggest_state: 'outdated' }]);
   await writerContext.close();
 });

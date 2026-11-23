@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Worker sweep for recurring project tasks (#2607): scans crove_projects.recurring_tasks_due and advances due series.
+// Worker sweep for recurring project tasks (#2607): scans ludy_projects.recurring_tasks_due and advances due series.
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
 import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
@@ -26,7 +26,7 @@ export async function sweepProjectsRecurring(deps: {
   for (let page = 0; page < SWEEP_MAX_PAGES; page += 1) {
     const { rows } = await sql<{ org_id: string; project_id: string; task_id: string }>`
       SELECT org_id, project_id, task_id
-        FROM crove_projects.recurring_tasks_due(${pageSize}::int)`.execute(deps.workerDb);
+        FROM ludy_projects.recurring_tasks_due(${pageSize}::int)`.execute(deps.workerDb);
     if (rows.length === 0) break;
 
     let progressed = 0;

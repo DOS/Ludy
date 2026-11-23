@@ -609,7 +609,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
            FROM generate_series(1, 505) AS gs
            RETURNING org_id, id
          )
-         INSERT INTO crove_projects.project_task (org_id, project_id, task_id)
+         INSERT INTO ludy_projects.project_task (org_id, project_id, task_id)
          SELECT org_id, $4, id FROM batch`,
         [org.orgId, coworkerSeat, dueLaterToday, projectId],
       );
@@ -621,7 +621,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
           [org.orgId, coworkerSeat, stuckUpdatedAt],
         )
       ).rows[0]?.id as string;
-      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+      await c.query('INSERT INTO ludy_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
         org.orgId,
         projectId,
         stuckWaitingId,
@@ -717,7 +717,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
            FROM generate_series(1, 510) AS gs
            RETURNING org_id, id
          )
-         INSERT INTO crove_projects.project_task (org_id, project_id, task_id)
+         INSERT INTO ludy_projects.project_task (org_id, project_id, task_id)
          SELECT org_id, $4, id FROM batch`,
         [org.orgId, privSeat, dueLaterToday, orgProjId],
       );
@@ -728,7 +728,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
           [org.orgId, privSeat, overdueAt],
         )
       ).rows[0]?.id as string;
-      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+      await c.query('INSERT INTO ludy_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
         org.orgId,
         privProjId,
         privOverdueId,
@@ -740,7 +740,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
           [org.orgId, overdueAt],
         )
       ).rows[0]?.id as string;
-      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+      await c.query('INSERT INTO ludy_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
         org.orgId,
         privProjId,
         privUnassignedId,
@@ -753,7 +753,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
           [org.orgId, outSeat, overdueAt],
         )
       ).rows[0]?.id as string;
-      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+      await c.query('INSERT INTO ludy_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
         org.orgId,
         orgProjId,
         outOverdueId,

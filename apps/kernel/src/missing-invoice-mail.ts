@@ -20,14 +20,14 @@ export const missingInvoiceMailTemplate: MailTemplate = {
 };
 
 // The monthly reminders (#669): every 15 minutes the worker finds the orgs whose reminder is due today
-// (crove_finance.missing_invoice_reminders_due: from 08:00 Vietnam time on the reminder's day, once a month) and runs
+// (ludy_finance.missing_invoice_reminders_due: from 08:00 Vietnam time on the reminder's day, once a month) and runs
 // finance.missing_invoices.remind in each, which queues the mail or, when nothing is missing, turns the reminder off.
 export const MISSING_INVOICE_SWEEP_MS = 15 * 60_000;
 const MISSING_INVOICE_SWEEP_LIMIT = 200;
 const ACTOR = { type: 'system' as const, component: 'finance.missing_invoices' };
 
 export async function sweepMissingInvoiceReminders(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
-  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_finance.missing_invoice_reminders_due(${MISSING_INVOICE_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_finance.missing_invoice_reminders_due(${MISSING_INVOICE_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
   let sent = 0;
   for (const row of rows) {
     // One org that fails (a lost connection) leaves the others to this pass and itself to the next.

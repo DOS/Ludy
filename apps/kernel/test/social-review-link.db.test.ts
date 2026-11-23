@@ -95,9 +95,9 @@ suite('social client review links on PostgreSQL (#589)', () => {
   });
   type Page = { org: string; changed: boolean; channels: { provider: string; channel: string; body: string; mediaCount: number }[]; feedback: { name: string; verdict: string; body: string | null }[] } | null;
   // The public side runs as the API login role, with no org context, as the HTTP edge does.
-  const view = async (token: string) => (await pool.query<{ page: Page }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+  const view = async (token: string) => (await pool.query<{ page: Page }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   const answer = async (token: string, name: string, verdict: string, body: string | null) =>
-    (await pool.query<{ done: { recorded: boolean } | null }>('SELECT crove_social.review_feedback_add($1, $2, $3, $4) AS done', [token, name, verdict, body])).rows[0]?.done ?? null;
+    (await pool.query<{ done: { recorded: boolean } | null }>('SELECT ludy_social.review_feedback_add($1, $2, $3, $4) AS done', [token, name, verdict, body])).rows[0]?.done ?? null;
   const links = (o: { orgId: string }, user: string, postId: string) =>
     rt.query<{ links: ReviewLinkView[]; feedback: ReviewFeedbackView[] }>('social.review_link.list', { postId }, { actor: asUser(user), orgId: o.orgId });
 
@@ -115,7 +115,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     expect(made.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(Date.parse(made.expiresAt) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
     // Only the hash is stored; the token is in no table, audit row or event.
-    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_social.review_link WHERE id = $1', [made.linkId])).rows[0]?.token_sha256);
+    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_social.review_link WHERE id = $1', [made.linkId])).rows[0]?.token_sha256);
     expect(stored).toBe(reviewTokenHash(made.token));
     const leaks = await admin(async (c) =>
       (
@@ -161,7 +161,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     expect((await get(o, o.member, postId)).variants[0]?.status).toBe('draft');
 
     // At most 100 answers per link.
-    await pool.query("SELECT crove_social.review_feedback_add($1, 'Khách', 'approved', NULL) FROM generate_series(1, 98)", [token]);
+    await pool.query("SELECT ludy_social.review_feedback_add($1, 'Khách', 'approved', NULL) FROM generate_series(1, 98)", [token]);
     await expect(answer(token, 'Khách', 'approved', null)).rejects.toMatchObject({ code: '54000' });
     // The card counts every answer, past the 200 it lists (#626).
     expect((await links(o, o.viewer, postId)).links[0]?.answers).toBe(100);
@@ -174,7 +174,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
 
     // Expired: the same.
     const other = await exec<{ token: string; linkId: string }>(o, o.owner, 'social.review_link.create', { postId, days: 1 });
-    await admin((c) => c.query("UPDATE crove_social.review_link SET created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' WHERE id = $1", [other.linkId]));
+    await admin((c) => c.query("UPDATE ludy_social.review_link SET created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' WHERE id = $1", [other.linkId]));
     expect(await view(other.token)).toBeNull();
   });
 
@@ -194,7 +194,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
             t,
             (
               await c.query<{ p: string }>(
-                "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = $1 ORDER BY 1",
+                "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = $1 ORDER BY 1",
                 [t],
               )
             ).rows.map((r) => r.p),
@@ -204,7 +204,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     );
     expect(grants).toEqual({ review_link: ['INSERT', 'SELECT'], review_feedback: ['SELECT'] });
 
-    const fns = ['crove_social.review_link_view(text)', 'crove_social.review_feedback_add(text,text,text,text)', 'crove_social.review_link_by_token(text,boolean)', 'crove_social.review_link_media(text)', 'crove_social.review_link_file(text,uuid)'];
+    const fns = ['ludy_social.review_link_view(text)', 'ludy_social.review_feedback_add(text,text,text,text)', 'ludy_social.review_link_by_token(text,boolean)', 'ludy_social.review_link_media(text)', 'ludy_social.review_link_file(text,uuid)'];
     const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'public'];
     const matrix = await admin(async (c) => {
       const { rows } = await c.query<{ fn: string; role: string; can: boolean }>(
@@ -214,11 +214,11 @@ suite('social client review links on PostgreSQL (#589)', () => {
       return Object.fromEntries(fns.map((f) => [f, roles.filter((r) => rows.some((row) => row.fn === f && row.role === r && row.can))]));
     });
     expect(matrix).toEqual({
-      'crove_social.review_link_view(text)': ['ludy_app'],
-      'crove_social.review_feedback_add(text,text,text,text)': ['ludy_app'],
-      'crove_social.review_link_by_token(text,boolean)': [],
-      'crove_social.review_link_media(text)': ['ludy_app'],
-      'crove_social.review_link_file(text,uuid)': ['ludy_app'],
+      'ludy_social.review_link_view(text)': ['ludy_app'],
+      'ludy_social.review_feedback_add(text,text,text,text)': ['ludy_app'],
+      'ludy_social.review_link_by_token(text,boolean)': [],
+      'ludy_social.review_link_media(text)': ['ludy_app'],
+      'ludy_social.review_link_file(text,uuid)': ['ludy_app'],
     });
   });
 
@@ -243,8 +243,8 @@ suite('social client review links on PostgreSQL (#589)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Ảnh khai trương', media: [{ fileId: shown.id }], channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.create', { body: 'Bài khác', media: [{ fileId: other.id }], channels: [{ connectionId: conn }] });
     const { token, linkId } = await exec<{ token: string; linkId: string }>(o, o.owner, 'social.review_link.create', { postId });
-    const media = async (t: string) => (await pool.query<{ media: unknown }>('SELECT crove_social.review_link_media($1) AS media', [t])).rows[0]?.media ?? null;
-    const file = async (t: string, id: string) => (await pool.query<{ file: unknown }>('SELECT crove_social.review_link_file($1, $2::uuid) AS file', [t, id])).rows[0]?.file ?? null;
+    const media = async (t: string) => (await pool.query<{ media: unknown }>('SELECT ludy_social.review_link_media($1) AS media', [t])).rows[0]?.media ?? null;
+    const file = async (t: string, id: string) => (await pool.query<{ file: unknown }>('SELECT ludy_social.review_link_file($1, $2::uuid) AS file', [t, id])).rows[0]?.file ?? null;
     expect(await media(token)).toEqual([[{ id: shown.id, type: 'image/jpeg' }]]);
     expect(await file(token, shown.id)).toMatchObject({ key: shown.key, type: 'image/jpeg', filename: 'anh.jpg' });
     // Another post's file, an unknown id, a malformed token: nothing.
@@ -275,7 +275,7 @@ suite('social client review links on PostgreSQL (#589)', () => {
     await setApp(false);
     expect(await view(token)).toBeNull();
     // A client's answer is refused too, as for a revoked link: nothing is written.
-    const answer = async () => (await pool.query<{ done: unknown }>("SELECT crove_social.review_feedback_add($1, 'Khách', 'approved', NULL) AS done", [token])).rows[0]?.done ?? null;
+    const answer = async () => (await pool.query<{ done: unknown }>("SELECT ludy_social.review_feedback_add($1, 'Khách', 'approved', NULL) AS done", [token])).rows[0]?.done ?? null;
     expect(await answer()).toBeNull();
     await setApp(true);
     expect(await view(token)).not.toBeNull();

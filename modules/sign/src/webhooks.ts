@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Runtime.execute() command and query handlers for eSign Slice 5b (#4440):
-//   - Definer-only outbound HMAC webhook endpoints (crove_sign.webhook) with owner/admin RBAC,
+//   - Definer-only outbound HMAC webhook endpoints (ludy_sign.webhook) with owner/admin RBAC,
 //     edge-sealed CredentialBroker secrets, and 24-hour dual-secret rotation grace window.
-//   - Safe-metadata delivery logs (crove_sign.webhook_delivery) and system worker delivery lifecycle
+//   - Safe-metadata delivery logs (ludy_sign.webhook_delivery) and system worker delivery lifecycle
 //     (sign.hook.{queued,record,delivery,target}), strictly excluding hr_contract and meeting_minutes envelopes.
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
@@ -54,7 +54,7 @@ export function isSignWebhookBrokerAvailable(): boolean {
 
 export const WEBHOOK_DELIVERY_ENQUEUE_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'webhook_delivery',
   ['org_id', 'id', 'webhook_id', 'envelope_id', 'event_type', 'status', 'payload_json', 'created_at'],
 );
@@ -139,7 +139,7 @@ export async function enqueueSignWebhookEvent(
   },
 ): Promise<number> {
   const { rows } = await sql<{ count: number }>`
-    SELECT crove_sign.webhook_enqueue_event(
+    SELECT ludy_sign.webhook_enqueue_event(
       ${params.envelopeId}::uuid,
       ${params.eventType},
       ${params.status},
@@ -168,7 +168,7 @@ export const signWebhookList = defineQuery({
   handler: async (ctx) => {
     assertWebhookAdminUser(ctx, 'view eSign webhooks');
     const { rows } = await sql<{ items: unknown }>`
-      SELECT crove_sign.webhook_list() AS items
+      SELECT ludy_sign.webhook_list() AS items
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -187,7 +187,7 @@ export const signWebhookDeliveries = defineQuery({
   handler: async (ctx, input): Promise<{ items: SignWebhookDeliveryRecord[] }> => {
     assertWebhookAdminUser(ctx, 'view eSign webhook deliveries');
     const { rows } = await sql<{ items: unknown }>`
-      SELECT crove_sign.webhook_deliveries_list(${input.webhookId ?? null}::uuid, ${input.limit}::int) AS items
+      SELECT ludy_sign.webhook_deliveries_list(${input.webhookId ?? null}::uuid, ${input.limit}::int) AS items
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -209,7 +209,7 @@ export const signWebhookCreate = defineCommand({
   access: SIGN_WEBHOOK_ADMINS,
   target: (input) => ({ type: 'sign.webhook', id: input.id }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook', [
       'org_id',
       'id',
       'url',
@@ -235,7 +235,7 @@ export const signWebhookCreate = defineCommand({
     }
     const parsedUrl = new URL(input.url);
     const { rows } = await sql<{ item: unknown }>`
-      SELECT crove_sign.webhook_create(
+      SELECT ludy_sign.webhook_create(
         ${input.id}::uuid,
         ${parsedUrl.href},
         ${input.events}::text[],
@@ -268,7 +268,7 @@ export const signWebhookUpdate = defineCommand({
   access: SIGN_WEBHOOK_ADMINS,
   target: webhookTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook', [
       'url',
       'events',
       'enabled',
@@ -277,7 +277,7 @@ export const signWebhookUpdate = defineCommand({
       'consecutive_failures',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook_delivery', ['status', 'payload_json']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook_delivery', ['status', 'payload_json']),
   ],
   handler: async (ctx, input): Promise<SignWebhookRecord> => {
     assertWebhookAdminUser(ctx, 'update an eSign webhook');
@@ -291,7 +291,7 @@ export const signWebhookUpdate = defineCommand({
     }
     const parsedUrl = new URL(input.url);
     const { rows } = await sql<{ item: unknown }>`
-      SELECT crove_sign.webhook_update(
+      SELECT ludy_sign.webhook_update(
         ${input.webhookId}::uuid,
         ${parsedUrl.href},
         ${input.events}::text[],
@@ -319,7 +319,7 @@ export const signWebhookRotateSecret = defineCommand({
   access: SIGN_WEBHOOK_ADMINS,
   target: webhookTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook', [
       'key_id',
       'secret_envelope',
       'secret_hint',
@@ -333,7 +333,7 @@ export const signWebhookRotateSecret = defineCommand({
     assertWebhookAdminUser(ctx, 'rotate an eSign webhook secret');
     assertWebhookStepUp(ctx, 'rotate an eSign webhook secret');
     const { rows } = await sql<{ item: unknown }>`
-      SELECT crove_sign.webhook_rotate_secret(
+      SELECT ludy_sign.webhook_rotate_secret(
         ${input.webhookId}::uuid,
         ${input.keyId},
         ${input.secretEnvelope},
@@ -360,13 +360,13 @@ export const signWebhookDelete = defineCommand({
   access: SIGN_WEBHOOK_ADMINS,
   target: webhookTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook_delivery', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook_delivery', ['id']),
   ],
   handler: async (ctx, input) => {
     assertWebhookAdminUser(ctx, 'delete an eSign webhook');
     const { rows } = await sql<{ deleted: boolean }>`
-      SELECT crove_sign.webhook_delete(${input.webhookId}::uuid) AS deleted
+      SELECT ludy_sign.webhook_delete(${input.webhookId}::uuid) AS deleted
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -391,7 +391,7 @@ export const signWebhookPing = defineCommand({
     assertWebhookAdminUser(ctx, 'send a test eSign webhook');
     assertWebhookStepUp(ctx, 'send a test eSign webhook');
     const { rows } = await sql<{ item: unknown }>`
-      SELECT crove_sign.webhook_ping(${input.webhookId}::uuid) AS item
+      SELECT ludy_sign.webhook_ping(${input.webhookId}::uuid) AS item
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -412,11 +412,11 @@ export const signHookQueued = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   target: deliveryTarget,
-  writes: [tableWrite(signManifest.tables, 'crove_sign', 'webhook_delivery', ['handed_at'])],
+  writes: [tableWrite(signManifest.tables, 'ludy_sign', 'webhook_delivery', ['handed_at'])],
   handler: async (ctx, input) => {
     assertWebhookSystem(ctx);
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_sign.webhook_touch(${input.id}::uuid) AS done
+      SELECT ludy_sign.webhook_touch(${input.id}::uuid) AS done
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -433,7 +433,7 @@ export const signHookRecord = defineCommand({
   access: 'system',
   target: deliveryTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook_delivery', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook_delivery', [
       'id',
       'status',
       'payload_json',
@@ -441,7 +441,7 @@ export const signHookRecord = defineCommand({
       'last_code',
       'sent_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'webhook', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'webhook', [
       'enabled',
       'paused_reason',
       'failing_since',
@@ -454,7 +454,7 @@ export const signHookRecord = defineCommand({
   handler: async (ctx, input) => {
     assertWebhookSystem(ctx);
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_sign.webhook_record(${input.id}::uuid, ${input.outcome}, ${input.code ?? null}::int) AS done
+      SELECT ludy_sign.webhook_record(${input.id}::uuid, ${input.outcome}, ${input.code ?? null}::int) AS done
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -486,7 +486,7 @@ export const signHookDelivery = defineQuery({
       attempts: number;
     }>`
       SELECT id, webhook_id, envelope_id, envelope_source_kind, event_type, payload_json, status, attempts
-      FROM crove_sign.webhook_delivery_get(${ctx.orgId}::uuid, ${input.id}::uuid)
+      FROM ludy_sign.webhook_delivery_get(${ctx.orgId}::uuid, ${input.id}::uuid)
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);
@@ -520,7 +520,7 @@ export const signHookTarget = defineQuery({
       previous_secret_envelope: string | null;
     }>`
       SELECT id, url, key_id, secret_envelope, previous_key_id, previous_secret_envelope
-      FROM crove_sign.webhook_target(${input.webhookId}::uuid)
+      FROM ludy_sign.webhook_target(${input.webhookId}::uuid)
     `
       .execute(ctx.trx)
       .catch(mapSignWebhookSqlError);

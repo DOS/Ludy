@@ -96,7 +96,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
       const email = `khach-${randomUUID().slice(0, 6)}@example.test`;
       const token = await bookingRequest(app, slug, type, { startsAt, name, email, phone: '0901234567', note: 'Ghi chú riêng tư', timeZone: VN });
       if (!token) throw new Error('no request');
-      const { rows } = await admin((cl) => cl.query<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
+      const { rows } = await admin((cl) => cl.query<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
       const bookingId = rows[0]?.id as string;
       const outcome = await worker.execute<{ status: string }>('crm.booking.confirm', { bookingId }, { actor: SYSTEM, orgId });
       expect(outcome).toMatchObject({ status: 'confirmed' });
@@ -165,7 +165,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     // A booking past the window (moved there directly: the type's horizon would refuse it). At 17:00, a time no other
     // booking here takes, since bookableDay(4) is the same date as bookableDay(3) when day 3 is a holiday.
     const tooFar = await o.book('tu-van', at(bookableDay(4), 1020));
-    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET starts_at = starts_at + interval '120 days', ends_at = ends_at + interval '120 days' WHERE id = (SELECT calendar_event_id FROM crove_crm.booking WHERE id = $1)", [tooFar]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.calendar_event SET starts_at = starts_at + interval '120 days', ends_at = ends_at + interval '120 days' WHERE id = (SELECT calendar_event_id FROM ludy_crm.booking WHERE id = $1)", [tooFar]));
 
     const { token } = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -220,13 +220,13 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     expect(await bookingFeed(app, second.token)).toMatchObject({ slug: o.slug, events: [] });
     // Another member's feed stays live beside it.
     const theirs = await o.exec<{ token: string }>(o.b, 'crm.booking_feed.create');
-    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_crm.booking_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.n);
+    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_crm.booking_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.n);
     expect(live).toBe(2);
     // Each member sees their own, never the token; the database keeps its hash only.
     const seen = await o.get(o.a);
     expect(seen).toEqual({ createdAt: expect.any(String) });
     expect(await o.get(o.owner)).toBeNull();
-    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a])).rows[0]?.token_sha256);
+    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a])).rows[0]?.token_sha256);
     expect(stored).toMatch(/^[0-9a-f]{64}$/);
     const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.booking_feed.%'", [o.orgId])).rows));
     expect(audit).toContain('crm.booking_feed.create');
@@ -285,7 +285,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const again = await o.exec<{ token: string }>(o.b, 'crm.booking_feed.create');
     expect(await bookingFeed(app, again.token)).toMatchObject({ slug: o.slug });
     // An admin made admin again keeps theirs: only leaving or becoming a viewer revokes.
-    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.owner])).rows[0]?.n);
+    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.owner])).rows[0]?.n);
     expect(live).toBe(1);
   });
 
@@ -299,7 +299,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const fresh = await o.exec<{ token: string }>(o.a, 'crm.booking_feed.create');
     expect(await worker.execute('crm.booking_feed.revoke_for_member', { eventId: removed }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ revoked: 0 });
     // The new address made the old one revoked already; one made before the event and still live is revoked by it.
-    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a])).rows[0]?.n);
+    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a])).rows[0]?.n);
     expect(live).toBe(1);
     expect(await bookingFeed(app, old.token)).toBeNull();
     expect(await bookingFeed(app, fresh.token)).toMatchObject({ slug: o.slug });
@@ -332,7 +332,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     };
     // The API's clock an hour ahead: a feed made before the removal is still older than it, so the removal revokes it.
     const early = await createSkewed(o.a, 3_600_000);
-    const [stamp] = (await admin((c) => c.query<{ before_now: boolean }>('SELECT created_at <= pg_catalog.now() AS before_now FROM crove_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a]))).rows;
+    const [stamp] = (await admin((c) => c.query<{ before_now: boolean }>('SELECT created_at <= pg_catalog.now() AS before_now FROM ludy_crm.booking_feed WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL', [o.orgId, o.a]))).rows;
     expect(stamp?.before_now).toBe(true);
     await app.execute('kernel.member.remove', { userId: o.a }, { actor: asMfa(o.owner), orgId: o.orgId });
     expect(await revokeFrom('kernel.member.removed', o.a)).toEqual({ revoked: 1 });
@@ -367,7 +367,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ grantee: string }>(
-          "SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'crove_crm' AND routine_name = 'booking_feed_events' AND grantee NOT IN ('postgres') ORDER BY 1",
+          "SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'ludy_crm' AND routine_name = 'booking_feed_events' AND grantee NOT IN ('postgres') ORDER BY 1",
         )
       ).rows.map((r) => r.grantee),
     );
@@ -375,14 +375,14 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_crm' AND table_name = 'booking_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_crm' AND table_name = 'booking_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
     expect(columns).toEqual(['revoked_at']);
     const w = await workerPool.connect();
     try {
-      await expect(w.query("SELECT crove_crm.booking_feed_events('x')")).rejects.toMatchObject({ code: '42501' });
+      await expect(w.query("SELECT ludy_crm.booking_feed_events('x')")).rejects.toMatchObject({ code: '42501' });
     } finally {
       w.release();
     }

@@ -82,12 +82,12 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
   async function published(o: Org, conn: string, at: string, metrics: Record<string, number>) {
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bài', channels: [{ connectionId: conn }] });
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, at]);
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, at]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
     });
   }
   const followers = (o: Org, conn: string, day: string, n: number) =>
-    admin((c) => c.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers) VALUES ($1, $2, $3, $4)', [o.orgId, conn, day, n]));
+    admin((c) => c.query('INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers) VALUES ($1, $2, $3, $4)', [o.orgId, conn, day, n]));
 
   const view = async (token: string) => (await reportView(rt, { token })) as unknown as Page | null;
   const link = (o: Org, period: { start: number; end: number }, extra: Record<string, unknown> = {}) =>
@@ -186,11 +186,11 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     await expect(setGoal(a, theirs, { posts: 1 })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     await setGoal(a, null, { posts: 1 });
     await setGoal(a, null, { posts: 2 });
-    const rows = await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.goal WHERE org_id = $1', [a.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.goal WHERE org_id = $1', [a.orgId])).rows);
     expect(Number(rows[0]?.n)).toBe(1);
     // The table refuses a second org row and a goal with no target.
-    await expect(admin((c) => c.query("INSERT INTO crove_social.goal (org_id, posts, created_by, updated_by) VALUES ($1, 5, $2, $2)", [a.orgId, a.owner]))).rejects.toThrow(/goal_scope_uq/);
-    await expect(admin((c) => c.query('INSERT INTO crove_social.goal (org_id, connection_id, created_by, updated_by) VALUES ($1, $2, $3, $3)', [b.orgId, theirs, b.owner]))).rejects.toThrow(/goal_some_target/);
+    await expect(admin((c) => c.query("INSERT INTO ludy_social.goal (org_id, posts, created_by, updated_by) VALUES ($1, 5, $2, $2)", [a.orgId, a.owner]))).rejects.toThrow(/goal_scope_uq/);
+    await expect(admin((c) => c.query('INSERT INTO ludy_social.goal (org_id, connection_id, created_by, updated_by) VALUES ($1, $2, $3, $3)', [b.orgId, theirs, b.owner]))).rejects.toThrow(/goal_some_target/);
   });
 
   it('counts the month in the goals zone against each target', async () => {
@@ -326,7 +326,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     await expect(link(o, SEP, { note: 'a'.repeat(2001) })).rejects.toMatchObject({ status: 422 });
     expect((await view((await link(o, SEP, { note: 'ữ'.repeat(2000) })).token))?.note).toHaveLength(2000);
     // The table holds no more either.
-    await expect(admin((c) => c.query('UPDATE crove_social.report_link SET note = $2 WHERE id = $1', [linkId, 'a'.repeat(2001)]))).rejects.toThrow(/report_link_note_length/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.report_link SET note = $2 WHERE id = $1', [linkId, 'a'.repeat(2001)]))).rejects.toThrow(/report_link_note_length/);
   });
 
   it('carries the goals in the report mail of a month, not of a week', async () => {

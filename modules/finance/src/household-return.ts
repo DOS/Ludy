@@ -45,7 +45,7 @@ export const householdCnkd = defineQuery({
     const { to } = ledger.period;
     // The return starts the day the household's first profile took effect: days before it are outside it.
     const opened = await ctx.trx
-      .selectFrom('crove_finance.household_profile')
+      .selectFrom('ludy_finance.household_profile')
       .select('effective_from')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -56,7 +56,7 @@ export const householdCnkd = defineQuery({
     const from = ledger.period.from > opened.effective_from ? ledger.period.from : opened.effective_from;
     // One profile for the whole quarter: a change inside it would need two returns' worth of parts, which a quarter cannot be asked for.
     const changed = await ctx.trx
-      .selectFrom('crove_finance.household_profile')
+      .selectFrom('ludy_finance.household_profile')
       .select('effective_from')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -71,7 +71,7 @@ export const householdCnkd = defineQuery({
 
     // The form in force on the quarter's last day, and the percentage of each trade the profile names.
     const forms = await ctx.trx
-      .selectFrom('crove_finance.household_return_form_version')
+      .selectFrom('ludy_finance.household_return_form_version')
       .select(['form', 'version', 'effective_from', 'name', 'pit_methods', 'status'])
       .where('form', '=', FORM)
       .where('effective_from', '<=', to)
@@ -79,7 +79,7 @@ export const householdCnkd = defineQuery({
     const form = pickInForce(forms, (r) => r.form, to)[0];
     if (!form || !form.pit_methods.includes('percentage')) throw notRequired();
     const rateRows = await ctx.trx
-      .selectFrom('crove_finance.household_trade_rate')
+      .selectFrom('ludy_finance.household_trade_rate')
       .select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'status'])
       .where('effective_from', '<=', to)
       .execute();
@@ -127,7 +127,7 @@ export const householdCnkd = defineQuery({
 
     // The tax the platforms already withheld: settlements of the entity that stand (not reversed, not a reversal) and end in the quarter.
     const settlements = await ctx.trx
-      .selectFrom('crove_finance.channel_settlement')
+      .selectFrom('ludy_finance.channel_settlement')
       .select(['id', 'platform', 'period_start', 'period_end', 'reversal_of'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -140,7 +140,7 @@ export const householdCnkd = defineQuery({
     const taxBySettlement = new Map<string, string[]>();
     if (standing.length > 0) {
       const taxLines = await ctx.trx
-        .selectFrom('crove_finance.channel_settlement_line')
+        .selectFrom('ludy_finance.channel_settlement_line')
         .select(['settlement_id', 'tax_withheld'])
         .where('org_id', '=', ctx.orgId)
         .where('legal_entity_id', '=', entity)

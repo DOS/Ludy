@@ -169,7 +169,7 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
 
     // Every existing row now has a non-null sort_key.
     const keysAfterInit = await withAdmin((c) =>
-      c.query<{ sort_key: string | null }>('SELECT sort_key FROM crove_projects.project_task WHERE project_id = $1', [projectId]),
+      c.query<{ sort_key: string | null }>('SELECT sort_key FROM ludy_projects.project_task WHERE project_id = $1', [projectId]),
     );
     expect(keysAfterInit.rows.every((r) => r.sort_key !== null)).toBe(true);
 
@@ -223,7 +223,7 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
       [frontId, secondId] = [mover, anchor];
     }
     const keysAfterStress = await withAdmin((c) =>
-      c.query<{ sort_key: string }>('SELECT sort_key FROM crove_projects.project_task WHERE project_id = $1 ORDER BY sort_key ASC NULLS LAST', [
+      c.query<{ sort_key: string }>('SELECT sort_key FROM ludy_projects.project_task WHERE project_id = $1 ORDER BY sort_key ASC NULLS LAST', [
         projectId,
       ]),
     );

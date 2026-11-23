@@ -63,12 +63,12 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
   ): Promise<string> {
     const id = randomUUID();
     await c.query(
-      `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, source_revision, reverses_entry_id)
+      `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, source_revision, reverses_entry_id)
        VALUES ($1, $2, $3, 'live revision', $4, $5, $6, $7)`,
       [orgId, id, e.date, e.sourceType, e.sourceId, e.revision ?? 1, e.reverses ?? null],
     );
     for (const [n, account, debit, credit] of e.lines) {
-      await c.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [
+      await c.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         n,
@@ -132,7 +132,7 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
     await inTransaction(async (c) => {
       await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Ghi lại', '0101234564')`, [orgId, party]);
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
          VALUES ($1, $2, 'purchase', $3, 'C26TLR', '501', '2026-09-10', 100000, 10000, 110000)`,
         [orgId, document, party],
       );
@@ -143,7 +143,7 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
     let reversal = '';
     await inTransaction(async (c) => {
       reversal = await entry(c, { date: '2026-09-20', sourceType: 'test.reversal', sourceId: randomUUID(), reverses: first, lines: mirror(lines) });
-      await c.query(`INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'Ghi lại')`, [
+      await c.query(`INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'Ghi lại')`, [
         orgId,
         document,
         reversal,
@@ -158,7 +158,7 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
       try {
         await enterUser(c, userId, orgId);
         return await refusal(
-          c.query(`SELECT crove_finance.post_journal_entry('2026-09-25'::date, 'ghi lại', 'finance.purchase_document', $1::uuid, $2::jsonb, NULL::uuid, 2)`, [
+          c.query(`SELECT ludy_finance.post_journal_entry('2026-09-25'::date, 'ghi lại', 'finance.purchase_document', $1::uuid, $2::jsonb, NULL::uuid, 2)`, [
             document,
             JSON.stringify(lines.map(([line_no, account_code, debit, credit]) => ({ line_no, account_code, debit, credit }))),
           ]),
@@ -191,7 +191,7 @@ suite('a re-posted source counts once in the finance lists (#1338)', () => {
     let first = '';
     await inTransaction(async (c) => {
       await c.query(
-        `INSERT INTO crove_finance.cash_voucher (org_id, id, voucher_type, voucher_date, cash_account, description, amount)
+        `INSERT INTO ludy_finance.cash_voucher (org_id, id, voucher_type, voucher_date, cash_account, description, amount)
          VALUES ($1, $2, 'cash_receipt', '2026-10-05', '1111', 'Thu tiền ghi lại', 500000)`,
         [orgId, voucher],
       );

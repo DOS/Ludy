@@ -105,7 +105,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     // Both left the pending list.
     await expect(page.getByRole('link', { name: SELLER })).toHaveCount(0);
     const documents = sql<{ n: number }>(
-      `SELECT count(*) AS n FROM crove_finance.purchase_document d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+      `SELECT count(*) AS n FROM ludy_finance.purchase_document d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(documents[0]?.n).toBe(3);

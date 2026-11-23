@@ -69,7 +69,7 @@ export async function withShortLink(ctx: CommandContext, w: PublishWork, revisio
   const target = w.content.linkUrl;
   if (!target || !/^https?:\/\//.test(target) || target.length > 2048) return w;
   const existing = await ctx.trx
-    .selectFrom('crove_social.short_link')
+    .selectFrom('ludy_social.short_link')
     .select(['code', 'target_url'])
     .where('org_id', '=', ctx.orgId)
     .where('variant_id', '=', w.variantId)
@@ -78,7 +78,7 @@ export async function withShortLink(ctx: CommandContext, w: PublishWork, revisio
   if (existing) return { ...w, shortLink: { code: existing.code, target: existing.target_url } };
   if (w.action !== 'call') return w;
   const policy = await ctx.trx
-    .selectFrom('crove_social.channel_policy')
+    .selectFrom('ludy_social.channel_policy')
     .select('short_links')
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', w.connectionId)
@@ -88,7 +88,7 @@ export async function withShortLink(ctx: CommandContext, w: PublishWork, revisio
   for (let i = 0; i < 2; i++) {
     const code = shortCode();
     const row = await ctx.trx
-      .insertInto('crove_social.short_link')
+      .insertInto('ludy_social.short_link')
       .values({ org_id: ctx.orgId, code, variant_id: w.variantId, revision, post_id: w.postId, target_url: target, created_at: ctx.now })
       .onConflict((oc) => oc.doNothing())
       .returning(['code', 'target_url'])
@@ -96,6 +96,6 @@ export async function withShortLink(ctx: CommandContext, w: PublishWork, revisio
     if (row) return { ...w, shortLink: { code: row.code, target: row.target_url } };
   }
   // Both tries clashed (a code, or another step that made the variant's link meanwhile): the variant's own, if any.
-  const made = await ctx.trx.selectFrom('crove_social.short_link').select(['code', 'target_url']).where('org_id', '=', ctx.orgId).where('variant_id', '=', w.variantId).where('revision', '=', revision).executeTakeFirst();
+  const made = await ctx.trx.selectFrom('ludy_social.short_link').select(['code', 'target_url']).where('org_id', '=', ctx.orgId).where('variant_id', '=', w.variantId).where('revision', '=', revision).executeTakeFirst();
   return made ? { ...w, shortLink: { code: made.code, target: made.target_url } } : w;
 }

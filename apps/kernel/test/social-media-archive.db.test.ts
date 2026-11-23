@@ -96,11 +96,11 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
   const restore = (o: Org, fileIds: string[], who = o.member) => exec<{ restored: string[] }>(o, who, 'social.media.restore', { fileIds });
   const list = (o: Org, input: Record<string, unknown> = {}, who = o.member) => query<{ items: LibraryItem[] }>(o, who, 'social.media.list', input);
   const names = async (o: Org, input: Record<string, unknown> = {}, who = o.member) => (await list(o, input, who)).items.map((i) => i.filename).sort();
-  const marks = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.media_archive WHERE org_id = $1', [o.orgId])).rows[0]?.n));
-  const posts = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const marks = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.media_archive WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const posts = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const create = (o: Org, who: string, input: Record<string, unknown>) => exec<{ postId: string; revision: number; variants: Array<{ variantId: string; connectionId: string }> }>(o, who, 'social.post.create', input);
   const revisionOf = (o: Org, table: 'post' | 'post_variant', id: string) =>
-    admin(async (c) => Number((await c.query<{ revision: number }>(`SELECT revision FROM crove_social.${table} WHERE org_id = $1 AND id = $2`, [o.orgId, id])).rows[0]?.revision));
+    admin(async (c) => Number((await c.query<{ revision: number }>(`SELECT revision FROM ludy_social.${table} WHERE org_id = $1 AND id = $2`, [o.orgId, id])).rows[0]?.revision));
 
   // A post on the channel other with its own media only: for the limited member, another channel's own media (#1081).
   async function hiddenOwn(o: Org) {
@@ -251,7 +251,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     const added = await exec<{ done: string[] }>(o, o.member, 'social.post.bulk_add_channel', { postIds: [postId], connectionId: third });
     expect(added.done).toEqual([postId]);
     await exec(o, o.member, 'social.post.submit', { postId, variantIds: variants.map((v) => v.variantId) });
-    const statuses = await admin(async (c) => (await c.query<{ status: string; media: unknown }>('SELECT status, media FROM crove_social.post_variant WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3', [o.orgId, postId, o.other])).rows);
+    const statuses = await admin(async (c) => (await c.query<{ status: string; media: unknown }>('SELECT status, media FROM ludy_social.post_variant WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3', [o.orgId, postId, o.other])).rows);
     expect(statuses).toHaveLength(1);
     expect(statuses[0]?.status).not.toBe('draft');
     expect(JSON.stringify(statuses[0]?.media)).toContain(own);

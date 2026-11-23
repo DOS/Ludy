@@ -272,7 +272,7 @@ export const meetingMediaRecord = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -306,7 +306,7 @@ export const meetingMediaRecord = defineCommand({
     // alone: a recording joined from live pieces carries none.
     if (meeting.ended_at === null && meeting.started_at !== null && input.stopReason !== undefined && meeting.recording_stop_reason === null) {
       await ctx.trx
-        .updateTable('crove_meetings.meeting')
+        .updateTable('ludy_meetings.meeting')
         .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
@@ -336,7 +336,7 @@ export const meetingRecordingStopped = defineCommand({
   handler: async (ctx, input): Promise<MeetingRecordingStoppedDone> => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['recorder_user_id', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -352,14 +352,14 @@ export const meetingRecordingStopped = defineCommand({
     // The recorder says the recording is over, whether or not anything was recorded: the call is free again (ADR-0055 slice 1, #4123).
     await endCapture(ctx, input.meetingId, 'stopped');
     const { rows: held } = await sql<{ recorded: boolean; ended: boolean }>`
-      SELECT EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
-          OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
-             (SELECT ended_at IS NOT NULL FROM crove_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid) AS ended`.execute(ctx.trx);
+      SELECT EXISTS (SELECT 1 FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
+          OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
+             (SELECT ended_at IS NOT NULL FROM ludy_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid) AS ended`.execute(ctx.trx);
     const changed = held[0]?.recorded !== true && held[0]?.ended !== true;
     if (changed) {
       const length = input.lengthSeconds === undefined || meeting.started_at === null ? null : input.lengthSeconds;
       await sql`
-        UPDATE crove_meetings.meeting
+        UPDATE ludy_meetings.meeting
         SET ended_at = CASE WHEN ${length}::int IS NULL THEN ${ctx.now}::timestamptz ELSE LEAST(started_at + (${length}::int * interval '1 second'), ${ctx.now}::timestamptz) END,
             recording_stop_reason = COALESCE(recording_stop_reason, ${input.reason ?? null}::text),
             updated_at = ${ctx.now}::timestamptz
@@ -381,7 +381,7 @@ export const meetingDelete = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -395,11 +395,11 @@ export const meetingDelete = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can delete this meeting');
     }
 
-    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
     // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016).
     const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     await ctx.trx
-      .deleteFrom('crove_meetings.meeting')
+      .deleteFrom('ludy_meetings.meeting')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .execute();
@@ -419,12 +419,12 @@ export const meetingOwnerDelete = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     userOf(ctx.actor);
-    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
     // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016). A meeting that does not exist has none, and the delete below then says so.
     const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
 
     const { rows } = await sql<{ deleted: boolean }>`
-      SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
+      SELECT ludy_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
     `.execute(ctx.trx);
 
     if (!rows[0]?.deleted) {
@@ -464,7 +464,7 @@ export const meetingOwnerList = defineCommand({
     }>`
       SELECT l.id, pg_catalog.to_json(l.started_at) #>> '{}' AS started_text, l.recorder_user_id, l.org_wide, l.status_code,
              l.audio_retention_date, l.video_retention_date, l.text_retention_date
-      FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, ${limit}::integer, ${input.afterStartedAt ?? null}::timestamptz, ${input.afterId ?? null}::uuid) l
+      FROM ludy_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, ${limit}::integer, ${input.afterStartedAt ?? null}::timestamptz, ${input.afterId ?? null}::uuid) l
     `.execute(ctx.trx);
     const items: MeetingOwnerListItem[] = rows.map((r) => ({
       id: r.id,
@@ -480,7 +480,7 @@ export const meetingOwnerList = defineCommand({
     const last = items[items.length - 1];
     if (items.length === limit && last) {
       const { rows: more } = await sql<{ id: string }>`
-        SELECT l.id FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, 1, ${last.startedAt}::timestamptz, ${last.id}::uuid) l
+        SELECT l.id FROM ludy_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, 1, ${last.startedAt}::timestamptz, ${last.id}::uuid) l
       `.execute(ctx.trx);
       if (more.length > 0) next = { afterStartedAt: last.startedAt, afterId: last.id };
     }
@@ -499,7 +499,7 @@ export const meetingReaderAdd = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -521,7 +521,7 @@ export const meetingReaderAdd = defineCommand({
     }
 
     await ctx.trx
-      .insertInto('crove_meetings.meeting_reader')
+      .insertInto('ludy_meetings.meeting_reader')
       .values({
         org_id: ctx.orgId,
         id: randomUUID(),
@@ -546,7 +546,7 @@ export const meetingReaderRemove = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -557,7 +557,7 @@ export const meetingReaderRemove = defineCommand({
     }
 
     await ctx.trx
-      .deleteFrom('crove_meetings.meeting_reader')
+      .deleteFrom('ludy_meetings.meeting_reader')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('user_id', '=', input.userId)
@@ -580,7 +580,7 @@ export const meetingMediaKeyReseal = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Only a system actor may do this');
     const { rows } = await sql<{ resealed: boolean }>`
-      SELECT crove_meetings.media_key_reseal(
+      SELECT ludy_meetings.media_key_reseal(
         ${ctx.orgId}::uuid,
         ${input.id}::uuid,
         ${input.fromKeyId}::text,
@@ -608,7 +608,7 @@ export const meetingRecordingNow = defineQuery({
     const now = new Date();
     const since = new Date(now.getTime() - RECORDING_NOW_WINDOW_HOURS * 3_600_000);
     const row = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'started_at'])
       .where('org_id', '=', ctx.orgId)
       .where('recorder_user_id', '=', userId)
@@ -629,7 +629,7 @@ export const meetingRecordingNow = defineQuery({
 // Caller's active calendar events with event reading enabled, scoped by org, user, and calendar_agenda_read RLS.
 function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId: string) {
   return trx
-    .selectFrom('crove_meetings.calendar_agenda as a')
+    .selectFrom('ludy_meetings.calendar_agenda as a')
     .innerJoin('ludy_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
     .where('a.org_id', '=', orgId)
     .where('a.user_id', '=', userId)
@@ -644,7 +644,7 @@ export const meetingList = defineQuery({
   handler: async (ctx, input): Promise<MeetingSummary[]> => {
     const userId = userOf(ctx.actor);
     let query = ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
@@ -664,7 +664,7 @@ export const meetingList = defineQuery({
     const meetingIds = rows.map((r) => r.id);
 
     const readers = await ctx.trx
-      .selectFrom('crove_meetings.meeting_reader')
+      .selectFrom('ludy_meetings.meeting_reader')
       .select(['meeting_id', sql<string>`count(*)::text`.as('count')])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', meetingIds)
@@ -673,7 +673,7 @@ export const meetingList = defineQuery({
     const readersMap = new Map(readers.map((r) => [r.meeting_id, Number(r.count)]));
 
     const audioSegments = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
+      .selectFrom('ludy_meetings.audio_segment')
       .select(['meeting_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', meetingIds)
@@ -681,7 +681,7 @@ export const meetingList = defineQuery({
     const audioSet = new Set(audioSegments.map((a) => a.meeting_id));
 
     const videos = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video')
+      .selectFrom('ludy_meetings.meeting_video')
       .select(['meeting_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', meetingIds)
@@ -695,7 +695,7 @@ export const meetingList = defineQuery({
       FROM pg_catalog.unnest(${meetingIds}::uuid[]) AS m(id)
       WHERE EXISTS (
         SELECT 1
-        FROM crove_meetings.transcript_segment s
+        FROM ludy_meetings.transcript_segment s
         WHERE s.org_id = ${ctx.orgId}::uuid
           AND s.meeting_id = m.id
       )
@@ -734,7 +734,7 @@ export const meetingGet = defineQuery({
   handler: async (ctx, input): Promise<MeetingDetail> => {
     const userId = userOf(ctx.actor);
     const meeting = (await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -744,7 +744,7 @@ export const meetingGet = defineQuery({
     }
 
     const readers = await ctx.trx
-      .selectFrom('crove_meetings.meeting_reader')
+      .selectFrom('ludy_meetings.meeting_reader')
       .select(['user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -752,21 +752,21 @@ export const meetingGet = defineQuery({
     const readerIds = readers.map((r) => r.user_id);
 
     const audioSegment = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
+      .selectFrom('ludy_meetings.audio_segment')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
 
     const video = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video')
+      .selectFrom('ludy_meetings.meeting_video')
       .select(['id', 'video_retention_date'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
 
     const transcriptSegment = await ctx.trx
-      .selectFrom('crove_meetings.transcript_segment')
+      .selectFrom('ludy_meetings.transcript_segment')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -826,7 +826,7 @@ export const meetingExtensionStatus = defineQuery({
   handler: async (ctx, input): Promise<MeetingExtensionStatus> => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id', 'status', 'keep_video', 'live_notes', 'length_seconds', 'extension_token_id', sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -841,13 +841,13 @@ export const meetingExtensionStatus = defineQuery({
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
     const audio = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
+      .selectFrom('ludy_meetings.audio_segment')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
     const video = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video')
+      .selectFrom('ludy_meetings.meeting_video')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -873,7 +873,7 @@ export const meetingAudioRead = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -887,21 +887,21 @@ export const meetingAudioRead = defineQuery({
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+      SELECT ludy_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
     `.execute(ctx.trx);
     if (!readerRows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting audio');
     }
 
     const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'audio')
+      SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'audio')
     `.execute(ctx.trx);
     if (keyRows.length === 0 || !keyRows[0]) {
       throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting audio key has been shredded');
     }
 
     const segment = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment as s')
+      .selectFrom('ludy_meetings.audio_segment as s')
       .innerJoin('ludy_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
       )
@@ -936,7 +936,7 @@ export const meetingVideoRead = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -950,21 +950,21 @@ export const meetingVideoRead = defineQuery({
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+      SELECT ludy_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
     `.execute(ctx.trx);
     if (!readerRows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting video');
     }
 
     const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'video')
+      SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'video')
     `.execute(ctx.trx);
     if (keyRows.length === 0 || !keyRows[0]) {
       throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting video key has been shredded');
     }
 
     const video = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video as v')
+      .selectFrom('ludy_meetings.meeting_video as v')
       .innerJoin('ludy_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
       )
@@ -999,7 +999,7 @@ export const meetingMediaMeta = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -1013,14 +1013,14 @@ export const meetingMediaMeta = defineQuery({
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+      SELECT ludy_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
     `.execute(ctx.trx);
     if (!readerRows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting media');
     }
 
     const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind})
+      SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind})
     `.execute(ctx.trx);
     if (keyRows.length === 0 || !keyRows[0]) {
       throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media key has been shredded');
@@ -1028,7 +1028,7 @@ export const meetingMediaMeta = defineQuery({
 
     if (input.kind === 'audio') {
       const segment = await ctx.trx
-        .selectFrom('crove_meetings.audio_segment as s')
+        .selectFrom('ludy_meetings.audio_segment as s')
         .innerJoin('ludy_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
         )
@@ -1052,7 +1052,7 @@ export const meetingMediaMeta = defineQuery({
       };
     } else {
       const video = await ctx.trx
-        .selectFrom('crove_meetings.meeting_video as v')
+        .selectFrom('ludy_meetings.meeting_video as v')
         .innerJoin('ludy_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
         )

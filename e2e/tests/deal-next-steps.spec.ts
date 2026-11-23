@@ -39,8 +39,8 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
 
   await test.step('the steps the daily rule raises show as a badge on the cards and as a count on the tab', async () => {
     exec(
-      `INSERT INTO crove_crm.deal_next_step (org_id, deal_id, reason, assignee_user_id, since_on)
-       SELECT d.org_id, d.id, 'no_activity', d.owner_user_id, current_date - 20 FROM crove_crm.deal d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+      `INSERT INTO ludy_crm.deal_next_step (org_id, deal_id, reason, assignee_user_id, since_on)
+       SELECT d.org_id, d.id, 'no_activity', d.owner_user_id, current_date - 20 FROM ludy_crm.deal d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     await page.reload();
@@ -89,7 +89,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     );
     expect(audits).toEqual([{ n: 1 }]);
     const stored = sql<{ status: string; n: number }>(
-      `SELECT n.status, count(*)::int AS n FROM crove_crm.deal_next_step n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' GROUP BY n.status ORDER BY n.status`,
+      `SELECT n.status, count(*)::int AS n FROM ludy_crm.deal_next_step n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' GROUP BY n.status ORDER BY n.status`,
       { slug },
     );
     expect(stored).toEqual([{ status: 'done', n: 3 }, { status: 'open', n: 1 }]);
@@ -108,7 +108,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     await setting.getByLabel('Số ngày').fill('30');
     await setting.getByRole('button', { name: 'Lưu' }).click();
     await expect(setting.getByText('Đã lưu.')).toBeVisible();
-    const stored = sql<{ stale_days: number }>(`SELECT s.stale_days FROM crove_crm.deal_setting s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
+    const stored = sql<{ stale_days: number }>(`SELECT s.stale_days FROM ludy_crm.deal_setting s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
     expect(stored).toEqual([{ stale_days: 30 }]);
   });
 });

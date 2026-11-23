@@ -259,27 +259,27 @@ suite('sales e-invoices (#313)', () => {
       async (c) =>
         (
           await c.query(
-            `SELECT d.direction, p.name, p.tax_code FROM crove_finance.purchase_document d JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id WHERE d.id = $1`,
+            `SELECT d.direction, p.name, p.tax_code FROM ludy_finance.purchase_document d JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id WHERE d.id = $1`,
             [saleDocument],
           )
         ).rows,
     );
     expect(doc).toEqual({ direction: 'sale', name: 'CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU', tax_code: BUYER_TAX_CODE });
     const lines = await admin(
-      async (c) => (await c.query(`SELECT debit_account, credit_account FROM crove_finance.purchase_line WHERE document_id = $1 ORDER BY line_no`, [saleDocument])).rows,
+      async (c) => (await c.query(`SELECT debit_account, credit_account FROM ludy_finance.purchase_line WHERE document_id = $1 ORDER BY line_no`, [saleDocument])).rows,
     );
     expect(lines).toEqual(lines.map(() => ({ debit_account: null, credit_account: '511' })));
     // The receivable carries the customer; no vendor default is remembered for a customer.
     const journal = await admin(
       async (c) =>
-        (await c.query(`SELECT account_code, debit::text, credit::text, party_id FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no`, [saleEntry])).rows,
+        (await c.query(`SELECT account_code, debit::text, credit::text, party_id FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no`, [saleEntry])).rows,
     );
     expect(journal.map((l) => [l.account_code, money(l.debit).toFixed(), money(l.credit).toFixed(), l.party_id !== null])).toEqual([
       ['131', '1980000', '0', true],
       ['511', '0', '1800000', false],
       ['3331', '0', '180000', false],
     ]);
-    expect((await admin((c) => c.query(`SELECT 1 FROM crove_finance.vendor_account_rule WHERE org_id = $1`, [org.orgId]))).rowCount).toBe(0);
+    expect((await admin((c) => c.query(`SELECT 1 FROM ludy_finance.vendor_account_rule WHERE org_id = $1`, [org.orgId]))).rowCount).toBe(0);
   });
 
   it('refuses a duplicate sale, whoever the customer is named', async () => {
@@ -414,18 +414,18 @@ suite('sales e-invoices (#313)', () => {
           await c.query('ROLLBACK');
         }
       };
-      const insertLine = `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account, credit_account) VALUES ($1, $2, 99, 'x', 1, $3, $4)`;
+      const insertLine = `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account, credit_account) VALUES ($1, $2, 99, 'x', 1, $3, $4)`;
       expect(await refused(insertLine, [org.orgId, saleDocument, '6422', null])).toBe('23514');
       expect(await refused(insertLine, [org.orgId, purchaseDocument, null, '511'])).toBe('23514');
       expect(await refused(insertLine, [org.orgId, saleDocument, '6422', '511'])).toBe('23514');
       // A revenue code (#430) the chart does not have.
       expect(await refused(insertLine, [org.orgId, saleDocument, null, '5199'])).toBe('23503');
-      expect(await refused(`UPDATE crove_finance.purchase_document SET direction = 'purchase' WHERE id = $1`, [saleDocument])).not.toBeNull();
+      expect(await refused(`UPDATE ludy_finance.purchase_document SET direction = 'purchase' WHERE id = $1`, [saleDocument])).not.toBeNull();
     });
   });
 
   it('credits a sale line only to a revenue account and never debits a purchase line to one, for every writer (#430)', async () => {
-    const insertLine = `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account, credit_account) VALUES ($1, $2, 99, 'x', 1, $3, $4)`;
+    const insertLine = `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account, credit_account) VALUES ($1, $2, 99, 'x', 1, $3, $4)`;
     // Each statement in its own transaction, rolled back: as the superuser, and as ludy_app in the owner's context of
     // the org (ludy_tenant, row security on), which writes the accepted rows too, so a refusal is the trigger's.
     const outcome = async (c: pg.Client, enter: boolean, params: unknown[]) => {
@@ -488,7 +488,7 @@ suite('sales e-invoices (#313)', () => {
     // The voided sale is no longer a duplicate: the same invoice records again and names the document it replaces.
     const again = await approve(await read(invoice('5001', { salt: '\n\n' })));
     const [row] = await admin(
-      async (c) => (await c.query(`SELECT direction, replaces_document_id FROM crove_finance.purchase_document WHERE id = $1`, [again.documentId])).rows,
+      async (c) => (await c.query(`SELECT direction, replaces_document_id FROM ludy_finance.purchase_document WHERE id = $1`, [again.documentId])).rows,
     );
     expect(row).toEqual({ direction: 'sale', replaces_document_id: saleDocument });
     // A purchase document cannot stand in for a voided sale, nor a sale for a purchase.
@@ -497,8 +497,8 @@ suite('sales e-invoices (#313)', () => {
       try {
         await expect(
           c.query(
-            `INSERT INTO crove_finance.purchase_document (org_id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, replaces_document_id)
-             SELECT org_id, 'purchase', party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, id FROM crove_finance.purchase_document WHERE id = $1`,
+            `INSERT INTO ludy_finance.purchase_document (org_id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, replaces_document_id)
+             SELECT org_id, 'purchase', party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, id FROM ludy_finance.purchase_document WHERE id = $1`,
             [saleDocument],
           ),
         ).rejects.toMatchObject({ code: '23514' });
@@ -516,7 +516,7 @@ suite('sales e-invoices (#313)', () => {
     expect(saleDetail.body.payload).toMatchObject({ direction: 'sale', seller: { taxCode: branch }, buyer: { taxCode: BUYER_TAX_CODE } });
     expect(saleDetail.body.payload.journal.map((j: { accountCode: string }) => j.accountCode)).toEqual(['131', '511', '3331']);
     const recorded = await approve(sale);
-    const [doc] = await admin(async (c) => (await c.query(`SELECT direction FROM crove_finance.purchase_document WHERE id = $1`, [recorded.documentId])).rows);
+    const [doc] = await admin(async (c) => (await c.query(`SELECT direction FROM ludy_finance.purchase_document WHERE id = $1`, [recorded.documentId])).rows);
     expect(doc).toEqual({ direction: 'sale' });
 
     // A supplier's branch selling to the org: still a purchase, and approved as one.
@@ -551,7 +551,7 @@ suite('sales e-invoices (#313)', () => {
       return String((await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, fileId)).proposalId);
     };
     const detail = async (id: string) => (await rpc('inbox/get', await tokenFor(owner), { id })).body;
-    const documentOf = async (id: string) => (await admin((c) => c.query(`SELECT direction, legal_entity_id FROM crove_finance.purchase_document WHERE id = $1`, [id]))).rows[0];
+    const documentOf = async (id: string) => (await admin((c) => c.query(`SELECT direction, legal_entity_id FROM ludy_finance.purchase_document WHERE id = $1`, [id]))).rows[0];
 
     // The entity's own sale, read in it: the journal is the sale's (receivable, revenue, output VAT), booked in that entity.
     const sale = await readIn(saleOf('6101'), entityId);

@@ -2,7 +2,7 @@
 // What composes a minutes-webhook body reads nothing of the transcript (meetings integrations A6, #3164): the composer (`enqueueMinutesHook` in hook.ts), the builder, the delivery job and the
 // migration that makes the tables name no transcript, audio, video, reader, attendee, translation or notes table or column. The composer reads one table, the meeting row (title, start, length);
 // the summary, decisions and action items it is handed are what `meetings.result.publish` just published. The invariant pins the body's shape and the tables' columns; this pins the source side,
-// so a later change that reads `crove_meetings.transcript_segment` (or a reader list, for attendee contact) for a body is a visible change here.
+// so a later change that reads `ludy_meetings.transcript_segment` (or a reader list, for attendee contact) for a body is a visible change here.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,15 +44,15 @@ describe('the minutes webhook composer reads nothing of the transcript', () => {
     const rest = whole.slice(start + 10);
     const next = rest.search(/\n(?:export |const |function |async function )/);
     const code = next === -1 ? rest : rest.slice(0, next);
-    const tables = [...code.matchAll(/(?:selectFrom|innerJoin|leftJoin)\(\s*['"]([a-z_.]+)['"]/g), ...code.matchAll(/\bFROM\s+(crove_[a-z_]+\.[a-z_]+)\s*(?=[\s\n;)`])/gi)].map((m) => m[1] as string);
+    const tables = [...code.matchAll(/(?:selectFrom|innerJoin|leftJoin)\(\s*['"]([a-z_.]+)['"]/g), ...code.matchAll(/\bFROM\s+((?:crove|ludy)_[a-z_]+\.[a-z_]+)\s*(?=[\s\n;)`])/gi)].map((m) => m[1] as string);
     // The meeting row (title, start, length) and the hook's own definer functions (named with a call, never a table).
-    expect([...new Set(tables)].sort()).toEqual(['crove_meetings.meeting']);
+    expect([...new Set(tables)].sort()).toEqual(['ludy_meetings.meeting']);
   });
 
   it('the scan bites: a read of the transcript, a reader list or an attendee contact is found', () => {
-    for (const line of ["selectFrom('crove_meetings.transcript_segment')", "FROM crove_meetings.meeting_reader", 'attendee_email', 'audio_key', "selectFrom('crove_meetings.meeting_note')"]) expect(NAMES.test(line), line).toBe(true);
+    for (const line of ["selectFrom('ludy_meetings.transcript_segment')", "FROM ludy_meetings.meeting_reader", 'attendee_email', 'audio_key', "selectFrom('ludy_meetings.meeting_note')"]) expect(NAMES.test(line), line).toBe(true);
     expect(ts("// reads the transcript\nconst a = 1;")).not.toMatch(NAMES);
     expect(ts("import { ROLES } from './transcript.ts';\nconst a = 1;")).not.toMatch(NAMES);
-    expect(ts("const x = await ctx.trx.selectFrom('crove_meetings.transcript_segment').selectAll().execute();")).toMatch(NAMES);
+    expect(ts("const x = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').selectAll().execute();")).toMatch(NAMES);
   });
 });

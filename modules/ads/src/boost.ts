@@ -124,7 +124,7 @@ export const adsBoostDraft = defineCommand({
     const open = earlier.find((b) => b.state === 'draft' && b.row.ad_account_id === adAccountId);
     // A draft of this post left open in another account is dropped when it is boosted from this one, so a post never has two drafts to send (a draft spends nothing).
     for (const stale of earlier.filter((b) => b.state === 'draft' && b.row.ad_account_id !== adAccountId)) {
-      await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'discarded' }).where('org_id', '=', ctx.orgId).where('id', '=', stale.row.id).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_campaign_draft').set({ status: 'discarded' }).where('org_id', '=', ctx.orgId).where('id', '=', stale.row.id).execute();
     }
     // Every ad runs as a Page: it must be an active Facebook Page of this org (the launch stops a plan without one, so say it now, before an approval is asked for).
     const page = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', input.pageConnectionId.toLowerCase()).executeTakeFirst();
@@ -150,7 +150,7 @@ export const adsBoostOptions = defineQuery({
     if (!setting?.write_enabled) return { enabled: false, reason: 'writing_off', accounts: [], pages: [] };
     if (setting.launches_blocked) return { enabled: false, reason: 'launches_blocked', accounts: [], pages: [] };
     const found = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'name', 'currency', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('write_enabled', '=', true)

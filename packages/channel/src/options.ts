@@ -9,7 +9,7 @@ export type ChannelOptionKind = (typeof CHANNEL_OPTION_KINDS)[number];
 // The most options a list keeps, and the longest name kept of one.
 export const CHANNEL_OPTIONS_MAX = 500;
 export const CHANNEL_OPTION_NAME_MAX = 200;
-// The most bytes a list's items take as PostgreSQL prints them (the CHECK on crove_social.channel_option.items). 500
+// The most bytes a list's items take as PostgreSQL prints them (the CHECK on ludy_social.channel_option.items). 500
 // names of 200 Vietnamese letters would not fit, so a list stops before it would pass this, as it does at 500 items.
 export const CHANNEL_OPTIONS_BYTES_MAX = 131_072;
 // How long the worker waits for a whole list (#1131), every page included, and the longest wait for one page. The

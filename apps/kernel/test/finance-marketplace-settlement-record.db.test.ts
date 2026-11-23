@@ -71,12 +71,12 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
-        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
+        c.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
     // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
-    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
+    await withAdmin((c) => c.query("INSERT INTO ludy_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     return { orgId, owner, admin, member, entity };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -87,13 +87,13 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await withAdmin(async (c) => {
       const net = lines.reduce((n, l) => n + Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0) - Number(l.tax ?? 0), 0);
       await c.query('BEGIN');
-      await c.query('INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, id, platform, start, end, reversalOf ? -net : net, reversalOf]);
+      await c.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, id, platform, start, end, reversalOf ? -net : net, reversalOf]);
       for (const [i, l] of lines.entries()) {
         const orderId = randomUUID();
-        await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
-        if (l.delivered !== null) await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
+        await c.query('INSERT INTO ludy_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
+        if (l.delivered !== null) await c.query("INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
         await c.query(
-          'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, refund, tax_withheld, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+          'INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, refund, tax_withheld, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
           [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.refund ?? '0', l.tax ?? '0', Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0) - Number(l.tax ?? 0)],
         );
       }
@@ -107,14 +107,14 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await withAdmin(async (c) => {
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of)
-         SELECT org_id, $3, platform, period_start, period_end, -report_net, id FROM crove_finance.channel_settlement WHERE org_id = $1 AND id = $2`,
+        `INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of)
+         SELECT org_id, $3, platform, period_start, period_end, -report_net, id FROM ludy_finance.channel_settlement WHERE org_id = $1 AND id = $2`,
         [o.orgId, original, id],
       );
       await c.query(
-        `INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net, adjustment)
+        `INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net, adjustment)
          SELECT org_id, gen_random_uuid(), $3, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net, true
-         FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2`,
+         FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2`,
         [o.orgId, original, id],
       );
       await c.query('COMMIT');
@@ -132,12 +132,12 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
   const entryOf = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
       [o.orgId, entryId],
     );
   const parties = (o: Org, name: string) => rows<{ id: string; kind: string }>('SELECT id, kind FROM ludy_kernel.party WHERE org_id = $1 AND name = $2', [o.orgId, name]);
-  const links = (o: Org, platform: string) => rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]);
-  const vouchersOf = (o: Org, settlementId: string) => rows<{ id: string; proposal_id: string }>('SELECT id, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2', [o.orgId, settlementId]);
+  const links = (o: Org, platform: string) => rows<{ party_id: string }>('SELECT party_id FROM ludy_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]);
+  const vouchersOf = (o: Org, settlementId: string) => rows<{ id: string; proposal_id: string }>('SELECT id, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2', [o.orgId, settlementId]);
 
   const TWO: SeedLine[] = [{ sales: '100000', discount: '5000' }, { sales: '250000', discount: '10000' }];
 
@@ -222,7 +222,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
     expect(await parties(o, 'Lazada')).toHaveLength(1);
     expect(await links(o, 'lazada')).toHaveLength(1);
-    const used = await rows<{ party_id: string }>(`SELECT DISTINCT l.party_id FROM crove_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '131'`, [o.orgId]);
+    const used = await rows<{ party_id: string }>(`SELECT DISTINCT l.party_id FROM ludy_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '131'`, [o.orgId]);
     expect(used).toHaveLength(1);
   });
 
@@ -246,7 +246,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await expect(approve(o, second.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_POSTED', status: 409 });
     expect(await vouchersOf(o, settlement)).toHaveLength(1);
     // The database holds it too: a second voucher for the settlement and the month is refused whatever the command does.
-    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, settlement_month) VALUES ($1, '2026-10-15', 'x', $2, $3, '2026-10-01')`, [o.orgId, first.proposalId, settlement])).rejects.toMatchObject({ code: '23505' });
+    await expect(rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, settlement_month) VALUES ($1, '2026-10-15', 'x', $2, $3, '2026-10-01')`, [o.orgId, first.proposalId, settlement])).rejects.toMatchObject({ code: '23505' });
   });
 
   it('refuses a stored proposal that differs from the settlement, however it got there', async () => {
@@ -270,9 +270,9 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const { proposalId } = await ask(o, settlement);
     await withAdmin(async (c) => {
       const orderId = randomUUID();
-      await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, 'shopee', `MK${randomUUID().slice(0, 12)}`]);
-      await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, '2026-10-02']);
-      await c.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, net) VALUES ($1, $2, $3, $4, $5, 1000, 1000)', [o.orgId, randomUUID(), settlement, orderId, 'KX']);
+      await c.query('INSERT INTO ludy_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, 'shopee', `MK${randomUUID().slice(0, 12)}`]);
+      await c.query("INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, '2026-10-02']);
+      await c.query('INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, net) VALUES ($1, $2, $3, $4, $5, 1000, 1000)', [o.orgId, randomUUID(), settlement, orderId, 'KX']);
     });
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_MISMATCH' });
   });
@@ -307,7 +307,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const tt99 = await org('tt99');
     const there = await seed(tt99, 'shopee', '2026-10-01', '2026-10-15', TWO);
     await expect(ask(tt99, there)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id IS NOT NULL', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND settlement_id IS NOT NULL', [o.orgId])).toHaveLength(0);
   });
 
   it('takes the four-eyes rule of every ledger command: the requester does not approve while another may, a member cannot approve', async () => {
@@ -356,7 +356,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect(stored?.lines).toHaveLength(4);
     expect(stored?.lines.map((l) => l.memo.slice(-7))).toEqual(['2026-09', '2026-09', '2026-10', '2026-10']);
     await approve(o, proposalId);
-    const vouchers = await rows<{ settlement_month: string; voucher_date: string; proposal_id: string }>('SELECT settlement_month::text, voucher_date::text, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2 ORDER BY settlement_month', [o.orgId, settlement]);
+    const vouchers = await rows<{ settlement_month: string; voucher_date: string; proposal_id: string }>('SELECT settlement_month::text, voucher_date::text, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2 ORDER BY settlement_month', [o.orgId, settlement]);
     expect(vouchers).toEqual([
       { settlement_month: '2026-09-01', voucher_date: '2026-09-30', proposal_id: proposalId },
       { settlement_month: '2026-10-01', voucher_date: '2026-10-15', proposal_id: proposalId },
@@ -391,10 +391,10 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
   async function household(o: Org, trades: string[], rateStatus: 'confirmed' | 'commentary' = 'confirmed') {
     await withAdmin(async (c) => {
       await c.query("UPDATE ludy_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]);
-      await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', $3::text[])", [o.orgId, o.entity, trades]);
-      await c.query("UPDATE crove_finance.household_trade_rate SET status = $1 WHERE trade = 'goods'", [rateStatus]);
+      await c.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', $3::text[])", [o.orgId, o.entity, trades]);
+      await c.query("UPDATE ludy_finance.household_trade_rate SET status = $1 WHERE trade = 'goods'", [rateStatus]);
     });
-    const rate = (await rows<{ vat_percent: string; pit_percent: string }>("SELECT vat_percent, pit_percent FROM crove_finance.household_trade_rate WHERE trade = 'goods' AND effective_from <= '2026-10-15' ORDER BY effective_from DESC LIMIT 1", []))[0];
+    const rate = (await rows<{ vat_percent: string; pit_percent: string }>("SELECT vat_percent, pit_percent FROM ludy_finance.household_trade_rate WHERE trade = 'goods' AND effective_from <= '2026-10-15' ORDER BY effective_from DESC LIMIT 1", []))[0];
     return { vat: Number(rate?.vat_percent), pit: Number(rate?.pit_percent) };
   }
   type Stored = { total: string; taxWithheld?: string; taxEstimate?: { withheld: string; expected: string; difference: string }; lines: { account: string; debit: string; credit: string }[] };
@@ -424,7 +424,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await approve(o, proposalId);
     // Posted: the org holds only this settlement's entries, so the ledger totals by account are exactly the proposal's, and the tax accounts net to what the payout will debit.
     const posted = Object.fromEntries(
-      (await rows<{ account: string; d: string; c: string }>('SELECT account_code AS account, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 GROUP BY 1', [o.orgId])).map((l) => [l.account, [Number(l.d), Number(l.c)]]),
+      (await rows<{ account: string; d: string; c: string }>('SELECT account_code AS account, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM ludy_finance.journal_line WHERE org_id = $1 GROUP BY 1', [o.orgId])).map((l) => [l.account, [Number(l.d), Number(l.c)]]),
     );
     expect(posted).toEqual({ '131': [3000000, 0], '5111': [vat, 3000000], '3331': [0, vat], '4212': [45000 - vat, 0], '3335': [0, 45000 - vat] });
   });
@@ -438,7 +438,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await household(o2, ['goods', 'services']);
     const s2 = await seed(o2, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
     await expect(ask(o2, s2)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = ANY($1)', [[o.orgId, o2.orgId]])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = ANY($1)', [[o.orgId, o2.orgId]])).toHaveLength(0);
   });
 
   it('refuses a household settlement whose withheld total is not whole dong, and posts nothing', async () => {
@@ -446,7 +446,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await household(o, ['goods']);
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000.5' }]);
     await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1', [o.orgId])).toHaveLength(0);
   });
 
   it('refuses an entity of kind household that has no profile in force, rather than treating it as a company', async () => {
@@ -469,7 +469,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const { proposalId } = await ask(o, settlement);
     await approve(o, proposalId);
     const insert = (settlementId: string | null, month: string | null) =>
-      rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, settlement_month) VALUES ($1, '2026-10-15', 'x', $2, $3, $4)`, [o.orgId, proposalId, settlementId, month]);
+      rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, settlement_month) VALUES ($1, '2026-10-15', 'x', $2, $3, $4)`, [o.orgId, proposalId, settlementId, month]);
     await expect(insert(settlement, '2026-10-02')).rejects.toMatchObject({ code: '23514' });
     await expect(insert(null, '2026-10-01')).rejects.toMatchObject({ code: '23514' });
     await expect(insert(settlement, '2026-10-01')).rejects.toMatchObject({ code: '23505' });
@@ -480,14 +480,14 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', TWO);
     const { proposalId } = await ask(o, settlement);
     // A voucher naming a settlement is no closing, no count, no pay run posting, and names a proposal.
-    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, settlement_id) VALUES ($1, '2026-10-15', 'x', $2)`, [o.orgId, randomUUID()])).rejects.toBeTruthy();
-    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, closing_year) VALUES ($1, '2026-10-15', 'x', $2, $3, 2025)`, [o.orgId, proposalId, randomUUID()])).rejects.toBeTruthy();
+    await expect(rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, settlement_id) VALUES ($1, '2026-10-15', 'x', $2)`, [o.orgId, randomUUID()])).rejects.toBeTruthy();
+    await expect(rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, closing_year) VALUES ($1, '2026-10-15', 'x', $2, $3, 2025)`, [o.orgId, proposalId, randomUUID()])).rejects.toBeTruthy();
   });
-  // Output VAT of the sales (#4303 S3b, research rule 1): the rate comes from crove_finance.marketplace_vat_rate through marketplaceVatRateAt, on the delivery day of each line.
+  // Output VAT of the sales (#4303 S3b, research rule 1): the rate comes from ludy_finance.marketplace_vat_rate through marketplaceVatRateAt, on the delivery day of each line.
   async function setRate(o: Org, rows: Array<{ from: string; method: 'deduction' | 'none'; percent: string | null }>, replaceAll = false) {
     await withAdmin(async (c) => {
-      if (replaceAll) await c.query('DELETE FROM crove_finance.marketplace_vat_rate WHERE org_id = $1', [o.orgId]);
-      for (const r of rows) await c.query('INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method, vat_percent) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.entity, r.from, r.method, r.percent]);
+      if (replaceAll) await c.query('DELETE FROM ludy_finance.marketplace_vat_rate WHERE org_id = $1', [o.orgId]);
+      for (const r of rows) await c.query('INSERT INTO ludy_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method, vat_percent) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.entity, r.from, r.method, r.percent]);
     });
   }
 
@@ -508,8 +508,8 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const done = await approve(o, proposalId);
     expect(done.voucherId).toBeTruthy();
     const posted = await rows<{ account_code: string; debit: string; credit: string }>(
-      `SELECT l.account_code, sum(l.debit)::bigint::text AS debit, sum(l.credit)::bigint::text AS credit FROM crove_finance.journal_line l JOIN crove_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
-       JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id AND e.source_type = 'finance.journal_voucher' WHERE v.org_id = $1 AND v.settlement_id = $2 GROUP BY l.account_code ORDER BY l.account_code`,
+      `SELECT l.account_code, sum(l.debit)::bigint::text AS debit, sum(l.credit)::bigint::text AS credit FROM ludy_finance.journal_line l JOIN ludy_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
+       JOIN ludy_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id AND e.source_type = 'finance.journal_voucher' WHERE v.org_id = $1 AND v.settlement_id = $2 GROUP BY l.account_code ORDER BY l.account_code`,
       [o.orgId, settlement],
     );
     expect(posted.map((r) => [r.account_code, r.debit, r.credit])).toEqual([['131', '2180000', '0'], ['33311', '0', '180000'], ['5111', '0', '2000000']]);

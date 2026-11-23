@@ -45,7 +45,7 @@ import {
 } from './shared.ts';
 
 const TABLES = projectsManifest.tables;
-const PROJECT = TABLES.crove_projects.project;
+const PROJECT = TABLES.ludy_projects.project;
 
 interface StarterLocalizedTemplate {
   key: BuiltinProjectTemplateKey;
@@ -277,7 +277,7 @@ export const projectTemplateList = defineQuery({
     const starters = starterProjectTemplates(input.language ?? 'vi');
 
     let q = ctx.trx
-      .selectFrom('crove_projects.project')
+      .selectFrom('ludy_projects.project')
       .select(['id', 'name', 'description', 'owner_user_id', 'status', 'template_tasks', 'created_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('is_template', '=', true);
@@ -327,7 +327,7 @@ export const projectTemplateCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project', [
+    tableWrite(TABLES, 'ludy_projects', 'project', [
       'org_id',
       'name',
       'description',
@@ -356,7 +356,7 @@ export const projectTemplateCreate = defineCommand({
       }
       // Query ludy_kernel.task directly in caller's ctx.trx so le_scope RLS hides out-of-entity tasks from snapshot.
       const rows = await ctx.trx
-        .selectFrom('crove_projects.project_task as pt')
+        .selectFrom('ludy_projects.project_task as pt')
         .innerJoin('ludy_kernel.task as t', (join) =>
           join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
         )
@@ -410,7 +410,7 @@ export const projectTemplateCreate = defineCommand({
 
     const description = descriptionOf(input.description);
     const created = await ctx.trx
-      .insertInto('crove_projects.project')
+      .insertInto('ludy_projects.project')
       .values({
         org_id: ctx.orgId,
         name: input.name,
@@ -445,12 +445,12 @@ export const projectTemplateArchive = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project', ['status', 'updated_at'])],
   target: (input) => ({ type: 'projects.project', id: input.templateId }),
   handler: async (ctx, input): Promise<ProjectTemplateArchiveResult> => {
     const userId = userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_projects.project')
+      .selectFrom('ludy_projects.project')
       .select([
         'id',
         'name',
@@ -482,7 +482,7 @@ export const projectTemplateArchive = defineCommand({
 
     if (projectRow.status !== 'archived') {
       await ctx.trx
-        .updateTable('crove_projects.project')
+        .updateTable('ludy_projects.project')
         .set({ status: 'archived', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', projectRow.id)
@@ -522,7 +522,7 @@ export const projectCreateFromTemplate = defineCommand({
       templateItems = starter.tasks;
     } else {
       const row = await ctx.trx
-        .selectFrom('crove_projects.project')
+        .selectFrom('ludy_projects.project')
         .select(['id', 'name', 'description', 'status', 'template_tasks'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.templateId!)
@@ -573,7 +573,7 @@ export const projectCreateFromTemplate = defineCommand({
     }
 
     const created = await ctx.trx
-      .insertInto('crove_projects.project')
+      .insertInto('ludy_projects.project')
       .values({
         org_id: ctx.orgId,
         name: projectName,
@@ -592,7 +592,7 @@ export const projectCreateFromTemplate = defineCommand({
 
     if (memberIds.length > 0) {
       await ctx.trx
-        .insertInto('crove_projects.project_member')
+        .insertInto('ludy_projects.project_member')
         .values(
           memberIds.map((uid) => ({
             org_id: ctx.orgId,
@@ -607,7 +607,7 @@ export const projectCreateFromTemplate = defineCommand({
     if (taskIds.length > 0) {
       const keys = spreadKeys(taskIds.length);
       await ctx.trx
-        .insertInto('crove_projects.project_task')
+        .insertInto('ludy_projects.project_task')
         .values(
           taskIds.map((taskId, i) => ({
             org_id: ctx.orgId,

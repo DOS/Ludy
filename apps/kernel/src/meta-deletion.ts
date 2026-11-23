@@ -3,7 +3,7 @@
 // ads plan section 9 #2219, conversations plan CV6 #2305, separate write app #2366). The signed request is checked against each Meta
 // app secret the deployment holds (the read Ads app's, the write app's that runs ads, and the Pages app's, which may be one app or
 // several), and a verified one is fanned out: the Ads accounts the
-// person granted (crove_ads.deletion_request) and the conversations of the connections they granted
+// person granted (ludy_ads.deletion_request) and the conversations of the connections they granted
 // (ludy_kernel.conversation_deletion_request) each get a request under the same confirmation code. The Meta user id and the body
 // are stored nowhere; each side keeps only the keyed hash its connections carry. The worker erases; the status page Meta shows the
 // person reads both sides by the code.
@@ -54,7 +54,7 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
         const hash = platformUserHash(t.secret, t.userId);
         const { rows } =
           t.side === 'ads'
-            ? await sql<{ code: string }>`SELECT crove_ads.deletion_request_enqueue(${fresh}, ${hash}) AS code`.execute(db)
+            ? await sql<{ code: string }>`SELECT ludy_ads.deletion_request_enqueue(${fresh}, ${hash}) AS code`.execute(db)
             : await sql<{ code: string }>`SELECT ludy_kernel.conversation_deletion_enqueue(${fresh}, ${hash}) AS code`.execute(db);
         if (rows[0]?.code) out.push(rows[0].code);
       }
@@ -102,7 +102,7 @@ export async function metaDeletionStatus(runtime: Runtime, code: string): Promis
     // page must not call that deletion handled.
     for (const adsCode of adsCodes) {
       const found = await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
-        SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db);
+        SELECT requested_at, completed_at, accounts FROM ludy_ads.deletion_request_status(${adsCode})`.execute(db);
       if (found.rows[0]) adsRows.push(found.rows[0]);
     }
     const k = kernel.rows[0];

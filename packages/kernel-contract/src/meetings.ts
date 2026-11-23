@@ -17,7 +17,7 @@ export type LiveConsentMethod = Exclude<ConsentMethod, 'platform_notice'>;
 export const LIVE_CONSENT_METHODS: readonly LiveConsentMethod[] = CONSENT_METHODS.filter((m): m is LiveConsentMethod => !IMPORT_ONLY_CONSENT_METHODS.includes(m));
 
 // Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
-// plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
+// plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on ludy_meetings.meeting.recording_stop_reason.
 export const RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
 export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
 export const zRecordingStopReason = z.enum(RECORDING_STOP_REASONS);

@@ -240,8 +240,8 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   }
 
-  const chunkCount = (meetingId: string) => count('SELECT 1 FROM crove_meetings.live_chunk WHERE meeting_id = $1', [meetingId]);
-  const liveKeyCount = (meetingId: string) => count("SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'", [meetingId]);
+  const chunkCount = (meetingId: string) => count('SELECT 1 FROM ludy_meetings.live_chunk WHERE meeting_id = $1', [meetingId]);
+  const liveKeyCount = (meetingId: string) => count("SELECT 1 FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'", [meetingId]);
   const chunkObjects = async (meetingId: string) =>
     (await rows<{ storage_key: string }>(`SELECT f.storage_key FROM ludy_kernel.file f WHERE f.source = 'meeting_audio' AND f.filename LIKE $1`, [`meeting-${meetingId}-live-%`])).map((r) => r.storage_key);
 
@@ -260,14 +260,14 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     expect((error as DomainError).code).toBe(code);
   };
 
-  const windowPassed = (meetingId: string) => rows("UPDATE crove_meetings.meeting SET started_at = now() - interval '5 hours' WHERE id = $1", [meetingId]);
+  const windowPassed = (meetingId: string) => rows("UPDATE ludy_meetings.meeting SET started_at = now() - interval '5 hours' WHERE id = $1", [meetingId]);
   const click = async (name: string, meetingId: string, bearer?: string) => {
     const res = await app.request(`/api/meetings/${meetingId}/live-assemble`, { method: 'POST', headers: { authorization: `Bearer ${bearer ?? (await token(name))}`, 'x-crove-org': slug } });
     return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   };
   const liveStatus = async (name: string, meetingId: string) => (await rpc('meetings/liveStatus', name, { meetingId })).body as { assemble: { available: boolean; reason: string | null; pieces: number; missing: number[] } };
-  const audioRows = (meetingId: string) => count('SELECT 1 FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId]);
-  const audioKeys = (meetingId: string) => count("SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]);
+  const audioRows = (meetingId: string) => count('SELECT 1 FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId]);
+  const audioKeys = (meetingId: string) => count("SELECT 1 FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]);
   const runs = () => count('SELECT 1 FROM ludy_kernel.ai_run WHERE org_id = $1', [orgId]);
   const sendAll = async (meetingId: string, seqs: number[], marker = 'p') => {
     for (const seq of seqs) expect((await sendChunk('recorder', meetingId, seq, piece(`${marker}${seq}`, seq))).status).toBe(200);
@@ -280,7 +280,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     await windowPassed(meetingId);
     expect(await liveStatus('recorder', meetingId)).toMatchObject({ assemble: { available: true, reason: null, pieces: 4, missing: [] } });
     const aiBefore = await runs();
-    const liveKeys = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1", [meetingId])).map((r) => r.wrapped_key.toString('hex'));
+    const liveKeys = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM ludy_meetings.media_key WHERE meeting_id = $1", [meetingId])).map((r) => r.wrapped_key.toString('hex'));
     const pieceObjects = await chunkObjects(meetingId);
     sandbox.seconds = 61;
     measured.length = 0;
@@ -295,15 +295,15 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     // The recording is the meeting's audio now: playable, equal to the join, one segment, a fresh key none of the pieces had, the length the sandbox measured.
     expect(await audioRows(meetingId)).toBe(1);
     expect(await audioKeys(meetingId)).toBe(1);
-    const audioKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!;
+    const audioKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!;
     expect(liveKeys).not.toContain(audioKey.wrapped_key.toString('hex'));
-    expect((await rows<{ length_seconds: number }>('SELECT length_seconds FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!.length_seconds).toBe(61);
+    expect((await rows<{ length_seconds: number }>('SELECT length_seconds FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!.length_seconds).toBe(61);
     const played = await play('recorder', meetingId, 'audio');
     expect(played.status).toBe(200);
     expect(Buffer.from(await played.arrayBuffer()).equals(joined([0, 1, 2, 3], 'join'))).toBe(true);
     expect((await rpc('meetings/get', 'recorder', { meetingId })).body.hasAudio).toBe(true);
     // Ciphertext only: the stored audio object holds no marker and no container header.
-    const object = (await rows<{ storage_key: string }>("SELECT f.storage_key FROM ludy_kernel.file f JOIN crove_meetings.audio_segment s ON s.org_id = f.org_id AND s.file_id = f.id WHERE s.meeting_id = $1", [meetingId]))[0]!;
+    const object = (await rows<{ storage_key: string }>("SELECT f.storage_key FROM ludy_kernel.file f JOIN ludy_meetings.audio_segment s ON s.org_id = f.org_id AND s.file_id = f.id WHERE s.meeting_id = $1", [meetingId]))[0]!;
     const stored = Buffer.from(await store.get(object.storage_key));
     expect(stored.includes(Buffer.from('join'))).toBe(false);
     expect(stored.includes(WEBM)).toBe(false);
@@ -328,18 +328,18 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
   it('ends the meeting\'s recording when it joins, like an upload does: ended_at is the start plus the length, no stop reason, and the recording chip lets go (#3205)', async () => {
     const meetingId = await liveMeeting();
     // Made with the extension (stamped as the extension scope does): the chip reads these from the server.
-    await rows('UPDATE crove_meetings.meeting SET extension_token_id = $1 WHERE id = $2', [randomUUID(), meetingId]);
+    await rows('UPDATE ludy_meetings.meeting SET extension_token_id = $1 WHERE id = $2', [randomUUID(), meetingId]);
     await sendAll(meetingId, [0, 1], 'end');
     await windowPassed(meetingId);
     sandbox.seconds = 61;
-    expect((await rows<{ ended: boolean }>('SELECT ended_at IS NOT NULL AS ended FROM crove_meetings.meeting WHERE id = $1', [meetingId]))[0]!.ended).toBe(false);
+    expect((await rows<{ ended: boolean }>('SELECT ended_at IS NOT NULL AS ended FROM ludy_meetings.meeting WHERE id = $1', [meetingId]))[0]!.ended).toBe(false);
     expect((await click('recorder', meetingId)).status).toBe(200);
-    const meeting = (await rows<{ gap: number; reason: string | null }>('SELECT extract(epoch FROM ended_at - started_at)::int AS gap, recording_stop_reason AS reason FROM crove_meetings.meeting WHERE id = $1', [meetingId]))[0]!;
+    const meeting = (await rows<{ gap: number; reason: string | null }>('SELECT extract(epoch FROM ended_at - started_at)::int AS gap, recording_stop_reason AS reason FROM ludy_meetings.meeting WHERE id = $1', [meetingId]))[0]!;
     expect(meeting).toEqual({ gap: 61, reason: null });
     // As if it had started a minute ago: the chip would list it, but for its end time.
-    await rows("UPDATE crove_meetings.meeting SET started_at = now() - interval '1 minute', ended_at = now() WHERE id = $1", [meetingId]);
+    await rows("UPDATE ludy_meetings.meeting SET started_at = now() - interval '1 minute', ended_at = now() WHERE id = $1", [meetingId]);
     expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
-    await rows('UPDATE crove_meetings.meeting SET ended_at = NULL WHERE id = $1', [meetingId]);
+    await rows('UPDATE ludy_meetings.meeting SET ended_at = NULL WHERE id = $1', [meetingId]);
     expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toMatchObject({ meetingId });
   });
 
@@ -367,12 +367,12 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const headless = await liveMeeting();
     await sendAll(headless, [0, 1, 2]);
     await windowPassed(headless);
-    await rows('DELETE FROM crove_meetings.live_chunk WHERE meeting_id = $1 AND seq = 0', [headless]);
+    await rows('DELETE FROM ludy_meetings.live_chunk WHERE meeting_id = $1 AND seq = 0', [headless]);
     // A meeting past its audio date has nothing to join.
     const expired = await liveMeeting();
     await sendAll(expired, [0]);
     await windowPassed(expired);
-    await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [expired]);
+    await rows(`UPDATE ludy_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [expired]);
     const stored = store.storage.size;
 
     expect((await liveStatus('recorder', early)).assemble).toMatchObject({ available: false, reason: 'still_recording', pieces: 2 });
@@ -429,7 +429,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const meetingId = await liveMeeting();
     await sendAll(meetingId, [0, 1, 2, 3], 'key');
     await windowPassed(meetingId);
-    await rows("DELETE FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'live:2'", [meetingId]);
+    await rows("DELETE FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'live:2'", [meetingId]);
     measured.length = 0;
     const done = await click('recorder', meetingId);
     expect(done.status).toBe(200);
@@ -529,7 +529,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
       headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 8 + marker.length) },
       body: new Uint8Array(Buffer.concat([OGG, Buffer.alloc(8, 0), Buffer.from(marker)])),
     });
-  const segmentOf = async (meetingId: string) => (await rows<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!;
+  const segmentOf = async (meetingId: string) => (await rows<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!;
   const joinedMeeting = async () => {
     const meetingId = await liveMeeting();
     await sendAll(meetingId, [0, 1]);
@@ -543,7 +543,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const joinedSegment = await segmentOf(meetingId);
     expect(joinedSegment.joined).toBe(true);
     const joinedObject = (await rows<{ storage_key: string }>('SELECT storage_key FROM ludy_kernel.file WHERE id = $1', [joinedSegment.file_id]))[0]!.storage_key;
-    const joinedKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!.wrapped_key.toString('hex');
+    const joinedKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!.wrapped_key.toString('hex');
 
     const late = await lateUpload(meetingId, 'complete-late');
     expect(late.status).toBe(200);
@@ -553,7 +553,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const replaced = await segmentOf(meetingId);
     expect(replaced.joined).toBe(false);
     expect(replaced.file_id).not.toBe(joinedSegment.file_id);
-    const newKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!.wrapped_key.toString('hex');
+    const newKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!.wrapped_key.toString('hex');
     expect(newKey).not.toBe(joinedKey);
     // The meeting plays the new recording, and the audit row says a joined one was replaced.
     const played = await play('recorder', meetingId, 'audio');
@@ -574,9 +574,9 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
   it('refuses the replacement once a transcript, minutes or a transcription or summary start was made from the joined recording, and keeps the joined one (#3187)', async () => {
     const ins = (text: string, params: unknown[]) => rows(text, params);
     const cases: Array<[string, (meetingId: string) => Promise<unknown>]> = [
-      ['a transcript draft', (id) => ins("INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) VALUES ($1, $2, 0, 1, 'xin chào')", [orgId, id])],
-      ['minutes', (id) => ins("INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature) VALUES ($1, $2, 'Tóm tắt', 'manual')", [orgId, id])],
-      ['a transcription or summary start', (id) => ins('UPDATE crove_meetings.meeting SET audio_used_at = now() WHERE id = $1', [id])],
+      ['a transcript draft', (id) => ins("INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) VALUES ($1, $2, 0, 1, 'xin chào')", [orgId, id])],
+      ['minutes', (id) => ins("INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, feature) VALUES ($1, $2, 'Tóm tắt', 'manual')", [orgId, id])],
+      ['a transcription or summary start', (id) => ins('UPDATE ludy_meetings.meeting SET audio_used_at = now() WHERE id = $1', [id])],
     ];
     for (const [what, derive] of cases) {
       const meetingId = await joinedMeeting();
@@ -619,9 +619,9 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     await windowPassed(uploaded);
     expect((await lateUpload(uploaded, 'plain-upload')).status).toBe(200);
     // As a segment from before the column was: not flagged. The migration's own statement then marks it.
-    await rows('UPDATE crove_meetings.audio_segment SET joined_from_pieces = false WHERE meeting_id = $1', [joined]);
+    await rows('UPDATE ludy_meetings.audio_segment SET joined_from_pieces = false WHERE meeting_id = $1', [joined]);
     const sqlText = rewriteHistoricalCoreSql(readFileSync(`${MIGRATIONS}/20270105100000_crove_meetings_audio_segment_joined.sql`, 'utf8'));
-    const backfill = /\nUPDATE crove_meetings\.audio_segment[\s\S]*?;\n/.exec(sqlText)![0];
+    const backfill = /\nUPDATE ludy_meetings\.audio_segment[\s\S]*?;\n/.exec(sqlText)![0];
     await rows(backfill);
     expect((await segmentOf(joined)).joined).toBe(true);
     expect((await segmentOf(uploaded)).joined).toBe(false);
@@ -683,10 +683,10 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     await sendAll(unjoined, [0, 1]);
     const unjoinedObjects = await chunkObjects(unjoined);
     await sweep();
-    const objectOf = async (id: string) => (await rows<{ storage_key: string }>("SELECT f.storage_key FROM ludy_kernel.file f JOIN crove_meetings.audio_segment s ON s.org_id = f.org_id AND s.file_id = f.id WHERE s.meeting_id = $1", [id]))[0]!.storage_key;
+    const objectOf = async (id: string) => (await rows<{ storage_key: string }>("SELECT f.storage_key FROM ludy_kernel.file f JOIN ludy_meetings.audio_segment s ON s.org_id = f.org_id AND s.file_id = f.id WHERE s.meeting_id = $1", [id]))[0]!.storage_key;
     const joinedObject = await objectOf(joinedId);
     // The audio date passes for both.
-    await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = ANY($1)`, [[joinedId, unjoined]]);
+    await rows(`UPDATE ludy_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = ANY($1)`, [[joinedId, unjoined]]);
     await retention();
     await sweep();
     expect(await audioKeys(joinedId)).toBe(0);

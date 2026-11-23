@@ -91,7 +91,7 @@ suite('the posting path tells a replay from a new posting (#1925)', () => {
     await c.connect();
     try {
       return (
-        await c.query<{ id: string; source_revision: number }>('SELECT id, source_revision FROM crove_finance.journal_entry WHERE org_id = $1 AND source_id = $2 ORDER BY source_revision', [
+        await c.query<{ id: string; source_revision: number }>('SELECT id, source_revision FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_id = $2 ORDER BY source_revision', [
           orgId,
           sourceId,
         ])

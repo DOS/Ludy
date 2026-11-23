@@ -88,7 +88,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
   const exec = <O>(o: Org, user: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(user), orgId: o.orgId });
   const fromMedia = <O = DraftsFromMediaResult>(o: Org, user: string, input: unknown) => exec<O>(o, user, 'social.post.create_from_media', input);
   const get = (o: Org, postId: string) => rt.query<PostView>('social.post.get', { postId }, { actor: asUser(o.viewer), orgId: o.orgId });
-  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const audits = (o: Org, command: string) =>
     admin(async (c) => (await c.query<{ detail: Record<string, unknown> | null }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
   const daily = (minute: number) => [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, minute }));
@@ -246,8 +246,8 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     // drifting apart, so this run lifts the table's for one set.
     const setId = randomUUID();
     await admin(async (c) => {
-      await c.query('ALTER TABLE crove_social.channel_set DROP CONSTRAINT channel_set_connection_ids_check');
-      await c.query('INSERT INTO crove_social.channel_set (org_id, id, name, connection_ids, updated_by) VALUES ($1, $2, $3, $4::uuid[], $5)', [o.orgId, setId, 'Mọi kênh', channels, o.owner]);
+      await c.query('ALTER TABLE ludy_social.channel_set DROP CONSTRAINT channel_set_connection_ids_check');
+      await c.query('INSERT INTO ludy_social.channel_set (org_id, id, name, connection_ids, updated_by) VALUES ($1, $2, $3, $4::uuid[], $5)', [o.orgId, setId, 'Mọi kênh', channels, o.owner]);
     });
     try {
       const photo = await file(o, 'anh.jpg');
@@ -259,8 +259,8 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
       expect(result.posts[0]?.variants).toHaveLength(20);
     } finally {
       await admin(async (c) => {
-        await c.query('DELETE FROM crove_social.channel_set WHERE org_id = $1 AND id = $2', [o.orgId, setId]);
-        await c.query('ALTER TABLE crove_social.channel_set ADD CONSTRAINT channel_set_connection_ids_check CHECK (cardinality(connection_ids) <= 20)');
+        await c.query('DELETE FROM ludy_social.channel_set WHERE org_id = $1 AND id = $2', [o.orgId, setId]);
+        await c.query('ALTER TABLE ludy_social.channel_set ADD CONSTRAINT channel_set_connection_ids_check CHECK (cardinality(connection_ids) <= 20)');
       });
     }
   });
@@ -278,25 +278,25 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
       await c.query(`CREATE FUNCTION public.t1088_fail() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
         BEGIN
           IF NEW.body = 'hong giua chung' AND EXISTS (
-            SELECT 1 FROM crove_social.post p JOIN crove_social.post_variant v ON v.org_id = p.org_id AND v.post_id = p.id
+            SELECT 1 FROM ludy_social.post p JOIN ludy_social.post_variant v ON v.org_id = p.org_id AND v.post_id = p.id
              WHERE p.org_id = NEW.org_id AND p.body = 'mot' AND v.queue_slot_at IS NOT NULL
           ) THEN
             RAISE EXCEPTION 'forced failure mid-loop';
           END IF;
           RETURN NEW;
         END $$`);
-      await c.query('CREATE TRIGGER t1088_fail BEFORE INSERT ON crove_social.post FOR EACH ROW EXECUTE FUNCTION public.t1088_fail()');
+      await c.query('CREATE TRIGGER t1088_fail BEFORE INSERT ON ludy_social.post FOR EACH ROW EXECUTE FUNCTION public.t1088_fail()');
     });
     try {
       await expect(fromMedia(o, o.member, { fileIds: files, connectionIds: [sandbox], caption: { kind: 'filename' }, queue: true })).rejects.toMatchObject({ status: 500 });
     } finally {
       await admin(async (c) => {
-        await c.query('DROP TRIGGER t1088_fail ON crove_social.post');
+        await c.query('DROP TRIGGER t1088_fail ON ludy_social.post');
         await c.query('DROP FUNCTION public.t1088_fail()');
       });
     }
     expect(await postCount(o)).toBe(0);
-    const held = await admin(async (c) => (await c.query('SELECT id FROM crove_social.post_variant WHERE org_id = $1 AND queue_slot_at IS NOT NULL', [o.orgId])).rows);
+    const held = await admin(async (c) => (await c.query('SELECT id FROM ludy_social.post_variant WHERE org_id = $1 AND queue_slot_at IS NOT NULL', [o.orgId])).rows);
     expect(held).toEqual([]);
     expect(await audits(o, 'social.post.create')).toHaveLength(0);
     expect(await free()).toEqual(before);

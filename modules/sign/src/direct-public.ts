@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // System worker command backing ADR-0034 mail_data hydration for Crove eSign Slice 2a A1 (#3551).
-// Public unauthenticated HTTP mutations on /api/sign/direct/* run via runtime.orgless() + crove_sign.public_direct_*
+// Public unauthenticated HTTP mutations on /api/sign/direct/* run via runtime.orgless() + ludy_sign.public_direct_*
 // SECURITY DEFINER SQL procedures (matching #3432) because ludy_app is blocked from calling ludy_kernel.enter_system_context.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -22,7 +22,7 @@ export const directOtpMailData = defineCommand({
   access: 'system',
   // Returns transient 6-digit OTP code strictly to the worker mail dispatcher; never cache in idempotency_key.
   noIdempotency: true,
-  writes: [tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['otp_sha256', 'expires_at'])],
+  writes: [tableWrite(signManifest.tables, 'ludy_sign', 'signing_otp', ['otp_sha256', 'expires_at'])],
   handler: async (ctx, input): Promise<{ code: string; docTitle: string; expiresAt: string } | null> => {
     assertSystemCommand(ctx);
     const minExp = new Date(Math.max(ctx.now.getTime(), Date.now()) + OTP_TTL_MS);
@@ -38,7 +38,7 @@ export const directOtpMailData = defineCommand({
         expiresAt: string;
       } | null;
     }>`
-      SELECT crove_sign.public_direct_otp_issue(
+      SELECT ludy_sign.public_direct_otp_issue(
         ${input.otpId}::uuid,
         ${minExp}::timestamptz,
         ${ctx.now}::timestamptz

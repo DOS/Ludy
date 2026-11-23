@@ -47,7 +47,7 @@ export async function loadSpendSummary(ctx: Pick<QueryContext, 'trx' | 'orgId'>,
     throw new DomainError('ADS_RANGE_INVALID', 422, `Chỉ xem được tối đa ${ADS_SUMMARY_MAX_DAYS} ngày một lần`);
   }
   const account = await ctx.trx
-    .selectFrom('crove_ads.ad_account')
+    .selectFrom('ludy_ads.ad_account')
     .select(['id', 'currency', 'time_zone', 'result_kind', 'settled_through', 'synced_through'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', input.adAccountId)
@@ -59,7 +59,7 @@ export async function loadSpendSummary(ctx: Pick<QueryContext, 'trx' | 'orgId'>,
   const resultOf = kind === null ? sql<string | null>`NULL::text` : sql<string | null>`(d.results ->> ${kind})`;
 
   const dayRows = await ctx.trx
-    .selectFrom('crove_ads.ad_spend_day as d')
+    .selectFrom('ludy_ads.ad_spend_day as d')
     .select([
       sql<string>`d.day::text`.as('day'),
       sql<string>`d.spend::text`.as('spend'),
@@ -91,7 +91,7 @@ export async function loadSpendSummary(ctx: Pick<QueryContext, 'trx' | 'orgId'>,
   }
 
   const campaignRows = await ctx.trx
-    .selectFrom('crove_ads.ad_spend_day as d')
+    .selectFrom('ludy_ads.ad_spend_day as d')
     .select([
       'd.external_object_id',
       // The latest name the platform gave it.

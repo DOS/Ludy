@@ -19,7 +19,7 @@ export const quoteReport = defineQuery({
     const days = input.days === undefined ? DEFAULT_DAYS : input.days;
     const { rows } = await sql<{ status: QuoteStatus; n: number; total: string }>`
       SELECT q.status, pg_catalog.count(*)::int AS n, coalesce(pg_catalog.sum(q.total), 0)::text AS total
-      FROM crove_crm.quote q
+      FROM ludy_crm.quote q
       WHERE q.org_id = ${ctx.orgId}::uuid
         AND (${days}::int IS NULL OR q.created_at >= pg_catalog.now() - pg_catalog.make_interval(days => ${days}::int))
       GROUP BY q.status`.execute(ctx.trx);

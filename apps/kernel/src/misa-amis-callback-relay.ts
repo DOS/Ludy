@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The worker relay of MISA AMIS's callback (#3903, S4 of #3854). The route (misa-amis-callback.ts) stores the signed results of a verified message in a machinery table; this relay takes them with
-// crove_finance.misa_amis_callback_claim (worker only), which finds, by org_refid in SQL, the organisation and the stored push row of each result (never from the envelope), and records through the one
+// ludy_finance.misa_amis_callback_claim (worker only), which finds, by org_refid in SQL, the organisation and the stored push row of each result (never from the envelope), and records through the one
 // write path, `finance.misa_amis.push_record`, as the system actor: the system context is the worker's alone, so this is the only place a callback can be recorded.
 //
 // The HMAC key is one per deployment, so a good signature proves the sender, not the organisation: a refid stored in two organisations is refused, and the envelope's company code and the signed voucher type
@@ -83,7 +83,7 @@ export function answerableLater(
 export async function runMisaAmisCallbacks(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   let taken = 0;
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const { rows } = await sql<ClaimedCallback>`SELECT * FROM crove_finance.misa_amis_callback_claim(${MISA_AMIS_CALLBACK_CLAIM}::int)`.execute(deps.workerDb);
+    const { rows } = await sql<ClaimedCallback>`SELECT * FROM ludy_finance.misa_amis_callback_claim(${MISA_AMIS_CALLBACK_CLAIM}::int)`.execute(deps.workerDb);
     if (rows.length === 0) break;
     const bySeq = new Map<string, { result: ClaimedCallback; located: Located[] }>();
     for (const row of rows) {
@@ -118,7 +118,7 @@ export async function runMisaAmisCallbacks(deps: { runtime: Runtime; workerDb: D
         else console.error('[misa-amis-callback] not recorded: RELAY_FAILED');
       }
     }
-    if (done.length > 0) await sql`SELECT crove_finance.misa_amis_callback_done(${done}::bigint[])`.execute(deps.workerDb);
+    if (done.length > 0) await sql`SELECT ludy_finance.misa_amis_callback_done(${done}::bigint[])`.execute(deps.workerDb);
     taken += bySeq.size;
     if (bySeq.size < MISA_AMIS_CALLBACK_CLAIM) break;
   }

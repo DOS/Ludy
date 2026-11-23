@@ -368,7 +368,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
         replacesDocumentId: null,
       }),
     ]);
-    const [row] = await admin(async (c) => (await c.query('SELECT document_id, reversal_entry_id, reason, voided_by FROM crove_finance.purchase_document_void WHERE org_id = $1', [org.orgId])).rows);
+    const [row] = await admin(async (c) => (await c.query('SELECT document_id, reversal_entry_id, reason, voided_by FROM ludy_finance.purchase_document_void WHERE org_id = $1', [org.orgId])).rows);
     expect(row).toEqual({ document_id: firstDocument, reversal_entry_id: reversalEntry, reason: 'Ghi nhầm tài khoản chi phí', voided_by: owner.userId });
     const [audit] = await admin(
       async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.reverse' AND outcome = 'ok'`, [org.orgId])).rows,
@@ -435,7 +435,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     const recorded = await approve(String(proposalId), edited.revision);
     secondDocument = String(recorded.documentId);
 
-    const [doc] = await admin(async (c) => (await c.query('SELECT replaces_document_id FROM crove_finance.purchase_document WHERE id = $1', [secondDocument])).rows);
+    const [doc] = await admin(async (c) => (await c.query('SELECT replaces_document_id FROM ludy_finance.purchase_document WHERE id = $1', [secondDocument])).rows);
     expect(doc).toEqual({ replaces_document_id: firstDocument });
     const entry = await rpc('journal/get', await tokenFor(owner), { id: recorded.journalEntryId });
     expect(entry.body?.lines?.map((l: { accountCode: string }) => l.accountCode)).toContain(corrected);
@@ -454,12 +454,12 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     const [voucher] = vouchers;
     const [doc] = await admin(
       async (c) =>
-        (await c.query(`SELECT subtotal::text, vat_amount::text, invoice_number, invoice_date::text FROM crove_finance.purchase_document WHERE id = $1`, [secondDocument]))
+        (await c.query(`SELECT subtotal::text, vat_amount::text, invoice_number, invoice_date::text FROM ludy_finance.purchase_document WHERE id = $1`, [secondDocument]))
           .rows,
     );
     const [entry] = await admin(
       async (c) =>
-        (await c.query(`SELECT id, entry_date::text FROM crove_finance.journal_entry WHERE source_type = 'finance.purchase_document' AND source_id = $1`, [secondDocument])).rows,
+        (await c.query(`SELECT id, entry_date::text FROM ludy_finance.journal_entry WHERE source_type = 'finance.purchase_document' AND source_id = $1`, [secondDocument])).rows,
     );
     expect(voucher).toMatchObject({ entryId: entry.id, entryDate: entry.entry_date, invoice: { number: doc.invoice_number, date: doc.invoice_date } });
     // A multi-line invoice is one row per line; the rows carry the document's amounts and VAT exactly.
@@ -503,11 +503,11 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
           await c.query('ROLLBACK');
         }
       };
-      const voidRow = `INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'x')`;
+      const voidRow = `INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'x')`;
       // A void must name the reversal of the document's own entry: not a reversal of another entry, nor the entry.
       const other = randomUUID();
       const otherReversal = randomUUID();
-      const entry = `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id)
+      const entry = `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id)
                      VALUES ($1, $2, '2026-10-15', 'test', 'test', gen_random_uuid(), $3)`;
       expect(
         await refused(voidRow, [org.orgId, secondDocument, otherReversal], [
@@ -518,12 +518,12 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
       expect(await refused(voidRow, [org.orgId, secondDocument, firstEntry])).toMatchObject({ code: '23514' });
       // One void per document, and voids are append-only.
       expect(await refused(voidRow, [org.orgId, firstDocument, reversalEntry])).toMatchObject({ code: '23505' });
-      expect(await refused(`UPDATE crove_finance.purchase_document_void SET reason = 'y' WHERE org_id = $1`, [org.orgId])).toMatchObject({ code: '42501' });
-      expect(await refused(`DELETE FROM crove_finance.purchase_document_void WHERE org_id = $1`, [org.orgId])).toMatchObject({ code: '42501' });
+      expect(await refused(`UPDATE ludy_finance.purchase_document_void SET reason = 'y' WHERE org_id = $1`, [org.orgId])).toMatchObject({ code: '42501' });
+      expect(await refused(`DELETE FROM ludy_finance.purchase_document_void WHERE org_id = $1`, [org.orgId])).toMatchObject({ code: '42501' });
 
-      const docRow = `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, replaces_document_id)
+      const docRow = `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, replaces_document_id)
                       SELECT org_id, party_id, invoice_series, $3, invoice_date, subtotal, vat_amount, total, $4::uuid
-                      FROM crove_finance.purchase_document WHERE org_id = $1 AND id = $2`;
+                      FROM ludy_finance.purchase_document WHERE org_id = $1 AND id = $2`;
       // Another document of the same invoice that replaces nothing, or a voided document already replaced: refused.
       expect(await refused(docRow, [org.orgId, secondDocument, '7001', null])).toMatchObject({ code: '23505', constraint: 'purchase_document_purchase_invoice_uq' });
       expect(await refused(docRow, [org.orgId, secondDocument, '7001', firstDocument])).toMatchObject({ code: '23505', constraint: 'purchase_document_replaces_uq' });
@@ -539,12 +539,12 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     // The entry of the second document, which is in force, and the mirror of its lines.
     const { entry, lines } = await admin(async (c) => {
       const found = await c.query<{ id: string }>(
-        `SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.purchase_document' AND source_id = $2`,
+        `SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.purchase_document' AND source_id = $2`,
         [org.orgId, secondDocument],
       );
       const id = found.rows[0]?.id ?? '';
       const rows = await c.query<{ line_no: number; account_code: string; debit: string; credit: string; party_id: string | null; memo: string | null }>(
-        `SELECT line_no, account_code, debit::text, credit::text, party_id, memo FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`,
+        `SELECT line_no, account_code, debit::text, credit::text, party_id, memo FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`,
         [org.orgId, id],
       );
       return { entry: id, lines: rows.rows };
@@ -560,7 +560,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
     try {
       await client.query('BEGIN');
       await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
-      await client.query(`SELECT crove_finance.post_journal_entry('2026-10-16'::date, 'Đảo trực tiếp', 'test', $1::uuid, $2::jsonb, $3::uuid)`, [
+      await client.query(`SELECT ludy_finance.post_journal_entry('2026-10-16'::date, 'Đảo trực tiếp', 'test', $1::uuid, $2::jsonb, $3::uuid)`, [
         randomUUID(),
         JSON.stringify(mirror),
         entry,
@@ -580,19 +580,19 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
         try {
           const reversal = randomUUID();
           await c.query(
-            `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id)
+            `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id)
              VALUES ($1, $2, '2026-10-16', 'Đảo trực tiếp', 'test', gen_random_uuid(), $3)`,
             [org.orgId, reversal, entry],
           );
           for (const l of mirror) {
             await c.query(
-              `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, memo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, memo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
               [org.orgId, reversal, l.line_no, l.account_code, l.debit, l.credit, l.party_id, l.memo],
             );
           }
-          if (options.early) await c.query('SET CONSTRAINTS crove_finance.journal_entry_reversal_voids IMMEDIATE');
+          if (options.early) await c.query('SET CONSTRAINTS ludy_finance.journal_entry_reversal_voids IMMEDIATE');
           if (options.void) {
-            await c.query(`INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'x')`, [
+            await c.query(`INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'x')`, [
               org.orgId,
               secondDocument,
               reversal,
@@ -623,7 +623,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
 
   it('explains a reversal the approver cannot see in full', async () => {
     await admin((c) =>
-      c.query(`CREATE POLICY crove_test_le_scope_165 ON crove_finance.journal_line AS RESTRICTIVE FOR SELECT TO ludy_tenant
+      c.query(`CREATE POLICY crove_test_le_scope_165 ON ludy_finance.journal_line AS RESTRICTIVE FOR SELECT TO ludy_tenant
                USING (memo IS DISTINCT FROM '${HIDDEN}')`),
     );
     // Posts an entry as the API login role in the owner's context.
@@ -634,7 +634,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
         await client.query('BEGIN');
         await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         const { rows } = await client.query<{ id: string }>(
-          `SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'Có dòng ngoài phạm vi', 'test', $1::uuid, $2::jsonb) AS id`,
+          `SELECT ludy_finance.post_journal_entry('2026-10-01'::date, 'Có dòng ngoài phạm vi', 'test', $1::uuid, $2::jsonb) AS id`,
           [randomUUID(), JSON.stringify(lines)],
         );
         await client.query('COMMIT');
@@ -684,23 +684,23 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
       // A purchase entry and its reversal, written as they were before voids existed (no void row). The rule that such
       // a reversal commits only with its void (20261018150000) came later, so it is switched off for this legacy write.
       await c.query('BEGIN');
-      await c.query('ALTER TABLE crove_finance.journal_entry DISABLE TRIGGER journal_entry_reversal_voids');
+      await c.query('ALTER TABLE ludy_finance.journal_entry DISABLE TRIGGER journal_entry_reversal_voids');
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total)
-         SELECT org_id, $2, party_id, '7900', '2026-10-01', 100, 10, 110 FROM crove_finance.purchase_document WHERE org_id = $1 LIMIT 1`,
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total)
+         SELECT org_id, $2, party_id, '7900', '2026-10-01', 100, 10, 110 FROM ludy_finance.purchase_document WHERE org_id = $1 LIMIT 1`,
         [org.orgId, document],
       );
-      const insertEntry = `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id)
+      const insertEntry = `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id)
                            VALUES ($1, $2, '2026-10-02', $3, $4, $5, $6)`;
       await c.query(insertEntry, [org.orgId, entry, 'HĐ 7900', 'finance.purchase_document', document, null]);
       await c.query(insertEntry, [org.orgId, reversal, 'Đảo bút toán (lý do: cũ)', 'kernel.proposal', randomUUID(), entry]);
-      const line = `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)`;
+      const line = `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)`;
       await c.query(line, [org.orgId, entry, 1, '6422', 110, 0]);
       await c.query(line, [org.orgId, entry, 2, '331', 0, 110]);
       await c.query(line, [org.orgId, reversal, 1, '6422', 0, 110]);
       await c.query(line, [org.orgId, reversal, 2, '331', 110, 0]);
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');
-      await c.query('ALTER TABLE crove_finance.journal_entry ENABLE TRIGGER journal_entry_reversal_voids');
+      await c.query('ALTER TABLE ludy_finance.journal_entry ENABLE TRIGGER journal_entry_reversal_voids');
       await c.query('COMMIT');
       // Applying the migration again backfills the void, once.
       for (let run = 0; run < 2; run += 1) {
@@ -708,7 +708,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
         await c.query(migration);
         await c.query('COMMIT');
       }
-      const { rows } = await c.query('SELECT reversal_entry_id, reason, voided_by FROM crove_finance.purchase_document_void WHERE org_id = $1 AND document_id = $2', [
+      const { rows } = await c.query('SELECT reversal_entry_id, reason, voided_by FROM ludy_finance.purchase_document_void WHERE org_id = $1 AND document_id = $2', [
         org.orgId,
         document,
       ]);

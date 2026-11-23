@@ -59,17 +59,17 @@ suite('finance.signals.overdue_receivables on PostgreSQL (#2969)', () => {
         const doc = randomUUID();
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7)`,
           [orgId, doc, partyId, number, date, total, legalEntity],
         );
         const entry = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
           [orgId, entry, date, `HĐ bán ${number}`, doc, legalEntity],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
           [orgId, entry, total, partyId, legalEntity],
         );
         await c.query('COMMIT');
@@ -82,11 +82,11 @@ suite('finance.signals.overdue_receivables on PostgreSQL (#2969)', () => {
         const entry = randomUUID();
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
           [orgId, entry, date, randomUUID(), legalEntity],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '112', $3, 0, NULL, $5), ($1, $2, 2, '131', 0, $3, $4, $5)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '112', $3, 0, NULL, $5), ($1, $2, 2, '131', 0, $3, $4, $5)`,
           [orgId, entry, amount, partyId, legalEntity],
         );
         await c.query('COMMIT');
@@ -153,8 +153,8 @@ suite('finance.signals.overdue_receivables on PostgreSQL (#2969)', () => {
     const [terms, paused] = [await o.party('A'), await o.party('B')];
     await o.sale(terms, '1', dated(5), '1000000');
     await o.sale(paused, '2', dated(5), '1000000');
-    await rows('INSERT INTO crove_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 90)', [o.orgId, terms]);
-    await rows('INSERT INTO crove_finance.customer_collection (org_id, party_id, paused_until) VALUES ($1, $2, $3)', [o.orgId, paused, addDays(TODAY, 30)]);
+    await rows('INSERT INTO ludy_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 90)', [o.orgId, terms]);
+    await rows('INSERT INTO ludy_finance.customer_collection (org_id, party_id, paused_until) VALUES ($1, $2, $3)', [o.orgId, paused, addDays(TODAY, 30)]);
     // Ninety day terms: the 35 day old invoice is not due yet. The pause stops the mail, not the debt.
     expect((await o.signals(o.owner, [terms, paused])).map((r) => r.partyId)).toEqual([paused]);
   });

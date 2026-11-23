@@ -40,11 +40,11 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
   async function seedMeeting(recorder: string, readers: string[] = ['reader']): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T04:00:00Z', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     await exec(recorder, 'meetings.transcript.draft_store', {
       meetingId,
       segments: [
@@ -108,7 +108,7 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
     const title = await runStart('recorder', 'meetings.title', meetingId);
     const commitments = await runStart('recorder', 'meetings.commitments', meetingId);
     expect(await results(meetingId)).toBe(2);
-    await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
     expect(await results(meetingId)).toBe(0);
     for (const [feature, runId] of [['meetings.title', title.runId], ['meetings.commitments', commitments.runId]] as const) {
       expect(await runRow(runId), feature).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });

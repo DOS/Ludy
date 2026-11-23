@@ -266,7 +266,7 @@ async function resolveOpeningContext(
     };
   }
   const opening = await ctx.trx
-    .selectFrom('crove_hr.job_opening')
+    .selectFrom('ludy_hr.job_opening')
     .select(['id', 'legal_entity_id', 'title', 'required_skills', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', openingId)
@@ -516,8 +516,8 @@ export const inviteDraftContextQuery = defineQuery({
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   handler: async (ctx, input): Promise<HrInviteDraftContext> => {
     const row = await ctx.trx
-      .selectFrom('crove_hr.candidate as c')
-      .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .selectFrom('ludy_hr.candidate as c')
+      .leftJoin('ludy_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
       .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )

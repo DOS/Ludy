@@ -255,7 +255,7 @@ suite('unclassified invoice lines (#2091)', () => {
     expect((await pendingList()).find((i) => i.id === unclassified)?.unclassifiedLines).toBe(0);
     await expect(approve(unclassified, revised.revision)).resolves.toMatchObject({ documentId: expect.any(String) });
     const learned = await admin(async (c) =>
-      (await c.query<{ match_text: string; debit_account: string }>(`SELECT match_text, debit_account FROM crove_finance.categorization_rule WHERE org_id = $1 AND match_text = 'khoan khong ro'`, [org.orgId])).rows,
+      (await c.query<{ match_text: string; debit_account: string }>(`SELECT match_text, debit_account FROM ludy_finance.categorization_rule WHERE org_id = $1 AND match_text = 'khoan khong ro'`, [org.orgId])).rows,
     );
     expect(learned).toEqual([{ match_text: 'khoan khong ro', debit_account: '6421' }]);
   });

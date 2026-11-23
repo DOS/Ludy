@@ -50,7 +50,7 @@ import {
 } from './shared.ts';
 
 const TABLES = projectsManifest.tables;
-const PROJECT_CYCLE = TABLES.crove_projects.project_cycle;
+const PROJECT_CYCLE = TABLES.ludy_projects.project_cycle;
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
 
 const cycleNotFound = () => new DomainError('CYCLE_NOT_FOUND', 404, 'Không tìm thấy chu kỳ này');
@@ -173,7 +173,7 @@ function validateCycleDates(startsOn: string, endsOn: string): void {
 
 export async function loadCycle(trx: Trx, orgId: string, projectId: string, cycleId: string, lock: boolean): Promise<RawCycleRow> {
   let q = trx
-    .selectFrom('crove_projects.project_cycle')
+    .selectFrom('ludy_projects.project_cycle')
     .select([
       'id',
       'project_id',
@@ -220,7 +220,7 @@ async function cycleTaskTotalsMap(
            pg_catalog.count(*) FILTER (WHERE t.status = 'cancelled')::text AS cancelled_n,
            COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status <> 'cancelled'), 0)::text AS total_pts,
            COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status = 'done'), 0)::text AS done_pts
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
       JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
      WHERE pt.org_id = ${orgId}::uuid
        AND pt.project_id = ${projectId}::uuid
@@ -240,7 +240,7 @@ async function cycleTaskTotalsMap(
 
 export async function loadActiveCycleView(trx: Trx, orgId: string, projectId: string): Promise<ProjectCycle | null> {
   const row = await trx
-    .selectFrom('crove_projects.project_cycle')
+    .selectFrom('ludy_projects.project_cycle')
     .select([
       'id',
       'project_id',
@@ -356,7 +356,7 @@ async function computeMetricsForProject(
     selectedRaw = await loadCycle(trx, orgId, projectId, cycleId, false);
   } else {
     selectedRaw = await trx
-      .selectFrom('crove_projects.project_cycle')
+      .selectFrom('ludy_projects.project_cycle')
       .select([
         'id',
         'project_id',
@@ -383,7 +383,7 @@ async function computeMetricsForProject(
   if (selectedRaw) {
     const { rows: hiddenRows } = await sql<{ count: string }>`
       SELECT pg_catalog.count(*)::text AS count
-        FROM crove_projects.project_task pt
+        FROM ludy_projects.project_task pt
        WHERE pt.org_id = ${orgId}::uuid
          AND pt.project_id = ${projectId}::uuid
          AND pt.cycle_id = ${selectedRaw.id}::uuid
@@ -395,7 +395,7 @@ async function computeMetricsForProject(
   }
 
   const completedRows = await trx
-    .selectFrom('crove_projects.project_cycle')
+    .selectFrom('ludy_projects.project_cycle')
     .select([
       'id',
       'project_id',
@@ -427,7 +427,7 @@ async function computeMetricsForProject(
   let burndown: ProjectCycleBurndownPoint[] = [];
   if (selectedCycle) {
     const taskRows = await trx
-      .selectFrom('crove_projects.project_task as pt')
+      .selectFrom('ludy_projects.project_task as pt')
       .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
       .select(['t.status', 'pt.story_points', 't.created_at', 't.updated_at'])
       .where('pt.org_id', '=', orgId)
@@ -487,7 +487,7 @@ export const projectCycleCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_cycle', [
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle', [
       'project_id',
       'number',
       'name',
@@ -510,7 +510,7 @@ export const projectCycleCreate = defineCommand({
     const { rows: metaRows } = await sql<{ max_number: number; last_ends_on: string | null }>`
       SELECT COALESCE(pg_catalog.max(number), 0)::int AS max_number,
              pg_catalog.max(ends_on)::text AS last_ends_on
-        FROM crove_projects.project_cycle
+        FROM ludy_projects.project_cycle
        WHERE org_id = ${ctx.orgId}::uuid
          AND project_id = ${project.id}::uuid`.execute(ctx.trx);
 
@@ -523,7 +523,7 @@ export const projectCycleCreate = defineCommand({
 
     const goal = descriptionOf(input.goal);
     const created = await ctx.trx
-      .insertInto('crove_projects.project_cycle')
+      .insertInto('ludy_projects.project_cycle')
       .values({
         org_id: ctx.orgId,
         project_id: project.id,
@@ -563,7 +563,7 @@ export const projectCycleUpdate = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_cycle', ['name', 'goal', 'starts_on', 'ends_on', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_cycle', ['name', 'goal', 'starts_on', 'ends_on', 'updated_at'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectCycleMutateResult> => {
     const userId = userOf(ctx.actor);
@@ -592,7 +592,7 @@ export const projectCycleUpdate = defineCommand({
     let latest = cycle;
     if (changed.length > 0) {
       latest = await ctx.trx
-        .updateTable('crove_projects.project_cycle')
+        .updateTable('ludy_projects.project_cycle')
         .set({
           name: nextName,
           goal: nextGoal,
@@ -632,7 +632,7 @@ async function assertCycleTasksAccessibleAndFree(
   leaseFilter: 'all' | 'open',
 ): Promise<{ openCount: number }> {
   const cycleLinks = await trx
-    .selectFrom('crove_projects.project_task')
+    .selectFrom('ludy_projects.project_task')
     .select('task_id')
     .where('org_id', '=', orgId)
     .where('project_id', '=', projectId)
@@ -643,7 +643,7 @@ async function assertCycleTasksAccessibleAndFree(
   if (cycleLinks.length === 0) return { openCount: 0 };
 
   const visibleTasks = await trx
-    .selectFrom('crove_projects.project_task as pt')
+    .selectFrom('ludy_projects.project_task as pt')
     .innerJoin('ludy_kernel.task as t', (join) =>
       join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
     )
@@ -682,8 +682,8 @@ export const projectCycleDelete = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_cycle', ['org_id', 'project_id', 'id']),
-    tableWrite(TABLES, 'crove_projects', 'project_task', ['cycle_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle', ['org_id', 'project_id', 'id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectCycleDeleteResult> => {
@@ -698,7 +698,7 @@ export const projectCycleDelete = defineCommand({
     await assertCycleTasksAccessibleAndFree(ctx.trx, ctx.orgId, project.id, cycle.id, ctx.now, 'all');
 
     await ctx.trx
-      .deleteFrom('crove_projects.project_cycle')
+      .deleteFrom('ludy_projects.project_cycle')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
       .where('id', '=', cycle.id)
@@ -717,7 +717,7 @@ export const projectCycleStart = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_cycle', ['status', 'started_at', 'updated_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_cycle', ['status', 'started_at', 'updated_at'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectCycleMutateResult> => {
     const userId = userOf(ctx.actor);
@@ -729,7 +729,7 @@ export const projectCycleStart = defineCommand({
     if (cycle.status !== 'upcoming') throw cycleNotUpcoming();
 
     const active = await ctx.trx
-      .selectFrom('crove_projects.project_cycle')
+      .selectFrom('ludy_projects.project_cycle')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -740,7 +740,7 @@ export const projectCycleStart = defineCommand({
     let updated: RawCycleRow;
     try {
       updated = await ctx.trx
-        .updateTable('crove_projects.project_cycle')
+        .updateTable('ludy_projects.project_cycle')
         .set({
           status: 'active',
           started_at: ctx.now,
@@ -771,8 +771,8 @@ export const projectCycleComplete = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_cycle', ['status', 'completed_at', 'updated_at']),
-    tableWrite(TABLES, 'crove_projects', 'project_task', ['cycle_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle', ['status', 'completed_at', 'updated_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectCycleCompleteResult> => {
@@ -800,7 +800,7 @@ export const projectCycleComplete = defineCommand({
     let carriedOverCount = 0;
     if (input.carryover.mode !== 'none' && openCount > 0) {
       const { rows: movedRows } = await sql<{ task_id: string }>`
-        UPDATE crove_projects.project_task pt
+        UPDATE ludy_projects.project_task pt
            SET cycle_id = ${targetCycleId}::uuid
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
@@ -816,7 +816,7 @@ export const projectCycleComplete = defineCommand({
     }
 
     const completed = await ctx.trx
-      .updateTable('crove_projects.project_cycle')
+      .updateTable('ludy_projects.project_cycle')
       .set({
         status: 'completed',
         completed_at: ctx.now,
@@ -872,7 +872,7 @@ async function assertProjectTaskMutable(
   now: Date,
 ): Promise<void> {
   const link = await trx
-    .selectFrom('crove_projects.project_task as pt')
+    .selectFrom('ludy_projects.project_task as pt')
     .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
     .select(['pt.task_id', 't.checkout_run_id', 't.lock_expires_at'])
     .where('pt.org_id', '=', orgId)
@@ -890,7 +890,7 @@ export const projectTaskSetCycle = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['cycle_id'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectTaskSetCycleResult> => {
     userOf(ctx.actor);
@@ -905,7 +905,7 @@ export const projectTaskSetCycle = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_projects.project_task')
+      .updateTable('ludy_projects.project_task')
       .set({ cycle_id: input.cycleId })
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -928,7 +928,7 @@ export const projectTaskSetPoints = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['story_points'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['story_points'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectTaskSetPointsResult> => {
     userOf(ctx.actor);
@@ -938,7 +938,7 @@ export const projectTaskSetPoints = defineCommand({
     await assertProjectTaskMutable(ctx.trx, ctx.orgId, project.id, input.taskId, ctx.now);
 
     await ctx.trx
-      .updateTable('crove_projects.project_task')
+      .updateTable('ludy_projects.project_task')
       .set({ story_points: input.storyPoints })
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -964,7 +964,7 @@ export const projectCycleList = defineQuery({
     const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
 
     const raw = await ctx.trx
-      .selectFrom('crove_projects.project_cycle')
+      .selectFrom('ludy_projects.project_cycle')
       .select([
         'id',
         'project_id',
@@ -999,7 +999,7 @@ export const projectCycleList = defineQuery({
       sql<{ task_n: string; pts_n: string }>`
         SELECT pg_catalog.count(*)::text AS task_n,
                COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)), 0)::text AS pts_n
-          FROM crove_projects.project_task pt
+          FROM ludy_projects.project_task pt
           JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
@@ -1007,7 +1007,7 @@ export const projectCycleList = defineQuery({
            AND t.status <> 'cancelled'`.execute(ctx.trx),
       sql<{ count: string }>`
         SELECT pg_catalog.count(*)::text AS count
-          FROM crove_projects.project_task pt
+          FROM ludy_projects.project_task pt
          WHERE pt.org_id = ${ctx.orgId}::uuid
            AND pt.project_id = ${project.id}::uuid
            AND NOT EXISTS (
@@ -1078,7 +1078,7 @@ export const projectCycleSummarySource = defineQuery({
     let truncated = false;
     if (selected !== null) {
       const taskRows = await ctx.trx
-        .selectFrom('crove_projects.project_task as pt')
+        .selectFrom('ludy_projects.project_task as pt')
         .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
         .select(['t.id', 't.title', 't.tainted', 't.status', 't.due'])
         .where('pt.org_id', '=', ctx.orgId)

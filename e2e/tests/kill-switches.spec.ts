@@ -170,7 +170,7 @@ test('the deployment relay and mail switches hold a booking and its mail, and re
       vars,
     );
     exec(
-      `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, min_notice_min, host_user_id, created_by)
+      `INSERT INTO ludy_crm.event_type (org_id, slug, title, duration_min, min_notice_min, host_user_id, created_by)
        SELECT t.org_id, 'dien-tap', 'Diễn tập', 30, 0, u.id, u.id
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
@@ -184,7 +184,7 @@ test('the deployment relay and mail switches hold a booking and its mail, and re
       `SELECT b.status,
               EXISTS (SELECT 1 FROM ludy_kernel.outbox_event e JOIN ludy_kernel.outbox_pending p ON p.org_id = e.org_id AND p.event_id = e.id
                        WHERE e.org_id = b.org_id AND e.type = :'type' AND e.payload->>'booking_id' = b.id::text) AS pending
-         FROM crove_crm.booking b JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug'`,
+         FROM ludy_crm.booking b JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug'`,
       { slug, type: RELAY_TYPE },
     );
   const mails = () =>

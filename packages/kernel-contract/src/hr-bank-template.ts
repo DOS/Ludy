@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The saved layout of one bank's bulk-salary file (issue #2893, payroll plan docs/plan/payroll.md 6.4 and 10 row 4, ADR-0046), on crove_hr.payroll_bank_template: an org sets its bank's layout once,
+// The saved layout of one bank's bulk-salary file (issue #2893, payroll plan docs/plan/payroll.md 6.4 and 10 row 4, ADR-0046), on ludy_hr.payroll_bank_template: an org sets its bank's layout once,
 // and the export applies it. A layout is the six columns of the file (sequence, name, account, bank, amount, content) in the order the bank wants, each with the header it shows, and the text of
 // the payment's content (`{month}` becomes MM/YYYY). It holds no person's data. Owners and admins only, in the commands and in the database's policies. These shapes equal the table's own check
-// (crove_hr.bank_layout_valid), so a layout the database would refuse is refused here first, with a reason.
+// (ludy_hr.bank_layout_valid), so a layout the database would refuse is refused here first, with a reason.
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 

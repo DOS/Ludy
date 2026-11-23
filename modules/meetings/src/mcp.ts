@@ -94,8 +94,8 @@ const notFound = () => new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not fo
 // The meetings a company grant may list: visibility 'org', a published result, and a text period that has not ended (a purge may not have run yet; the commands treat such a meeting as gone).
 function visibleMeetings(ctx: Pick<QueryContext, 'trx' | 'orgId'>) {
   return ctx.trx
-    .selectFrom('crove_meetings.meeting as m')
-    .innerJoin('crove_meetings.meeting_result as r', (join) => join.onRef('r.org_id', '=', 'm.org_id').onRef('r.meeting_id', '=', 'm.id').on('r.stage', '=', 'published'))
+    .selectFrom('ludy_meetings.meeting as m')
+    .innerJoin('ludy_meetings.meeting_result as r', (join) => join.onRef('r.org_id', '=', 'm.org_id').onRef('r.meeting_id', '=', 'm.id').on('r.stage', '=', 'published'))
     .where('m.org_id', '=', ctx.orgId)
     .where('m.visibility', '=', 'org')
     .where(sql<boolean>`(m.text_retention_date IS NULL OR m.text_retention_date > ${vnDay(new Date())}::date)`);
@@ -186,7 +186,7 @@ export const mcpMinutes = defineQuery({
       .executeTakeFirst();
     if (!row) throw notFound();
     const items = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(['title', 'who_drafted', sql<string | null>`when_parsed::text`.as('when_parsed'), 'status', 'task_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -222,7 +222,7 @@ export const mcpMinutes = defineQuery({
 async function openItems(ctx: Pick<QueryContext, 'trx' | 'orgId'>, opts: { dueBefore?: string; seriesId?: string; limit: number }): Promise<McpOpenActions> {
   const filtered = () => {
     let q = visibleMeetings(ctx)
-      .innerJoin('crove_meetings.action_item as a', (join) => join.onRef('a.org_id', '=', 'm.org_id').onRef('a.meeting_id', '=', 'm.id'))
+      .innerJoin('ludy_meetings.action_item as a', (join) => join.onRef('a.org_id', '=', 'm.org_id').onRef('a.meeting_id', '=', 'm.id'))
       .where('a.org_id', '=', ctx.orgId)
       .where('a.stage', '=', 'published')
       // Open: not yet accepted and no task made from it (only `action_item_accept` sets either, together).
@@ -363,7 +363,7 @@ export const mcpSearch = defineQuery({
         FROM (
           SELECT a.meeting_id, a.title, a.transcript_seconds, a.created_at, a.id,
                  row_number() OVER (PARTITION BY a.meeting_id ORDER BY a.transcript_seconds, a.created_at, a.id) AS n
-            FROM crove_meetings.action_item a
+            FROM ludy_meetings.action_item a
            WHERE a.org_id = ${ctx.orgId}
              AND a.stage = 'published'
              AND a.flags = '[]'::jsonb

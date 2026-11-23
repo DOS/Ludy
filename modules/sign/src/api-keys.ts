@@ -107,7 +107,7 @@ export const signApiKeyList = defineQuery({
     assertHumanManager(ctx);
     try {
       const { rows } = await sql<{ items: RawApiKeyJson[] }>`
-        SELECT crove_sign.api_key_list() AS items
+        SELECT ludy_sign.api_key_list() AS items
       `.execute(ctx.trx);
       const list = Array.isArray(rows[0]?.items) ? rows[0].items : [];
       return { items: list.map(normalizeApiKeyRecord) };
@@ -133,7 +133,7 @@ export const signApiKeyCreate = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'api_key', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'api_key', [
       'org_id',
       'id',
       'name',
@@ -158,7 +158,7 @@ export const signApiKeyCreate = defineCommand({
     }
     try {
       const { rows } = await sql<{ row: RawApiKeyJson }>`
-        SELECT crove_sign.api_key_insert(
+        SELECT ludy_sign.api_key_insert(
           ${input.id ?? null}::uuid,
           ${input.name}::text,
           ${input.keyPrefix}::text,
@@ -189,7 +189,7 @@ export const signApiKeyRevoke = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'sign.api_key', id: input.apiKeyId }),
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'api_key', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'api_key', [
       'revoked_at',
       'updated_at',
     ]),
@@ -198,7 +198,7 @@ export const signApiKeyRevoke = defineCommand({
     assertHumanManager(ctx);
     try {
       const { rows } = await sql<{ row: RawApiKeyJson }>`
-        SELECT crove_sign.api_key_revoke(${input.apiKeyId}::uuid) AS row
+        SELECT ludy_sign.api_key_revoke(${input.apiKeyId}::uuid) AS row
       `.execute(ctx.trx);
       const record = normalizeApiKeyRecord(rows[0]!.row);
       ctx.audit({

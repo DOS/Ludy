@@ -96,7 +96,7 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await compose(page, body);
   await submitApproveSchedule(page, [channel]);
   const postId = postIdOf(page);
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   await expect(channelCard(page, channel).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
   return postId;
 }
@@ -156,7 +156,7 @@ test('a channel that needs two approvals waits for a second admin, then is appro
   await expect(card.getByText('Đã duyệt', { exact: true })).toBeVisible();
 
   const approvers = sql<{ n: number }>(
-    `SELECT count(DISTINCT decided_by)::int AS n FROM crove_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`,
+    `SELECT count(DISTINCT decided_by)::int AS n FROM ludy_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`,
     { post: postIdOf(page) },
   );
   expect(approvers).toEqual([{ n: 2 }]);
@@ -177,7 +177,7 @@ test('retries a failed channel and settles the channels Crove could not account 
   // What a platform's refusal and a lost answer leave behind, which the sandbox never produces on its own.
   const setVariant = (channel: string, values: string) =>
     exec(
-      `UPDATE crove_social.post_variant v SET ${values}, updated_at = now()
+      `UPDATE ludy_social.post_variant v SET ${values}, updated_at = now()
          FROM ludy_kernel.channel_connection c
         WHERE v.post_id = :'post' AND c.org_id = v.org_id AND c.id = v.channel_connection_id AND c.display_name = :'channel'`,
       { post: postId, channel },
@@ -217,7 +217,7 @@ test('retries a failed channel and settles the channels Crove could not account 
   await expect(failedCard.getByText('Nền tảng từ chối bài này.')).toHaveCount(0);
 
   const rows = sql<{ display_name: string; status: string }>(
-    `SELECT c.display_name, v.status FROM crove_social.post_variant v
+    `SELECT c.display_name, v.status FROM ludy_social.post_variant v
        JOIN ludy_kernel.channel_connection c ON c.org_id = v.org_id AND c.id = v.channel_connection_id
       WHERE v.post_id = :'post'`,
     { post: postId },
@@ -240,7 +240,7 @@ test('publishes many failed posts again at once from the attention list (#1456)'
   }
   // What a platform outage leaves behind, which the sandbox never produces on its own.
   exec(
-    `UPDATE crove_social.post_variant SET status = 'failed', error_kind = 'bad_request', error_code = 'E2E_REFUSED', updated_at = now() WHERE post_id IN (:'a', :'b')`,
+    `UPDATE ludy_social.post_variant SET status = 'failed', error_kind = 'bad_request', error_code = 'E2E_REFUSED', updated_at = now() WHERE post_id IN (:'a', :'b')`,
     { a: posts[0] ?? '', b: posts[1] ?? '' },
   );
 
@@ -261,7 +261,7 @@ test('publishes many failed posts again at once from the attention list (#1456)'
 
   // Each is a new attempt due now: the worker's sweep publishes both to the sandbox.
   await expect
-    .poll(() => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status), { timeout: 45_000 })
+    .poll(() => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status), { timeout: 45_000 })
     .toEqual(['published', 'published']);
 });
 
@@ -280,7 +280,7 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
     posts.push(postIdOf(page));
   }
-  const statuses = () => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status);
+  const statuses = () => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status);
 
   // The browser's own dialog must never open: answering it would hide the very thing this test is about.
   const browserDialogs: string[] = [];
@@ -427,10 +427,10 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
   await expect(page).toHaveURL(/\/social$/);
   const [post] = sql<{ id: string; media: { name: string; alt: string | null }[]; labels: string[]; comments: string[] }>(
     `SELECT p.id,
-            (SELECT json_agg(json_build_object('name', f.filename, 'alt', m.alt_text) ORDER BY m.position) FROM crove_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.org_id = p.org_id AND m.post_id = p.id) AS media,
-            (SELECT json_agg(l.name ORDER BY l.name) FROM crove_social.post_label pl JOIN crove_social.label l ON l.org_id = pl.org_id AND l.id = pl.label_id WHERE pl.org_id = p.org_id AND pl.post_id = p.id) AS labels,
-            (SELECT json_agg(v.settings->>'firstComment') FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft') AS comments
-       FROM crove_social.post p WHERE p.body = :'body'`,
+            (SELECT json_agg(json_build_object('name', f.filename, 'alt', m.alt_text) ORDER BY m.position) FROM ludy_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.org_id = p.org_id AND m.post_id = p.id) AS media,
+            (SELECT json_agg(l.name ORDER BY l.name) FROM ludy_social.post_label pl JOIN ludy_social.label l ON l.org_id = pl.org_id AND l.id = pl.label_id WHERE pl.org_id = p.org_id AND pl.post_id = p.id) AS labels,
+            (SELECT json_agg(v.settings->>'firstComment') FROM ludy_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft') AS comments
+       FROM ludy_social.post p WHERE p.body = :'body'`,
     { body: `Khai trương chi nhánh mới, giảm 20% ${run}` },
   );
   expect(post?.media).toEqual([
@@ -439,7 +439,7 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
   ]);
   expect(post?.labels).toEqual(['Khai trương', 'Tháng 11']);
   expect(post?.comments).toEqual(['Xem thực đơn ở trang của quán']);
-  expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post WHERE body IN (:'a', :'b')`, { a: `Bài có ảnh nội bộ ${run}`, b: `Bài thiếu ảnh ${run}` })).toEqual([{ n: 0 }]);
+  expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_social.post WHERE body IN (:'a', :'b')`, { a: `Bài có ảnh nội bộ ${run}`, b: `Bài thiếu ảnh ${run}` })).toEqual([{ n: 0 }]);
   // The draft shows its two images on its page.
   await page.goto(`${new URL(page.url()).pathname}/${post?.id}`);
   await expect(page.getByText('2/20')).toBeVisible();
@@ -463,12 +463,12 @@ test('turns on evergreen reposting for a published post', async ({ page }) => {
   await expect(page.getByRole('radio', { name: 'Theo chu kỳ' })).toBeChecked();
   await expect(page.getByLabel('Chu kỳ đăng lại')).toHaveValue('30');
   await expect(page.getByLabel('Chu kỳ đăng lại').locator('option:checked')).toHaveText('Mỗi 30 ngày');
-  expect(sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM crove_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ evergreen_days: 30 }]);
+  expect(sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM ludy_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ evergreen_days: 30 }]);
 
   // And off again.
   await page.getByRole('radio', { name: 'Không tự đăng lại' }).check();
   await expect
-    .poll(() => sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM crove_social.post WHERE id = :'post'`, { post: postId }))
+    .poll(() => sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM ludy_social.post WHERE id = :'post'`, { post: postId }))
     .toEqual([{ evergreen_days: null }]);
 });
 
@@ -484,9 +484,9 @@ test('shows the latest metrics of a published channel on the post and in the rep
   // A capture as the worker records it. Taken now, it is newer than any capture the worker's own sweep may have made
   // since the post went out, and the sweep asks again only after 6 hours.
   exec(
-    `INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
+    `INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
      SELECT v.org_id, v.id, 'e2e-capture', '{"reach": 1234, "impressions": 2345, "reactions": 56, "comments": 7, "shares": 3}'::jsonb
-       FROM crove_social.post_variant v WHERE v.post_id = :'post'`,
+       FROM ludy_social.post_variant v WHERE v.post_id = :'post'`,
     { post: postId },
   );
   await page.reload();
@@ -514,7 +514,7 @@ test('shows the latest metrics of a published channel on the post and in the rep
   // The best post of the window (#645), and the channel's followers over it from the daily snapshots.
   await expect(panel.locator('[data-slot="card"]').filter({ hasText: 'Bài nổi bật trong khoảng này' })).toContainText(body);
   exec(
-    `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers)
+    `INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers)
      SELECT c.org_id, c.id, d.day, d.n FROM ludy_kernel.channel_connection c,
        (VALUES ((now() AT TIME ZONE 'UTC')::date - 3, 1000), ((now() AT TIME ZONE 'UTC')::date, 1080)) AS d(day, n)
      WHERE c.display_name = :'channel'`,
@@ -638,7 +638,7 @@ test('lets an owner approve and schedule their own post in one step (#638)', asy
   await page.getByRole('button', { name: 'Duyệt và đăng vào khung giờ kế tiếp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await expect(channelCard(page, 'Trang Một Bước').getByText('Đã lên lịch', { exact: true })).toBeVisible();
-  const decided = sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`, { post: postIdOf(page) });
+  const decided = sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`, { post: postIdOf(page) });
   expect(decided).toEqual([{ n: 1 }]);
 });
 
@@ -663,7 +663,7 @@ test('a new owner posts from a fresh channel by choosing when, with no empty-que
   await expect(channelCard(page, 'Trang Chọn Giờ').getByText('Đã lên lịch', { exact: true })).toBeVisible();
   await expect(page.getByText(/hàng đợi/)).toHaveCount(0);
   const rows = sql<{ at: string | null; slot: string | null }>(
-    `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'HH24:MI') AS at, queue_slot_at::text AS slot FROM crove_social.post_variant WHERE post_id = :'post'`,
+    `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'HH24:MI') AS at, queue_slot_at::text AS slot FROM ludy_social.post_variant WHERE post_id = :'post'`,
     { post: postIdOf(page), zone: TIME_ZONE },
   );
   expect(rows).toEqual([{ at: '15:30', slot: null }]);
@@ -676,7 +676,7 @@ test('a draft saved from the composer keeps no time the person did not choose (#
   await compose(page, 'Nháp chưa chọn giờ');
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
-  const planned = sql<{ at: string | null }>(`SELECT scheduled_at::text AS at FROM crove_social.post WHERE id = :'post'`, { post: postIdOf(page) });
+  const planned = sql<{ at: string | null }>(`SELECT scheduled_at::text AS at FROM ludy_social.post WHERE id = :'post'`, { post: postIdOf(page) });
   expect(planned).toEqual([{ at: null }]);
 });
 
@@ -764,7 +764,7 @@ test('posts a Story of one image, with no text, in a phone frame (#644)', async 
   await expect(page.getByText('Tin (Story) cần đúng một ảnh hoặc một video')).toHaveCount(0);
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
-  const saved = sql<{ post_type: string }>(`SELECT settings->>'postType' AS post_type FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postIdOf(page) });
+  const saved = sql<{ post_type: string }>(`SELECT settings->>'postType' AS post_type FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postIdOf(page) });
   expect(saved).toEqual([{ post_type: 'story' }]);
   // The saved post keeps the type in its channel's editor.
   await expect(page.getByLabel('Kiểu bài')).toHaveValue('story');
@@ -785,7 +785,7 @@ test('crops a post image to a frame, and the server reads the new size (#636)', 
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const media = sql<{ image_width: number; image_height: number; content_type: string }>(
-    `SELECT f.image_width, f.image_height, f.content_type FROM crove_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.post_id = :'post'`,
+    `SELECT f.image_width, f.image_height, f.content_type FROM ludy_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.post_id = :'post'`,
     { post: postIdOf(page) },
   );
   expect(media).toEqual([{ image_width: 1080, image_height: 1080, content_type: 'image/png' }]);
@@ -814,7 +814,7 @@ test('turns an idea on the board into a draft, which moves it to Drafted (#701)'
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await expect(page.getByText('Bài này được viết từ ý tưởng')).toBeVisible();
   const saved = sql<{ stage: string; linked: boolean; link_url: string | null }>(
-    `SELECT i.stage, i.post_id = p.id AS linked, p.link_url FROM crove_social.idea i JOIN crove_social.post p ON p.org_id = i.org_id AND p.id = :'post'`,
+    `SELECT i.stage, i.post_id = p.id AS linked, p.link_url FROM ludy_social.idea i JOIN ludy_social.post p ON p.org_id = i.org_id AND p.id = :'post'`,
     { post: postIdOf(page) },
   );
   expect(saved).toEqual([{ stage: 'drafted', linked: true, link_url: 'https://cuahang.vn/thu' }]);
@@ -838,8 +838,8 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const postId = postIdOf(page);
-  const statuses = () => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId }).map((r) => r.status);
-  const approvals = () => sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post_approval WHERE post_id = :'post'`, { post: postId })[0]?.n;
+  const statuses = () => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId }).map((r) => r.status);
+  const approvals = () => sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_social.post_approval WHERE post_id = :'post'`, { post: postId })[0]?.n;
 
   // The board's moves that reach the server, so a refused drop can be shown to send nothing.
   const moves: string[] = [];
@@ -900,7 +900,7 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   await expect(reviewerColumn('Đã duyệt').getByTestId('board-card')).toHaveCount(1);
   expect(statuses()).toEqual(['approved']);
   const decided = sql<{ email: string; decision: string }>(
-    `SELECT u.email, a.decision FROM crove_social.post_approval a JOIN ludy_kernel.user_account u ON u.id = a.decided_by WHERE a.post_id = :'post'`,
+    `SELECT u.email, a.decision FROM ludy_social.post_approval a JOIN ludy_kernel.user_account u ON u.id = a.decided_by WHERE a.post_id = :'post'`,
     { post: postId },
   );
   expect(decided).toEqual([{ email: reviewer.toLowerCase(), decision: 'approved' }]);
@@ -916,7 +916,7 @@ test('plans an undated draft by dropping it on a day, then moves its time from t
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const postId = postIdOf(page);
   const planned = () =>
-    sql<{ at: string | null }>(`SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM crove_social.post WHERE id = :'post'`, { post: postId, zone: TIME_ZONE })[0]?.at;
+    sql<{ at: string | null }>(`SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM ludy_social.post WHERE id = :'post'`, { post: postId, zone: TIME_ZONE })[0]?.at;
   expect(planned()).toBeNull();
   const updates: string[] = [];
   page.on('request', (r) => {
@@ -967,10 +967,10 @@ test('puts an approved post in an open queue slot by dropping it there, then mov
   await page.getByRole('button', { name: 'Duyệt', exact: true }).click();
   await expect(page.getByText('Lên lịch 1 kênh đã duyệt')).toBeVisible();
   const postId = postIdOf(page);
-  const [channel] = sql<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId });
+  const [channel] = sql<{ id: string }>(`SELECT channel_connection_id AS id FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId });
   const slotOf = () =>
     sql<{ status: string; at: string | null }>(
-      `SELECT status, to_char(queue_slot_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM crove_social.post_variant WHERE post_id = :'post'`,
+      `SELECT status, to_char(queue_slot_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM ludy_social.post_variant WHERE post_id = :'post'`,
       { post: postId, zone: TIME_ZONE },
     )[0];
 
@@ -1013,10 +1013,10 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await submitApproveSchedule(page, [channel]);
   const postId = postIdOf(page);
   const postUrl = page.url();
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   const card = channelCard(page, channel);
   await expect(card.getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
-  const variantId = sql<{ id: string }>(`SELECT id FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId })[0]?.id as string;
+  const variantId = sql<{ id: string }>(`SELECT id FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId })[0]?.id as string;
 
   // A blocked word in the new text is refused, with nothing sent.
   await card.getByRole('button', { name: 'Sửa nội dung đã đăng' }).click();
@@ -1026,14 +1026,14 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await card.getByRole('button', { name: 'Cập nhật lên kênh' }).click();
   await expect(card.getByText('Bài có từ bị cấm: «rẻ nhất»')).toBeVisible();
   expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.external_call WHERE key LIKE :'key'`, { key: `social.publish:${variantId}:%:edit%` })).toEqual([{ n: '0' }]);
-  expect(sql<{ edit_state: string | null }>(`SELECT edit_state FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ edit_state: null }]);
+  expect(sql<{ edit_state: string | null }>(`SELECT edit_state FROM ludy_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ edit_state: null }]);
 
   // The corrected text goes to the channel; the page follows until the platform confirms it.
   await text.fill('Phở bò giá 45.000đ');
   await card.getByRole('button', { name: 'Cập nhật lên kênh' }).click();
   await expect(card.getByLabel('Nội dung mới')).toHaveCount(0);
   await expect
-    .poll(() => sql<{ revision: number; body: string | null; edit_state: string | null }>(`SELECT revision, body, edit_state FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId }), { timeout: 45_000 })
+    .poll(() => sql<{ revision: number; body: string | null; edit_state: string | null }>(`SELECT revision, body, edit_state FROM ludy_social.post_variant WHERE id = :'id'`, { id: variantId }), { timeout: 45_000 })
     .toEqual([{ revision: 2, body: 'Phở bò giá 45.000đ', edit_state: null }]);
   expect(sql<{ state: string }>(`SELECT state FROM ludy_kernel.external_call WHERE key = :'key'`, { key: `social.publish:${variantId}:1:1:edit` })).toEqual([{ state: 'succeeded' }]);
   await expect(card.getByText('Đang cập nhật nội dung đã sửa lên kênh')).toHaveCount(0, { timeout: 15_000 });
@@ -1076,7 +1076,7 @@ test('corrects a published post on its channel: a blocked word is refused, the t
     data: { json: { variantId, revision: 2, body: 'Thành viên sửa bài' } },
   });
   expect(refused.status()).toBe(403);
-  expect(sql<{ revision: number }>(`SELECT revision FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ revision: 2 }]);
+  expect(sql<{ revision: number }>(`SELECT revision FROM ludy_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ revision: 2 }]);
   await memberContext.close();
 });
 
@@ -1101,12 +1101,12 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   // Two days ahead is always in the month view. The six-channel draft is planned at 08:00 and the other at 09:00; ten
   // copies of the other, written with SQL, fill the day to twelve posts, hourly from 10:00.
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date(Date.now() + 2 * 86_400_000));
-  exec(`UPDATE crove_social.post SET scheduled_at = (:'day' || ' 08:00+07')::timestamptz WHERE id = :'six'`, { day, six });
-  exec(`UPDATE crove_social.post SET scheduled_at = (:'day' || ' 09:00+07')::timestamptz WHERE id = :'second'`, { day, second });
+  exec(`UPDATE ludy_social.post SET scheduled_at = (:'day' || ' 08:00+07')::timestamptz WHERE id = :'six'`, { day, six });
+  exec(`UPDATE ludy_social.post SET scheduled_at = (:'day' || ' 09:00+07')::timestamptz WHERE id = :'second'`, { day, second });
   // Every column but the generated ones (search_text, #1360), which an insert may not name.
   const columns = (table: string) =>
     sql<{ list: string }>(
-      `SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) AS list FROM information_schema.columns WHERE table_schema = 'crove_social' AND table_name = :'table' AND is_generated = 'NEVER'`,
+      `SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) AS list FROM information_schema.columns WHERE table_schema = 'ludy_social' AND table_name = :'table' AND is_generated = 'NEVER'`,
       { table },
     )[0]?.list as string;
   const postColumns = columns('post');
@@ -1114,16 +1114,16 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   exec(
     `WITH n AS (SELECT g, gen_random_uuid() AS id FROM generate_series(3, 12) g),
           copies AS (
-            INSERT INTO crove_social.post (${postColumns})
+            INSERT INTO ludy_social.post (${postColumns})
             SELECT ${postColumns} FROM (SELECT (jsonb_populate_record(p, jsonb_build_object('id', n.id, 'body', 'Bài số ' || n.g, 'scheduled_at', (:'day' || ' ' || lpad((n.g + 7)::text, 2, '0') || ':00+07')::timestamptz))).*
-              FROM crove_social.post p, n WHERE p.id = :'second') r RETURNING id)
-     INSERT INTO crove_social.post_variant (${variantColumns})
-     SELECT ${variantColumns} FROM (SELECT (jsonb_populate_record(v, jsonb_build_object('id', gen_random_uuid(), 'post_id', n.id))).* FROM crove_social.post_variant v, n WHERE v.post_id = :'second') r`,
+              FROM ludy_social.post p, n WHERE p.id = :'second') r RETURNING id)
+     INSERT INTO ludy_social.post_variant (${variantColumns})
+     SELECT ${variantColumns} FROM (SELECT (jsonb_populate_record(v, jsonb_build_object('id', gen_random_uuid(), 'post_id', n.id))).* FROM ludy_social.post_variant v, n WHERE v.post_id = :'second') r`,
     { day, second },
   );
   const planned = (body: string) =>
     sql<{ at: string }>(
-      `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM crove_social.post WHERE body = :'body' AND org_id = (SELECT org_id FROM crove_social.post WHERE id = :'six')`,
+      `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM ludy_social.post WHERE body = :'body' AND org_id = (SELECT org_id FROM ludy_social.post WHERE id = :'six')`,
       { body, six, zone: TIME_ZONE },
     )[0]?.at;
   expect(planned('Bài số 12')).toBe(`${day} 19:00`);
@@ -1193,7 +1193,7 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   // And opens from its link.
   await dialog.getByRole('link', { name: 'Bài số 7', exact: true }).focus();
   await page.keyboard.press('Enter');
-  const [seventh] = sql<{ id: string }>(`SELECT id FROM crove_social.post WHERE body = 'Bài số 7' AND org_id = (SELECT org_id FROM crove_social.post WHERE id = :'six')`, { six });
+  const [seventh] = sql<{ id: string }>(`SELECT id FROM ludy_social.post WHERE body = 'Bài số 7' AND org_id = (SELECT org_id FROM ludy_social.post WHERE id = :'six')`, { six });
   await expect(page).toHaveURL(new RegExp(`/social/${seventh?.id ?? 'missing'}$`));
 
   // At phone width the month and the day's list fit the screen: the day shows dots, not chips (#3655), and a tap on them opens the list.
@@ -1240,12 +1240,12 @@ test('makes a client report link without the best posts and the audience, which 
   const body = 'Bài không được lộ trong báo cáo';
   const postId = await publishOnSandbox(page, channel, body);
   exec(
-    `INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
-     SELECT v.org_id, v.id, 'e2e-sections', '{"reach": 4321, "reactions": 21}'::jsonb FROM crove_social.post_variant v WHERE v.post_id = :'post'`,
+    `INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
+     SELECT v.org_id, v.id, 'e2e-sections', '{"reach": 4321, "reactions": 21}'::jsonb FROM ludy_social.post_variant v WHERE v.post_id = :'post'`,
     { post: postId },
   );
   exec(
-    `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
+    `INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
      SELECT c.org_id, c.id, (now() AT TIME ZONE 'UTC')::date, 100, '{"age": [{"key": "18-24", "count": 60}], "gender": [], "cities": [{"key": "Hanoi, Hanoi", "count": 40}], "countries": []}'::jsonb
        FROM ludy_kernel.channel_connection c WHERE c.display_name = :'channel'
      ON CONFLICT DO NOTHING`,

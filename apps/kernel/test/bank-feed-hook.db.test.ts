@@ -125,7 +125,7 @@ suite('Bank feed webhook (#4203)', () => {
       headers: { 'content-type': 'application/json', 'x-request-id': randomUUID(), 'x-request-timestamp': FRESH, 'x-signature': 'f'.repeat(128), ...headers },
       body,
     });
-  const notices = async () => rows<{ hook_id: string; request_id: string; body: string }>('SELECT hook_id, request_id, body FROM crove_finance.bank_feed_webhook_notice ORDER BY received_at, id');
+  const notices = async () => rows<{ hook_id: string; request_id: string; body: string }>('SELECT hook_id, request_id, body FROM ludy_finance.bank_feed_webhook_notice ORDER BY received_at, id');
   const asWorker = async <T>(text: string, values: unknown[] = []) => (await workerPool.query(text, values)).rows as T[];
   let keyOwner = '';
 
@@ -198,13 +198,13 @@ suite('Bank feed webhook (#4203)', () => {
   it('lets owners and admins set the hook, refuses a member and an outsider, and keeps only the hash of the key', async () => {
     expect((await hookSet(member)).status).toBe(403);
     expect((await hookSet(outsider)).status).not.toBe(200);
-    expect(await rows('SELECT 1 FROM crove_finance.bank_feed_hook')).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.bank_feed_hook')).toHaveLength(0);
     const made = await hookSet(owner);
     expect(made.status).toBe(200);
     keyOwner = String(made.body.key);
     expect(made.body).toMatchObject({ provider: 'bank_tingee', created: true });
     expect(keyOwner).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM crove_finance.bank_feed_hook WHERE org_id = $1', [orgId]);
+    const stored = await rows<{ key_sha256: string }>('SELECT key_sha256 FROM ludy_finance.bank_feed_hook WHERE org_id = $1', [orgId]);
     expect(stored).toEqual([{ key_sha256: bankFeedHookKeyHash(keyOwner) }]);
     // The key is in no audit row, and the status answers never carry it or its hash.
     const audit = JSON.stringify(await rows('SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1', [orgId]));
@@ -236,7 +236,7 @@ suite('Bank feed webhook (#4203)', () => {
     // A body naming another org's account lands on the hook of the address, not on the org the body names: the org comes from our own row.
     const naming = await post(keyOwner, {}, JSON.stringify({ clientId: 'hook-test', orgId: otherOrgId, accountNumber: 'other' }));
     expect(naming.status).toBe(200);
-    expect((await rows<{ org_id: string }>('SELECT DISTINCT org_id FROM crove_finance.bank_feed_webhook_notice')).map((r) => r.org_id)).toEqual([orgId]);
+    expect((await rows<{ org_id: string }>('SELECT DISTINCT org_id FROM ludy_finance.bank_feed_webhook_notice')).map((r) => r.org_id)).toEqual([orgId]);
   });
 
   it('refuses a stale or malformed notice and an oversize body, answers a validation challenge, and stores none of them', async () => {
@@ -252,40 +252,40 @@ suite('Bank feed webhook (#4203)', () => {
 
   it('keeps both tables out of reach of every login role and gives each login only its own functions', async () => {
     for (const table of ['bank_feed_hook', 'bank_feed_webhook_notice']) {
-      await expect(pool.query(`SELECT 1 FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
-      await expect(workerPool.query(`SELECT 1 FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query(`SELECT 1 FROM ludy_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
+      await expect(workerPool.query(`SELECT 1 FROM ludy_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
     }
     // The worker cannot look up, put or set; the API cannot claim, reject or sweep.
-    await expect(workerPool.query("SELECT * FROM crove_finance.bank_feed_hook_lookup('bank_tingee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool.query("SELECT crove_finance.bank_feed_hook_put_notice($1::uuid, $2, 'r', 't', 's', 'b')", [randomUUID(), '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT * FROM crove_finance.bank_feed_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT crove_finance.bank_feed_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
-    await expect(pool.query('SELECT crove_finance.bank_feed_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query("SELECT * FROM ludy_finance.bank_feed_hook_lookup('bank_tingee', $1)", ['0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query("SELECT ludy_finance.bank_feed_hook_put_notice($1::uuid, $2, 'r', 't', 's', 'b')", [randomUUID(), '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT * FROM ludy_finance.bank_feed_hook_claim(10)')).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.bank_feed_hook_reject($1::uuid)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.bank_feed_hook_sweep()')).rejects.toMatchObject({ code: '42501' });
     // Set and status need the caller's own sealed context: called bare they refuse.
-    await expect(pool.query('SELECT crove_finance.bank_feed_hook_set($1::uuid, $2)', [connectionId, '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_finance.bank_feed_hook_set($1::uuid, $2)', [connectionId, '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
   });
 
   it('claims the waiting notices and deletes them as it hands them out, with the hook and the connection they belong to', async () => {
     const waiting = await notices();
     expect(waiting.length).toBeGreaterThan(0);
-    const claimed = await asWorker<{ org_id: string; connection_id: string; provider: string; body: string }>('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
+    const claimed = await asWorker<{ org_id: string; connection_id: string; provider: string; body: string }>('SELECT * FROM ludy_finance.bank_feed_hook_claim(100)');
     expect(claimed).toHaveLength(waiting.length);
     expect(claimed[0]).toMatchObject({ org_id: orgId, connection_id: connectionId, provider: 'bank_tingee' });
     expect(await notices()).toHaveLength(0);
-    expect(await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)')).toHaveLength(0);
+    expect(await asWorker('SELECT * FROM ludy_finance.bank_feed_hook_claim(100)')).toHaveLength(0);
   });
 
   it('sweeps a notice older than ten minutes whatever its state, in the claim and in the nightly sweep', async () => {
-    const hook = (await rows<{ id: string }>('SELECT id FROM crove_finance.bank_feed_hook WHERE org_id = $1', [orgId]))[0]!.id;
+    const hook = (await rows<{ id: string }>('SELECT id FROM ludy_finance.bank_feed_hook WHERE org_id = $1', [orgId]))[0]!.id;
     const old = async () => {
-      await rows("INSERT INTO crove_finance.bank_feed_webhook_notice (org_id, hook_id, request_id, notice_timestamp, signature, body, received_at) VALUES ($1, $2, $3, $4, $5, $6, now() - interval '11 minutes')", [orgId, hook, randomUUID(), FRESH, 'a'.repeat(128), BODY]);
+      await rows("INSERT INTO ludy_finance.bank_feed_webhook_notice (org_id, hook_id, request_id, notice_timestamp, signature, body, received_at) VALUES ($1, $2, $3, $4, $5, $6, now() - interval '11 minutes')", [orgId, hook, randomUUID(), FRESH, 'a'.repeat(128), BODY]);
     };
     await old();
-    expect(await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)')).toHaveLength(0);
+    expect(await asWorker('SELECT * FROM ludy_finance.bank_feed_hook_claim(100)')).toHaveLength(0);
     expect(await notices()).toHaveLength(0);
     await old();
     await old();
-    expect(await asWorker<{ swept: number }>('SELECT crove_finance.bank_feed_hook_sweep() AS swept')).toEqual([{ swept: 2 }]);
+    expect(await asWorker<{ swept: number }>('SELECT ludy_finance.bank_feed_hook_sweep() AS swept')).toEqual([{ swept: 2 }]);
     expect(await notices()).toHaveLength(0);
   });
 
@@ -297,14 +297,14 @@ suite('Bank feed webhook (#4203)', () => {
     const waiting = (await notices())[0]!.request_id;
     expect((await post(keyOwner, { 'x-request-id': waiting })).status).toBe(200);
     expect(await notices()).toHaveLength(20);
-    await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
+    await asWorker('SELECT * FROM ludy_finance.bank_feed_hook_claim(100)');
   });
 
   it('stops the hook after ten refused notices in an hour: it answers 200 and stores nothing, until the key is rotated', async () => {
-    const hook = (await rows<{ id: string }>('SELECT id FROM crove_finance.bank_feed_hook WHERE org_id = $1', [orgId]))[0]!.id;
-    for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT crove_finance.bank_feed_hook_reject($1::uuid) AS r', [hook])).toEqual([{ r: false }]);
+    const hook = (await rows<{ id: string }>('SELECT id FROM ludy_finance.bank_feed_hook WHERE org_id = $1', [orgId]))[0]!.id;
+    for (let i = 1; i < 10; i++) expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.bank_feed_hook_reject($1::uuid) AS r', [hook])).toEqual([{ r: false }]);
     expect((await hookStatus(owner)).body).toMatchObject({ rejectedCount: 9, stopped: false });
-    expect(await asWorker<{ r: boolean }>('SELECT crove_finance.bank_feed_hook_reject($1::uuid) AS r', [hook])).toEqual([{ r: true }]);
+    expect(await asWorker<{ r: boolean }>('SELECT ludy_finance.bank_feed_hook_reject($1::uuid) AS r', [hook])).toEqual([{ r: true }]);
     expect((await hookStatus(owner)).body).toMatchObject({ stopped: true });
     expect((await post(keyOwner)).status).toBe(200);
     expect(await notices()).toHaveLength(0);
@@ -314,7 +314,7 @@ suite('Bank feed webhook (#4203)', () => {
     const keyNew = String(rotated.body.key);
     expect(keyNew).not.toBe(keyOwner);
     // A request that passed the lookup with the old key and reaches the put after the rotation stores nothing.
-    const stale = await pool.query('SELECT crove_finance.bank_feed_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, bankFeedHookKeyHash(keyOwner), randomUUID(), FRESH, 'a'.repeat(128), BODY]);
+    const stale = await pool.query('SELECT ludy_finance.bank_feed_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [hook, bankFeedHookKeyHash(keyOwner), randomUUID(), FRESH, 'a'.repeat(128), BODY]);
     expect(stale.rows).toEqual([{ put: 'gone' }]);
     expect(await notices()).toHaveLength(0);
     expect((await post(keyOwner)).status).toBe(404);
@@ -325,12 +325,12 @@ suite('Bank feed webhook (#4203)', () => {
   });
 
   it('stops answering for a hook whose connection is closed or whose org has Finance off', async () => {
-    await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
+    await asWorker('SELECT * FROM ludy_finance.bank_feed_hook_claim(100)');
     await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
     expect((await post(keyOwner)).status).toBe(404);
     await rows("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = $2", [orgId, connectionId]);
     expect((await post(keyOwner)).status).toBe(200);
-    await asWorker('SELECT * FROM crove_finance.bank_feed_hook_claim(100)');
+    await asWorker('SELECT * FROM ludy_finance.bank_feed_hook_claim(100)');
   });
 
   it('erases the notices that mention a person (owners only), and the purge of an org takes its hook and notices', async () => {
@@ -347,7 +347,7 @@ suite('Bank feed webhook (#4203)', () => {
     expect(left[0]?.body).not.toContain(PAYER_EMAIL);
     // The purge function names both tables (the full purge is exercised in org-purge.db.test.ts).
     const def = await rows<{ ok: boolean }>(
-      "SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.bank_feed_webhook_notice' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'crove_finance.bank_feed_hook' AS ok",
+      "SELECT pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_finance.bank_feed_webhook_notice' AND pg_get_functiondef('ludy_kernel.org_purge(integer)'::regprocedure) ~ 'ludy_finance.bank_feed_hook' AS ok",
     );
     expect(def).toEqual([{ ok: true }]);
   });

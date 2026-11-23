@@ -6,7 +6,7 @@
 //
 // Who may do what: owners, admins and members draft (a member limited to some legal entities sees those entities' accounts only, by the row policy of the
 // table); an owner or an admin asks for approval; an agent never submits (access lists no agent) and the AI coworker's drafts are written by the system in
-// W1b. The database holds the rest (crove_ads.campaign_draft_guard): a request waiting for approval freezes its draft, and a draft becomes `approved` only
+// W1b. The database holds the rest (ludy_ads.campaign_draft_guard): a request waiting for approval freezes its draft, and a draft becomes `approved` only
 // inside the execution of the approved proposal that names it.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -45,8 +45,8 @@ const draftSubmitted = () => new DomainError('ADS_DRAFT_SUBMITTED', 409, 'Bản 
 // The columns the builder reads, with the dates, the money and the lists as text the contract knows.
 const draftSelect = (db: Db['trx']) =>
   db
-    .selectFrom('crove_ads.ad_campaign_draft as d')
-    .innerJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id'))
+    .selectFrom('ludy_ads.ad_campaign_draft as d')
+    .innerJoin('ludy_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id'))
     .select([
       'd.id',
       'd.ad_account_id',
@@ -112,7 +112,7 @@ export interface ContextBase {
 export async function contextBase(ctx: Db, accountId: string): Promise<ContextBase> {
   const setting = await currentSetting(ctx);
   const capRows = await ctx.trx
-    .selectFrom('crove_ads.ad_spend_cap')
+    .selectFrom('ludy_ads.ad_spend_cap')
     .select(['id', 'scope', 'ad_account_id', 'period', 'amount', 'currency'])
     .where('org_id', '=', ctx.orgId)
     .where((w) => w.or([w('scope', '=', 'org'), w('ad_account_id', '=', accountId)]))
@@ -152,7 +152,7 @@ export async function draftPlanOf(ctx: Db, draftId: string): Promise<{ plan: Non
 }
 
 export async function accountOf(ctx: Db, adAccountId: string, lock = false) {
-  let q = ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'name', 'currency', 'time_zone', 'write_enabled', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', adAccountId);
+  let q = ctx.trx.selectFrom('ludy_ads.ad_account').select(['id', 'name', 'currency', 'time_zone', 'write_enabled', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', adAccountId);
   if (lock) q = q.forShare();
   const account = await q.executeTakeFirst();
   if (!account) throw accountMissing();
@@ -285,7 +285,7 @@ export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignD
     const merged: AdsCampaignPlanDraft = { ...planOf(current), ...Object.fromEntries(Object.entries(input.plan).filter(([, v]) => v !== undefined)) } as AdsCampaignPlanDraft;
     const maxSpend = merged.dailyBudget && flightDays(merged.startOn, merged.endOn) ? maxSpendOf(merged.dailyBudget, flightDays(merged.startOn, merged.endOn) as number) : null;
     await ctx.trx
-      .updateTable('crove_ads.ad_campaign_draft')
+      .updateTable('ludy_ads.ad_campaign_draft')
       .set({ ...columns, max_spend: maxSpend, ai_fields: stillDrafted(current.ai_fields, planOf(current), merged) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', current.id)
@@ -294,7 +294,7 @@ export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignD
     const merged = input.plan;
     const maxSpend = merged.dailyBudget && days ? maxSpendOf(merged.dailyBudget, days) : null;
     const inserted = await ctx.trx
-      .insertInto('crove_ads.ad_campaign_draft')
+      .insertInto('ludy_ads.ad_campaign_draft')
       .values({
         org_id: ctx.orgId,
         ad_account_id: adAccountId,
@@ -344,7 +344,7 @@ export const adsCampaignDraftDiscard = defineCommand({
     if (!current) throw draftMissing();
     if (current.status !== 'draft') throw draftClosed();
     if (await pendingProposal(ctx, current.id)) throw draftSubmitted();
-    await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'discarded' }).where('org_id', '=', ctx.orgId).where('id', '=', current.id).execute();
+    await ctx.trx.updateTable('ludy_ads.ad_campaign_draft').set({ status: 'discarded' }).where('org_id', '=', ctx.orgId).where('id', '=', current.id).execute();
     ctx.audit({ draftId: current.id, adAccountId: current.ad_account_id, discarded: true });
     return { draftId: current.id };
   },
@@ -462,8 +462,8 @@ export const adsCampaignLaunch = defineCommand({
     // first's commitment.
     const window = { adAccountId: account.id, currency: account.currency, dailyBudget: plan.dailyBudget, startOn: plan.startOn, endOn: plan.endOn };
     await refuseOverCaps(ctx, window, base.caps);
-    await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'approved' }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
-    // The ledger row: the plan's commitment, queued. The database accepts it only here, inside this approved execution (crove_ads.launch_guard); nothing
+    await ctx.trx.updateTable('ludy_ads.ad_campaign_draft').set({ status: 'approved' }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+    // The ledger row: the plan's commitment, queued. The database accepts it only here, inside this approved execution (ludy_ads.launch_guard); nothing
     // launches it yet (W2-3's writer does, W2-4 makes the stop real).
     const launch = await queueLaunch(ctx, {
       draftId: row.id,
@@ -479,7 +479,7 @@ export const adsCampaignLaunch = defineCommand({
       approverId: ctx.actor.userId,
     });
     // The launch job's trigger (W2-3): ids only. The relay turns it into a job of the queue ads-launch where this deployment has a writer; a lost event is queued
-    // again by the sweep (crove_ads.launch_requeue).
+    // again by the sweep (ludy_ads.launch_requeue).
     await ctx.emit(ADS_LAUNCH_QUEUED, { launchId: launch.id, adAccountId: account.id });
     ctx.audit({ draftId: row.id, launchId: launch.id, adAccountId: account.id, maxSpend: payload.amount, currency: payload.currency, days: payload.days, planHash: payload.planHash, revision: row.revision });
     return { draftId: row.id, launchId: launch.id, approved: true, maxSpend: payload.amount, currency: payload.currency };

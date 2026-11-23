@@ -82,7 +82,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     if (regime === 'tt99') {
       await withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
+          `INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
            SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`,
           [orgId],
         ),
@@ -121,7 +121,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     Object.fromEntries(
       (
         await rows<{ account_code: string; debit: string; credit: string }>(
-          'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
+          'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
           [o.orgId, entryId],
         )
       ).map((l) => [l.account_code, l.debit !== '0' ? `Dr ${l.debit}` : `Cr ${l.credit}`]),
@@ -166,7 +166,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const posted = await approve(o, proposalId);
     const lines = await entry(o, posted.journalEntryId);
     const all = await rows<{ account_code: string; debit: string; credit: string }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
       [o.orgId, posted.journalEntryId],
     );
     expect(new Set(all.map((l) => l.account_code)).size).toBe(all.length);
@@ -179,14 +179,14 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     expect(lines['3385']).toMatch(/^Cr /);
     expect(lines['3386']).toBeUndefined();
     expect(Object.keys(lines)).toEqual(expect.arrayContaining(['6422', '6421', '154', '3383', '3384', '3382', '3335']));
-    const [voucher] = await rows<{ payroll_run_id: string; proposal_id: string }>('SELECT payroll_run_id, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
+    const [voucher] = await rows<{ payroll_run_id: string; proposal_id: string }>('SELECT payroll_run_id, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
     expect(voucher).toMatchObject({ payroll_run_id: runId, proposal_id: proposalId });
     // The people stay on the run: the test team's names appear nowhere in the proposal, the voucher, the entry, the audit rows of the posting or the outbox.
     const [trace] = await rows<{ n: string }>(
       `SELECT (SELECT count(*) FROM ludy_kernel.proposal t WHERE org_id = $1 AND t::text ILIKE '%canary%')
-            + (SELECT count(*) FROM crove_finance.journal_voucher t WHERE org_id = $1 AND t::text ILIKE '%canary%')
-            + (SELECT count(*) FROM crove_finance.journal_entry t WHERE org_id = $1 AND t::text ILIKE '%canary%')
-            + (SELECT count(*) FROM crove_finance.journal_line t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM ludy_finance.journal_voucher t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM ludy_finance.journal_entry t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM ludy_finance.journal_line t WHERE org_id = $1 AND t::text ILIKE '%canary%')
             + (SELECT count(*) FROM ludy_kernel.audit_event t WHERE org_id = $1 AND command IN ('kernel.proposal.request', 'hr.payroll.posting.prepare', 'finance.payroll_posting.check', 'finance.payroll_posting.regime', 'kernel.proposal.approve', 'finance.payroll_posting.record') AND t::text ILIKE '%canary%')
             + (SELECT count(*) FROM ludy_kernel.outbox_event t WHERE org_id = $1 AND t::text ILIKE '%canary%') AS n`,
       [o.orgId],
@@ -196,7 +196,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     await expect(ask(o, runId)).rejects.toMatchObject({ code: 'HR_POSTING_DONE' });
     await expect(
       withAdmin((c) =>
-        c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`, [posted.voucherId]),
+        c.query(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM ludy_finance.journal_voucher WHERE id = $1`, [posted.voucherId]),
       ),
     ).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
   });
@@ -218,7 +218,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: MONTH });
     const before = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
     // After the month was opened, the first person moves to sales from the first day, on the same wage: the figures do not change, the expense account does.
-    const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]);
+    const [first] = await rows<{ id: string }>(`SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]);
     await o.exec(o.owner, 'hr.payroll.employment.add', { employeeId: first?.id, effectiveFrom: `${MONTH}-01`, contractType: 'indefinite', region: 'I', baseWage: TEAM[0]?.wage, payFunction: 'sales' });
     await expect(o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: before.fingerprint, acceptFlags: true }, asMfa(o.owner))).rejects.toMatchObject({ code: 'HR_RUN_STALE' });
     await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
@@ -258,7 +258,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     setMapStatus('commentary');
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MAP_UNCONFIRMED' });
     expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
     setMapStatus('confirmed');
     await expect(approve(o, proposalId)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
   });
@@ -276,7 +276,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
   // The insurance of a correction, split across the funds as the person types it: the employee's part and the employer's part of each, signed.
   const split = (employee: Record<string, string>, employer: Record<string, string>) =>
     Object.keys({ ...employee, ...employer }).map((fund) => ({ fund, employee: employee[fund] ?? '0', employer: employer[fund] ?? '0' }));
-  const firstEmployee = async (o: Org) => (await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]))[0]?.id as string;
+  const firstEmployee = async (o: Org) => (await rows<{ id: string }>(`SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]))[0]?.id as string;
 
   it('posts a run that carries corrections of an earlier month with their signs, in the run\'s own period, once the accountant confirms how a correction is booked', async () => {
     const o = await org();
@@ -305,7 +305,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     expect(lines['3335']).toBe(`Cr ${money(sheet.totals.pit).toFixed(0)}`);
     const insurancePayable = ['3383', '3384', '3385'].reduce((sum, account) => sum.plus((lines[account] ?? 'Cr 0').slice(3)), money(0));
     expect(insurancePayable.toFixed(0)).toBe(money(sheet.totals.employeeInsurance).plus(sheet.totals.employerInsurance).toFixed(0));
-    const [voucher] = await rows<{ voucher_date: string }>('SELECT to_char(voucher_date, \'YYYY-MM-DD\') AS voucher_date FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, april.runId]);
+    const [voucher] = await rows<{ voucher_date: string }>('SELECT to_char(voucher_date, \'YYYY-MM-DD\') AS voucher_date FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, april.runId]);
     expect(voucher?.voucher_date).toBe('2026-04-30');
     const monthOnly = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: march.runId });
     expect(money(sheet.totals.gross).minus(monthOnly.totals.gross).toFixed(0)).toBe('500000');
@@ -341,9 +341,9 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     // The line being corrected must name its terms: a pay line that lost them gives no cost department, so no correction is taken (raw session, outside the commands).
     await withAdmin(async (c) => {
       await c.query('BEGIN');
-      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
-      await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND employee_id = $3 AND kind = 'pay'`, [o.orgId, march.runId, employeeId]);
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('ALTER TABLE ludy_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query(`UPDATE ludy_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND employee_id = $3 AND kind = 'pay'`, [o.orgId, march.runId, employeeId]);
+      await c.query('ALTER TABLE ludy_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
       await c.query('COMMIT');
     });
     await expect(o.exec(o.owner, 'hr.payroll.line.adjust', { ...base })).rejects.toMatchObject({ code: 'HR_ADJUST_NO_TERMS' });
@@ -353,7 +353,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const march2 = await approvedRun(o2);
     const april2 = await approvedRun(o2, '2026-04', async (runId) => {
       await o2.exec(o2.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march2.runId, employeeId: employee2, note: 'Điều chỉnh cũ', gross: '500000', pit: '25000' });
-      await rows(`UPDATE crove_hr.payroll_line SET employment_id = NULL, breakdown = NULL WHERE org_id = $1 AND run_id = $2 AND kind = 'adjustment'`, [o2.orgId, runId]);
+      await rows(`UPDATE ludy_hr.payroll_line SET employment_id = NULL, breakdown = NULL WHERE org_id = $1 AND run_id = $2 AND kind = 'adjustment'`, [o2.orgId, runId]);
     });
     await expect(ask(o2, april2.runId)).rejects.toMatchObject({ code: 'HR_POSTING_ADJUSTMENTS' });
     // The same through the verification from the totals (what approving rebuilds): a request made while the correction was whole, whose line then loses its terms and split, is refused at the approval.
@@ -366,9 +366,9 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const asked3 = await ask(o3, april3.runId);
     await withAdmin(async (c) => {
       await c.query('BEGIN');
-      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
-      await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL, breakdown = NULL WHERE org_id = $1 AND run_id = $2 AND kind = 'adjustment'`, [o3.orgId, april3.runId]);
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('ALTER TABLE ludy_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query(`UPDATE ludy_hr.payroll_line SET employment_id = NULL, breakdown = NULL WHERE org_id = $1 AND run_id = $2 AND kind = 'adjustment'`, [o3.orgId, april3.runId]);
+      await c.query('ALTER TABLE ludy_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
       await c.query('COMMIT');
     });
     await expect(approve(o3, asked3.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_ADJUSTMENTS' });
@@ -380,9 +380,9 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     // A stored line that lost its employment (a raw session that lifts the freeze of an approved run, outside the commands) has no cost department on record: refused, never read as administration.
     await withAdmin(async (c) => {
       await c.query('BEGIN');
-      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
-      await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND id = (SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [o.orgId, march.runId]);
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('ALTER TABLE ludy_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query(`UPDATE ludy_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND id = (SELECT id FROM ludy_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [o.orgId, march.runId]);
+      await c.query('ALTER TABLE ludy_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
       await c.query('COMMIT');
     });
     await expect(ask(o, march.runId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
@@ -395,7 +395,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     // The entity moves to TT99 books from the start of the year after the proposal was made: the entry was built for the TT133 chart.
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
+        `INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
          SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`,
         [o.orgId],
       ),
@@ -406,7 +406,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const again = await ask(o, runId);
     await rt.execute('finance.period.lock', { month: MONTH }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(approve(o, again.proposalId)).rejects.toMatchObject({ code: 'PERIOD_LOCKED' });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
   });
 
   it('counts the person who approved the run as a co-author of its posting: they do not approve it while another may (#2736)', async () => {
@@ -467,7 +467,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
     await expect(rt.execute('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
     // Nothing was posted and the proposal still waits (a new request is refused as open until it is rejected).
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
   });
 
@@ -485,7 +485,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     // The chief approves: the HR module rebuilds the entry from the run's totals by cost department for them, so no owner or admin has to.
     const posted = await approve(o, proposalId, chief);
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(1);
     expect(posted.journalEntryId).toEqual(expect.any(String));
   });
 
@@ -515,7 +515,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     // The verification itself refuses them too, whatever the approval policy says: a member and a viewer are refused by the command and by the database function.
     await expect(o.exec(o.member, 'hr.payroll.posting.verify', { runId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(o.exec(viewer, 'hr.payroll.posting.verify', { runId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
   });
 
   it('returns no per-person field from the verification and the totals function: the same entry as the proposal, by cost department only', async () => {
@@ -556,7 +556,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     // Put the entity back; now the run's approver (the owner) is removed from the co-authors, which would let them approve: refused as not made by the preparer.
     await rows(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb(legal_entity_id::text)), co_authors = NULL WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId]);
     await expect(approveBy(o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'coAuthors' } });
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
   });
 });

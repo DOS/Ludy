@@ -201,7 +201,7 @@ suite('cash and bank vouchers (#327)', () => {
     const recorded = await approve(adminUser, String(proposal.proposalId));
     expect(recorded.status).toBe(200);
     const [doc] = await admin(
-      async (c) => (await c.query('SELECT party_id, total::text AS total FROM crove_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows,
+      async (c) => (await c.query('SELECT party_id, total::text AS total FROM ludy_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows,
     );
     vendor = { id: doc.party_id, total: doc.total.replace(/\.0+$/, '') };
     customer = randomUUID();
@@ -304,7 +304,7 @@ suite('cash and bank vouchers (#327)', () => {
     });
     const lines = await admin(
       async (c) =>
-        (await c.query('SELECT line_no, account_code, debit::text, credit::text, party_id FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [paymentEntry]))
+        (await c.query('SELECT line_no, account_code, debit::text, credit::text, party_id FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [paymentEntry]))
           .rows,
     );
     expect(lines).toEqual([
@@ -471,7 +471,7 @@ suite('cash and bank vouchers (#327)', () => {
       const row = { org_id: org.orgId, voucher_type: 'cash_payment', voucher_date: '2026-09-30', cash_account: '1111', description: 'x', amount: '1', ...values };
       const cols = Object.keys(row);
       return c.query(
-        `INSERT INTO crove_finance.cash_voucher (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING number`,
+        `INSERT INTO ludy_finance.cash_voucher (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING number`,
         Object.values(row),
       );
     };
@@ -489,8 +489,8 @@ suite('cash and bank vouchers (#327)', () => {
       }),
     ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('must be posted as a journal entry') });
     // Vouchers never change and are never deleted, even by the database owner.
-    await expect(asApp((c) => c.query(`UPDATE crove_finance.cash_voucher SET amount = 1 WHERE id = $1`, [paymentVoucher]))).rejects.toMatchObject({ code: '42501' });
-    await expect(admin((c) => c.query(`DELETE FROM crove_finance.cash_voucher WHERE id = $1`, [paymentVoucher]))).rejects.toThrow(/append-only/);
+    await expect(asApp((c) => c.query(`UPDATE ludy_finance.cash_voucher SET amount = 1 WHERE id = $1`, [paymentVoucher]))).rejects.toMatchObject({ code: '42501' });
+    await expect(admin((c) => c.query(`DELETE FROM ludy_finance.cash_voucher WHERE id = $1`, [paymentVoucher]))).rejects.toThrow(/append-only/);
     // Another org's row is refused by row security.
     await expect(asApp((c) => insert(c, { org_id: other.orgId }))).rejects.toMatchObject({ code: '42501' });
     // An entry that does not move the cash account by the amount is refused at commit (as the database owner, who may
@@ -502,15 +502,15 @@ suite('cash and bank vouchers (#327)', () => {
           const id = randomUUID();
           const entry = randomUUID();
           await c.query(
-            `INSERT INTO crove_finance.cash_voucher (org_id, id, voucher_type, voucher_date, cash_account, description, amount) VALUES ($1, $2, 'cash_receipt', '2026-09-30', '1111', 'x', 100)`,
+            `INSERT INTO ludy_finance.cash_voucher (org_id, id, voucher_type, voucher_date, cash_account, description, amount) VALUES ($1, $2, 'cash_receipt', '2026-09-30', '1111', 'x', 100)`,
             [org.orgId, id],
           );
           await c.query(
-            `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-09-30', 'x', 'finance.cash_voucher', $3)`,
+            `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-09-30', 'x', 'finance.cash_voucher', $3)`,
             [org.orgId, entry, id],
           );
           await c.query(
-            `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', 90, 0), ($1, $2, 2, '711', 0, 90)`,
+            `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', 90, 0), ($1, $2, 2, '711', 0, 90)`,
             [org.orgId, entry],
           );
           await c.query('COMMIT');
@@ -575,7 +575,7 @@ suite('cash and bank vouchers (#327)', () => {
       await c.query(`SET LOCAL session_replication_role = replica`);
       for (let i = 0; i < 120; i += 1) {
         await c.query(
-          `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount) VALUES ($1, 'cash_payment', $2, $3, '1111', 'Chi lẻ', 1)`,
+          `INSERT INTO ludy_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount) VALUES ($1, 'cash_payment', $2, $3, '1111', 'Chi lẻ', 1)`,
           [other.orgId, i + 2, `2026-08-${String((i % 28) + 1).padStart(2, '0')}`],
         );
       }

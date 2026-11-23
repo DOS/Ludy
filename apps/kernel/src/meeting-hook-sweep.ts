@@ -27,7 +27,7 @@ export interface MeetingHookSweepDeps {
 // One pass. Returns what it did, for the log and the tests.
 export async function runMeetingHookSweep(deps: MeetingHookSweepDeps): Promise<{ handedOver: number; expired: number; failures: number }> {
   const done = { handedOver: 0, expired: 0, failures: 0 };
-  const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' }>`SELECT org_id, id, kind FROM crove_meetings.hook_open(${PER_PASS}::int)`.execute(deps.workerDb);
+  const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' }>`SELECT org_id, id, kind FROM ludy_meetings.hook_open(${PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of open.rows) {
     const ctx = { actor: ACTOR, orgId: row.org_id };
     try {

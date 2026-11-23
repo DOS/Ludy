@@ -694,14 +694,14 @@ export const memberVyRunCheck = defineQuery({
 });
 
 // The pieces of the recorder's own recording that are going on now, for the recorder's own live notes run (ADR-0052 L4a, #3110). The same shape and the same rules as the
-// finished audio below: the database function crove_meetings.live_for_member_vy is the gate (this run's own context, the meeting its result row names, the run's member the
+// finished audio below: the database function ludy_meetings.live_for_member_vy is the gate (this run's own context, the meeting its result row names, the run's member the
 // recorder and active, the meeting opted into live notes and inside its audio period), each piece carries its own wrapped key (media_key kind live:<seq>, #3109) and never
 // plaintext, and the file rows are then read by exactly the ids it returned. An empty answer is not an error: the window simply has nothing new yet.
 async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: number, limit: number) {
   type Row = { seq: number; length_seconds: number; start_offset_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
   let rows: Row[];
   try {
-    rows = (await sql<Row>`SELECT * FROM crove_meetings.live_for_member_vy(${ctx.orgId}::uuid, ${meetingId}::uuid, ${afterSeq}::int, ${limit}::int)`.execute(ctx.trx)).rows;
+    rows = (await sql<Row>`SELECT * FROM ludy_meetings.live_for_member_vy(${ctx.orgId}::uuid, ${meetingId}::uuid, ${afterSeq}::int, ${limit}::int)`.execute(ctx.trx)).rows;
   } catch (error: unknown) {
     const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
     if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
@@ -748,7 +748,7 @@ async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: 
 }
 
 // The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the
-// wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function crove_meetings.audio_for_member_vy is the gate:
+// wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function ludy_meetings.audio_for_member_vy is the gate:
 // it answers only in this run's own context, for the meeting the run's result row names, when the run's member is that meeting's recorder and is active. The
 // file rows (visible to every member of the org) are then read by exactly the ids it returned. It is a command, not a query, so that the read is audited (ids and
 // a count; the runtime audits no read of a member-scoped context, and a sensitive query is refused to an agent): the one memberVy command beside the store.
@@ -769,7 +769,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
     type Row = { segment_order: number; start_offset_seconds: number; length_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
     let rows: Row[];
     try {
-      rows = (await sql<Row>`SELECT * FROM crove_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
+      rows = (await sql<Row>`SELECT * FROM ludy_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
     } catch (error: unknown) {
       const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY|AUDIO_EXPIRED)/.exec(error instanceof Error ? error.message : '')?.[0];
       if (code === 'MEETINGS_KEY_SHREDDED' || code === 'MEETINGS_AUDIO_EXPIRED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
@@ -787,7 +787,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
     const byId = new Map(files.map((f) => [f.id, f]));
     // The names that may be spoken (#3499): the recorder's own people and the linked party, behind the same gate as the audio (the function runs it again). Raw text people typed: the
     // transcription client cuts and cleans it (normalizeTerms) before anything leaves, and it is never stored or audited here.
-    const terms = (await sql<{ term: string }>`SELECT term FROM crove_meetings.terms_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows.map((r) => r.term);
+    const terms = (await sql<{ term: string }>`SELECT term FROM ludy_meetings.terms_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows.map((r) => r.term);
     ctx.audit({ runId: ctx.memberVy.runId, subjectId: input.meetingId, count: rows.length });
     return {
       language: first.is_english ? 'en' : 'vi',

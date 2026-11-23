@@ -25,7 +25,7 @@ export interface PostRow {
   revision: number;
   // When it was archived (#1299); null while it is not.
   archived_at: Date | null;
-  // The post's images in order (crove_social.post_media), loaded with the row.
+  // The post's images in order (ludy_social.post_media), loaded with the row.
   media: readonly PostMedia[];
 }
 
@@ -125,7 +125,7 @@ export const mediaFor = (post: PostContent, v: { media?: unknown; content_frozen
 // The images of a post, in order, with what the hash and the channel rules need from each file.
 export async function loadPostMedia(trx: Trx, orgId: string, postId: string): Promise<PostMedia[]> {
   const rows = await trx
-    .selectFrom('crove_social.post_media as m')
+    .selectFrom('ludy_social.post_media as m')
     .innerJoin('ludy_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
     .select(['m.file_id', 'm.alt_text', 'f.generation', 'f.content_type', 'f.size_bytes', 'f.duration_ms', 'f.image_width', 'f.image_height'])
     .where('m.org_id', '=', orgId)
@@ -202,7 +202,7 @@ export function eventLabel(event: VariantEvent): string {
 }
 
 export async function lockPost(trx: Trx, orgId: string, postId: string): Promise<PostRow> {
-  const post = await trx.selectFrom('crove_social.post').select(POST_COLUMNS).where('org_id', '=', orgId).where('id', '=', postId).forUpdate().executeTakeFirst();
+  const post = await trx.selectFrom('ludy_social.post').select(POST_COLUMNS).where('org_id', '=', orgId).where('id', '=', postId).forUpdate().executeTakeFirst();
   if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng này');
   // Media rows change only under this post lock, so reading them after it is consistent.
   return { ...post, media: await loadPostMedia(trx, orgId, postId) };
@@ -224,7 +224,7 @@ export interface QueueState {
 // any post or variant, so they never wait on each other in a cycle.
 export async function lockQueue(trx: Trx, orgId: string, connectionId: string): Promise<QueueState | null> {
   const queue = await trx
-    .selectFrom('crove_social.queue')
+    .selectFrom('ludy_social.queue')
     .select(['id', 'time_zone', 'paused'])
     .where('org_id', '=', orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -232,7 +232,7 @@ export async function lockQueue(trx: Trx, orgId: string, connectionId: string): 
     .executeTakeFirst();
   if (!queue) return null;
   const slots = await trx
-    .selectFrom('crove_social.queue_slot')
+    .selectFrom('ludy_social.queue_slot')
     .select(['weekday', 'minute', 'label_id'])
     .where('org_id', '=', orgId)
     .where('queue_id', '=', queue.id)
@@ -243,7 +243,7 @@ export async function lockQueue(trx: Trx, orgId: string, connectionId: string): 
 
 export async function lockVariants(trx: Trx, orgId: string, postId: string): Promise<VariantRow[]> {
   return trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(VARIANT_COLUMNS)
     .where('org_id', '=', orgId)
     .where('post_id', '=', postId)
@@ -263,7 +263,7 @@ export function pick(variants: VariantRow[], ids: readonly string[] | undefined)
 }
 
 export async function variantPost(trx: Trx, orgId: string, variantIds: readonly string[]): Promise<string> {
-  const rows = await trx.selectFrom('crove_social.post_variant').select(['post_id']).where('org_id', '=', orgId).where('id', 'in', [...variantIds]).execute();
+  const rows = await trx.selectFrom('ludy_social.post_variant').select(['post_id']).where('org_id', '=', orgId).where('id', 'in', [...variantIds]).execute();
   const posts = new Set(rows.map((r) => r.post_id));
   if (rows.length !== new Set(variantIds).size) throw new DomainError('VARIANT_NOT_FOUND', 404, 'Không tìm thấy kênh này của bài đăng');
   if (posts.size !== 1) throw new DomainError('VARIANTS_OF_SEVERAL_POSTS', 422, 'Chỉ chọn các kênh của cùng một bài đăng');
@@ -278,7 +278,7 @@ export const MOVABLE: readonly SocialVariantStatus[] = ['draft', 'in_review', 'c
 // The slots of a connection's queue that variants hold (all but one, when given), as epoch milliseconds.
 export async function takenSlots(trx: Trx, orgId: string, connectionId: string, exceptId?: string): Promise<Set<number>> {
   let q = trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select('queue_slot_at')
     .where('org_id', '=', orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -291,7 +291,7 @@ export async function takenSlots(trx: Trx, orgId: string, connectionId: string, 
 
 export async function setVariant(ctx: CommandContext, id: string, values: Record<string, unknown>): Promise<void> {
   await ctx.trx
-    .updateTable('crove_social.post_variant')
+    .updateTable('ludy_social.post_variant')
     .set({ ...values, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', id)
@@ -340,9 +340,9 @@ export function freezeValues(post: PostRow, v: VariantRow): Record<string, unkno
 }
 
 export async function refreshPostStatus(ctx: CommandContext, postId: string): Promise<void> {
-  const rows = await ctx.trx.selectFrom('crove_social.post_variant').select('status').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post_variant').select('status').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   await ctx.trx
-    .updateTable('crove_social.post')
+    .updateTable('ludy_social.post')
     .set({ status: postStatus(rows.map((r) => r.status)), updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', postId)
@@ -351,7 +351,7 @@ export async function refreshPostStatus(ctx: CommandContext, postId: string): Pr
 
 export async function latestDecision(trx: Trx, orgId: string, variantId: string) {
   return trx
-    .selectFrom('crove_social.post_approval')
+    .selectFrom('ludy_social.post_approval')
     .select(['decision', 'revision', 'content_hash'])
     .where('org_id', '=', orgId)
     .where('variant_id', '=', variantId)

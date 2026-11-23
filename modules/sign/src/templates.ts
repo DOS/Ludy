@@ -67,7 +67,7 @@ import {
 
 const templateTarget = (input: { templateId: string }) => ({ type: 'sign.template', id: input.templateId });
 
-const TEMPLATE_DIRECT_LINK_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'template_direct_link', [
+const TEMPLATE_DIRECT_LINK_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'template_direct_link', [
   'org_id',
   'template_id',
   'token_sha256',
@@ -134,7 +134,7 @@ function toDirectLinkSummary(detail: DirectLinkDetail | null): DirectLinkSummary
 
 async function lockTemplate(ctx: CommandContext, templateId: string) {
   const row = await ctx.trx
-    .selectFrom('crove_sign.template')
+    .selectFrom('ludy_sign.template')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', templateId)
@@ -155,7 +155,7 @@ async function findPassedInspectForFile(
   file: { id: string; storage_key: string; generation: string; sha256: string },
 ): Promise<{ pageCount: number; pageDimensionsJson: unknown; detectedTagsJson: unknown } | null> {
   const existingTpl = await ctx.trx
-    .selectFrom('crove_sign.template')
+    .selectFrom('ludy_sign.template')
     .select(['page_count', 'page_dimensions_json', 'detected_tags_json'])
     .where('org_id', '=', ctx.orgId)
     .where('source_file_id', '=', file.id)
@@ -176,7 +176,7 @@ async function findPassedInspectForFile(
   }
 
   const existingEnv = await ctx.trx
-    .selectFrom('crove_sign.envelope')
+    .selectFrom('ludy_sign.envelope')
     .select(['page_count', 'page_dimensions_json', 'detected_tags_json'])
     .where('org_id', '=', ctx.orgId)
     .where('source_file_id', '=', file.id)
@@ -200,7 +200,7 @@ async function findPassedInspectForFile(
 
 async function loadTemplateRoles(ctx: CommandContext, templateId: string) {
   return ctx.trx
-    .selectFrom('crove_sign.template_role')
+    .selectFrom('ludy_sign.template_role')
     .select(['id', 'role_key', 'signer_role', 'role_label', 'routing_order', 'delivery_mode', 'require_email_otp', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('template_id', '=', templateId)
@@ -237,7 +237,7 @@ export const templateList = defineQuery({
   handler: async (ctx, input) => {
     assertUserQuery(ctx);
     let q = ctx.trx
-      .selectFrom('crove_sign.template as t')
+      .selectFrom('ludy_sign.template as t')
       .select([
         't.id',
         't.title',
@@ -254,7 +254,7 @@ export const templateList = defineQuery({
         't.archived_at',
         't.created_at',
         't.updated_at',
-        sql<unknown>`crove_sign.template_direct_link_state(t.id)`.as('direct_link_state'),
+        sql<unknown>`ludy_sign.template_direct_link_state(t.id)`.as('direct_link_state'),
       ])
       .where('t.org_id', '=', ctx.orgId);
 
@@ -269,14 +269,14 @@ export const templateList = defineQuery({
 
     const ids = rows.map((r) => r.id);
     const roleRows = await ctx.trx
-      .selectFrom('crove_sign.template_role')
+      .selectFrom('ludy_sign.template_role')
       .select(['template_id', 'signer_role'])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', 'in', ids)
       .execute();
 
     const fieldRows = await ctx.trx
-      .selectFrom('crove_sign.template_field')
+      .selectFrom('ludy_sign.template_field')
       .select(['template_id'])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', 'in', ids)
@@ -331,7 +331,7 @@ export const templateGet = defineQuery({
   handler: async (ctx, input) => {
     assertUserQuery(ctx);
     const tpl = await ctx.trx
-      .selectFrom('crove_sign.template')
+      .selectFrom('ludy_sign.template')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
@@ -339,7 +339,7 @@ export const templateGet = defineQuery({
     if (!tpl) throw new DomainError('SIGN_TEMPLATE_NOT_FOUND', 404, 'Template not found');
 
     const roles = await ctx.trx
-      .selectFrom('crove_sign.template_role')
+      .selectFrom('ludy_sign.template_role')
       .select(['id', 'role_key', 'signer_role', 'role_label', 'routing_order', 'delivery_mode', 'require_email_otp', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', tpl.id)
@@ -351,7 +351,7 @@ export const templateGet = defineQuery({
     const roleKeyById = new Map(roles.map((r) => [r.id, r.role_key]));
 
     const fields = await ctx.trx
-      .selectFrom('crove_sign.template_field')
+      .selectFrom('ludy_sign.template_field')
       .select([
         'id',
         'template_role_id',
@@ -373,7 +373,7 @@ export const templateGet = defineQuery({
       .execute();
 
     const { rows: linkRows } = await sql<{ state: unknown }>`
-      SELECT crove_sign.template_direct_link_state(${tpl.id}::uuid) AS state
+      SELECT ludy_sign.template_direct_link_state(${tpl.id}::uuid) AS state
     `.execute(ctx.trx);
     const directLink = parseDirectLinkJson(linkRows[0]?.state ?? null);
 
@@ -448,7 +448,7 @@ export const templateInspectJobData = defineQuery({
   handler: async (ctx, input): Promise<SignTemplateInspectJobData | null> => {
     assertSystemQuery(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_sign.template')
+      .selectFrom('ludy_sign.template')
       .select(['id', 'status', 'inspect_status', 'source_storage_key', 'source_generation', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
@@ -472,7 +472,7 @@ export const templateCreate = defineCommand({
   sideEffect: 'internal',
   access: SIGN_WRITERS,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', [
       'org_id',
       'title',
       'description',
@@ -494,7 +494,7 @@ export const templateCreate = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'template_role', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template_role', [
       'org_id',
       'template_id',
       'role_key',
@@ -506,7 +506,7 @@ export const templateCreate = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'template_field', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template_field', [
       'org_id',
       'template_id',
       'template_role_id',
@@ -545,7 +545,7 @@ export const templateCreate = defineCommand({
 
     if (input.sourceEnvelopeId) {
       const env = await ctx.trx
-        .selectFrom('crove_sign.envelope')
+        .selectFrom('ludy_sign.envelope')
         .select([
           'id',
           'source_kind',
@@ -612,7 +612,7 @@ export const templateCreate = defineCommand({
     } else {
       const file = await requireSignSourceFile(ctx, input.sourceFileId!);
       const existingConfidentialEnv = await ctx.trx
-        .selectFrom('crove_sign.envelope')
+        .selectFrom('ludy_sign.envelope')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('source_kind', 'in', ['hr_contract', 'meeting_minutes'])
@@ -650,7 +650,7 @@ export const templateCreate = defineCommand({
     }
 
     const tpl = await ctx.trx
-      .insertInto('crove_sign.template')
+      .insertInto('ludy_sign.template')
       .values({
         org_id: ctx.orgId,
         title: input.title,
@@ -686,7 +686,7 @@ export const templateCreate = defineCommand({
 
     if (sourceMeta.sourceEnvelopeId && input.copyRolesAndFields !== false) {
       const envSigners = await ctx.trx
-        .selectFrom('crove_sign.signer')
+        .selectFrom('ludy_sign.signer')
         .select([
           'id',
           'role_key',
@@ -722,7 +722,7 @@ export const templateCreate = defineCommand({
         };
         const assignedKeys = new Set<string>();
         const insertedRoles = await ctx.trx
-          .insertInto('crove_sign.template_role')
+          .insertInto('ludy_sign.template_role')
           .values(
             envSigners.map((s) => {
               const roleKey =
@@ -750,7 +750,7 @@ export const templateCreate = defineCommand({
         });
 
         const envFields = await ctx.trx
-          .selectFrom('crove_sign.field')
+          .selectFrom('ludy_sign.field')
           .select([
             'signer_id',
             'field_type',
@@ -796,7 +796,7 @@ export const templateCreate = defineCommand({
           ];
         });
         if (clonedFields.length > 0) {
-          await ctx.trx.insertInto('crove_sign.template_field').values(clonedFields).execute();
+          await ctx.trx.insertInto('ludy_sign.template_field').values(clonedFields).execute();
         }
       }
     }
@@ -837,7 +837,7 @@ export const templateInspectComplete = defineCommand({
   access: 'system',
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', [
       'inspect_status',
       'inspect_error',
       'page_count',
@@ -874,7 +874,7 @@ export const templateInspectComplete = defineCommand({
         }
       }
       await ctx.trx
-        .updateTable('crove_sign.template')
+        .updateTable('ludy_sign.template')
         .set({
           inspect_status: 'passed',
           inspect_error: null,
@@ -897,7 +897,7 @@ export const templateInspectComplete = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_sign.template')
+      .updateTable('ludy_sign.template')
       .set({
         inspect_status: 'failed',
         inspect_error: input.error,
@@ -923,7 +923,7 @@ export const templateUpdate = defineCommand({
   access: SIGN_WRITERS,
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', [
       'title',
       'description',
       'routing_mode',
@@ -947,13 +947,13 @@ export const templateUpdate = defineCommand({
       throw new DomainError('SIGN_TEMPLATE_NOT_INSPECTED', 409, 'Source PDF must pass inspection before template becomes active');
     }
     if (input.status === 'draft' && row.status === 'active') {
-      await sql`SELECT crove_sign.template_direct_link_revoke_for_template(${row.id}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_sign.template_direct_link_revoke_for_template(${row.id}::uuid)`.execute(ctx.trx);
     }
 
     const nextVersion = row.version + 1;
     const nextStatus = input.status ?? row.status;
     await ctx.trx
-      .updateTable('crove_sign.template')
+      .updateTable('ludy_sign.template')
       .set({
         title: input.title ?? row.title,
         description: input.description === undefined ? row.description : input.description,
@@ -983,7 +983,7 @@ export const templateRolesSet = defineCommand({
   access: SIGN_WRITERS,
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template_role', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template_role', [
       'org_id',
       'template_id',
       'role_key',
@@ -995,8 +995,8 @@ export const templateRolesSet = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'template_field', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'template', ['version', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'template_field', ['id']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', ['version', 'updated_at']),
     TEMPLATE_DIRECT_LINK_WRITE,
     SIGNING_OTP_INVALIDATE_WRITE,
   ],
@@ -1022,7 +1022,7 @@ export const templateRolesSet = defineCommand({
     }
 
     const existingRoles = await ctx.trx
-      .selectFrom('crove_sign.template_role')
+      .selectFrom('ludy_sign.template_role')
       .select(['id', 'role_key', 'signer_role'])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', row.id)
@@ -1031,7 +1031,7 @@ export const templateRolesSet = defineCommand({
 
     const fieldCountsByRole = new Map<string, number>();
     const existingFields = await ctx.trx
-      .selectFrom('crove_sign.template_field')
+      .selectFrom('ludy_sign.template_field')
       .select(['template_role_id'])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', row.id)
@@ -1080,13 +1080,13 @@ export const templateRolesSet = defineCommand({
     const toDeleteIds = existingRoles.filter((r) => !matchedExistingIds.has(r.id)).map((r) => r.id);
     if (toDeleteIds.length > 0) {
       await ctx.trx
-        .deleteFrom('crove_sign.template_field')
+        .deleteFrom('ludy_sign.template_field')
         .where('org_id', '=', ctx.orgId)
         .where('template_id', '=', row.id)
         .where('template_role_id', 'in', toDeleteIds)
         .execute();
       await ctx.trx
-        .deleteFrom('crove_sign.template_role')
+        .deleteFrom('ludy_sign.template_role')
         .where('org_id', '=', ctx.orgId)
         .where('template_id', '=', row.id)
         .where('id', 'in', toDeleteIds)
@@ -1097,7 +1097,7 @@ export const templateRolesSet = defineCommand({
     const survivingUpdates = operations.filter((op): op is { kind: 'update'; existingId: string; role: (typeof input.roles)[number] } => op.kind === 'update');
     for (const op of survivingUpdates) {
       await ctx.trx
-        .updateTable('crove_sign.template_role')
+        .updateTable('ludy_sign.template_role')
         .set({
           role_key: `swap-${op.existingId.replace(/-/g, '')}`,
           updated_at: ctx.now,
@@ -1109,7 +1109,7 @@ export const templateRolesSet = defineCommand({
 
     for (const op of survivingUpdates) {
       await ctx.trx
-        .updateTable('crove_sign.template_role')
+        .updateTable('ludy_sign.template_role')
         .set({
           role_key: op.role.roleKey,
           signer_role: op.role.signerRole,
@@ -1127,7 +1127,7 @@ export const templateRolesSet = defineCommand({
     const inserts = operations.filter((op): op is { kind: 'insert'; role: (typeof input.roles)[number] } => op.kind === 'insert');
     if (inserts.length > 0) {
       await ctx.trx
-        .insertInto('crove_sign.template_role')
+        .insertInto('ludy_sign.template_role')
         .values(
           inserts.map((op) => ({
             org_id: ctx.orgId,
@@ -1147,12 +1147,12 @@ export const templateRolesSet = defineCommand({
 
     const nonCcCount = input.roles.filter((r) => r.signerRole !== 'cc').length;
     if (nonCcCount !== 1) {
-      await sql`SELECT crove_sign.template_direct_link_revoke_for_template(${row.id}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_sign.template_direct_link_revoke_for_template(${row.id}::uuid)`.execute(ctx.trx);
     }
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.template')
+      .updateTable('ludy_sign.template')
       .set({ version: nextVersion, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -1184,7 +1184,7 @@ export const templateFieldsSet = defineCommand({
   access: SIGN_WRITERS,
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template_field', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template_field', [
       'org_id',
       'template_id',
       'template_role_id',
@@ -1201,7 +1201,7 @@ export const templateFieldsSet = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'template', ['version', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', ['version', 'updated_at']),
   ],
   handler: async (ctx, input) => {
     userIdOf(ctx);
@@ -1212,7 +1212,7 @@ export const templateFieldsSet = defineCommand({
     }
 
     const roles = await ctx.trx
-      .selectFrom('crove_sign.template_role')
+      .selectFrom('ludy_sign.template_role')
       .select(['id', 'role_key', 'signer_role'])
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', row.id)
@@ -1248,14 +1248,14 @@ export const templateFieldsSet = defineCommand({
     const normalized = normalizeNormalizedFieldBoxes(resolvedFields, row.page_count);
 
     await ctx.trx
-      .deleteFrom('crove_sign.template_field')
+      .deleteFrom('ludy_sign.template_field')
       .where('org_id', '=', ctx.orgId)
       .where('template_id', '=', row.id)
       .execute();
 
     if (normalized.length > 0) {
       await ctx.trx
-        .insertInto('crove_sign.template_field')
+        .insertInto('ludy_sign.template_field')
         .values(
           normalized.map((f) => ({
             org_id: ctx.orgId,
@@ -1280,7 +1280,7 @@ export const templateFieldsSet = defineCommand({
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.template')
+      .updateTable('ludy_sign.template')
       .set({ version: nextVersion, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', row.id)
@@ -1299,7 +1299,7 @@ export const templateArchive = defineCommand({
   access: SIGN_WRITERS,
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template', ['status', 'archived_at', 'archived_by', 'version', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', ['status', 'archived_at', 'archived_by', 'version', 'updated_at']),
     TEMPLATE_DIRECT_LINK_WRITE,
     SIGNING_OTP_INVALIDATE_WRITE,
   ],
@@ -1311,13 +1311,13 @@ export const templateArchive = defineCommand({
     }
 
     const { rows: revoked } = await sql<{ count: number }>`
-      SELECT crove_sign.template_direct_link_revoke_for_template(${row.id}::uuid) AS count
+      SELECT ludy_sign.template_direct_link_revoke_for_template(${row.id}::uuid) AS count
     `.execute(ctx.trx);
     const revokedLinks = Number(revoked[0]?.count ?? 0);
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.template')
+      .updateTable('ludy_sign.template')
       .set({
         status: 'archived',
         archived_at: ctx.now,
@@ -1349,7 +1349,7 @@ export const templateDirectLinkSet = defineCommand({
     if (!input.enabled) {
       await lockTemplate(ctx, input.templateId);
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set_v3(
+        SELECT ludy_sign.template_direct_link_set_v3(
           ${input.templateId}::uuid,
           false,
           ${input.requireEmailOtp ?? false},
@@ -1385,7 +1385,7 @@ export const templateDirectLinkSet = defineCommand({
     await assertDirectLinkEligible(ctx, input.templateId);
 
     const { rows: existingRows } = await sql<{ state: unknown }>`
-      SELECT crove_sign.template_direct_link_state(${input.templateId}::uuid) AS state
+      SELECT ludy_sign.template_direct_link_state(${input.templateId}::uuid) AS state
     `.execute(ctx.trx);
     const existingState = parseDirectLinkJson(existingRows[0]?.state ?? null);
 
@@ -1408,7 +1408,7 @@ export const templateDirectLinkSet = defineCommand({
         );
       }
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set_v3(
+        SELECT ludy_sign.template_direct_link_set_v3(
           ${input.templateId}::uuid,
           true,
           ${nextOtp},
@@ -1448,7 +1448,7 @@ export const templateDirectLinkSet = defineCommand({
     const nextMaxUses = input.maxUses ?? null;
     const nextExpiresAt = parsedExpiresAt ?? null;
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_set_v3(
+      SELECT ludy_sign.template_direct_link_set_v3(
         ${input.templateId}::uuid,
         true,
         ${nextOtp},
@@ -1502,7 +1502,7 @@ export const templateDirectLinkRotate = defineCommand({
     await assertDirectLinkEligible(ctx, input.templateId);
 
     const { rows: existingRows } = await sql<{ state: unknown }>`
-      SELECT crove_sign.template_direct_link_state(${input.templateId}::uuid) AS state
+      SELECT ludy_sign.template_direct_link_state(${input.templateId}::uuid) AS state
     `.execute(ctx.trx);
     const existingState = parseDirectLinkJson(existingRows[0]?.state ?? null);
     const updateLimits = input.maxUses !== undefined || input.expiresAt !== undefined;
@@ -1517,7 +1517,7 @@ export const templateDirectLinkRotate = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_rotate_v3(
+      SELECT ludy_sign.template_direct_link_rotate_v3(
         ${input.templateId}::uuid,
         ${tokenHash},
         ${input.requireEmailOtp ?? null}::boolean,
@@ -1559,7 +1559,7 @@ export const templateInstantiate = defineCommand({
   noIdempotency: true,
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope', [
       'org_id',
       'title',
       'subject',
@@ -1586,7 +1586,7 @@ export const templateInstantiate = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', [
       'org_id',
       'envelope_id',
       'role_key',
@@ -1602,7 +1602,7 @@ export const templateInstantiate = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(signManifest.tables, 'crove_sign', 'field', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'field', [
       'org_id',
       'envelope_id',
       'signer_id',
@@ -1641,7 +1641,7 @@ export const templateInstantiate = defineCommand({
     await assertCanUseProjectAcceptanceSource(ctx, sourceKind, sourceId);
 
     const tpl = await ctx.trx
-      .selectFrom('crove_sign.template')
+      .selectFrom('ludy_sign.template')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
@@ -1714,7 +1714,7 @@ export const templateInstantiate = defineCommand({
     });
 
     const fields = await ctx.trx
-      .selectFrom('crove_sign.template_field')
+      .selectFrom('ludy_sign.template_field')
       .select([
         'id',
         'template_role_id',
@@ -1749,7 +1749,7 @@ export const templateInstantiate = defineCommand({
 
     const env = await insertEnvelopeGuardingProjectAcceptance(sourceKind, () =>
       ctx.trx
-        .insertInto('crove_sign.envelope')
+        .insertInto('ludy_sign.envelope')
         .values({
           org_id: ctx.orgId,
           title: input.title ?? tpl.title,
@@ -1808,7 +1808,7 @@ export const templateInstantiate = defineCommand({
 
     if (resolvedRoles.length > 0) {
       const insertedSigners = await ctx.trx
-        .insertInto('crove_sign.signer')
+        .insertInto('ludy_sign.signer')
         .values(
           resolvedRoles.map((r) => ({
             org_id: ctx.orgId,
@@ -1865,7 +1865,7 @@ export const templateInstantiate = defineCommand({
     const insertedFields =
       fieldInsertValues.length > 0
         ? await ctx.trx
-            .insertInto('crove_sign.field')
+            .insertInto('ludy_sign.field')
             .values(fieldInsertValues)
             .returning(['id', 'signer_id', 'field_type', 'page_number'])
             .execute()
@@ -1875,7 +1875,7 @@ export const templateInstantiate = defineCommand({
     let effectivePageCount = env.page_count;
     if (tpl.inspect_status === 'passed' && tpl.page_count !== null) {
       const { rows: inheritRows } = await sql<{ inherited: boolean }>`
-        SELECT crove_sign.template_inherit_inspect(${tpl.id}::uuid, ${env.id}::uuid) AS inherited
+        SELECT ludy_sign.template_inherit_inspect(${tpl.id}::uuid, ${env.id}::uuid) AS inherited
       `.execute(ctx.trx);
       if (inheritRows[0]?.inherited) {
         effectiveInspectStatus = 'passed';
@@ -1934,7 +1934,7 @@ export const templateSharedSummarySet = defineCommand({
   access: SIGN_WRITERS,
   target: templateTarget,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'template', [
+    tableWrite(signManifest.tables, 'ludy_sign', 'template', [
       'share_summary_with_signers',
       'shared_summary_json',
       'version',
@@ -1960,7 +1960,7 @@ export const templateSharedSummarySet = defineCommand({
 
     const nextVersion = row.version + 1;
     await ctx.trx
-      .updateTable('crove_sign.template')
+      .updateTable('ludy_sign.template')
       .set({
         share_summary_with_signers: input.shareSummaryWithSigners,
         shared_summary_json: cleanSummary ? JSON.stringify(cleanSummary) : null,

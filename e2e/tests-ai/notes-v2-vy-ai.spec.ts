@@ -17,28 +17,28 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
 
   await test.step('seed an overdue to-do, an open today to-do, an unfiled private note, and a target notebook', async () => {
     exec(
-      `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, priority, due_on, time_zone, sort_key)
+      `INSERT INTO ludy_notes.todo (org_id, owner_user_id, title, priority, due_on, time_zone, sort_key)
        SELECT t.org_id, u.id, 'Nộp tờ khai thuế quá hạn', 1, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, 'Asia/Ho_Chi_Minh', '000001'
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
-      `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, priority, due_on, time_zone, sort_key)
+      `INSERT INTO ludy_notes.todo (org_id, owner_user_id, title, priority, due_on, time_zone, sort_key)
        SELECT t.org_id, u.id, 'Gọi khách chốt báo giá', 2, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'Asia/Ho_Chi_Minh', '000002'
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
-      `INSERT INTO crove_notes.notebook (org_id, author_user_id, visibility, name, sort_key)
+      `INSERT INTO ludy_notes.notebook (org_id, author_user_id, visibility, name, sort_key)
        SELECT t.org_id, u.id, 'private', 'Hồ sơ tài chính', '000001'
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
     exec(
-      `INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title, body)
+      `INSERT INTO ludy_notes.note (org_id, author_user_id, visibility, title, body)
        SELECT t.org_id, u.id, 'private', 'Hóa đơn điện tháng 11', 'Cần lưu vào sổ tay tài chính'
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
@@ -47,21 +47,21 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
 
     overdueTodoId = (
       sql<{ id: string }>(
-        `SELECT td.id FROM crove_notes.todo td JOIN ludy_kernel.tenant t ON t.org_id = td.org_id
+        `SELECT td.id FROM ludy_notes.todo td JOIN ludy_kernel.tenant t ON t.org_id = td.org_id
          WHERE t.slug = :'slug' AND td.title = 'Nộp tờ khai thuế quá hạn'`,
         { slug },
       )[0] as { id: string }
     ).id;
     notebookId = (
       sql<{ id: string }>(
-        `SELECT nb.id FROM crove_notes.notebook nb JOIN ludy_kernel.tenant t ON t.org_id = nb.org_id
+        `SELECT nb.id FROM ludy_notes.notebook nb JOIN ludy_kernel.tenant t ON t.org_id = nb.org_id
          WHERE t.slug = :'slug' AND nb.name = 'Hồ sơ tài chính'`,
         { slug },
       )[0] as { id: string }
     ).id;
     unfiledNoteId = (
       sql<{ id: string }>(
-        `SELECT n.id FROM crove_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
+        `SELECT n.id FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
          WHERE t.slug = :'slug' AND n.title = 'Hóa đơn điện tháng 11'`,
         { slug },
       )[0] as { id: string }
@@ -83,7 +83,7 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
     await expect(planner.getByTestId('my-work-vy-dropped')).toBeVisible();
 
     const revisionBefore = (
-      sql<{ revision: number }>(`SELECT revision FROM crove_notes.todo WHERE id = :'id'`, { id: overdueTodoId })[0] as {
+      sql<{ revision: number }>(`SELECT revision FROM ludy_notes.todo WHERE id = :'id'`, { id: overdueTodoId })[0] as {
         revision: number;
       }
     ).revision;
@@ -93,7 +93,7 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
     await expect(planner.getByTestId(`my-work-vy-reschedule-applied-badge-${overdueTodoId}`)).toBeVisible();
 
     const revisionAfter = (
-      sql<{ revision: number }>(`SELECT revision FROM crove_notes.todo WHERE id = :'id'`, { id: overdueTodoId })[0] as {
+      sql<{ revision: number }>(`SELECT revision FROM ludy_notes.todo WHERE id = :'id'`, { id: overdueTodoId })[0] as {
         revision: number;
       }
     ).revision;
@@ -114,7 +114,7 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
 
     // Nothing modified in DB prior to explicit confirmation.
     const noteBefore = sql<{ notebook_id: string | null }>(
-      `SELECT notebook_id FROM crove_notes.note WHERE id = :'id'`,
+      `SELECT notebook_id FROM ludy_notes.note WHERE id = :'id'`,
       { id: unfiledNoteId },
     )[0] as { notebook_id: string | null };
     expect(noteBefore.notebook_id).toBeNull();
@@ -123,7 +123,7 @@ test('Vy daily planner (todo_plan) and inbox organizer (organize) propose cleanl
     await expect(organizer.getByTestId(`notes-vy-organize-applied-badge-${unfiledNoteId}`)).toBeVisible();
 
     const noteAfter = sql<{ notebook_id: string | null; tags: string[] }>(
-      `SELECT notebook_id, tags FROM crove_notes.note WHERE id = :'id'`,
+      `SELECT notebook_id, tags FROM ludy_notes.note WHERE id = :'id'`,
       { id: unfiledNoteId },
     )[0] as { notebook_id: string | null; tags: string[] };
     expect(noteAfter.notebook_id).toBe(notebookId);

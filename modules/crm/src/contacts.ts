@@ -75,7 +75,7 @@ export function contactFields(): Record<string, FieldCondition> {
     has_tax_code: flagIs(hasText(sql`p.tax_code`)),
     company: companyIs,
     has_open_deal: flagIs(sql<boolean>`EXISTS (
-      SELECT 1 FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      SELECT 1 FROM ludy_crm.deal d JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = p.org_id AND d.party_id = p.id AND s.kind = 'open')`),
     created: withinLastDays(sql`p.created_at`),
   };
@@ -165,7 +165,7 @@ export const contactList = defineQuery({
         (SELECT count(*)::int FROM ludy_kernel.party x
           WHERE x.org_id = p.org_id AND x.duplicate_of IS NULL AND p.kind = 'organization'
             AND (x.company_id = p.id OR x.company_id IN (SELECT m.id FROM ludy_kernel.party m WHERE m.org_id = p.org_id AND m.duplicate_of = p.id))) AS people_count,
-        (SELECT count(*)::int FROM crove_crm.deal dl JOIN crove_crm.pipeline_stage st ON st.org_id = dl.org_id AND st.id = dl.stage_id
+        (SELECT count(*)::int FROM ludy_crm.deal dl JOIN ludy_crm.pipeline_stage st ON st.org_id = dl.org_id AND st.id = dl.stage_id
           WHERE dl.org_id = p.org_id AND dl.party_id = p.id AND st.kind = 'open') AS open_deals
       FROM ludy_kernel.party p
       LEFT JOIN ludy_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id

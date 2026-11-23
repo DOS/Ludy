@@ -590,9 +590,9 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(firstLink.signerId).toBe(s1.signerId);
     expect(firstLink.token.length).toBeGreaterThanOrEqual(32);
 
-    // Token is hashed only in crove_sign.signing_token and never leaks into audit/outbox/signing_event.
+    // Token is hashed only in ludy_sign.signing_token and never leaks into audit/outbox/signing_event.
     const tokenRows = await admin(async (c) =>
-      (await c.query('SELECT id, token_sha256, revoked_at FROM crove_sign.signing_token WHERE org_id = $1 AND envelope_id = $2', [org.orgId, envelopeId])).rows,
+      (await c.query('SELECT id, token_sha256, revoked_at FROM ludy_sign.signing_token WHERE org_id = $1 AND envelope_id = $2', [org.orgId, envelopeId])).rows,
     );
     expect(tokenRows).toHaveLength(1);
     expect(tokenRows[0].token_sha256).toBe(sha256Hex(Buffer.from(firstLink.token, 'utf8')));
@@ -603,7 +603,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(auditDump).not.toContain(firstLink.token);
     const eventDump = await admin(async (c) =>
-      JSON.stringify((await c.query('SELECT payload_json FROM crove_sign.signing_event WHERE org_id = $1 AND envelope_id = $2', [org.orgId, envelopeId])).rows),
+      JSON.stringify((await c.query('SELECT payload_json FROM ludy_sign.signing_event WHERE org_id = $1 AND envelope_id = $2', [org.orgId, envelopeId])).rows),
     );
     expect(eventDump).not.toContain(firstLink.token);
 
@@ -612,8 +612,8 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     try {
       await appClient.query('BEGIN');
       await appClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
-      await expect(appClient.query('SELECT id FROM crove_sign.signing_token')).rejects.toThrow();
-      await expect(appClient.query('SELECT id FROM crove_sign.signing_otp')).rejects.toThrow();
+      await expect(appClient.query('SELECT id FROM ludy_sign.signing_token')).rejects.toThrow();
+      await expect(appClient.query('SELECT id FROM ludy_sign.signing_otp')).rejects.toThrow();
     } finally {
       await appClient.query('ROLLBACK').catch(() => {});
       appClient.release();
@@ -635,39 +635,39 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
         await guardClient.query('ROLLBACK TO SAVEPOINT sign_guard');
         await guardClient.query('RELEASE SAVEPOINT sign_guard');
       };
-      await expectGuardFailure('DELETE FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, envelopeId], /ENVELOPE_FROZEN/);
+      await expectGuardFailure('DELETE FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, envelopeId], /ENVELOPE_FROZEN/);
       await expectGuardFailure(
-        'UPDATE crove_sign.field SET envelope_id = $1 WHERE org_id = $2 AND envelope_id = $3',
+        'UPDATE ludy_sign.field SET envelope_id = $1 WHERE org_id = $2 AND envelope_id = $3',
         [badEnv.envelopeId, org.orgId, envelopeId],
         /FIELD_IMMUTABLE/,
       );
       await expectGuardFailure(
-        "INSERT INTO crove_sign.field (org_id, envelope_id, signer_id, field_type, page_number, x_norm, y_norm, w_norm, h_norm) VALUES ($1, $2, $3, 'signature', 1, 0.1, 0.1, 0.2, 0.1)",
+        "INSERT INTO ludy_sign.field (org_id, envelope_id, signer_id, field_type, page_number, x_norm, y_norm, w_norm, h_norm) VALUES ($1, $2, $3, 'signature', 1, 0.1, 0.1, 0.2, 0.1)",
         [org.orgId, badEnv.envelopeId, s1.signerId],
         /field_signer_fk/,
       );
       await expectGuardFailure(
-        "INSERT INTO crove_sign.signer (org_id, envelope_id, role_label, name, delivery_mode, status) VALUES ($1, $2, 'Signer', 'Forged', 'link', 'pending')",
+        "INSERT INTO ludy_sign.signer (org_id, envelope_id, role_label, name, delivery_mode, status) VALUES ($1, $2, 'Signer', 'Forged', 'link', 'pending')",
         [org.orgId, badEnv.envelopeId],
         /SIGNER_INVALID_TRANSITION/,
       );
       await expectGuardFailure(
-        "INSERT INTO crove_sign.signer (org_id, envelope_id, role_label, name, delivery_mode, status, signed_at, otp_verified_at, signature_kind, consent_accepted_at) VALUES ($1, $2, 'Signer', 'Forged', 'link', 'waiting', now(), now(), 'draw', now())",
+        "INSERT INTO ludy_sign.signer (org_id, envelope_id, role_label, name, delivery_mode, status, signed_at, otp_verified_at, signature_kind, consent_accepted_at) VALUES ($1, $2, 'Signer', 'Forged', 'link', 'waiting', now(), now(), 'draw', now())",
         [org.orgId, badEnv.envelopeId],
         /SIGNER_SYSTEM_ONLY/,
       );
       const tempSigner = await guardClient.query<{ id: string }>(
-        "INSERT INTO crove_sign.signer (org_id, envelope_id, role_label, name, delivery_mode) VALUES ($1, $2, 'Signer', 'Draft Temp', 'link') RETURNING id",
+        "INSERT INTO ludy_sign.signer (org_id, envelope_id, role_label, name, delivery_mode) VALUES ($1, $2, 'Signer', 'Draft Temp', 'link') RETURNING id",
         [org.orgId, badEnv.envelopeId],
       );
       const tempSignerId = tempSigner.rows[0]!.id;
       await expectGuardFailure(
-        "UPDATE crove_sign.signer SET status = 'pending' WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_sign.signer SET status = 'pending' WHERE org_id = $1 AND id = $2",
         [org.orgId, tempSignerId],
         /SIGNER_INVALID_TRANSITION/,
       );
       await expectGuardFailure(
-        'UPDATE crove_sign.signer SET token_last_reminded_at = now() WHERE org_id = $1 AND id = $2',
+        'UPDATE ludy_sign.signer SET token_last_reminded_at = now() WHERE org_id = $1 AND id = $2',
         [org.orgId, tempSignerId],
         /SIGNER_SYSTEM_ONLY/,
       );
@@ -699,7 +699,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(rotated.token).not.toBe(firstLink.token);
     const rotatedRows = await admin(async (c) =>
-      (await c.query('SELECT id, revoked_at FROM crove_sign.signing_token WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at', [org.orgId, s1.signerId])).rows,
+      (await c.query('SELECT id, revoked_at FROM ludy_sign.signing_token WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at', [org.orgId, s1.signerId])).rows,
     );
     expect(rotatedRows).toHaveLength(2);
     expect(rotatedRows[0].revoked_at).not.toBeNull();
@@ -721,7 +721,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(linkIdemRows).toEqual([]);
     const rotatedAfterRefusal = await admin(async (c) =>
-      (await c.query('SELECT id, revoked_at FROM crove_sign.signing_token WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at', [org.orgId, s1.signerId])).rows,
+      (await c.query('SELECT id, revoked_at FROM ludy_sign.signing_token WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at', [org.orgId, s1.signerId])).rows,
     );
     expect(rotatedAfterRefusal).toHaveLength(3);
     expect(rotatedAfterRefusal[2].revoked_at).toBeNull();
@@ -789,13 +789,13 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     // Mark sequential envelope as executed via admin PG update (Slice 1b signing step stand-in), then run seal job.
     await admin(async (c) => {
       await c.query(
-        `UPDATE crove_sign.signer
+        `UPDATE ludy_sign.signer
          SET status = 'signed', signed_at = now(), consent_accepted_at = now(), signature_kind = 'type', signature_typed_text = name, updated_at = now()
          WHERE org_id = $1 AND envelope_id = $2 AND signer_role <> 'cc'`,
         [org.orgId, envelopeId],
       );
       await c.query(
-        `UPDATE crove_sign.field
+        `UPDATE ludy_sign.field
          SET value_text = CASE WHEN field_type = 'signature' THEN NULL ELSE '2026-11-16' END,
              signature_png_base64 = CASE WHEN field_type = 'signature' THEN 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' ELSE NULL END,
              filled_at = now(),
@@ -804,7 +804,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
         [org.orgId, envelopeId],
       );
       await c.query(
-        `UPDATE crove_sign.envelope
+        `UPDATE ludy_sign.envelope
          SET status = 'completed', completed_at = now(), updated_at = now()
          WHERE org_id = $1 AND id = $2`,
         [org.orgId, envelopeId],
@@ -836,13 +836,13 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(verified).toMatchObject({ valid: true, eventChain: { valid: true }, files: { pointersConsistent: true } });
 
-    // Append-only guard rejects app UPDATE/DELETE on crove_sign.signing_event.
+    // Append-only guard rejects app UPDATE/DELETE on ludy_sign.signing_event.
     const appendClient = await pool.connect();
     try {
       await appendClient.query('BEGIN');
       await appendClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
       await expect(
-        appendClient.query("UPDATE crove_sign.signing_event SET payload_json = '{\"tampered\":true}'::jsonb WHERE org_id = $1 AND envelope_id = $2", [org.orgId, envelopeId]),
+        appendClient.query("UPDATE ludy_sign.signing_event SET payload_json = '{\"tampered\":true}'::jsonb WHERE org_id = $1 AND envelope_id = $2", [org.orgId, envelopeId]),
       ).rejects.toThrow();
     } finally {
       await appendClient.query('ROLLBACK').catch(() => {});
@@ -853,7 +853,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_sign.signing_event SET payload_json = '{\"tampered\":true}'::jsonb WHERE org_id = $1 AND envelope_id = $2 AND seq = 2", [
+      await c.query("UPDATE ludy_sign.signing_event SET payload_json = '{\"tampered\":true}'::jsonb WHERE org_id = $1 AND envelope_id = $2 AND seq = 2", [
         org.orgId,
         parallelEnv.envelopeId,
       ]);
@@ -879,7 +879,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
   });
 
-  it('runs keeping sweeps while sign app is off, erases OTP emails under PDPL, and purges all 7 crove_sign tables via orgPurge', async () => {
+  it('runs keeping sweeps while sign app is off, erases OTP emails under PDPL, and purges all 7 ludy_sign tables via orgPurge', async () => {
     const upload = await uploadFile(app, member, pdfFixture('cleanup-expire'), 'sweep.pdf', 'sign_document');
     const sourceFileId = ((upload.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
 
@@ -985,11 +985,11 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        'UPDATE crove_sign.field SET signature_png_base64 = $3, filled_at = now() WHERE org_id = $1 AND envelope_id = $2',
+        'UPDATE ludy_sign.field SET signature_png_base64 = $3, filled_at = now() WHERE org_id = $1 AND envelope_id = $2',
         [org.orgId, sealedEnv.envelopeId, 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='],
       );
-      await c.query("UPDATE crove_sign.signer SET status = 'signed', signed_at = now() WHERE org_id = $1 AND envelope_id = $2", [org.orgId, sealedEnv.envelopeId]);
-      await c.query("UPDATE crove_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [org.orgId, sealedEnv.envelopeId]);
+      await c.query("UPDATE ludy_sign.signer SET status = 'signed', signed_at = now() WHERE org_id = $1 AND envelope_id = $2", [org.orgId, sealedEnv.envelopeId]);
+      await c.query("UPDATE ludy_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [org.orgId, sealedEnv.envelopeId]);
       await c.query('COMMIT');
     });
     const sealedDone = await runSignPdfSealJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: org.orgId, envelopeId: sealedEnv.envelopeId });
@@ -1006,34 +1006,34 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const staleDraftDate = new Date(Date.now() - 120 * DAY_MS);
     await admin(async (c) => {
       await c.query(
-        'UPDATE crove_sign.envelope SET expires_at = now() - interval \'5 minutes\' WHERE org_id = $1 AND id = $2',
+        'UPDATE ludy_sign.envelope SET expires_at = now() - interval \'5 minutes\' WHERE org_id = $1 AND id = $2',
         [org.orgId, expiringEnv.envelopeId],
       );
       await c.query(
-        'UPDATE crove_sign.envelope SET updated_at = $3 WHERE org_id = $1 AND id = $2',
+        'UPDATE ludy_sign.envelope SET updated_at = $3 WHERE org_id = $1 AND id = $2',
         [org.orgId, staleDraft.envelopeId, staleDraftDate],
       );
       // Old expired OTP (> 24h) to test cleanup_org_secrets
       await c.query(
-        `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
+        `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
          VALUES ($1, $2, $3, 'stale-otp@sign.test', $4, $5, $5)`,
         [org.orgId, expSigner.signerId, sentExp.links[0]!.tokenId, sha256Hex(Buffer.from('123456')), staleOtpDate],
       );
       // Old revoked token (> 30d) to test cleanup_org_secrets
       await c.query(
-        `INSERT INTO crove_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, created_by, created_at)
+        `INSERT INTO ludy_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $5, $6, $5)`,
         [org.orgId, expiringEnv.envelopeId, expSigner.signerId, sha256Hex(Buffer.from('stale-tok')), staleTokenDate, member.userId],
       );
       // Fresh OTP for personal_erase_otp
       await c.query(
-        `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at)
+        `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at)
          VALUES ($1, $2, $3, 'Signer-Erase@Sign.Test', $4, now() + interval '10 minutes')`,
         [org.orgId, expSigner.signerId, sentExp.links[0]!.tokenId, sha256Hex(Buffer.from('654321'))],
       );
       // ai_analysis row so all 7 tables are populated before orgPurge
       await c.query(
-        `INSERT INTO crove_sign.ai_analysis (org_id, envelope_id, source_sha256, status, summary_text)
+        `INSERT INTO ludy_sign.ai_analysis (org_id, envelope_id, source_sha256, status, summary_text)
          VALUES ($1, $2, $3, 'completed', 'Sample AI review')`,
         [org.orgId, expiringEnv.envelopeId, sha256Hex(pdfFixture('cleanup-expire'))],
       );
@@ -1049,7 +1049,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(expiredCount).toBe(1);
 
     const expStatus = await admin(async (c) =>
-      (await c.query('SELECT status, expired_at FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, expiringEnv.envelopeId])).rows[0],
+      (await c.query('SELECT status, expired_at FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, expiringEnv.envelopeId])).rows[0],
     );
     expect(expStatus.status).toBe('expired');
     expect(expStatus.expired_at).not.toBeNull();
@@ -1061,20 +1061,20 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(cleaned.draftEvents).toBe(0);
 
     const staleKept = await admin(async (c) =>
-      (await c.query('SELECT id, status FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, staleDraft.envelopeId])).rows,
+      (await c.query('SELECT id, status FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, staleDraft.envelopeId])).rows,
     );
     expect(staleKept).toEqual([{ id: staleDraft.envelopeId, status: 'draft' }]);
 
-    // Non-owner cannot call crove_sign.personal_erase_otp or personal_erase_unsealed_signers directly.
+    // Non-owner cannot call ludy_sign.personal_erase_otp or personal_erase_unsealed_signers directly.
     const adminClient = await pool.connect();
     try {
       await adminClient.query('BEGIN');
       await adminClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [adminUser.userId, org.orgId]);
       await adminClient.query('SAVEPOINT sp_erase_otp');
-      await expect(adminClient.query("SELECT crove_sign.personal_erase_otp('signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
+      await expect(adminClient.query("SELECT ludy_sign.personal_erase_otp('signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
       await adminClient.query('ROLLBACK TO SAVEPOINT sp_erase_otp');
       await adminClient.query('SAVEPOINT sp_erase_signer');
-      await expect(adminClient.query("SELECT crove_sign.personal_erase_unsealed_signers('email', 'signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
+      await expect(adminClient.query("SELECT ludy_sign.personal_erase_unsealed_signers('email', 'signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
       await adminClient.query('ROLLBACK TO SAVEPOINT sp_erase_signer');
     } finally {
       await adminClient.query('ROLLBACK').catch(() => {});
@@ -1083,7 +1083,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
 
     // Re-verify fresh OTP row before PDPL test (fresh OTP was NOT deleted by cleanup).
     const freshOtpBefore = await admin(async (c) =>
-      Number((await c.query("SELECT count(*) AS n FROM crove_sign.signing_otp WHERE org_id = $1 AND lower(email) = 'signer-erase@sign.test'", [org.orgId])).rows[0].n),
+      Number((await c.query("SELECT count(*) AS n FROM ludy_sign.signing_otp WHERE org_id = $1 AND lower(email) = 'signer-erase@sign.test'", [org.orgId])).rows[0].n),
     );
     expect(freshOtpBefore).toBe(1);
 
@@ -1092,7 +1092,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       { value: 'signer-erase@sign.test' },
       { actor: asUser(owner), orgId: org.orgId },
     );
-    const emailMatches = found.matches.filter((m) => m.column === 'crove_sign.signer.email');
+    const emailMatches = found.matches.filter((m) => m.column === 'ludy_sign.signer.email');
     expect(emailMatches.find((m) => m.rowId === draftEraseSigner.signerId)?.handling).toBe('erase');
     expect(emailMatches.find((m) => m.rowId === expSigner.signerId)?.handling).toBe('erase');
     expect(emailMatches.find((m) => m.rowId === sealedSigner.signerId)?.handling).toBe('keep_record');
@@ -1104,20 +1104,20 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(erased.erased).toEqual(
       expect.arrayContaining([
-        { column: 'crove_sign.signing_otp.email', rows: 1 },
-        { column: 'crove_sign.signer.name', rows: 2 },
-        { column: 'crove_sign.signer.email', rows: 2 },
-        { column: 'crove_sign.signer.phone', rows: 1 },
+        { column: 'ludy_sign.signing_otp.email', rows: 1 },
+        { column: 'ludy_sign.signer.name', rows: 2 },
+        { column: 'ludy_sign.signer.email', rows: 2 },
+        { column: 'ludy_sign.signer.phone', rows: 1 },
       ]),
     );
-    expect(erased.kept).toContainEqual(expect.objectContaining({ column: 'crove_sign.signer.email', rows: 1 }));
+    expect(erased.kept).toContainEqual(expect.objectContaining({ column: 'ludy_sign.signer.email', rows: 1 }));
     const draftAfterErase = await admin(async (c) => ({
-      erasedSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
-      erasedField: (await c.query('SELECT id FROM crove_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
-      erasedExpSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, expSigner.signerId])).rows,
-      keptSealedSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, sealedSigner.signerId])).rows,
-      coSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftCoSigner.signerId])).rows,
-      coField: (await c.query('SELECT id FROM crove_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftCoSigner.signerId])).rows,
+      erasedSigner: (await c.query('SELECT id FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
+      erasedField: (await c.query('SELECT id FROM ludy_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
+      erasedExpSigner: (await c.query('SELECT id FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, expSigner.signerId])).rows,
+      keptSealedSigner: (await c.query('SELECT id FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, sealedSigner.signerId])).rows,
+      coSigner: (await c.query('SELECT id FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftCoSigner.signerId])).rows,
+      coField: (await c.query('SELECT id FROM ludy_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftCoSigner.signerId])).rows,
     }));
     expect(draftAfterErase.erasedSigner).toHaveLength(0);
     expect(draftAfterErase.erasedField).toHaveLength(0);
@@ -1133,19 +1133,19 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(erasedPhone.erased).toEqual(
       expect.arrayContaining([
-        { column: 'crove_sign.signer.name', rows: 1 },
-        { column: 'crove_sign.signer.phone', rows: 1 },
+        { column: 'ludy_sign.signer.name', rows: 1 },
+        { column: 'ludy_sign.signer.phone', rows: 1 },
       ]),
     );
     const phoneSignerLeft = await admin(async (c) =>
-      (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftPhoneSigner.signerId])).rows,
+      (await c.query('SELECT id FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftPhoneSigner.signerId])).rows,
     );
     expect(phoneSignerLeft).toHaveLength(0);
 
-    // Insert another OTP row on the preserved sealed signer so orgPurge exercises all 7 crove_sign tables simultaneously.
+    // Insert another OTP row on the preserved sealed signer so orgPurge exercises all 7 ludy_sign tables simultaneously.
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at)
+        `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at)
          VALUES ($1, $2, $3, 'purge-check@sign.test', $4, now() + interval '5 minutes')`,
         [org.orgId, sealedSigner.signerId, sentSealed.links[0]!.tokenId, sha256Hex(Buffer.from('999999'))],
       );
@@ -1169,13 +1169,13 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(purgeCode, lines.join('\n')).toBe(0);
 
     for (const table of [
-      'crove_sign.signing_otp',
-      'crove_sign.signing_token',
-      'crove_sign.signing_event',
-      'crove_sign.field',
-      'crove_sign.signer',
-      'crove_sign.ai_analysis',
-      'crove_sign.envelope',
+      'ludy_sign.signing_otp',
+      'ludy_sign.signing_token',
+      'ludy_sign.signing_event',
+      'ludy_sign.field',
+      'ludy_sign.signer',
+      'ludy_sign.ai_analysis',
+      'ludy_sign.envelope',
     ]) {
       const remaining = await admin(async (c) =>
         Number((await c.query(`SELECT count(*) AS n FROM ${table} WHERE org_id = $1`, [org.orgId])).rows[0].n),
@@ -1212,8 +1212,8 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(voidedDraft.status).toBe('voided');
     const voidedRows = await admin(async (c) => ({
-      env: (await c.query('SELECT status, void_reason FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, draftEnv.envelopeId])).rows[0],
-      signer: (await c.query('SELECT status FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [regOrgId, draftSigner.signerId])).rows[0],
+      env: (await c.query('SELECT status, void_reason FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, draftEnv.envelopeId])).rows[0],
+      signer: (await c.query('SELECT status FROM ludy_sign.signer WHERE org_id = $1 AND id = $2', [regOrgId, draftSigner.signerId])).rows[0],
     }));
     expect(voidedRows.env).toEqual({ status: 'voided', void_reason: 'Cancelled before send' });
     expect(voidedRows.signer).toEqual({ status: 'voided' });
@@ -1240,7 +1240,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       pageCount: null,
     });
     const voidedEvents = await admin(async (c) =>
-      (await c.query<{ event_type: string }>('SELECT event_type FROM crove_sign.signing_event WHERE org_id = $1 AND envelope_id = $2 ORDER BY seq ASC', [regOrgId, draftEnv.envelopeId])).rows,
+      (await c.query<{ event_type: string }>('SELECT event_type FROM ludy_sign.signing_event WHERE org_id = $1 AND envelope_id = $2 ORDER BY seq ASC', [regOrgId, draftEnv.envelopeId])).rows,
     );
     expect(voidedEvents.map((e) => e.event_type)).not.toContain('document_inspected');
 
@@ -1256,7 +1256,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(inspectFail.status).toBe('failed');
     const inspectRow = await admin(async (c) =>
-      (await c.query<{ inspect_status: string; inspect_error: string }>('SELECT inspect_status, inspect_error FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, failEnv.envelopeId])).rows[0],
+      (await c.query<{ inspect_status: string; inspect_error: string }>('SELECT inspect_status, inspect_error FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, failEnv.envelopeId])).rows[0],
     );
     expect(inspectRow?.inspect_status).toBe('failed');
     expect(inspectRow?.inspect_error.length).toBe(500);
@@ -1325,7 +1325,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const meta = await admin(async (c) =>
       (
         await c.query<{ source_storage_key: string; source_generation: string; source_sha256: string }>(
-          'SELECT source_storage_key, source_generation, source_sha256 FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+          'SELECT source_storage_key, source_generation, source_sha256 FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2',
           [regOrgId, mainEnv.envelopeId],
         )
       ).rows[0]!,
@@ -1342,18 +1342,18 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       }
     };
     await expectTenantSqlRejects(
-      `INSERT INTO crove_sign.envelope (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+      `INSERT INTO ludy_sign.envelope (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
        VALUES ($1, 'Forged Inspect', $2, $3, $4, $5, 'passed', $6)`,
       [regOrgId, sourceFileId, meta.source_storage_key, meta.source_generation, meta.source_sha256, owner.userId],
       /ENVELOPE_FORBIDDEN/,
     );
     await expectTenantSqlRejects(
-      "UPDATE crove_sign.envelope SET inspect_status = 'passed' WHERE org_id = $1 AND id = $2",
+      "UPDATE ludy_sign.envelope SET inspect_status = 'passed' WHERE org_id = $1 AND id = $2",
       [regOrgId, failEnv.envelopeId],
       /ENVELOPE_SYSTEM_ONLY/,
     );
     await expectTenantSqlRejects(
-      'UPDATE crove_sign.envelope SET source_file_id = $3 WHERE org_id = $1 AND id = $2',
+      'UPDATE ludy_sign.envelope SET source_file_id = $3 WHERE org_id = $1 AND id = $2',
       [regOrgId, failEnv.envelopeId, randomUUID()],
       /ENVELOPE_IMMUTABLE/,
     );
@@ -1364,11 +1364,11 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        'UPDATE crove_sign.field SET signature_png_base64 = $3, filled_at = now() WHERE org_id = $1 AND envelope_id = $2',
+        'UPDATE ludy_sign.field SET signature_png_base64 = $3, filled_at = now() WHERE org_id = $1 AND envelope_id = $2',
         [regOrgId, mainEnv.envelopeId, 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='],
       );
-      await c.query("UPDATE crove_sign.signer SET status = 'signed', signed_at = now() WHERE org_id = $1 AND envelope_id = $2", [regOrgId, mainEnv.envelopeId]);
-      await c.query("UPDATE crove_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [regOrgId, mainEnv.envelopeId]);
+      await c.query("UPDATE ludy_sign.signer SET status = 'signed', signed_at = now() WHERE org_id = $1 AND envelope_id = $2", [regOrgId, mainEnv.envelopeId]);
+      await c.query("UPDATE ludy_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [regOrgId, mainEnv.envelopeId]);
       await c.query('COMMIT');
     });
     await expect(
@@ -1394,7 +1394,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(lateFail).toMatchObject({ sealStatus: 'sealed', idempotent: true, ignoredOutcome: 'failed' });
     const sealedRow = await admin(async (c) =>
-      (await c.query<{ seal_status: string; sealed_file_id: string | null }>('SELECT seal_status, sealed_file_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, mainEnv.envelopeId])).rows[0],
+      (await c.query<{ seal_status: string; sealed_file_id: string | null }>('SELECT seal_status, sealed_file_id FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, mainEnv.envelopeId])).rows[0],
     );
     expect(sealedRow?.seal_status).toBe('sealed');
     expect(sealedRow?.sealed_file_id).toBeTruthy();
@@ -1466,7 +1466,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        "UPDATE crove_sign.envelope SET updated_at = '2026-01-01T00:00:00.123456Z' WHERE org_id = $1 AND id = ANY($2::uuid[])",
+        "UPDATE ludy_sign.envelope SET updated_at = '2026-01-01T00:00:00.123456Z' WHERE org_id = $1 AND id = ANY($2::uuid[])",
         [blockedOrgId, [blockedEnv1.envelopeId, blockedEnv2.envelopeId]],
       );
       await c.query('COMMIT');
@@ -1490,7 +1490,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(pagedInspectIds).toEqual([pendingEnv.envelopeId]);
     expect(appOnCalls).toBe(2);
     await expect(
-      sql`SELECT 1 FROM crove_sign.work_recovery_candidates(now(), 10, NULL, now(), NULL, NULL)`.execute(workerDb),
+      sql`SELECT 1 FROM ludy_sign.work_recovery_candidates(now(), 10, NULL, now(), NULL, NULL)`.execute(workerDb),
     ).rejects.toMatchObject({ code: '22023' });
 
     // 7. Inbound email attaching a colliding sign_document PDF keeps the sign source as duplicate without failing valid attachments.
@@ -1565,7 +1565,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     });
     expect(recoveredTplIds).toContain(pendingTpl.templateId);
     await expect(
-      sql`SELECT 1 FROM crove_sign.template_work_recovery_candidates(now(), 10, NULL, now(), NULL, NULL)`.execute(workerDb),
+      sql`SELECT 1 FROM ludy_sign.template_work_recovery_candidates(now(), 10, NULL, now(), NULL, NULL)`.execute(workerDb),
     ).rejects.toMatchObject({ code: '22023' });
     const tplInspected = await runSignPdfInspectJob(
       { workerDb, runtime: workerRuntime, store, extract: mockExtract() },
@@ -1619,11 +1619,11 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     await admin(async (c) => {
       for (const item of seededTokens) {
         await c.query(
-          "UPDATE crove_sign.envelope SET expires_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2",
+          "UPDATE ludy_sign.envelope SET expires_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2",
           [item.orgId, item.envelopeId],
         );
         await c.query(
-          `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
+          `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
            VALUES ($1, $2, $3, 'iso-stale@sign.test', $4, now() - interval '30 hours', now() - interval '30 hours')`,
           [item.orgId, item.signerId, item.tokenId, sha256Hex(Buffer.from('111222'))],
         );
@@ -1631,12 +1631,12 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     });
 
     const { rows: dueExpire } = await sql<{ org_id: string }>`
-      SELECT org_id FROM crove_sign.expire_sweep_due_orgs(100)
+      SELECT org_id FROM ludy_sign.expire_sweep_due_orgs(100)
     `.execute(workerDb);
     expect(dueExpire.map((r) => r.org_id)).toEqual([org1Id, org2Id]);
 
     const { rows: dueCleanup } = await sql<{ org_id: string }>`
-      SELECT org_id FROM crove_sign.cleanup_due_orgs_secrets(${new Date(Date.now() - 24 * 3_600_000)}::timestamptz, ${new Date(Date.now() - 30 * DAY_MS)}::timestamptz, 100)
+      SELECT org_id FROM ludy_sign.cleanup_due_orgs_secrets(${new Date(Date.now() - 24 * 3_600_000)}::timestamptz, ${new Date(Date.now() - 30 * DAY_MS)}::timestamptz, 100)
     `.execute(workerDb);
     expect(dueCleanup.map((r) => r.org_id)).toEqual([org1Id, org2Id]);
 
@@ -1670,10 +1670,10 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(errors.every((e) => !e.includes('simulated failure'))).toBe(true);
 
     const orgStatuses = await admin(async (c) => ({
-      env1: (await c.query<{ status: string }>('SELECT status FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org1Id, seededTokens[0]!.envelopeId])).rows[0]?.status,
-      env2: (await c.query<{ status: string }>('SELECT status FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org2Id, seededTokens[1]!.envelopeId])).rows[0]?.status,
-      otp1: Number((await c.query('SELECT count(*) AS n FROM crove_sign.signing_otp WHERE org_id = $1', [org1Id])).rows[0].n),
-      otp2: Number((await c.query('SELECT count(*) AS n FROM crove_sign.signing_otp WHERE org_id = $1', [org2Id])).rows[0].n),
+      env1: (await c.query<{ status: string }>('SELECT status FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [org1Id, seededTokens[0]!.envelopeId])).rows[0]?.status,
+      env2: (await c.query<{ status: string }>('SELECT status FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2', [org2Id, seededTokens[1]!.envelopeId])).rows[0]?.status,
+      otp1: Number((await c.query('SELECT count(*) AS n FROM ludy_sign.signing_otp WHERE org_id = $1', [org1Id])).rows[0].n),
+      otp2: Number((await c.query('SELECT count(*) AS n FROM ludy_sign.signing_otp WHERE org_id = $1', [org2Id])).rows[0].n),
     }));
     expect(orgStatuses.env1).toBe('sent');
     expect(orgStatuses.env2).toBe('expired');
@@ -1691,7 +1691,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
         { actor: asUser(owner), orgId },
       );
       await admin(async (c) => {
-        await c.query("UPDATE crove_sign.envelope SET updated_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [orgId, env.envelopeId]);
+        await c.query("UPDATE ludy_sign.envelope SET updated_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2", [orgId, env.envelopeId]);
       });
       pendingIds.push({ orgId, envelopeId: env.envelopeId });
     }

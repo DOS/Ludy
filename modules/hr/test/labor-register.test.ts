@@ -408,7 +408,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       const orders: Array<{ col: string; dir: 'asc' | 'desc' }> = [];
       let joinDepartments = false;
       const runRows = (): Array<Record<string, unknown>> => {
-        const depts = tables['crove_hr.department'] ?? [];
+        const depts = tables['ludy_hr.department'] ?? [];
         const base = (tables[baseTable] ?? []).map((r) => {
           if (!joinDepartments) return r;
           const dept = depts.find((d) => d.org_id === r.org_id && d.id === r.department_id);
@@ -432,7 +432,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
           get(_, prop) {
             if (prop === 'leftJoin') {
               return (joined: string) => {
-                if (joined.startsWith('crove_hr.department')) joinDepartments = true;
+                if (joined.startsWith('ludy_hr.department')) joinDepartments = true;
                 return q;
               };
             }
@@ -471,7 +471,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       'ludy_kernel.legal_entity': [
         { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
       ],
-      'crove_hr.payroll_employee': [
+      'ludy_hr.payroll_employee': [
         {
           id: 'emp-with-may',
           org_id: 'org-1',
@@ -512,7 +512,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
           insurance_number_sealed: '0123456783',
         },
       ],
-      'crove_hr.payroll_employment': [
+      'ludy_hr.payroll_employment': [
         { id: 'row-may-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-with-may', effective_from: '2026-05-01', contract_type: 'fixed_term', base_wage: '12000000' },
         { id: 'row-may-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-with-may', effective_from: '2026-06-20', contract_type: 'fixed_term', base_wage: '18000000' },
         { id: 'row-jun-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-june-only', effective_from: '2026-06-01', contract_type: 'none', base_wage: '10000000' },
@@ -520,11 +520,11 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
         { id: 'row-null-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-null-legacy', effective_from: '2026-06-01', contract_type: 'fixed_term', base_wage: '11000000' },
         { id: 'row-null-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-null-legacy', effective_from: '2026-06-20', contract_type: 'fixed_term', base_wage: '14000000' },
       ],
-      'crove_hr.payroll_run': [
+      'ludy_hr.payroll_run': [
         { id: 'run-may', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-05' },
         { id: 'run-jun', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-06' },
       ],
-      'crove_hr.payroll_line': [
+      'ludy_hr.payroll_line': [
         {
           run_id: 'run-may',
           org_id: 'org-1',
@@ -607,7 +607,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       otherAmounts: '600000.00',
     });
 
-    for (const emp of tables['crove_hr.payroll_employee']!) {
+    for (const emp of tables['ludy_hr.payroll_employee']!) {
       emp.ended_on = '2026-06-10';
     }
     const pliEnded = await declarationGet.handler(makeCtx(tables), { kind: '01pli', period: '2026-H1' });
@@ -646,7 +646,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       'ludy_kernel.legal_entity': [
         { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
       ],
-      'crove_hr.payroll_employee': [
+      'ludy_hr.payroll_employee': [
         {
           id: 'emp-saved-priority',
           org_id: 'org-1',
@@ -700,7 +700,7 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
           insurance_number_sealed: '0123456104',
         },
       ],
-      'crove_hr.payroll_employment': [
+      'ludy_hr.payroll_employment': [
         {
           id: 'row-saved-1',
           org_id: 'org-1',
@@ -768,8 +768,8 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
           fixed_term_sequence: 2,
         },
       ],
-      'crove_hr.payroll_run': [{ id: 'run-apr', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-04' }],
-      'crove_hr.payroll_line': [
+      'ludy_hr.payroll_run': [{ id: 'run-apr', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-04' }],
+      'ludy_hr.payroll_line': [
         {
           run_id: 'run-apr',
           org_id: 'org-1',
@@ -856,11 +856,11 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       'ludy_kernel.legal_entity': [
         { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
       ],
-      'crove_hr.department': [
+      'ludy_hr.department': [
         { id: 'dept-sales', org_id: 'org-1', legal_entity_id: 'entity-1', name: 'Phòng Kinh doanh Canary' },
         { id: 'dept-secret', org_id: 'org-1', legal_entity_id: 'entity-1', name: 'Phòng Đã Xóa Bí Mật' },
       ],
-      'crove_hr.payroll_employee': [
+      'ludy_hr.payroll_employee': [
         {
           id: 'emp-full',
           org_id: 'org-1',
@@ -927,18 +927,18 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
           finalization_authorized_years: [],
         },
       ],
-      'crove_hr.payroll_employment': [
+      'ludy_hr.payroll_employment': [
         { id: 'e1-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', effective_from: '2026-01-01', contract_type: 'fixed_term', base_wage: '15000000' },
         { id: 'e1-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', effective_from: '2026-07-01', contract_type: 'indefinite', base_wage: '15000000' },
         { id: 'e2-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-title-only', effective_from: '2026-08-10', contract_type: 'fixed_term', base_wage: '12000000' },
         { id: 'e3-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-dept-only', effective_from: '2026-05-01', contract_type: 'none', base_wage: '8000000' },
         { id: 'e4-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-erased', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '20000000' },
       ],
-      'crove_hr.payroll_run': [
+      'ludy_hr.payroll_run': [
         { id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-07' },
         { id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-08' },
       ],
-      'crove_hr.payroll_line': [
+      'ludy_hr.payroll_line': [
         { run_id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', employment_id: 'e1-2', kind: 'pay', status: 'calculated', gross: '12000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '12000000', pit: '0', breakdown: { ...breakdown, insurance: { suspended: null, funds: funds.map((f) => ({ ...f, wage: '12000000' })) } }, inputs: {} },
         { run_id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', employment_id: 'e1-2', kind: 'pay', status: 'calculated', gross: '15000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '15000000', pit: '0', breakdown, inputs: {} },
         { run_id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-title-only', employment_id: 'e2-1', kind: 'pay', status: 'calculated', gross: '12000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '12000000', pit: '0', breakdown, inputs: {} },
@@ -1021,8 +1021,8 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
         { id: 'entity-default', org_id: 'org-1', name: 'Công ty Mặc Định', tax_code: '0100000001', is_default: true },
         { id: 'entity-branch', org_id: 'org-1', name: 'Chi nhánh Hai', tax_code: '0100000001-002', is_default: false },
       ],
-      'crove_hr.department': [],
-      'crove_hr.payroll_employee': [
+      'ludy_hr.department': [],
+      'ludy_hr.payroll_employee': [
         {
           id: 'emp-spaced',
           org_id: 'org-1',
@@ -1072,16 +1072,16 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
           finalization_authorized_years: [],
         },
       ],
-      'crove_hr.payroll_employment': [
+      'ludy_hr.payroll_employment': [
         { id: 'emp1', org_id: 'org-1', legal_entity_id: 'entity-default', employee_id: 'emp-spaced', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '12000000' },
         { id: 'emp2', org_id: 'org-1', legal_entity_id: 'entity-default', employee_id: 'emp-passport', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '12000000' },
         { id: 'emp3', org_id: 'org-1', legal_entity_id: 'entity-branch', employee_id: 'emp-branch', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '12000000' },
       ],
-      'crove_hr.payroll_run': [
+      'ludy_hr.payroll_run': [
         { id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-default', status: 'approved', month: '2026-07' },
         { id: 'run-aug-draft', org_id: 'org-1', legal_entity_id: 'entity-default', status: 'draft', month: '2026-08' },
       ],
-      'crove_hr.payroll_line': [
+      'ludy_hr.payroll_line': [
         {
           run_id: 'run-jul',
           org_id: 'org-1',

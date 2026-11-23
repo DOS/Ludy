@@ -444,7 +444,7 @@ suite('projects custom board columns (#2605)', () => {
     });
     await withAdmin(async (c) => {
       const { rows } = await c.query<{ column_id: string | null }>(
-        'SELECT column_id FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2 AND task_id = $3',
+        'SELECT column_id FROM ludy_projects.project_task WHERE org_id = $1 AND project_id = $2 AND task_id = $3',
         [org.orgId, projectId, agentTaskId],
       );
       expect(rows[0]?.column_id).toBeNull();
@@ -489,20 +489,20 @@ suite('projects custom board columns (#2605)', () => {
       columnId: piiCol.id,
     });
 
-    // PDPL find and erase redacts crove_projects.project_column.name.
+    // PDPL find and erase redacts ludy_projects.project_column.name.
     const found = await rt.execute<PersonalDataResult>(
       'kernel.personal_data.find',
       { value: '0901234567' },
       { actor: asUser(owner.userId), orgId: org.orgId },
     );
-    expect(found.matches.some((m) => m.column === 'crove_projects.project_column.name' && m.rowId === piiCol.id)).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_projects.project_column.name' && m.rowId === piiCol.id)).toBe(true);
 
     const erased = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: '0901234567' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased.find((e) => e.column === 'crove_projects.project_column.name')?.rows).toBe(1);
+    expect(erased.erased.find((e) => e.column === 'ludy_projects.project_column.name')?.rows).toBe(1);
 
     const boardAfterErase = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId });
     expect(boardAfterErase.columns?.find((c) => c.id === piiCol.id)?.name).toContain('[đã xóa]');
@@ -539,10 +539,10 @@ suite('projects custom board columns (#2605)', () => {
 
     await withAdmin(async (c) => {
       for (const tbl of [
-        'crove_projects.project_column',
-        'crove_projects.project_task',
-        'crove_projects.project_member',
-        'crove_projects.project',
+        'ludy_projects.project_column',
+        'ludy_projects.project_task',
+        'ludy_projects.project_member',
+        'ludy_projects.project',
         'ludy_kernel.task',
       ]) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);

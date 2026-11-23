@@ -59,20 +59,20 @@ suite('the CRM proposal twins (#3863)', () => {
     const empty = await exec<Quote>('crm.quote.save', { dealId, lines: [] });
     return exec<Quote>('crm.quote.save', { quoteId: empty.id, version: empty.version, lines: [item()] });
   }
-  const quoteRow = async (quoteId: string) => (await h.q<{ status: string; version: number; sent_via: string | null }>('SELECT status, version, sent_via FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [h.orgId, quoteId])).rows[0];
+  const quoteRow = async (quoteId: string) => (await h.q<{ status: string; version: number; sent_via: string | null }>('SELECT status, version, sent_via FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [h.orgId, quoteId])).rows[0];
 
   // A confirmed booking of the type at `minute` of the day: the visitor's request, then the worker's confirmation.
   let guests = 0;
   async function booking(minute: number) {
     guests += 1;
     await bookingRequest(h.runtime, slug, 'tu-van', { startsAt: at(day, minute), name: 'Nguyễn Văn Khách', email: `khach${guests}@example.test`, phone: '0901234567', note: 'Hỏi về thuế', timeZone: VN });
-    const row = (await h.q<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 AND starts_at = $2', [h.orgId, at(day, minute)])).rows[0];
+    const row = (await h.q<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 AND starts_at = $2', [h.orgId, at(day, minute)])).rows[0];
     const bookingId = row?.id as string;
     await h.system('test.crm.booking', 'crm.booking.confirm', { bookingId });
     return bookingId;
   }
   const bookingRow = async (bookingId: string) => {
-    const row = (await h.q<{ status: string; starts_at: Date }>('SELECT status, starts_at FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [h.orgId, bookingId])).rows[0];
+    const row = (await h.q<{ status: string; starts_at: Date }>('SELECT status, starts_at FROM ludy_crm.booking WHERE org_id = $1 AND id = $2', [h.orgId, bookingId])).rows[0];
     return { status: row?.status, startsAt: row?.starts_at.toISOString() };
   };
 

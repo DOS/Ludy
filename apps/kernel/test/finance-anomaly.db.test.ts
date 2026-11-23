@@ -190,7 +190,7 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
       expect(await anomalies(id), `invoice ${n}`).toEqual([]);
       await approveOne(id);
     }
-    expect(await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.purchase_document WHERE org_id = $1`, [orgId])).rows[0]?.n))).toBe(5);
+    expect(await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.purchase_document WHERE org_id = $1`, [orgId])).rows[0]?.n))).toBe(5);
   });
 
   it('raises nothing on an invoice like the earlier ones', async () => {

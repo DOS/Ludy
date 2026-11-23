@@ -55,7 +55,7 @@ suite('finance.mcp.payment_reminder on PostgreSQL (#3849)', () => {
       await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchAdmin, branch, owner]);
     }
     // Planted on purpose: the org's bank account number a reminder mail names (payTo), which a grant must never read.
-    await rows("INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, $2, '1121', '4455667788')", [orgId, entity]);
+    await rows("INSERT INTO ludy_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, $2, '1121', '4455667788')", [orgId, entity]);
     const grant = async (userId: string) => {
       const id = randomUUID();
       await rows(
@@ -74,15 +74,15 @@ suite('finance.mcp.payment_reminder on PostgreSQL (#3849)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'SECRETSERIES', $4, $5, 'VND', $6, 0, $6, $7, $8)`,
           [orgId, doc, partyId, number, date, total, direction, entity],
         );
         const entry = randomUUID();
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'secret text', 'finance.purchase_document', $4, $5)`, [orgId, entry, date, doc, entity]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'secret text', 'finance.purchase_document', $4, $5)`, [orgId, entry, date, doc, entity]);
         const [debit, credit] = direction === 'sale' ? ['131', '511'] : ['156', '331'];
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, $5, $3, 0, $4, $6), ($1, $2, 2, $7, 0, $3, $4, $6)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, $5, $3, 0, $4, $6), ($1, $2, 2, $7, 0, $3, $4, $6)`,
           [orgId, entry, total, partyId, debit, entity, credit],
         );
         await c.query('COMMIT');
@@ -94,9 +94,9 @@ suite('finance.mcp.payment_reminder on PostgreSQL (#3849)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         const entry = randomUUID();
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'manual', 'finance.test', $4, $5)`, [orgId, entry, date, randomUUID(), entity]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'manual', 'finance.test', $4, $5)`, [orgId, entry, date, randomUUID(), entity]);
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, $4, $5)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, $4, $5)`,
           [orgId, entry, total, partyId, entity],
         );
         await c.query('COMMIT');
@@ -165,7 +165,7 @@ suite('finance.mcp.payment_reminder on PostgreSQL (#3849)', () => {
     const o = await org();
     const p = await o.party('Khách tạm dừng');
     await o.invoice(p, 'T1', daysAgo(90), '1000000');
-    await rows("INSERT INTO crove_finance.customer_collection (org_id, party_id, paused_until) VALUES ($1, $2, (now() + interval '10 days')::date)", [o.orgId, p]);
+    await rows("INSERT INTO ludy_finance.customer_collection (org_id, party_id, paused_until) VALUES ($1, $2, (now() + interval '10 days')::date)", [o.orgId, p]);
     await expect(o.read(o.owner, { partyId: p })).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED', status: 409 });
   });
 

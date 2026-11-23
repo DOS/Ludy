@@ -36,7 +36,7 @@ export const summaryReady = defineCommand({
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // Only the recorder asks for a run, and only the recorder is told.
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder is told that the draft is ready');
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('ludy_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
     await ctx.emit('meetings.summary.ready', zSummaryReadyEvent.parse({ meetingId: input.meetingId, runId: input.runId, recorderUserId: userId, language: row.language }));
     ctx.audit({ meetingId: input.meetingId, runId: input.runId });
     return { queued: true };

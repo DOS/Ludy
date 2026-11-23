@@ -77,15 +77,15 @@ suite("This week's decisions and open items (#3949)", () => {
   async function meeting(title: string, daysAgo: number, recorder: string, readers: string[], textDay = 'current_date + 365'): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $4, 'vi', now() - ($5 || ' days')::interval, now() - ($5 || ' days')::interval + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, ${textDay})`,
       [orgId, id, users[recorder], title, String(daysAgo)],
     );
-    for (const reader of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
+    for (const reader of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
     return id;
   }
   const result = (meetingId: string, decisions: string[], stage: 'draft' | 'published') =>
-    sqlAdmin(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', $3::jsonb, 'manual', $4)`, [orgId, meetingId, JSON.stringify(decisions), stage]);
+    sqlAdmin(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', $3::jsonb, 'manual', $4)`, [orgId, meetingId, JSON.stringify(decisions), stage]);
   async function item(meetingId: string, title: string, over: { task?: string; stage?: 'draft' | 'published' } = {}): Promise<void> {
     let taskId: string | null = null;
     if (over.task !== undefined) {
@@ -93,7 +93,7 @@ suite("This week's decisions and open items (#3949)", () => {
       await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, over.task]);
     }
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
        VALUES ($1, $2, $3, $4, 'Lan', $5, 'thứ sáu', $6, $7, $8, false, 10)`,
       [orgId, randomUUID(), meetingId, title, users.lan, over.stage ?? 'published', taskId === null ? 'suggested' : 'accepted', taskId],
     );
@@ -259,11 +259,11 @@ suite("This week's decisions and open items (#3949)", () => {
       for (let i = 0; i < 55; i += 1) {
         const id = randomUUID();
         await c.query(
-          `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+          `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
            VALUES ($1, $2, $4, 'vi', now() - interval '1 day', now() - interval '1 day' + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, current_date + 365)`,
           [orgId, id, users.solo1, `Họp nháp ${stamp(i)}`],
         );
-        await c.query(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', '["Chỉ là nháp"]'::jsonb, 'manual', 'draft')`, [orgId, id]);
+        await c.query(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', '["Chỉ là nháp"]'::jsonb, 'manual', 'draft')`, [orgId, id]);
       }
     });
     for (let i = 0; i < 3; i += 1) await result(await meeting(`Họp có kết quả ${i}`, 3, 'solo1', []), [`Quyết định thật ${i}`], 'published');
@@ -278,13 +278,13 @@ suite("This week's decisions and open items (#3949)", () => {
         const id = randomUUID();
         const taskId = randomUUID();
         await c.query(
-          `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+          `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
            VALUES ($1, $2, $4, 'vi', now() - interval '2 days', now() - interval '2 days' + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, current_date + 365)`,
           [orgId, id, users.solo2, `Họp đã xong ${stamp(i)}`],
         );
         await c.query(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, 'Đã xong', 'human', 'system', 'done')`, [orgId, taskId]);
         await c.query(
-          `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+          `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
            VALUES ($1, $2, $3, 'Đã xong', 'Lan', $4, '', 'published', 'accepted', $5, false, 10)`,
           [orgId, randomUUID(), id, users.lan, taskId],
         );

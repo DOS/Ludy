@@ -1,5 +1,5 @@
 // Sub-account codes under the TT133 chart (issue #319), as pure functions shared by the finance commands and the
-// SPA. The database applies the same rules (crove_finance.org_account_before_insert); these give a precise message
+// SPA. The database applies the same rules (ludy_finance.org_account_before_insert); these give a precise message
 // first.
 //
 // A sub-account's code extends its parent's code, the way Vietnamese firms number their detail accounts:
@@ -30,7 +30,7 @@ export function isTaggedCode(code: string): boolean {
 // The accounts a sale line may be credited to, and a purchase line never debited to (#430): every TT133 account of
 // class 5 (511 sales, 515 financial income), 711 other income and 3387 unearned revenue, with their sub-accounts (a
 // sub-account's code starts with its parent's). The database holds every writer to the same rule
-// (crove_finance.check_line_direction).
+// (ludy_finance.check_line_direction).
 export function isRevenueAccount(code: string): boolean {
   return /^(5|711|3387)/.test(code);
 }

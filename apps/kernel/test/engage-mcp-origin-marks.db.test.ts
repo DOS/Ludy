@@ -120,7 +120,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const connection = randomUUID();
     await sqlAdmin(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
     adAccount = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [orgA, adAccount, connection]);
+    await sqlAdmin(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [orgA, adAccount, connection]);
   }, 300_000);
 
   afterAll(async () => {
@@ -181,13 +181,13 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const rewritten = await run<Quote>('crm.mcp.quote_save', { quoteId: mine.id, version: mine.version, lines: [{ kind: 'item', description: 'Dòng của Dy', quantity: '1', unitPrice: '100000', vatRate: '10' }] });
     // A person's draft the coworker rewrote: where it came from is unchanged, its text may now be the coworker's.
     expect(rewritten).toMatchObject({ actorOrigin: 'ui', tainted: true });
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [mine.id])).toMatchObject({ actor_origin: 'mcp', tainted: true });
+    expect(await one(`SELECT actor_origin, tainted FROM ludy_crm.quote_line WHERE quote_id = $1`, [mine.id])).toMatchObject({ actor_origin: 'mcp', tainted: true });
     const theirs = await run<Quote>('crm.mcp.quote_save', { dealId: deal.id, lines: [] });
     expect(theirs).toMatchObject({ actorOrigin: 'mcp', tainted: true });
     // A person adding a line to the coworker's quote leaves the mark where it was, and the person's own line is not marked.
     const personal = await run<Quote>('crm.quote.save', { quoteId: theirs.id, version: theirs.version, lines: [{ kind: 'item', description: 'Dòng của người', quantity: '1', unitPrice: '50000', vatRate: '10' }] }, asBrowser('owner'));
     expect(personal).toMatchObject({ actorOrigin: 'mcp', tainted: true });
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [theirs.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
+    expect(await one(`SELECT actor_origin, tainted FROM ludy_crm.quote_line WHERE quote_id = $1`, [theirs.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
     // A person sends the coworker's quote and then revises it: the revision is the person's, and the coworker's text keeps its mark.
     const sentOne = (await run<{ quote: Quote }>('crm.quote.send', { quoteId: theirs.id, version: personal.version, via: 'link' }, asBrowser('owner'))).quote;
     const revision = await run<Quote>('crm.quote.revise', { quoteId: sentOne.id }, asBrowser('owner'));
@@ -207,18 +207,18 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const own = await run<Quote>('crm.quote.save', { dealId: deal.id, lines: [] }, asBrowser('owner'));
     expect(own).toMatchObject({ actorOrigin: 'ui', tainted: false });
     const copied = await run<Quote>('crm.quote.save', { quoteId: own.id, version: own.version, lines: lines('Gói Dy đề xuất') }, asBrowser('owner'));
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
+    expect(await one(`SELECT actor_origin, tainted FROM ludy_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
     // The quote says it carries tainted text though its own row is clean.
     expect(copied).toMatchObject({ actorOrigin: 'ui', tainted: true });
-    expect(await one(`SELECT tainted FROM crove_crm.quote WHERE id = $1`, [own.id])).toMatchObject({ tainted: false });
+    expect(await one(`SELECT tainted FROM ludy_crm.quote WHERE id = $1`, [own.id])).toMatchObject({ tainted: false });
     // A line the person types, or rewrites, is theirs.
     const typed = await run<Quote>('crm.quote.save', { quoteId: own.id, version: copied.version, lines: lines('Gói do người nhập') }, asBrowser('owner'));
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
+    expect(await one(`SELECT actor_origin, tainted FROM ludy_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
     expect(typed).toMatchObject({ tainted: false });
     // A revision of the coworker's sent quote copies its lines with their mark.
     const sent = (await run<{ quote: Quote }>('crm.quote.send', { quoteId: dy.id, version: filled.version, via: 'link' }, asBrowser('owner'))).quote;
     const revision = await run<Quote>('crm.quote.revise', { quoteId: sent.id }, asBrowser('owner'));
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [revision.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
+    expect(await one(`SELECT actor_origin, tainted FROM ludy_crm.quote_line WHERE quote_id = $1`, [revision.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
   });
 
   it('keeps the taint of a line a person re-saves unchanged, though the draft save deletes its lines and inserts them again and no other tainted line is left', async () => {
@@ -231,10 +231,10 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const copied = await run<Quote>('crm.quote.save', { quoteId: own.id, version: own.version, lines: lines('Gói chỉ còn một dòng') }, asBrowser('owner'));
     // The coworker's own draft goes away: the copy is now the only tainted line with that text.
     await run('crm.quote.delete_draft', { quoteId: dy.id }, asBrowser('owner'));
-    expect(await one(`SELECT count(*)::int AS n FROM crove_crm.quote_line WHERE tainted AND description = $1`, ['Gói chỉ còn một dòng'])).toMatchObject({ n: 1 });
+    expect(await one(`SELECT count(*)::int AS n FROM ludy_crm.quote_line WHERE tainted AND description = $1`, ['Gói chỉ còn một dòng'])).toMatchObject({ n: 1 });
     // The person saves the draft again with the same text: the lines are deleted and inserted again in one transaction, and the line is still tainted, so is the quote.
     const again = await run<Quote>('crm.quote.save', { quoteId: own.id, version: copied.version, lines: lines('Gói chỉ còn một dòng') }, asBrowser('owner'));
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
+    expect(await one(`SELECT actor_origin, tainted FROM ludy_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
     expect(again).toMatchObject({ actorOrigin: 'ui', tainted: true });
   });
 
@@ -249,7 +249,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     await c.connect();
     try {
       const keys = async () => (await c.query<{ k: string }>(`SELECT COALESCE(pg_catalog.current_setting('ludy.tainted_line_keys', true), '') AS k`)).rows[0]?.k;
-      const drop = () => c.query(`DELETE FROM crove_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id]);
+      const drop = () => c.query(`DELETE FROM ludy_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id]);
       expect(await keys()).toBe('');
       await c.query('BEGIN');
       await drop();
@@ -257,7 +257,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
       expect(await keys()).not.toBe('');
       await c.query('ROLLBACK');
       expect(await keys()).toBe('');
-      expect(await one(`SELECT count(*)::int AS n FROM crove_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id])).toMatchObject({ n: 1 });
+      expect(await one(`SELECT count(*)::int AS n FROM ludy_crm.quote_line WHERE quote_id = $1 AND tainted`, [filled.id])).toMatchObject({ n: 1 });
       await c.query('BEGIN');
       await drop();
       expect(await keys()).not.toBe('');

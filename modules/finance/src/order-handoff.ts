@@ -87,7 +87,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const claimed = new Set(
       (
         await ctx.trx
-          .selectFrom('crove_finance.einvoice_draft_line')
+          .selectFrom('ludy_finance.einvoice_draft_line')
           .select('source_line_no')
           .where('org_id', '=', ctx.orgId)
           .where('source_kind', '=', ORDER_SOURCE_KIND)
@@ -122,7 +122,7 @@ export const einvoiceDraftFromOrder = defineCommand({
 
     const today = await databaseToday(ctx.trx);
     const series = await ctx.trx
-      .selectFrom('crove_finance.einvoice_series')
+      .selectFrom('ludy_finance.einvoice_series')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -145,7 +145,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const draftId = randomUUID();
     try {
       await ctx.trx
-        .insertInto('crove_finance.einvoice_draft')
+        .insertInto('ludy_finance.einvoice_draft')
         .values({
           org_id: ctx.orgId,
           id: draftId,
@@ -167,7 +167,7 @@ export const einvoiceDraftFromOrder = defineCommand({
         .execute();
       for (const [index, line] of computed.lines.entries()) {
         await ctx.trx
-          .insertInto('crove_finance.einvoice_draft_line')
+          .insertInto('ludy_finance.einvoice_draft_line')
           .values({
             org_id: ctx.orgId,
             legal_entity_id: entity,
@@ -221,7 +221,7 @@ export const stockMoveFromOrderLine = defineCommand({
     await lockOrderLine(ctx, handoff.orderId, lineNo);
 
     const forward = await ctx.trx
-      .selectFrom('crove_finance.stock_move')
+      .selectFrom('ludy_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'move_date'])
       .where('org_id', '=', ctx.orgId)
       .where('source_type', '=', 'crm_order_line')
@@ -229,7 +229,7 @@ export const stockMoveFromOrderLine = defineCommand({
       .where('crm_order_line_no', '=', lineNo)
       .executeTakeFirst();
     const reversal = forward
-      ? await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', forward.id).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', forward.id).executeTakeFirst()
       : undefined;
 
     if (action === 'return') {
@@ -287,9 +287,9 @@ export interface OrderSource {
 // to its source and amount. A document line takes the source only when its number and its amount are the draft line's, so a line that was changed on the way to the books carries none.
 export async function orderSourcesOfInvoice(ctx: CommandContext, legalEntityId: string, series: string, number: string): Promise<Map<number, OrderSource & { amount: string }>> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft as d')
-    .innerJoin('crove_finance.einvoice_series as s', (join) => join.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.series_id'))
-    .innerJoin('crove_finance.einvoice_draft_line as l', (join) => join.onRef('l.org_id', '=', 'd.org_id').onRef('l.draft_id', '=', 'd.id'))
+    .selectFrom('ludy_finance.einvoice_draft as d')
+    .innerJoin('ludy_finance.einvoice_series as s', (join) => join.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.series_id'))
+    .innerJoin('ludy_finance.einvoice_draft_line as l', (join) => join.onRef('l.org_id', '=', 'd.org_id').onRef('l.draft_id', '=', 'd.id'))
     .select(['l.line_no', 'l.amount', 'l.source_kind', 'l.source_id', 'l.source_line_no'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -317,8 +317,8 @@ export const einvoiceDraftOrderLines = defineQuery({
   handler: async (ctx, input): Promise<OrderLineInvoiceStates> => {
     const orderIds = [...new Set(input.orderIds)];
     const rows = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft_line as l')
-      .innerJoin('crove_finance.einvoice_draft as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.legal_entity_id', '=', 'l.legal_entity_id').onRef('d.id', '=', 'l.draft_id'))
+      .selectFrom('ludy_finance.einvoice_draft_line as l')
+      .innerJoin('ludy_finance.einvoice_draft as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.legal_entity_id', '=', 'l.legal_entity_id').onRef('d.id', '=', 'l.draft_id'))
       .select(['l.source_id', 'l.source_line_no', 'd.state'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.source_kind', '=', ORDER_SOURCE_KIND)

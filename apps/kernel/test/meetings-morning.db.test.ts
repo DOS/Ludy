@@ -60,7 +60,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   }
   async function eventNow(who: string, title = SECRET_TITLE): Promise<void> {
     await sqlAdmin(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
        VALUES ($1, $2, $3, $4, $5, now(), now() + interval '30 minutes', $6)`,
       [orgId, connections[who], users[who], crypto.randomUUID(), title, ZONE],
     );
@@ -114,10 +114,10 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     // Turning it on again changes the one row; defaults fill what the member left out.
     await set('lan', { enabled: true });
     expect(await get('lan')).toEqual({ enabled: true, minute: 420, timeZone: ZONE, language: 'vi' });
-    expect((await sqlAdmin(`SELECT 1 FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.lan])).rowCount).toBe(1);
+    expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.lan])).rowCount).toBe(1);
     await set('lan', { enabled: false });
     expect(await get('lan')).toMatchObject({ enabled: false });
-    expect((await sqlAdmin(`SELECT 1 FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.lan])).rowCount).toBe(0);
+    expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.lan])).rowCount).toBe(0);
   });
 
   it('refuses a time that is not a minute of the day and a zone that is not a zone', async () => {
@@ -170,7 +170,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     // odd: a zone name the database does not know, stored by hand: the sweep skips it and goes on.
     await connect('odd');
     await eventNow('odd');
-    await sqlAdmin(`INSERT INTO crove_meetings.morning_notice (org_id, user_id, send_minute, time_zone, language) VALUES ($1, $2, 0, 'Not/AZone', 'vi')`, [orgId, users.odd]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.morning_notice (org_id, user_id, send_minute, time_zone, language) VALUES ($1, $2, 0, 'Not/AZone', 'vi')`, [orgId, users.odd]);
     const before = (await mails()).length;
     expect(await sweep()).toMatchObject({ found: 0, sent: 0, failures: 0 });
     for (const who of ['nam', 'quiet', 'muted', 'odd']) expect(await notices(who), who).toHaveLength(0);
@@ -184,7 +184,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const zone = 'Pacific/Kiritimati';
     const now = await localNow(zone);
     await sqlAdmin(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
        VALUES ($1, $2, $3, $4, 'Họp ở xa', now(), now() + interval '30 minutes', $5)`,
       [orgId, connections.quiet, users.quiet, crypto.randomUUID(), zone],
     );
@@ -199,7 +199,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   it('drops a member\'s setting when they leave the org, so a later return finds it off, and leaves the others alone', async () => {
     await set('gone', { enabled: true, minute: 480, timeZone: ZONE, language: 'vi' });
     await set('owner', { enabled: true, minute: 480, timeZone: ZONE, language: 'vi' });
-    const rows = (user: string) => sqlAdmin(`SELECT 1 FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users[user]]);
+    const rows = (user: string) => sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users[user]]);
     expect((await rows('gone')).rowCount).toBe(1);
     await runtime.execute('kernel.member.remove', { userId: users.gone }, { actor: asMfa('owner'), orgId });
     expect((await rows('gone')).rowCount).toBe(0);
@@ -212,13 +212,13 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   it('caps the day\'s count at 1000, so a member with more events still gets a notice', async () => {
     await connect('busy');
     await sqlAdmin(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
        SELECT $1, $2, $3, 'busy-' || g, 'Họp ' || g, now(), now() + interval '30 minutes', $4 FROM generate_series(1, 1005) g`,
       [orgId, connections.busy, users.busy, ZONE],
     );
     const now = await localNow(ZONE);
     await set('busy', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
-    expect((await sqlAdmin<{ events: number }>(`SELECT events FROM crove_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.busy])).rows).toEqual([{ events: 1000 }]);
+    expect((await sqlAdmin<{ events: number }>(`SELECT events FROM ludy_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.busy])).rows).toEqual([{ events: 1000 }]);
     expect(await sweep()).toMatchObject({ found: 1, sent: 1, failures: 0 });
     expect((await notices('busy'))[0]).toMatchObject({ detail: { count: '1000' } });
   });
@@ -229,7 +229,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'twin-two@calendar.test', 'twin two', '{}', true)`, [orgId, second, users.twin]);
     // One meeting both calendars hold (same provider event id and start), and one only the second holds.
     await sqlAdmin(
-      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
        VALUES ($1, $2, $4, 'shared-event', 'Họp chung', now(), now() + interval '30 minutes', $5),
               ($1, $3, $4, 'shared-event', 'Họp chung', now(), now() + interval '30 minutes', $5),
               ($1, $3, $4, 'only-second', 'Họp riêng', now(), now() + interval '30 minutes', $5)`,
@@ -237,7 +237,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     );
     const now = await localNow(ZONE);
     await set('twin', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
-    expect((await sqlAdmin<{ events: number }>(`SELECT events FROM crove_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.twin])).rows).toEqual([{ events: 2 }]);
+    expect((await sqlAdmin<{ events: number }>(`SELECT events FROM ludy_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.twin])).rows).toEqual([{ events: 2 }]);
   });
 
   it('hands out the due members in no fixed order, so a pass that is cut short does not give the same first ones every time', async () => {
@@ -252,7 +252,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const seen = new Set<string>();
     await admin(async (c) => {
       for (let call = 0; call < 150; call += 1) {
-        const rows = (await c.query<{ user_id: string }>(`SELECT user_id FROM crove_meetings.morning_notices_due(1, $1)`, [orgId])).rows;
+        const rows = (await c.query<{ user_id: string }>(`SELECT user_id FROM ludy_meetings.morning_notices_due(1, $1)`, [orgId])).rows;
         expect(rows).toHaveLength(1);
         seen.add(rows[0]!.user_id);
       }
@@ -279,6 +279,6 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     } finally {
       await holder.end();
     }
-    expect((await sqlAdmin(`SELECT 1 FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer])).rowCount).toBe(0);
+    expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer])).rowCount).toBe(0);
   });
 });

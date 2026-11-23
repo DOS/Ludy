@@ -30,7 +30,7 @@ import { NOTE_SUMMARY_COLUMNS, noteSummaryRow } from './notes.ts';
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const NOTEBOOK = notesManifest.tables.crove_notes.notebook;
+const NOTEBOOK = notesManifest.tables.ludy_notes.notebook;
 const REBALANCE_AT = 80;
 const BACKLINK_SCAN_LIMIT = 500;
 const WIKI_TOKEN_MAX = 260;
@@ -254,7 +254,7 @@ export const notebookList = defineQuery({
     const [wholeOrg, notebookRows, countRows] = await Promise.all([
       hasWholeOrgScope(ctx.trx),
       ctx.trx
-        .selectFrom('crove_notes.notebook')
+        .selectFrom('ludy_notes.notebook')
         .select(NOTEBOOK_COLUMNS)
         .where('org_id', '=', ctx.orgId)
         .orderBy('pinned', 'desc')
@@ -262,7 +262,7 @@ export const notebookList = defineQuery({
         .orderBy('id')
         .execute(),
       ctx.trx
-        .selectFrom('crove_notes.note')
+        .selectFrom('ludy_notes.note')
         .select((eb) => ['notebook_id', eb.fn.countAll<string>().as('n')])
         .where('org_id', '=', ctx.orgId)
         .where('deleted_at', 'is', null)
@@ -315,7 +315,7 @@ export const notebookCreate = defineCommand({
     }
 
     const existing = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(['id', 'author_user_id', 'sort_key'])
       .where('org_id', '=', ctx.orgId)
       .where('author_user_id', '=', userId)
@@ -327,13 +327,13 @@ export const notebookCreate = defineCommand({
 
     // After every notebook the caller reads (its own included), so members' first notebooks do not all share one key.
     const { rows: lastRows } = await sql<{ last: string | null }>`
-      SELECT pg_catalog.max(sort_key) AS last FROM crove_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+      SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     let sortKey = keyBetween(lastRows[0]?.last ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
       const fresh = spreadKeys(existing.length + 1);
       for (let i = 0; i < existing.length; i++) {
         await ctx.trx
-          .updateTable('crove_notes.notebook')
+          .updateTable('ludy_notes.notebook')
           .set({ sort_key: fresh[i] as string })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing[i]!.id)
@@ -343,7 +343,7 @@ export const notebookCreate = defineCommand({
     }
 
     const row = await ctx.trx
-      .insertInto('crove_notes.notebook')
+      .insertInto('ludy_notes.notebook')
       .values({
         org_id: ctx.orgId,
         author_user_id: userId,
@@ -379,7 +379,7 @@ async function computeReorderedSortKey(
   anchorId: string,
 ): Promise<string> {
   const rows = await ctx.trx
-    .selectFrom('crove_notes.notebook')
+    .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility', 'sort_key'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('sort_key')
@@ -405,7 +405,7 @@ async function computeReorderedSortKey(
     for (let i = 0; i < editable.length; i++) {
       if (cursor === insertAt) cursor++;
       await ctx.trx
-        .updateTable('crove_notes.notebook')
+        .updateTable('ludy_notes.notebook')
         .set({ sort_key: fresh[cursor] as string })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', editable[i]!.id)
@@ -449,7 +449,7 @@ export const notebookUpdate = defineCommand({
     const wholeOrg = await hasWholeOrgScope(ctx.trx);
 
     const peek = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(NOTEBOOK_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.notebookId)
@@ -469,7 +469,7 @@ export const notebookUpdate = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
 
     const before = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(NOTEBOOK_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.notebookId)
@@ -481,7 +481,7 @@ export const notebookUpdate = defineCommand({
     const nextVisibility = input.visibility ?? before.visibility;
     if (before.visibility === 'org' && nextVisibility === 'private') {
       const sharedNote = await ctx.trx
-        .selectFrom('crove_notes.note')
+        .selectFrom('ludy_notes.note')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('notebook_id', '=', before.id)
@@ -509,7 +509,7 @@ export const notebookUpdate = defineCommand({
     let row: { id: string; revision: number };
     try {
       row = await ctx.trx
-        .updateTable('crove_notes.notebook')
+        .updateTable('ludy_notes.notebook')
         .set({
           name: nextName,
           stack_name: nextStack,
@@ -556,7 +556,7 @@ export const notebookDelete = defineCommand({
     const wholeOrg = await hasWholeOrgScope(ctx.trx);
 
     const peek = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(['id', 'author_user_id', 'visibility'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.notebookId)
@@ -567,7 +567,7 @@ export const notebookDelete = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
 
     const locked = await ctx.trx
-      .selectFrom('crove_notes.notebook')
+      .selectFrom('ludy_notes.notebook')
       .select(['id', 'author_user_id', 'visibility'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.notebookId)
@@ -576,7 +576,7 @@ export const notebookDelete = defineCommand({
     if (!locked) throw notebookNotFound();
 
     await ctx.trx
-      .deleteFrom('crove_notes.notebook')
+      .deleteFrom('ludy_notes.notebook')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.notebookId)
       .execute();
@@ -591,7 +591,7 @@ export const notebookDelete = defineCommand({
   },
 });
 
-// RLS-safe backlinks (#3559): reads ONLY non-trashed notes the caller is permitted to read under crove_notes.note RLS.
+// RLS-safe backlinks (#3559): reads ONLY non-trashed notes the caller is permitted to read under ludy_notes.note RLS.
 // Another member's private note is never read, matched, or counted.
 export const noteBacklinks = defineQuery({
   name: 'notes.note.backlinks',
@@ -600,7 +600,7 @@ export const noteBacklinks = defineQuery({
   handler: async (ctx, input): Promise<NoteSummary[]> => {
     const userId = userOf(ctx.actor);
     const target = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select(['id', 'title'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
@@ -608,7 +608,7 @@ export const noteBacklinks = defineQuery({
     if (!target) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
 
     const candidates = await ctx.trx
-      .selectFrom('crove_notes.note')
+      .selectFrom('ludy_notes.note')
       .select([...NOTE_SUMMARY_COLUMNS, 'body'])
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // System worker commands backing ADR-0034 mail_data hydration and edge normalization helpers for Crove eSign Slice 1b (#3324).
-// Public unauthenticated HTTP mutations run via runtime.orgless() + crove_sign.public_* SECURITY DEFINER SQL procedures
+// Public unauthenticated HTTP mutations run via runtime.orgless() + ludy_sign.public_* SECURITY DEFINER SQL procedures
 // because ludy_app is deliberately blocked from calling ludy_kernel.enter_system_context.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -81,7 +81,7 @@ export const publicOtpMailData = defineCommand({
   access: 'system',
   // Returns transient 6-digit OTP code strictly to the worker mail dispatcher; never cache in idempotency_key.
   noIdempotency: true,
-  writes: [tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['otp_sha256', 'expires_at'])],
+  writes: [tableWrite(signManifest.tables, 'ludy_sign', 'signing_otp', ['otp_sha256', 'expires_at'])],
   handler: async (ctx, input): Promise<{ code: string; signerName: string; docTitle: string; expiresAt: string } | null> => {
     assertSystem(ctx);
     const minExp = new Date(Math.max(ctx.now.getTime(), Date.now()) + OTP_TTL_MS);
@@ -97,7 +97,7 @@ export const publicOtpMailData = defineCommand({
         expiresAt: string;
       } | null;
     }>`
-      SELECT crove_sign.public_otp_issue(
+      SELECT ludy_sign.public_otp_issue(
         ${input.otpId}::uuid,
         ${minExp}::timestamptz,
         ${ctx.now}::timestamptz
@@ -131,8 +131,8 @@ export const signerMailData = defineCommand({
   // Returns transient one-time signing token strictly to the worker mail dispatcher; never cache in idempotency_key.
   noIdempotency: true,
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['org_id', 'envelope_id', 'signer_id', 'token_sha256', 'expires_at', 'revoked_at', 'revoked_by', 'created_by', 'created_at']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['invalidated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signing_token', ['org_id', 'envelope_id', 'signer_id', 'token_sha256', 'expires_at', 'revoked_at', 'revoked_by', 'created_by', 'created_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signing_otp', ['invalidated_at']),
   ],
   handler: async (
     ctx,
@@ -157,7 +157,7 @@ export const signerMailData = defineCommand({
           minted: boolean;
         } | null;
       }>`
-        SELECT crove_sign.public_mail_token_issue(
+        SELECT ludy_sign.public_mail_token_issue(
           ${input.envelopeId}::uuid,
           ${input.signerId}::uuid,
           ${input.messageId}::uuid,
@@ -171,7 +171,7 @@ export const signerMailData = defineCommand({
         return null;
       }
       const signerRow = await ctx.trx
-        .selectFrom('crove_sign.signer')
+        .selectFrom('ludy_sign.signer')
         .select(['signer_role'])
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', input.envelopeId)
@@ -193,7 +193,7 @@ export const signerMailData = defineCommand({
     }
 
     const envelope = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'status', 'message', 'expires_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -207,7 +207,7 @@ export const signerMailData = defineCommand({
     }
 
     const signer = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'name', 'signer_role', 'status', 'delivery_mode', 'email'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', envelope.id)
@@ -234,7 +234,7 @@ export const signerMailData = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows } = await sql<{ id: string }>`
-      SELECT crove_sign.mint_signing_token(
+      SELECT ludy_sign.mint_signing_token(
         ${envelope.id}::uuid,
         ${signer.id}::uuid,
         ${tokenHash},
@@ -282,7 +282,7 @@ export const envelopeCompletedMailData = defineCommand({
   } | null> => {
     assertSystem(ctx);
     const envelope = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'status',
         'seal_status',
@@ -363,7 +363,7 @@ export const signerDelegatedMailData = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirst(),
       ctx.trx
-        .selectFrom('crove_sign.signer')
+        .selectFrom('ludy_sign.signer')
         .select(['name', 'email', 'delegated_from_name', 'delegated_from_email', 'delegation_reason'])
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', input.envelopeId)

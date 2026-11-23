@@ -2,7 +2,7 @@
 // The committed spend of a month on the Ads screen (issue #3297, plan docs/plan/ads-write.md sections 3.3, 8 and 9): next to the actual spend, what the launches
 // that still commit can spend in the month, the monthly cap and the room left, for the account and for the org, in the account's currency. A read only: it
 // writes nothing, posts nothing to the books and calls no model. The sum is the lock's own (launch-caps.ts: countedFor and committedInMonth are what the monthly
-// caps are checked with, and the commitments come from the same definer, crove_ads.launch_commitments), so what the screen shows and what the next approval is
+// caps are checked with, and the commitments come from the same definer, ludy_ads.launch_commitments), so what the screen shows and what the next approval is
 // judged against cannot drift. Money is a decimal string and every sum goes through decimal.js (AGENTS.md "Money").
 import { Decimal } from 'decimal.js';
 import type { MemberRole } from '@ludy/db';
@@ -49,7 +49,7 @@ export const adsCommitted = defineQuery({
   // The caps are read by owners and admins (ads.write.state); the figure that sits next to them is theirs too.
   access: MANAGERS,
   handler: async (ctx: QueryContext, input): Promise<AdsCommitted> => {
-    const account = await ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'currency']).where('org_id', '=', ctx.orgId).where('id', '=', input.adAccountId).executeTakeFirst();
+    const account = await ctx.trx.selectFrom('ludy_ads.ad_account').select(['id', 'currency']).where('org_id', '=', ctx.orgId).where('id', '=', input.adAccountId).executeTakeFirst();
     // An account the caller does not read is hidden by the entity policy: it is not found.
     if (!account) throw new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản quảng cáo này');
     if (!account.currency) throw new DomainError('ADS_CURRENCY_UNKNOWN', 409, 'Tài khoản này chưa đọc được đơn vị tiền');

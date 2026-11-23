@@ -48,7 +48,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, $3, 'vi', now(), $4, $5, 'ready', 'told_at_start', $4, now(), '1.0', current_date + 30, current_date + 365)`,
         [orgId, id, title, users[recorder], visibility],
       ),
@@ -67,7 +67,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     await exec(who, 'crm.pipeline.setup', {});
     return (await exec<Deal>(who, 'crm.deal.create', { partyId, title: 'Gói kế toán năm', amount: '15000000', expectedClose: '2026-12-31' })).id;
   };
-  const linkCount = (meetingId: string) => admin((c) => c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.meeting_link WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]).then((r) => Number(r.rows[0]!.n)));
+  const linkCount = (meetingId: string) => admin((c) => c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.meeting_link WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]).then((r) => Number(r.rows[0]!.n)));
   const audits = (command: string, meetingId: string) =>
     admin((c) => c.query<{ detail: Record<string, unknown>; actor_id: string | null }>(`SELECT detail, actor_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ->> 'meetingId' = $3 ORDER BY occurred_at`, [orgId, command, meetingId]).then((r) => r.rows));
 
@@ -185,7 +185,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
       await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_party_suggest ON ludy_kernel.party'));
     }
     // The transcript is the recorder's: a reader who may read the meeting still gets no suggestion from it.
-    await admin((c) => c.query("INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)", [orgId, m, users.attendee]));
+    await admin((c) => c.query("INSERT INTO ludy_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)", [orgId, m, users.attendee]));
     expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toBe('FORBIDDEN');
   });
 
@@ -207,7 +207,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     const read = await admin((c) => c.query("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.link.suggest' AND detail ->> 'read' = 'sensitive'", [orgId]));
     expect(read.rowCount).toBeGreaterThan(0);
     // Past its text day the transcript is gone from the meeting: nothing is derived from it.
-    await admin((c) => c.query('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, m]));
+    await admin((c) => c.query('UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, m]));
     expect(await refuses(query('recorder', 'meetings.link.suggest', { meetingId: m }))).toBe('MEETING_NOT_FOUND');
   });
 

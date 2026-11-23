@@ -1,5 +1,5 @@
 // Text variations (#1260): up to 5 other texts of an evergreen (#393) or recurring (#979) post, kept on the post with
-// the position of the next one (crove_social.post.text_variations, text_variation_next). Each copy the worker makes
+// the position of the next one (ludy_social.post.text_variations, text_variation_next). Each copy the worker makes
 // takes the next one in turn as its text (repostCopy with rotate), and the cursor moves on in the copy's transaction,
 // under the post's lock; a text that would repeat a recent post on X or LinkedIn (#1156) is passed over while another
 // is left. The variation is the copy's text, so banned words, the review checklist, the channel rules, the signature and
@@ -26,7 +26,7 @@ export interface ChosenVariation extends TextVariation {
 }
 
 async function variationsOf(ctx: CommandContext, postId: string): Promise<{ list: TextVariation[]; cursor: number }> {
-  const row = await ctx.trx.selectFrom('crove_social.post').select(['text_variations', 'text_variation_next']).where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirstOrThrow();
+  const row = await ctx.trx.selectFrom('ludy_social.post').select(['text_variations', 'text_variation_next']).where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirstOrThrow();
   return { list: parseTextVariations(row.text_variations), cursor: row.text_variation_next };
 }
 
@@ -71,7 +71,7 @@ export async function nextTextVariation(ctx: CommandContext, postId: string, tar
 
 // Moves the cursor past the variation a copy just took. Under the post's lock, in the copy's transaction.
 export async function advanceTextVariation(ctx: CommandContext, postId: string, chosen: ChosenVariation): Promise<void> {
-  await ctx.trx.updateTable('crove_social.post').set({ text_variation_next: chosen.next }).where('org_id', '=', ctx.orgId).where('id', '=', postId).execute();
+  await ctx.trx.updateTable('ludy_social.post').set({ text_variation_next: chosen.next }).where('org_id', '=', ctx.orgId).where('id', '=', postId).execute();
 }
 
 export type TextVariationsResult = { postId: string; variations: TextVariation[]; next: number };
@@ -93,7 +93,7 @@ export const postSetTextVariations = defineCommand({
     // Not on an archived post (#1299): restore it first, as for any other edit.
     refuseArchived(post);
     const row = await ctx.trx
-      .selectFrom('crove_social.post')
+      .selectFrom('ludy_social.post')
       .select(['evergreen_days', 'recurrence', 'recurrence_source_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.postId)
@@ -108,7 +108,7 @@ export const postSetTextVariations = defineCommand({
     const variations = keepAiMarks(before.list, input.variations);
     const next = cursorAfterEdit(before.list, before.cursor, variations);
     await ctx.trx
-      .updateTable('crove_social.post')
+      .updateTable('ludy_social.post')
       .set({ text_variations: JSON.stringify(variations), text_variation_next: next, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.postId)

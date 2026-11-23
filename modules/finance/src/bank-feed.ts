@@ -97,7 +97,7 @@ export const bankFeedMap = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.bank_feed:${ctx.orgId}:${connection.id}:${input.externalAccountId}`}, 0))`.execute(ctx.trx);
     // Only an account the connection reaches, as the worker listed it with the credential.
     const listed = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_listed_account')
+      .selectFrom('ludy_finance.bank_feed_listed_account')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', connection.id)
@@ -113,7 +113,7 @@ export const bankFeedMap = defineCommand({
     if (feedDigits !== null) {
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.bank_account_number:${ctx.orgId}:${feedDigits}`}, 0))`.execute(ctx.trx);
       const recorded = await ctx.trx
-        .selectFrom('crove_finance.bank_account_number')
+        .selectFrom('ludy_finance.bank_account_number')
         .select(['bank_account', 'legal_entity_id'])
         .where('org_id', '=', ctx.orgId)
         .where('account_number', '=', feedDigits)
@@ -123,7 +123,7 @@ export const bankFeedMap = defineCommand({
       }
     }
     const existing = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_account')
+      .selectFrom('ludy_finance.bank_feed_account')
       .select(['id', 'legal_entity_id', 'cursor', 'feed_from'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', connection.id)
@@ -144,7 +144,7 @@ export const bankFeedMap = defineCommand({
       // Its lines are already in that entity's books: another entity takes an unmap first.
       if (existing.legal_entity_id !== legalEntityId) throw accountMapped();
       await ctx.trx
-        .updateTable('crove_finance.bank_feed_account')
+        .updateTable('ludy_finance.bank_feed_account')
         .set({ bank_account: input.bankAccount, ...(input.feedFrom !== undefined ? { feed_from: input.feedFrom } : {}) })
         .where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       feedAccountId = existing.id;
@@ -153,7 +153,7 @@ export const bankFeedMap = defineCommand({
       // mapping that row security hides from the caller (in another entity's books): the same answer as a visible one in
       // another entity, never a generic conflict, and nothing says which entity holds it (#2079).
       const inserted = await ctx.trx
-        .insertInto('crove_finance.bank_feed_account')
+        .insertInto('ludy_finance.bank_feed_account')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: legalEntityId,
@@ -184,7 +184,7 @@ export const bankFeedUnmap = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ feedAccountId: string }> => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.bank_feed_account')
+      .deleteFrom('ludy_finance.bank_feed_account')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.feedAccountId)
       .returning(['id', 'bank_account', 'legal_entity_id'])
@@ -208,7 +208,7 @@ export const bankFeedAccounts = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<BankFeedAccountView[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_account as a')
+      .selectFrom('ludy_finance.bank_feed_account as a')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from', 'a.cursor', 'a.last_pull_outcome', 'a.last_pull_outcome_at', 'a.last_pull_item'])
       .where('a.org_id', '=', ctx.orgId)
@@ -261,7 +261,7 @@ export const bankFeedListed = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input): Promise<Array<BankFeedListedAccount & { listedAt: string }>> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_listed_account')
+      .selectFrom('ludy_finance.bank_feed_listed_account')
       .select(['external_account_id', 'display_name', 'listed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
@@ -279,8 +279,8 @@ export const bankFeedPullDue = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<Array<{ feedAccountId: string; externalAccountId: string; cursor: string | null }>> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_account as a')
-      .innerJoin('crove_finance.bank_feed_listed_account as l', (j) =>
+      .selectFrom('ludy_finance.bank_feed_account as a')
+      .innerJoin('ludy_finance.bank_feed_listed_account as l', (j) =>
         j.onRef('l.org_id', '=', 'a.org_id').onRef('l.channel_connection_id', '=', 'a.channel_connection_id').onRef('l.external_account_id', '=', 'a.external_account_id'),
       )
       .select(['a.id', 'a.external_account_id', 'a.cursor'])
@@ -328,12 +328,12 @@ export const bankFeedRecordAccounts = defineCommand({
     if (new Set(ids).size !== ids.length) throw new DomainError('BANK_FEED_INVALID', 422, 'Nguồn giao dịch ngân hàng gửi một tài khoản hai lần');
     for (const account of input.accounts) {
       await ctx.trx
-        .insertInto('crove_finance.bank_feed_listed_account')
+        .insertInto('ludy_finance.bank_feed_listed_account')
         .values({ org_id: ctx.orgId, channel_connection_id: connection.id, external_account_id: account.externalAccountId, display_name: account.displayName })
         .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'external_account_id']).doUpdateSet({ display_name: account.displayName, listed_at: ctx.now }))
         .execute();
     }
-    let gone = ctx.trx.deleteFrom('crove_finance.bank_feed_listed_account').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', connection.id);
+    let gone = ctx.trx.deleteFrom('ludy_finance.bank_feed_listed_account').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', connection.id);
     if (ids.length > 0) gone = gone.where('external_account_id', 'not in', ids);
     const removed = (await gone.returning('id').execute()).length;
     ctx.audit({ connectionId: connection.id, provider: connection.provider, listed: ids.length, removed });
@@ -360,7 +360,7 @@ export const bankFeedRecordOutcome = defineCommand({
     if (!connection || !isBankFeedProviderId(connection.provider)) throw new DomainError('BANK_FEED_NOT_FOUND', 404, 'Không tìm thấy kết nối nguồn giao dịch ngân hàng');
     if (connection.status !== 'active') return { recorded: 0 };
     let update = ctx.trx
-      .updateTable('crove_finance.bank_feed_account')
+      .updateTable('ludy_finance.bank_feed_account')
       .set({ last_pull_outcome: input.kind, last_pull_outcome_at: ctx.now, last_pull_item: input.item ?? null })
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId);
@@ -373,7 +373,7 @@ export const bankFeedRecordOutcome = defineCommand({
         'external_account_id',
         'in',
         ctx.trx
-          .selectFrom('crove_finance.bank_feed_listed_account')
+          .selectFrom('ludy_finance.bank_feed_listed_account')
           .select('external_account_id')
           .where('org_id', '=', ctx.orgId)
           .where('channel_connection_id', '=', input.connectionId),
@@ -395,7 +395,7 @@ export const bankFeedRecordPull = defineCommand({
   handler: async (ctx, input): Promise<BankImportResult | { importId: null }> => {
     // The account and entity are the mapping's, never the job's input.
     const mapped = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_account as a')
+      .selectFrom('ludy_finance.bank_feed_account as a')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.bank_account', 'a.legal_entity_id', 'a.cursor', 'a.feed_from', 'c.provider', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
@@ -412,7 +412,7 @@ export const bankFeedRecordPull = defineCommand({
       const start = reachFrom(ctx.now, mapped.provider);
       if (mapped.feed_from < start) {
         movedTo = start;
-        await ctx.trx.updateTable('crove_finance.bank_feed_account').set({ feed_from: start }).where('org_id', '=', ctx.orgId).where('id', '=', mapped.id).execute();
+        await ctx.trx.updateTable('ludy_finance.bank_feed_account').set({ feed_from: start }).where('org_id', '=', ctx.orgId).where('id', '=', mapped.id).execute();
       }
     }
     // From the cut-over day on the feed supplies the account (#4218): a line it brings from before that day (the first pull goes back a month) is the statement files', and is left out so one transaction is never booked under two keys.
@@ -422,7 +422,7 @@ export const bankFeedRecordPull = defineCommand({
     const result =
       lines.length > 0 ? await ingestFeedLines(ctx, { bankAccount: mapped.bank_account, legalEntityId: mapped.legal_entity_id, source: mapped.provider, lines }) : null;
     await ctx.trx
-      .updateTable('crove_finance.bank_feed_account')
+      .updateTable('ludy_finance.bank_feed_account')
       // A stored page clears why an earlier one stopped, in the same transaction as its lines (#4244).
       .set({ cursor: input.cursor, last_synced_at: ctx.now, last_pull_outcome: 'ok', last_pull_outcome_at: ctx.now, last_pull_item: null })
       .where('org_id', '=', ctx.orgId)
@@ -437,7 +437,7 @@ export const bankFeedRecordPull = defineCommand({
 });
 
 // The webhook hook key of a connection (#4203, Tingee S3): 128 random bits as 22 base64url characters, shown once; the database keeps its SHA-256 only, in a definer-only table, through
-// crove_finance.bank_feed_hook_set (owners and admins, checked there too). A second call replaces the key, so the old address stops at once and a hook stopped by refused notices takes notices again.
+// ludy_finance.bank_feed_hook_set (owners and admins, checked there too). A second call replaces the key, so the old address stops at once and a hook stopped by refused notices takes notices again.
 export const bankFeedHookKey = () => randomBytes(16).toString('base64url');
 export const bankFeedHookKeyHash = (key: string) => createHash('sha256').update(key, 'utf8').digest('hex');
 
@@ -462,7 +462,7 @@ export const bankFeedHookSet = defineCommand({
     if (!connection || !isBankFeedProviderId(connection.provider)) throw new DomainError('BANK_FEED_NOT_FOUND', 404, 'Không tìm thấy kết nối nguồn giao dịch ngân hàng');
     if (connection.status !== 'active') throw new DomainError('BANK_FEED_INACTIVE', 422, 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại');
     const key = bankFeedHookKey();
-    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.bank_feed_hook_set(${input.connectionId}::uuid, ${bankFeedHookKeyHash(key)}) AS made`.execute(ctx.trx);
+    const { rows } = await sql<{ made: boolean }>`SELECT ludy_finance.bank_feed_hook_set(${input.connectionId}::uuid, ${bankFeedHookKeyHash(key)}) AS made`.execute(ctx.trx);
     const created = rows[0]?.made === true;
     ctx.audit({ created });
     return { provider: connection.provider, key, created };
@@ -475,7 +475,7 @@ export const bankFeedHook = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input): Promise<BankFeedHookStatus> => {
     const { rows } = await sql<{ created_at: Date | string; rotated_at: Date | string | null; last_seen_at: Date | string | null; rejected_count: number; stopped: boolean }>`
-      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM crove_finance.bank_feed_hook_status(${input.connectionId}::uuid)`.execute(ctx.trx);
+      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM ludy_finance.bank_feed_hook_status(${input.connectionId}::uuid)`.execute(ctx.trx);
     const row = rows[0];
     if (!row) return { exists: false, createdAt: null, rotatedAt: null, lastSeenAt: null, rejectedCount: 0, stopped: false };
     const iso = (v: Date | string | null) => (v === null ? null : new Date(v).toISOString());

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The cash limit is written once in SQL (crove_hr.payroll_run_totals counts the net pays at or above it, #2751) and once in code (CASH_PAYMENT_LIMIT, which the preparer of a payment uses): the two
+// The cash limit is written once in SQL (ludy_hr.payroll_run_totals counts the net pays at or above it, #2751) and once in code (CASH_PAYMENT_LIMIT, which the preparer of a payment uses): the two
 // must be the same number, or the flag the preparer raises and the flag finance rebuilds at record time would disagree.
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

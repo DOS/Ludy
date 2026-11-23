@@ -83,7 +83,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     const confirm = (bookingId: string) => worker.execute<{ status: string; refusal?: string }>('crm.booking.confirm', { bookingId }, { actor: SYSTEM, orgId });
     // The bookings the definer recorded, oldest first.
     const bookings = async () =>
-      (await admin((c) => c.query<{ id: string; status: string; refusal: string | null; party_id: string | null; calendar_event_id: string | null }>('SELECT id, status, refusal, party_id, calendar_event_id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at, id', [orgId]))).rows;
+      (await admin((c) => c.query<{ id: string; status: string; refusal: string | null; party_id: string | null; calendar_event_id: string | null }>('SELECT id, status, refusal, party_id, calendar_event_id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at, id', [orgId]))).rows;
     return { orgId, slug, owner, host, type, confirm, bookings };
   }
 
@@ -176,12 +176,12 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
     const erased = await app.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: 'khach@example.test' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     expect(erased.erased).toEqual(
-      expect.arrayContaining(['visitor_name', 'email', 'phone', 'note'].map((c) => expect.objectContaining({ column: `crove_crm.booking.${c}`, rows: 2 }))),
+      expect.arrayContaining(['visitor_name', 'email', 'phone', 'note'].map((c) => expect.objectContaining({ column: `ludy_crm.booking.${c}`, rows: 2 }))),
     );
-    const left = (await admin((c) => c.query('SELECT visitor_name, email, phone, note FROM crove_crm.booking WHERE org_id = $1', [o.orgId]))).rows;
+    const left = (await admin((c) => c.query('SELECT visitor_name, email, phone, note FROM ludy_crm.booking WHERE org_id = $1', [o.orgId]))).rows;
     expect(left).toEqual([0, 1].map(() => ({ visitor_name: null, email: null, phone: null, note: null })));
     const found = await app.execute<PersonalDataResult>('kernel.personal_data.find', { value: '0901234567' }, { actor: asUser(o.owner), orgId: o.orgId });
-    expect(found.matches.filter((m) => m.column.startsWith('crove_crm.booking'))).toEqual([]);
+    expect(found.matches.filter((m) => m.column.startsWith('ludy_crm.booking'))).toEqual([]);
   });
 
   it('refuses a taken time, a full day and an archived type, and turns away bad requests at once', async () => {
@@ -391,7 +391,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     // An ask recorded before the start, which the worker reaches after it.
     const late = await bookingManageAsk(app, o.slug, 'tu-van', { manage: token, action: 'cancel' });
     await admin((c) =>
-      c.query("UPDATE crove_crm.booking SET starts_at = now() - interval '10 minutes', ends_at = now() + interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, id]),
+      c.query("UPDATE ludy_crm.booking SET starts_at = now() - interval '10 minutes', ends_at = now() + interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, id]),
     );
     expect(await worker.execute('crm.booking.manage', { bookingId: id, requestId: late?.requestId }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ bookingId: id, outcome: 'unavailable' });
     expect(await bookingManageView(app, o.slug, 'tu-van', { manage: token })).toMatchObject({ status: 'confirmed', usable: false, outcome: 'unavailable' });
@@ -465,7 +465,7 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     // 200 visitors asked for the same slot (recorded directly: the request definer caps requests per type per hour).
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_crm.booking (org_id, event_type_id, starts_at, ends_at, visitor_name, email, time_zone)
+        `INSERT INTO ludy_crm.booking (org_id, event_type_id, starts_at, ends_at, visitor_name, email, time_zone)
          SELECT $1, $2, $3::timestamptz, $3::timestamptz + interval '30 minutes', 'Khách ' || i, 'k' || i || '@example.test', $4
          FROM generate_series(1, 200) i`,
         [o.orgId, o.type.id, startsAt, VN],

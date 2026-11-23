@@ -41,9 +41,9 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
   const rows = async (table: string) => (await h.q<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [h.orgId])).rows[0]?.n ?? 0;
   const entries: Entry[] = [
     { label: 'the kernel R1 twin (Hộp thư)', module: 'kernel', scope: ENGAGE_SCOPE, command: 'kernel.mcp.party_create', input: () => ({ kind: 'person', name: `Khách ${counter++}` }), count: () => rows('ludy_kernel.party') },
-    { label: 'the CRM R1 twin', module: 'crm', scope: ENGAGE_SCOPE, command: 'crm.mcp.deal_create', input: () => ({ partyId: party, title: `Cơ hội ${counter++}`, amount: '1000000', expectedClose: null }), count: () => rows('crove_crm.deal') },
-    { label: 'the Ads draft', module: 'ads', scope: ADS_SCOPE, command: 'ads.mcp.campaign_draft_save', input: () => ({ adAccountId: adAccount, plan: { name: `Nháp ${counter++}`, objective: 'traffic', dailyBudget: '200000' } }), count: () => rows('crove_ads.ad_campaign_draft') },
-    { label: 'the Social draft', module: 'social', scope: SOCIAL_SCOPE, command: 'social.mcp.draft_create', input: () => ({ body: `Bài ${counter++}`, channels: [{ connectionId: socialChannel }] }), count: () => rows('crove_social.post') },
+    { label: 'the CRM R1 twin', module: 'crm', scope: ENGAGE_SCOPE, command: 'crm.mcp.deal_create', input: () => ({ partyId: party, title: `Cơ hội ${counter++}`, amount: '1000000', expectedClose: null }), count: () => rows('ludy_crm.deal') },
+    { label: 'the Ads draft', module: 'ads', scope: ADS_SCOPE, command: 'ads.mcp.campaign_draft_save', input: () => ({ adAccountId: adAccount, plan: { name: `Nháp ${counter++}`, objective: 'traffic', dailyBudget: '200000' } }), count: () => rows('ludy_ads.ad_campaign_draft') },
+    { label: 'the Social draft', module: 'social', scope: SOCIAL_SCOPE, command: 'social.mcp.draft_create', input: () => ({ body: `Bài ${counter++}`, channels: [{ connectionId: socialChannel }] }), count: () => rows('ludy_social.post') },
   ];
   let party = '';
 
@@ -56,7 +56,7 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
     const connection = randomUUID();
     await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [h.orgId, connection, h.owner]);
     adAccount = randomUUID();
-    await h.q(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [h.orgId, adAccount, connection]);
+    await h.q(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', 'act-1', 'Tài khoản QC', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [h.orgId, adAccount, connection]);
     socialChannel = randomUUID();
     await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', 'acct-social-1', 'Trang', $3)`, [h.orgId, socialChannel, h.owner]);
   }, 300_000);

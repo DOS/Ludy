@@ -67,17 +67,17 @@ suite('social metrics against the window before (#947)', () => {
   async function published(o: { orgId: string; owner: string }, conn: string, daysAgo: number, metrics: Record<string, unknown>, clicks?: Record<number, number>) {
     const { postId } = await exec<{ postId: string }>(o, 'social.post.create', { body: `Bài ${daysAgo} ngày trước`, channels: [{ connectionId: conn }] });
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING id", [postId, daysAgo]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING id", [postId, daysAgo]);
       const id = rows[0]?.id;
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, 'old', '{\"reach\": 1}', now() - interval '2 days')", [o.orgId, id]);
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'new', $3)", [o.orgId, id, JSON.stringify(metrics)]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, 'old', '{\"reach\": 1}', now() - interval '2 days')", [o.orgId, id]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'new', $3)", [o.orgId, id, JSON.stringify(metrics)]);
       if (clicks !== undefined) {
         const link = await c.query<{ id: string }>(
-          "INSERT INTO crove_social.short_link (org_id, code, variant_id, revision, post_id, target_url) VALUES ($1, $2, $3, 1, $4, 'https://shop.example/') RETURNING id",
+          "INSERT INTO ludy_social.short_link (org_id, code, variant_id, revision, post_id, target_url) VALUES ($1, $2, $3, 1, $4, 'https://shop.example/') RETURNING id",
           [o.orgId, randomUUID().replace(/-/g, '').slice(0, 12), id, postId],
         );
         for (const [ago, n] of Object.entries(clicks)) {
-          await c.query('INSERT INTO crove_social.short_link_click (org_id, short_link_id, day, clicks) VALUES ($1, $2, current_date - $3::int, $4)', [o.orgId, link.rows[0]?.id, Number(ago), n]);
+          await c.query('INSERT INTO ludy_social.short_link_click (org_id, short_link_id, day, clicks) VALUES ($1, $2, current_date - $3::int, $4)', [o.orgId, link.rows[0]?.id, Number(ago), n]);
         }
       }
     });
@@ -223,7 +223,7 @@ suite('social metrics against the window before (#947)', () => {
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, contentType],
         );
         const { rows } = await c.query<{ id: string }>(
-          "UPDATE crove_social.post_variant SET provider = 'instagram', external_post_id = '17900000000000001', media = $2, settings = $3 WHERE post_id = $1 RETURNING id",
+          "UPDATE ludy_social.post_variant SET provider = 'instagram', external_post_id = '17900000000000001', media = $2, settings = $3 WHERE post_id = $1 RETURNING id",
           [postId, JSON.stringify([{ fileId }]), JSON.stringify(settings)],
         );
         return rows[0]?.id as string;

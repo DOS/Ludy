@@ -53,7 +53,7 @@ async function copyTranscript(ctx: CommandContext, input: { meetingId: string; r
   const json = JSON.stringify(ordered);
   if (Buffer.byteLength(json, 'utf8') > TRANSCRIPT_ROW_BYTES_MAX) throw new DomainError('TRANSLATION_TOO_LARGE', 422, 'The translation is larger than a row holds');
   await ctx.trx
-    .deleteFrom('crove_meetings.translation')
+    .deleteFrom('ludy_meetings.translation')
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', input.meetingId)
     .where('member_user_id', '=', userId)
@@ -62,7 +62,7 @@ async function copyTranscript(ctx: CommandContext, input: { meetingId: string; r
     .where('source_stage', '=', body.stage)
     .execute();
   await ctx.trx
-    .insertInto('crove_meetings.translation')
+    .insertInto('ludy_meetings.translation')
     .values({
       org_id: ctx.orgId,
       meeting_id: input.meetingId,
@@ -97,7 +97,7 @@ export const translationCopyResult = defineCommand({
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The meeting row is held FOR SHARE (as meetings.summary.start does), so the erasure of a person's data, which holds it FOR NO KEY UPDATE, and this copy serialize: either the copy
     // commits first and the erasure then drops its row, or the erasure commits first and the copy re-reads the redacted original, whose hash no longer matches.
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     // The member's own result, read in the member's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
     const found = await ctx
       .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId: input.runId })
@@ -137,7 +137,7 @@ export const translationCopyResult = defineCommand({
     }
     // One translation for the member, meeting, stage and language: a new one replaces the earlier (the member asked again), and the model's text stays tainted.
     await ctx.trx
-      .deleteFrom('crove_meetings.translation')
+      .deleteFrom('ludy_meetings.translation')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('member_user_id', '=', userId)
@@ -146,7 +146,7 @@ export const translationCopyResult = defineCommand({
       .where('source_stage', '=', body.stage)
       .execute();
     await ctx.trx
-      .insertInto('crove_meetings.translation')
+      .insertInto('ludy_meetings.translation')
       .values({
         org_id: ctx.orgId,
         meeting_id: input.meetingId,
@@ -176,7 +176,7 @@ export async function dropDraftTranslationsForMember(
   memberUserId: string,
 ): Promise<number> {
   const res = await trx
-    .deleteFrom('crove_meetings.translation')
+    .deleteFrom('ludy_meetings.translation')
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
     .where('member_user_id', '=', memberUserId)

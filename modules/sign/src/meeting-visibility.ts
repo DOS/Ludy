@@ -35,7 +35,7 @@ export async function assertCanCreateMeetingMinutesEnvelope(
   }
 
   const { rows } = await sql<{ state: number }>`
-    SELECT crove_sign.check_meeting_minutes_source(${sourceId}::uuid) AS state
+    SELECT ludy_sign.check_meeting_minutes_source(${sourceId}::uuid) AS state
   `.execute(ctx.trx);
   const state = Number(rows[0]?.state ?? 0);
   if (state === 0) {
@@ -61,7 +61,7 @@ export async function canAccessMeetingMinutesEnvelopeRow(
   if (!row.source_id) return false;
 
   const { rows } = await sql<{ allowed: boolean }>`
-    SELECT crove_sign.can_access_meeting_minutes_envelope(
+    SELECT ludy_sign.can_access_meeting_minutes_envelope(
       ${ctx.orgId}::uuid,
       ${row.source_id}::uuid,
       ${row.created_by}::uuid
@@ -81,9 +81,9 @@ export async function assertCanAccessMeetingMinutesEnvelopeRow(
 }
 
 export function applyMeetingMinutesVisibilityFilter<O>(
-  query: SelectQueryBuilder<Database, 'crove_sign.envelope', O>,
+  query: SelectQueryBuilder<Database, 'ludy_sign.envelope', O>,
   ctx: Pick<QueryContext, 'actor'>,
-): SelectQueryBuilder<Database, 'crove_sign.envelope', O> {
+): SelectQueryBuilder<Database, 'ludy_sign.envelope', O> {
   if (ctx.actor.type === 'system') return query;
   if (ctx.actor.type !== 'user') {
     return query.where('source_kind', '!=', 'meeting_minutes');
@@ -91,7 +91,7 @@ export function applyMeetingMinutesVisibilityFilter<O>(
   return query.where((eb) =>
     eb.or([
       eb('source_kind', '!=', 'meeting_minutes'),
-      sql<boolean>`crove_sign.can_access_meeting_minutes_envelope(${eb.ref('org_id')}, ${eb.ref('source_id')}, ${eb.ref('created_by')})`,
+      sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope(${eb.ref('org_id')}, ${eb.ref('source_id')}, ${eb.ref('created_by')})`,
     ]),
   );
 }

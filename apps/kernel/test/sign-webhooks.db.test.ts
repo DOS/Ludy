@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PostgreSQL 17 integration tests for eSign Slice 5b outbound HMAC webhooks (#4440):
-//   - MACHINERY isolation (zero login-role grants on crove_sign.webhook / webhook_delivery; ludy_app denied webhook_target)
+//   - MACHINERY isolation (zero login-role grants on ludy_sign.webhook / webhook_delivery; ludy_app denied webhook_target)
 //   - Owner/admin RBAC + SSRF blocking on create & update + 1-time edge secret sealing with zero clear-secret persistence
 //   - 24h dual-secret rotation grace window (v1=<new>,v1=<old>) and grace expiry
 //   - All 5 lifecycle events (sent via send & public direct start, signer.signed, completed with cert/SHA-256, declined, expired) + ping
@@ -390,7 +390,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     const tableGrants = await adminSql<{ role: string; tbl: string; op: string }>(
       `SELECT r AS role, t AS tbl, p AS op
        FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r,
-            unnest(ARRAY['crove_sign.webhook', 'crove_sign.webhook_delivery']) t,
+            unnest(ARRAY['ludy_sign.webhook', 'ludy_sign.webhook_delivery']) t,
             unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
        WHERE has_table_privilege(r, t, p)`,
     );
@@ -399,11 +399,11 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     const workerOnlyFns = await adminSql<{ fn: string }>(
       `SELECT f AS fn
        FROM unnest(ARRAY[
-         'crove_sign.webhook_open(integer)',
-         'crove_sign.webhook_delivery_get(uuid, uuid)',
-         'crove_sign.webhook_target(uuid)',
-         'crove_sign.webhook_touch(uuid)',
-         'crove_sign.webhook_record(uuid, text, integer)'
+         'ludy_sign.webhook_open(integer)',
+         'ludy_sign.webhook_delivery_get(uuid, uuid)',
+         'ludy_sign.webhook_target(uuid)',
+         'ludy_sign.webhook_touch(uuid)',
+         'ludy_sign.webhook_record(uuid, text, integer)'
        ]) f
        WHERE has_function_privilege('ludy_app', f, 'EXECUTE')`,
     );
@@ -456,10 +456,10 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     expect(listed.body.items).toHaveLength(1);
     expect(JSON.stringify(listed.body)).not.toContain(firstSecret);
 
-    // Neither crove_sign.webhook, audit_event, outbox_event, nor idempotency_key contains the clear secret.
+    // Neither ludy_sign.webhook, audit_event, outbox_event, nor idempotency_key contains the clear secret.
     const dbLeakCheck = await adminSql<{ hit: boolean }>(
       `SELECT EXISTS (
-         SELECT 1 FROM crove_sign.webhook WHERE org_id = $1::uuid AND (secret_envelope LIKE '%' || $2 || '%' OR COALESCE(previous_secret_envelope, '') LIKE '%' || $2 || '%')
+         SELECT 1 FROM ludy_sign.webhook WHERE org_id = $1::uuid AND (secret_envelope LIKE '%' || $2 || '%' OR COALESCE(previous_secret_envelope, '') LIKE '%' || $2 || '%')
        ) OR EXISTS (
          SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1::uuid AND detail::text LIKE '%' || $2 || '%'
        ) OR EXISTS (
@@ -527,7 +527,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
 
     // Expire the 24h grace window and confirm previous secret is no longer returned by sign.hook.target.
     await adminSql(
-      `UPDATE crove_sign.webhook SET previous_expires_at = now() - interval '1 minute' WHERE org_id = $1::uuid AND id = $2::uuid`,
+      `UPDATE ludy_sign.webhook SET previous_expires_at = now() - interval '1 minute' WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, webhookId],
     );
     const targetAfterGrace = await workerRuntime.query<{
@@ -553,7 +553,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
       { actor: { type: 'system', component: 'sign.hook' }, orgId: org.orgId },
     );
     const settledPing = await adminSql<{ status: string; payload_json: Record<string, unknown> | null; last_code: number }>(
-      `SELECT status, payload_json, last_code FROM crove_sign.webhook_delivery WHERE org_id = $1::uuid AND id = $2::uuid`,
+      `SELECT status, payload_json, last_code FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, ping1.body.deliveryId],
     );
     expect(settledPing.rows[0]?.status).toBe('sent');
@@ -608,7 +608,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     const sent3 = await rpc('sign/envelope/send', owner, { envelopeId: env3.envelopeId });
     expect(sent3.status).toBe(200);
     await adminSql(
-      `UPDATE crove_sign.envelope SET expires_at = now() - interval '5 minutes' WHERE org_id = $1::uuid AND id = $2::uuid`,
+      `UPDATE ludy_sign.envelope SET expires_at = now() - interval '5 minutes' WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, env3.envelopeId],
     );
     const expiredCount = await sweepSignExpire({ workerDb, runtime: workerRuntime });
@@ -659,7 +659,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     expect(tplFieldsRes.status).toBe(200);
     // Ensure template inspect_status = 'passed' and status = 'active'
     await adminSql(
-      `UPDATE crove_sign.template
+      `UPDATE ludy_sign.template
        SET inspect_status = 'passed', page_count = 1, page_dimensions_json = '[{"pageNumber":1,"widthPt":595,"heightPt":842}]'::jsonb
        WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, templateId],
@@ -699,7 +699,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
       payload_json: Record<string, unknown>;
     }>(
       `SELECT envelope_id, event_type, payload_json
-       FROM crove_sign.webhook_delivery
+       FROM ludy_sign.webhook_delivery
        WHERE org_id = $1::uuid AND status = 'queued'
        ORDER BY created_at ASC`,
       [org.orgId],
@@ -749,7 +749,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     for (const badKey of ['title', 'email', 'phone', 'token', 'otp', 'pdfBase64']) {
       await expect(
         adminSql(
-          `INSERT INTO crove_sign.webhook_delivery (org_id, id, webhook_id, envelope_id, event_type, status, payload_json)
+          `INSERT INTO ludy_sign.webhook_delivery (org_id, id, webhook_id, envelope_id, event_type, status, payload_json)
            VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'sign.envelope.sent', 'queued', $5::jsonb)`,
           [
             org.orgId,
@@ -774,7 +774,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
   it('strictly excludes hr_contract and meeting_minutes envelopes from webhook enqueueing', async () => {
     const beforeCount = (
       await adminSql<{ n: number }>(
-        `SELECT count(*)::int AS n FROM crove_sign.webhook_delivery WHERE org_id = $1::uuid`,
+        `SELECT count(*)::int AS n FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid`,
         [org.orgId],
       )
     ).rows[0]!.n;
@@ -792,7 +792,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
       const envId = randomUUID();
       const signerId = randomUUID();
       await adminSql(
-        `INSERT INTO crove_sign.envelope (
+        `INSERT INTO ludy_sign.envelope (
            org_id, id, title, status, routing_mode, source_kind, source_id,
            source_file_id, source_storage_key, source_generation, source_sha256,
            inspect_status, page_count, page_dimensions_json, created_by
@@ -804,27 +804,27 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
         [org.orgId, envId, sourceKind, sourceId, owner.userId, fileId],
       );
       await adminSql(
-        `INSERT INTO crove_sign.signer (org_id, id, envelope_id, routing_order, signer_role, role_label, name, delivery_mode, status)
+        `INSERT INTO ludy_sign.signer (org_id, id, envelope_id, routing_order, signer_role, role_label, name, delivery_mode, status)
          VALUES ($1::uuid, $2::uuid, $3::uuid, 1, 'approver', 'Approver', 'Approver', 'link', 'waiting')`,
         [org.orgId, signerId, envId],
       );
       // Direct SQL enqueue helper call inside user context must return 0 for both confidential source kinds.
       const enqueued = await adminSql<{ n: number }>(
-        `SELECT count(*)::int AS n FROM crove_sign.webhook_delivery WHERE org_id = $1::uuid AND envelope_id = $2::uuid`,
+        `SELECT count(*)::int AS n FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid AND envelope_id = $2::uuid`,
         [org.orgId, envId],
       );
       expect(enqueued.rows[0]?.n).toBe(0);
     }
 
-    // Also invoke crove_sign.webhook_enqueue_event inside an active user context for both confidential envelopes!
+    // Also invoke ludy_sign.webhook_enqueue_event inside an active user context for both confidential envelopes!
     const confRows = await adminSql<{ id: string }>(
-      `SELECT id FROM crove_sign.envelope WHERE org_id = $1::uuid AND source_kind IN ('hr_contract', 'meeting_minutes')`,
+      `SELECT id FROM ludy_sign.envelope WHERE org_id = $1::uuid AND source_kind IN ('hr_contract', 'meeting_minutes')`,
       [org.orgId],
     );
     expect(confRows.rows).toHaveLength(2);
     for (const r of confRows.rows) {
       await adminSql(
-        `UPDATE crove_sign.envelope
+        `UPDATE ludy_sign.envelope
          SET status = 'sent', expires_at = now() - interval '1 minute'
          WHERE org_id = $1::uuid AND id = $2::uuid`,
         [org.orgId, r.id],
@@ -835,7 +835,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
 
     const afterCount = (
       await adminSql<{ n: number }>(
-        `SELECT count(*)::int AS n FROM crove_sign.webhook_delivery WHERE org_id = $1::uuid`,
+        `SELECT count(*)::int AS n FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid`,
         [org.orgId],
       )
     ).rows[0]!.n;
@@ -855,7 +855,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
 
     // Backdate failing_since beyond 7 days so the next terminal failure auto-pauses the webhook.
     await adminSql(
-      `UPDATE crove_sign.webhook
+      `UPDATE ludy_sign.webhook
        SET failing_since = now() - interval '8 days', consecutive_failures = 5
        WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, webhookId],
@@ -886,7 +886,7 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     // Turn off sign app on the tenant (ADR-0053) -> non-runsWhenOff queries refuse, while sign.hook.record STILL succeeds!
     // Backdate earlier ping so we can enqueue one fresh queued delivery after re-enabling.
     await adminSql(
-      `UPDATE crove_sign.webhook_delivery SET created_at = now() - interval '2 minutes' WHERE org_id = $1::uuid AND event_type = 'ping'`,
+      `UPDATE ludy_sign.webhook_delivery SET created_at = now() - interval '2 minutes' WHERE org_id = $1::uuid AND event_type = 'ping'`,
       [org.orgId],
     );
     const queuedForOff = await rpc<SignWebhookPingResult>('sign/webhook/ping', owner, {
@@ -912,12 +912,12 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     );
     expect(offRecorded.recorded).toBe(true);
     const droppedRow = await adminSql<{ status: string; payload_json: unknown }>(
-      `SELECT status, payload_json FROM crove_sign.webhook_delivery WHERE org_id = $1::uuid AND id = $2::uuid`,
+      `SELECT status, payload_json FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, queuedForOff.body.deliveryId],
     );
     expect(droppedRow.rows[0]).toEqual({ status: 'dropped', payload_json: null });
 
-    // Org offboarding & purge deletes both crove_sign.webhook_delivery and crove_sign.webhook rows cleanly.
+    // Org offboarding & purge deletes both ludy_sign.webhook_delivery and ludy_sign.webhook rows cleanly.
     const dayMs = 24 * 60 * 60 * 1000;
     const purgeSetup = new pg.Client({ connectionString: adminUrl });
     await purgeSetup.connect();
@@ -956,8 +956,8 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
 
     const leftAfterPurge = await adminSql<{ wh: number; del: number }>(
       `SELECT
-         (SELECT count(*)::int FROM crove_sign.webhook WHERE org_id = $1::uuid) AS wh,
-         (SELECT count(*)::int FROM crove_sign.webhook_delivery WHERE org_id = $1::uuid) AS del`,
+         (SELECT count(*)::int FROM ludy_sign.webhook WHERE org_id = $1::uuid) AS wh,
+         (SELECT count(*)::int FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid) AS del`,
       [org.orgId],
     );
     expect(leftAfterPurge.rows[0]).toEqual({ wh: 0, del: 0 });

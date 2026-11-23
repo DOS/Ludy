@@ -123,7 +123,7 @@ const none = (reason: string): LaunchBegin => ({ action: 'none', reason });
 const launchColumns = ['id', 'ad_account_id', 'draft_id', 'plan_hash', 'tag', 'state', 'attempt', 'step', 'currency', 'start_on', 'end_on', 'commit_until', 'legal_entity_id', 'retry_requested_at'] as const;
 export const launchSelect = (ctx: Db) =>
   ctx.trx
-    .selectFrom('crove_ads.ad_launch')
+    .selectFrom('ludy_ads.ad_launch')
     .select([...launchColumns, sql<string>`daily_budget::text`.as('daily_budget'), sql<string>`start_on::text`.as('start_text'), sql<string>`end_on::text`.as('end_text'), sql<string | null>`commit_until::text`.as('commit_text')])
     .where('org_id', '=', ctx.orgId);
 
@@ -131,7 +131,7 @@ export const launchSelect = (ctx: Db) =>
 // every command takes), with the write connection's provider and state.
 export async function launchAccountOf(ctx: Db, adAccountId: string) {
   const account = await ctx.trx
-    .selectFrom('crove_ads.ad_account')
+    .selectFrom('ludy_ads.ad_account')
     .select(['id', 'currency', 'time_zone', 'write_enabled', 'write_connection_id', 'external_account_id', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', adAccountId)
@@ -151,10 +151,10 @@ interface LaunchUpdate {
   commit_until?: null;
 }
 export async function setLaunch(ctx: Db, launchId: string, values: LaunchUpdate): Promise<void> {
-  await ctx.trx.updateTable('crove_ads.ad_launch').set(values).where('org_id', '=', ctx.orgId).where('id', '=', launchId).execute();
+  await ctx.trx.updateTable('ludy_ads.ad_launch').set(values).where('org_id', '=', ctx.orgId).where('id', '=', launchId).execute();
 }
 
-// The moves of the writer, the system's, with what the database holds them to (crove_ads.launch_guard): a launch that never activated anything commits nothing when
+// The moves of the writer, the system's, with what the database holds them to (ludy_ads.launch_guard): a launch that never activated anything commits nothing when
 // it ends, because nothing ran.
 const failLaunch = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'failed', stop_reason: reason, commit_until: null });
 const stopLaunch = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'stopped', stop_reason: reason, commit_until: null });
@@ -315,7 +315,7 @@ export const adsLaunchBegin = defineCommand({
     }
     // The retry: the request of the person is taken, and the launch runs again as the next attempt (the database counts it, and clears the request in the same statement).
     if (launch.state === 'needs_attention') {
-      const { rows: taken } = await sql<{ attempt: number | null }>`SELECT crove_ads.launch_take_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS attempt`.execute(ctx.trx);
+      const { rows: taken } = await sql<{ attempt: number | null }>`SELECT ludy_ads.launch_take_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS attempt`.execute(ctx.trx);
       if (taken[0]?.attempt == null) return none('settled');
       launch.attempt = taken[0].attempt;
       launch.state = 'launching';
@@ -323,7 +323,7 @@ export const adsLaunchBegin = defineCommand({
     }
 
     // Which object is next: the first of the plan's steps that has no recorded object.
-    const objects = await ctx.trx.selectFrom('crove_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
+    const objects = await ctx.trx.selectFrom('ludy_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
     const idOf = new Map(objects.map((o) => [o.slot, o.external_id]));
     const next = launchSteps(plan.variants.length).find((s) => !idOf.has(s));
     if (!next) {
@@ -482,7 +482,7 @@ export const adsLaunchRecord = defineCommand({
 
     if (result.kind === 'accepted' || result.kind === 'found') {
       await ctx.trx
-        .insertInto('crove_ads.ad_object')
+        .insertInto('ludy_ads.ad_object')
         .values({
           org_id: ctx.orgId,
           ad_account_id: launch.ad_account_id,

@@ -131,7 +131,7 @@ suite('social media library on PostgreSQL (S9)', () => {
     const conn = await connection(o);
     const { postId } = await rt.execute<{ postId: string }>('social.post.create', { body: 'Bài', channels: [{ connectionId: conn }] }, { actor: asUser(o.owner), orgId: o.orgId });
     await admin((c) =>
-      c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE post_id = $1', [postId, JSON.stringify([{ fileId: kept, generation: null, altText: null, mime: 'image/jpeg', sizeBytes: 120000 }])]),
+      c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE post_id = $1', [postId, JSON.stringify([{ fileId: kept, generation: null, altText: null, mime: 'image/jpeg', sizeBytes: 120000 }])]),
     );
     expect((await list(o)).items.map((i) => i.usedIn)).toEqual([1]);
     expect((await usage(o, kept)).map((u) => u.postId)).toEqual([postId]);

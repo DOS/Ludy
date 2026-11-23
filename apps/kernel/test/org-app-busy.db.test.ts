@@ -108,11 +108,11 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
   const asStaff = <T,>(fn: (c: pg.Client) => Promise<T>) =>
     admin(async (c) => {
       await c.query('SET session_replication_role = replica');
-      await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER USER');
+      await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER USER');
       try {
         return await fn(c);
       } finally {
-        await c.query('ALTER TABLE crove_ads.ad_launch ENABLE TRIGGER USER');
+        await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE TRIGGER USER');
         await c.query('SET session_replication_role = DEFAULT');
       }
     });
@@ -126,13 +126,13 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     const meetingId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_meetings.meeting (org_id, id, recorder_user_id, title, consent_method, consent_confirmed_by, audio_retention_date, text_retention_date, started_at, visibility)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, recorder_user_id, title, consent_method, consent_confirmed_by, audio_retention_date, text_retention_date, started_at, visibility)
          VALUES ($1, $2, $3, 'Họp đang ghi', 'told_at_start', $3, current_date + 30, current_date + 365, now(), 'attendees')`,
         [orgId, meetingId, recorder],
       ),
     );
     expect(await refused('meetings')).toMatchObject({ code: 'APP_BUSY', details: { module: 'meetings', reasons: ['recording'] } });
-    await admin((c) => c.query('UPDATE crove_meetings.meeting SET ended_at = now() WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
+    await admin((c) => c.query('UPDATE ludy_meetings.meeting SET ended_at = now() WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
     expect(await refused('meetings')).toBeNull();
     await setApp('meetings', true);
   });
@@ -157,7 +157,7 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     await expect(
       db.transaction().execute(async (trx) => {
         const { sql } = await import('kysely');
-        await sql`SELECT crove_meetings.org_busy_reasons(${randomUUID()}::uuid, 4)`.execute(trx);
+        await sql`SELECT ludy_meetings.org_busy_reasons(${randomUUID()}::uuid, 4)`.execute(trx);
       }),
     ).rejects.toBeTruthy();
   });
@@ -168,7 +168,7 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     const finished = ['stopped', 'failed', 'cancelled'].includes(state);
     await asStaff((c) =>
       c.query(
-        `INSERT INTO crove_ads.ad_launch (org_id, id, ad_account_id, legal_entity_id, draft_id, proposal_id, plan_hash, state, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, started_at, finished_at)
+        `INSERT INTO ludy_ads.ad_launch (org_id, id, ad_account_id, legal_entity_id, draft_id, proposal_id, plan_hash, state, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, started_at, finished_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'VND', 100000, current_date, current_date, 100000, $9, $10, now(), $11)`,
         [orgId, id, randomUUID(), randomUUID(), randomUUID(), randomUUID(), `sha256:${'b'.repeat(64)}`, state, finished ? null : new Date().toISOString().slice(0, 10), owner, finished ? new Date().toISOString() : null],
       ),
@@ -186,13 +186,13 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
       ]),
     );
   };
-  const windDown = (id: string) => asStaff((c) => c.query('UPDATE crove_ads.ad_launch SET wound_down_at = now() WHERE org_id = $1 AND id = $2', [orgId, id]));
+  const windDown = (id: string) => asStaff((c) => c.query('UPDATE ludy_ads.ad_launch SET wound_down_at = now() WHERE org_id = $1 AND id = $2', [orgId, id]));
 
   it('keeps Ads on while a campaign runs, and says so, until it is stopped and wound down', async () => {
     const id = await launch('live');
     expect(await refused('ads')).toMatchObject({ code: 'APP_BUSY', details: { module: 'ads', reasons: ['campaign_running'] } });
     // Stopped, with its objects not yet paused at the platform: still spend to stop.
-    await asStaff((c) => c.query("UPDATE crove_ads.ad_launch SET state = 'stopped', finished_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]));
+    await asStaff((c) => c.query("UPDATE ludy_ads.ad_launch SET state = 'stopped', finished_at = now() WHERE org_id = $1 AND id = $2", [orgId, id]));
     expect(await refused('ads')).toMatchObject({ code: 'APP_BUSY', details: { reasons: ['wind_down_open'] } });
     await windDown(id);
     expect(await refused('ads')).toBeNull();
@@ -204,14 +204,14 @@ suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
     await call(live, 'activate_a');
     expect(await refused('ads')).toMatchObject({ code: 'APP_BUSY', details: { reasons: ['campaign_running', 'activation_open'] } });
     // The launch is wound down: its unsettled call is history (some paths leave one for good) and does not keep the app on.
-    await asStaff((c) => c.query("UPDATE crove_ads.ad_launch SET state = 'stopped', finished_at = now(), wound_down_at = now() WHERE org_id = $1 AND id = $2", [orgId, live]));
+    await asStaff((c) => c.query("UPDATE ludy_ads.ad_launch SET state = 'stopped', finished_at = now(), wound_down_at = now() WHERE org_id = $1 AND id = $2", [orgId, live]));
     expect(await refused('ads')).toBeNull();
     await setApp('ads', true);
     // An unsettled call of an open launch counts as another call when it is not an activation.
     const open = await launch('needs_attention');
     await call(open, 'campaign', 'ambiguous');
     expect(await refused('ads')).toMatchObject({ details: { reasons: ['campaign_running', 'call_open'] } });
-    await asStaff((c) => c.query("UPDATE crove_ads.ad_launch SET state = 'failed', finished_at = now() WHERE org_id = $1 AND id = $2", [orgId, open]));
+    await asStaff((c) => c.query("UPDATE ludy_ads.ad_launch SET state = 'failed', finished_at = now() WHERE org_id = $1 AND id = $2", [orgId, open]));
     expect(await refused('ads')).toBeNull();
     await setApp('ads', true);
   });

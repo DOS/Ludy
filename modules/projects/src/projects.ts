@@ -75,8 +75,8 @@ import { tasksFromNoteConfirm, tasksFromNoteStart } from './tasks-from-note.ts';
 export { READERS, loadProject, userOf };
 
 const TABLES = projectsManifest.tables;
-const PROJECT = TABLES.crove_projects.project;
-const TIME_ENTRY_STOP_WRITE = tableWrite(TABLES, 'crove_projects', 'time_entry', ['ended_at', 'duration_minutes', 'updated_at']);
+const PROJECT = TABLES.ludy_projects.project;
+const TIME_ENTRY_STOP_WRITE = tableWrite(TABLES, 'ludy_projects', 'time_entry', ['ended_at', 'duration_minutes', 'updated_at']);
 
 type TaskStatus = ProjectTaskCard['status'];
 
@@ -89,7 +89,7 @@ export const projectCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project', [
+    tableWrite(TABLES, 'ludy_projects', 'project', [
       'org_id',
       'name',
       'description',
@@ -100,7 +100,7 @@ export const projectCreate = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
   ],
   handler: async (ctx, input): Promise<{ projectId: string }> => {
     const userId = userOf(ctx.actor);
@@ -115,7 +115,7 @@ export const projectCreate = defineCommand({
     }
     const description = descriptionOf(input.description);
     const created = await ctx.trx
-      .insertInto('crove_projects.project')
+      .insertInto('ludy_projects.project')
       .values({
         org_id: ctx.orgId,
         name: input.name,
@@ -132,7 +132,7 @@ export const projectCreate = defineCommand({
 
     if (memberIds.length > 0) {
       await ctx.trx
-        .insertInto('crove_projects.project_member')
+        .insertInto('ludy_projects.project_member')
         .values(
           memberIds.map((uid) => ({
             org_id: ctx.orgId,
@@ -165,7 +165,7 @@ export const projectUpdate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project', [
+    tableWrite(TABLES, 'ludy_projects', 'project', [
       'name',
       'description',
       'visibility',
@@ -174,7 +174,7 @@ export const projectUpdate = defineCommand({
       'points_enabled',
       'updated_at',
     ]),
-    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
     TIME_ENTRY_STOP_WRITE,
   ],
   target: projectTarget,
@@ -202,7 +202,7 @@ export const projectUpdate = defineCommand({
     if (changed.length > 0) {
       if (row.visibility !== 'private' && nextVisibility === 'private') {
         const { rows: accRows } = await sql<{ has_acceptance: boolean }>`
-          SELECT crove_projects.has_project_acceptance_envelope(${ctx.orgId}::uuid, ${row.id}::uuid) AS has_acceptance
+          SELECT ludy_projects.has_project_acceptance_envelope(${ctx.orgId}::uuid, ${row.id}::uuid) AS has_acceptance
         `.execute(ctx.trx);
         if (accRows[0]?.has_acceptance) {
           throw new DomainError(
@@ -212,7 +212,7 @@ export const projectUpdate = defineCommand({
           );
         }
         const linkedBoard = await ctx.trx
-          .selectFrom('crove_projects.roadmap_board')
+          .selectFrom('ludy_projects.roadmap_board')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('project_id', '=', row.id)
@@ -232,7 +232,7 @@ export const projectUpdate = defineCommand({
         });
       }
       await ctx.trx
-        .updateTable('crove_projects.project')
+        .updateTable('ludy_projects.project')
         .set({
           name: nextName,
           description: nextDescription,
@@ -271,7 +271,7 @@ export const projectSetStatus = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; status: ProjectStatus }> => {
     const userId = userOf(ctx.actor);
@@ -283,7 +283,7 @@ export const projectSetStatus = defineCommand({
         await stopRunningProjectTimers(ctx, row.id, { kind: 'all' });
       }
       await ctx.trx
-        .updateTable('crove_projects.project')
+        .updateTable('ludy_projects.project')
         .set({ status: input.status, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.id)
@@ -303,7 +303,7 @@ export const projectArchive = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project', ['status', 'updated_at']), TIME_ENTRY_STOP_WRITE],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; status: 'archived' }> => {
     const userId = userOf(ctx.actor);
@@ -313,7 +313,7 @@ export const projectArchive = defineCommand({
     if (row.status !== 'archived') {
       await stopRunningProjectTimers(ctx, row.id, { kind: 'all' });
       await ctx.trx
-        .updateTable('crove_projects.project')
+        .updateTable('ludy_projects.project')
         .set({ status: 'archived', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.id)
@@ -334,8 +334,8 @@ export const projectSetOwner = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project', ['owner_user_id', 'updated_at']),
-    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project', ['owner_user_id', 'updated_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; ownerUserId: string }> => {
@@ -360,7 +360,7 @@ export const projectSetOwner = defineCommand({
         );
       }
       await ctx.trx
-        .updateTable('crove_projects.project')
+        .updateTable('ludy_projects.project')
         .set({ owner_user_id: input.ownerUserId, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.id)
@@ -380,7 +380,7 @@ export const projectMemberAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_member', ['org_id', 'project_id', 'user_id', 'created_at'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; userId: string; added: boolean }> => {
     const userId = userOf(ctx.actor);
@@ -390,7 +390,7 @@ export const projectMemberAdd = defineCommand({
     await assertOrgMembers(ctx.trx, ctx.orgId, [input.userId]);
 
     const inserted = await ctx.trx
-      .insertInto('crove_projects.project_member')
+      .insertInto('ludy_projects.project_member')
       .values({
         org_id: ctx.orgId,
         project_id: row.id,
@@ -418,7 +418,7 @@ export const projectMemberRemove = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_member', ['org_id', 'project_id', 'user_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_member', ['org_id', 'project_id', 'user_id']),
     TIME_ENTRY_STOP_WRITE,
   ],
   target: projectTarget,
@@ -436,7 +436,7 @@ export const projectMemberRemove = defineCommand({
     }
 
     const deleted = await ctx.trx
-      .deleteFrom('crove_projects.project_member')
+      .deleteFrom('ludy_projects.project_member')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', row.id)
       .where('user_id', '=', input.userId)
@@ -462,7 +462,7 @@ export const projectTaskAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id', 'added_by', 'created_at'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['org_id', 'project_id', 'task_id', 'added_by', 'created_at'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; added: boolean }> => {
     const userId = userOf(ctx.actor);
@@ -478,7 +478,7 @@ export const projectTaskAdd = defineCommand({
     if (!visibleTask) throw taskNotFound();
 
     const existing = await ctx.trx
-      .selectFrom('crove_projects.project_task')
+      .selectFrom('ludy_projects.project_task')
       .select(['id', 'project_id'])
       .where('org_id', '=', ctx.orgId)
       .where('task_id', '=', input.taskId)
@@ -493,7 +493,7 @@ export const projectTaskAdd = defineCommand({
     }
 
     await ctx.trx
-      .insertInto('crove_projects.project_task')
+      .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: row.id,
@@ -524,11 +524,11 @@ export const projectTaskRemove = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
-    // Removing a task from a project cascades ON DELETE CASCADE to crove_projects.task_dependency.
-    tableWrite(TABLES, 'crove_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
-    // Removing a task from a project clears task_id via ON DELETE SET NULL (task_id) on crove_projects.time_entry.
-    tableWrite(TABLES, 'crove_projects', 'time_entry', ['task_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
+    // Removing a task from a project cascades ON DELETE CASCADE to ludy_projects.task_dependency.
+    tableWrite(TABLES, 'ludy_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
+    // Removing a task from a project clears task_id via ON DELETE SET NULL (task_id) on ludy_projects.time_entry.
+    tableWrite(TABLES, 'ludy_projects', 'time_entry', ['task_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string; removed: boolean }> => {
@@ -545,7 +545,7 @@ export const projectTaskRemove = defineCommand({
     if (!visibleTask) throw taskNotFound();
 
     const existing = await ctx.trx
-      .selectFrom('crove_projects.project_task')
+      .selectFrom('ludy_projects.project_task')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', row.id)
@@ -555,7 +555,7 @@ export const projectTaskRemove = defineCommand({
     let removed = false;
     if (existing) {
       await ctx.trx
-        .deleteFrom('crove_projects.project_task')
+        .deleteFrom('ludy_projects.project_task')
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', row.id)
         .where('task_id', '=', input.taskId)
@@ -578,7 +578,7 @@ export const projectTaskReorder = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['sort_key'])],
+  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['sort_key'])],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectTaskReorderResult> => {
     userOf(ctx.actor);
@@ -595,7 +595,7 @@ export const projectTaskReorder = defineCommand({
 
     const { rows: allRows } = await sql<ProjectOrderRow>`
       SELECT pt.task_id, pt.sort_key
-        FROM crove_projects.project_task pt
+        FROM ludy_projects.project_task pt
         LEFT JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -614,7 +614,7 @@ export const projectTaskReorder = defineCommand({
         : await placeProjectTaskBetween(ctx, row.id, remaining, at, at + 1);
 
     await ctx.trx
-      .updateTable('crove_projects.project_task')
+      .updateTable('ludy_projects.project_task')
       .set({ sort_key: nextKey })
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', row.id)
@@ -633,7 +633,7 @@ export const projectTaskCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   // Calls kernel.task.create via ctx.run (which has no writes declaration), so omits writes to avoid checking
-  // nested ludy_kernel.task / wakeup inserts against a crove_projects-only declaration (human-only command).
+  // nested ludy_kernel.task / wakeup inserts against a ludy_projects-only declaration (human-only command).
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string }> => {
     const userId = userOf(ctx.actor);
@@ -641,7 +641,7 @@ export const projectTaskCreate = defineCommand({
       throw new DomainError('INVALID_DATE_RANGE', 422, 'Ngày bắt đầu không được sau hạn hoàn thành');
     }
     // Check existence/status without a row lock before calling kernel.task.create (which locks ludy_kernel.position),
-    // then lock crove_projects.project afterwards so concurrent task/project writes share the position -> project lock order.
+    // then lock ludy_projects.project afterwards so concurrent task/project writes share the position -> project lock order.
     const preview = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
     assertNotArchived(preview);
     const cycleId = input.cycleId ?? null;
@@ -655,7 +655,7 @@ export const projectTaskCreate = defineCommand({
     let effectiveStatus = input.status ?? 'todo';
     if (input.columnId !== undefined) {
       const requestedColumn = await ctx.trx
-        .selectFrom('crove_projects.project_column')
+        .selectFrom('ludy_projects.project_column')
         .select(['id', 'task_status'])
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', preview.id)
@@ -707,7 +707,7 @@ export const projectTaskCreate = defineCommand({
     }
 
     await ctx.trx
-      .insertInto('crove_projects.project_task')
+      .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: row.id,
@@ -748,7 +748,7 @@ export const projectList = defineQuery({
     }
 
     let q = ctx.trx
-      .selectFrom('crove_projects.project as p')
+      .selectFrom('ludy_projects.project as p')
       .select([
         'p.id',
         'p.name',
@@ -787,7 +787,7 @@ export const projectList = defineQuery({
 
     const { rows: memberCounts } = await sql<{ project_id: string; n: string }>`
       SELECT project_id, pg_catalog.count(*)::text AS n
-        FROM crove_projects.project_member
+        FROM ludy_projects.project_member
        WHERE org_id = ${ctx.orgId}::uuid
          AND project_id = ANY(${projectIds}::uuid[])
        GROUP BY project_id`.execute(ctx.trx);
@@ -798,7 +798,7 @@ export const projectList = defineQuery({
       SELECT pt.project_id,
              pg_catalog.count(*) FILTER (WHERE t.status IN ('todo', 'in_progress', 'waiting', 'in_review'))::text AS open_n,
              pg_catalog.count(*) FILTER (WHERE t.status = 'done')::text AS done_n
-        FROM crove_projects.project_task pt
+        FROM ludy_projects.project_task pt
         JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
          AND pt.project_id = ANY(${projectIds}::uuid[])
@@ -872,7 +872,7 @@ export const projectBoard = defineQuery({
     const profileIds = row.owner_user_id && !memberIds.includes(row.owner_user_id) ? [...memberIds, row.owner_user_id] : memberIds;
 
     const projectMemberRows = await ctx.trx
-      .selectFrom('crove_projects.project_member')
+      .selectFrom('ludy_projects.project_member')
       .select('user_id')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', row.id)
@@ -951,7 +951,7 @@ export const projectBoard = defineQuery({
     }
 
     let taskQuery = ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
+      .selectFrom('ludy_projects.project_task as pt')
       .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
       .select([
         't.id',
@@ -979,7 +979,7 @@ export const projectBoard = defineQuery({
       .where('pt.project_id', '=', row.id);
 
     let countQuery = ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
+      .selectFrom('ludy_projects.project_task as pt')
       .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('pt.org_id', '=', ctx.orgId)
@@ -1002,7 +1002,7 @@ export const projectBoard = defineQuery({
           break;
         case 'upcoming': {
           const upcomingClause = sql<boolean>`EXISTS (
-            SELECT 1 FROM crove_projects.project_cycle pc
+            SELECT 1 FROM ludy_projects.project_cycle pc
              WHERE pc.org_id = pt.org_id
                AND pc.project_id = pt.project_id
                AND pc.id = pt.cycle_id
@@ -1125,7 +1125,7 @@ export const projectUnassignedTasks = defineQuery({
         FROM ludy_kernel.task t
        WHERE t.org_id = ${ctx.orgId}::uuid
          AND NOT EXISTS (
-           SELECT 1 FROM crove_projects.project_task pt
+           SELECT 1 FROM ludy_projects.project_task pt
             WHERE pt.org_id = t.org_id AND pt.task_id = t.id
          )
        ORDER BY CASE WHEN t.status IN ('done', 'cancelled') THEN 1 ELSE 0 END ASC,
@@ -1157,8 +1157,8 @@ export const projectTaskProjects = defineQuery({
     // Join ludy_kernel.task so le_scope RLS filters out tasks outside the caller's legal entities.
     const { rows } = await sql<{ task_id: string; project_id: string; project_name: string }>`
       SELECT pt.task_id, p.id AS project_id, p.name AS project_name
-        FROM crove_projects.project_task pt
-        JOIN crove_projects.project p
+        FROM ludy_projects.project_task pt
+        JOIN ludy_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
         JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
@@ -1183,8 +1183,8 @@ export const projectMemberCompletedTasks = defineQuery({
     userOf(ctx.actor);
     const { rows: countRows } = await sql<{ total_count: number }>`
       SELECT count(*)::int AS total_count
-        FROM crove_projects.project_task pt
-        JOIN crove_projects.project p
+        FROM ludy_projects.project_task pt
+        JOIN ludy_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
         JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
@@ -1214,8 +1214,8 @@ export const projectMemberCompletedTasks = defineQuery({
              p.id AS project_id,
              p.name AS project_name,
              t.updated_at
-        FROM crove_projects.project_task pt
-        JOIN crove_projects.project p
+        FROM ludy_projects.project_task pt
+        JOIN ludy_projects.project p
           ON p.org_id = pt.org_id AND p.id = pt.project_id
         JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id

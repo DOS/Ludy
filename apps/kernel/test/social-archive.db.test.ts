@@ -74,15 +74,15 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
   const restore = (o: Org, user: string, postId: string) => exec<ArchiveResult>(o, user, 'social.post.restore', { postId });
   // A channel moved by hand, as the publisher or the queue leaves it.
   const setStatus = (o: Org, postId: string, status: string, extra = '') =>
-    admin((c) => c.query(`UPDATE crove_social.post_variant SET status = $3${extra} WHERE org_id = $1 AND post_id = $2`, [o.orgId, postId, status]));
+    admin((c) => c.query(`UPDATE ludy_social.post_variant SET status = $3${extra} WHERE org_id = $1 AND post_id = $2`, [o.orgId, postId, status]));
   const publish = async (o: Org, postId: string, publishedAt = new Date()) => {
     await admin(async (c) => {
-      await c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = $3, external_post_id = 'ext-' || id::text WHERE org_id = $1 AND post_id = $2", [o.orgId, postId, publishedAt]);
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = $3, external_post_id = 'ext-' || id::text WHERE org_id = $1 AND post_id = $2", [o.orgId, postId, publishedAt]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
     });
   };
   const row = (o: Org, postId: string) =>
-    admin(async (c) => (await c.query<{ archived_at: Date | null; archived_by: string | null; evergreen_days: number | null; recurrence: unknown }>('SELECT archived_at, archived_by, evergreen_days, recurrence FROM crove_social.post WHERE org_id = $1 AND id = $2', [o.orgId, postId])).rows[0]);
+    admin(async (c) => (await c.query<{ archived_at: Date | null; archived_by: string | null; evergreen_days: number | null; recurrence: unknown }>('SELECT archived_at, archived_by, evergreen_days, recurrence FROM ludy_social.post WHERE org_id = $1 AND id = $2', [o.orgId, postId])).rows[0]);
   const audits = (o: Org, command: string) =>
     admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>("SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
   const sorted = (ids: readonly string[]) => [...ids].sort();
@@ -243,14 +243,14 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     // A takedown asked for and not answered yet (#860).
     const asked = await post(o, o.member, 'Đang chờ gỡ');
     await publish(o, asked);
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET remove_requested_at = now(), removed_by = $2 WHERE org_id = $1 AND post_id = $3', [o.orgId, o.owner, asked]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET remove_requested_at = now(), removed_by = $2 WHERE org_id = $1 AND post_id = $3', [o.orgId, o.owner, asked]));
     await expect(archive(o, o.owner, asked)).rejects.toMatchObject({ code: 'POST_ARCHIVE_REMOVING' });
     expect((await exec<BulkArchiveResult>(o, o.owner, 'social.post.bulk_archive', { postIds: [asked] })).skipped).toEqual([{ postId: asked, reason: 'removing' }]);
     // A planned takedown (#861) the worker will still ask for.
     const planned = await post(o, o.member, 'Sẽ tự gỡ');
     await publish(o, planned, new Date(Date.now() - 3_600_000));
     await admin((c) =>
-      c.query("UPDATE crove_social.post_variant SET settings = settings || jsonb_build_object('removeAt', $3::text) WHERE org_id = $1 AND post_id = $2", [o.orgId, planned, new Date(Date.now() + DAY).toISOString()]),
+      c.query("UPDATE ludy_social.post_variant SET settings = settings || jsonb_build_object('removeAt', $3::text) WHERE org_id = $1 AND post_id = $2", [o.orgId, planned, new Date(Date.now() + DAY).toISOString()]),
     );
     await expect(archive(o, o.owner, planned)).rejects.toMatchObject({ code: 'POST_ARCHIVE_REMOVING' });
     // Published, failed, cancelled and in review are fine.
@@ -310,7 +310,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     const series = await post(o, o.member, 'Bài lặp hằng tuần');
     await publish(o, series, new Date(Date.now() - DAY));
     await exec(o, o.member, 'social.post.recurrence_set', { postId: series, recurrence: { everyWeeks: 1, weekdays: [1, 3], time: '09:00', until: null, times: null } });
-    const due = (fn: string) => admin(async (c) => (await c.query<{ post_id: string }>(`SELECT post_id FROM crove_social.${fn}(500, ARRAY[]::uuid[])`)).rows.map((r) => r.post_id));
+    const due = (fn: string) => admin(async (c) => (await c.query<{ post_id: string }>(`SELECT post_id FROM ludy_social.${fn}(500, ARRAY[]::uuid[])`)).rows.map((r) => r.post_id));
     expect(await due('evergreen_due')).toContain(evergreen);
     expect(await due('recurring_due')).toContain(series);
 
@@ -344,10 +344,10 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     const otherPlan = (await exec<{ linkId: string }>(o, o.owner, 'social.review_link.create_plan', { postIds: [other] })).linkId;
     // An expired or revoked link stays as it was.
     const expired = (await exec<{ linkId: string }>(o, o.owner, 'social.review_link.create', { postId: target })).linkId;
-    await admin((c) => c.query("UPDATE crove_social.review_link SET expires_at = now() - interval '1 minute', created_at = now() - interval '2 days' WHERE id = $1", [expired]));
+    await admin((c) => c.query("UPDATE ludy_social.review_link SET expires_at = now() - interval '1 minute', created_at = now() - interval '2 days' WHERE id = $1", [expired]));
 
     await archive(o, o.member, target);
-    const links = await admin(async (c) => (await c.query<{ id: string; revoked_by: string | null }>('SELECT id, revoked_by FROM crove_social.review_link WHERE org_id = $1', [o.orgId])).rows);
+    const links = await admin(async (c) => (await c.query<{ id: string; revoked_by: string | null }>('SELECT id, revoked_by FROM ludy_social.review_link WHERE org_id = $1', [o.orgId])).rows);
     const revoked = new Map(links.map((l) => [l.id, l.revoked_by]));
     expect(revoked.get(single)).toBe(o.member);
     expect(revoked.get(plan)).toBe(o.member);
@@ -360,10 +360,10 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await expect(exec(o, o.owner, 'social.review_link.create_plan', { postIds: [target, other] })).rejects.toMatchObject({ code: 'POST_ARCHIVED' });
     // A plan from a date range leaves archived posts out.
     const when = new Date(Date.now() + 2 * DAY).toISOString();
-    await admin((c) => c.query('UPDATE crove_social.post SET scheduled_at = $2 WHERE org_id = $1 AND id = ANY($3::uuid[])', [o.orgId, when, [target, other]]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET scheduled_at = $2 WHERE org_id = $1 AND id = ANY($3::uuid[])', [o.orgId, when, [target, other]]));
     const ranged = await exec<{ linkId: string; posts: number }>(o, o.owner, 'social.review_link.create_plan', { range: { from: new Date().toISOString(), to: new Date(Date.now() + 5 * DAY).toISOString() } });
     expect(ranged.posts).toBe(1);
-    const inPlan = await admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM crove_social.review_link_post WHERE link_id = $1', [ranged.linkId])).rows.map((r) => r.post_id));
+    const inPlan = await admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM ludy_social.review_link_post WHERE link_id = $1', [ranged.linkId])).rows.map((r) => r.post_id));
     expect(inPlan).toEqual([other]);
   });
 
@@ -427,9 +427,9 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     // Its review clock moved back as if it went into review days ago (the trigger is skipped for this).
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_social.post_variant SET review_since = now() - interval '3 days' WHERE org_id = $1 AND post_id = $2", [o.orgId, reviewing]);
+      await c.query("UPDATE ludy_social.post_variant SET review_since = now() - interval '3 days' WHERE org_id = $1 AND post_id = $2", [o.orgId, reviewing]);
     });
-    const remindersDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM crove_social.review_reminders_due(1000)')).rows.map((r) => r.post_id));
+    const remindersDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM ludy_social.review_reminders_due(1000)')).rows.map((r) => r.post_id));
     expect(await remindersDue()).toContain(reviewing);
     await expect(worker.execute('social.review.remind', { postId: reviewing }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });
     expect(await remindersDue()).not.toContain(reviewing);
@@ -471,9 +471,9 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     }
     // The client answers yes before the post is archived.
     const { token } = await exec<{ token: string }>(o, o.owner, 'social.review_link.create', { postId: byClient });
-    await admin((c) => c.query('SELECT crove_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', 'approved', null]));
+    await admin((c) => c.query('SELECT ludy_social.review_feedback_add($1, $2, $3, $4)', [token, 'Chị Lan (khách)', 'approved', null]));
     // Archived some other way than the command (it refuses these): the second guard holds on its own.
-    await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $2 WHERE org_id = $1 AND id = ANY($3::uuid[])', [o.orgId, o.owner, [byPolicy, byToggle, byClient]]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET archived_at = now(), archived_by = $2 WHERE org_id = $1 AND id = ANY($3::uuid[])', [o.orgId, o.owner, [byPolicy, byToggle, byClient]]));
 
     const event = await admin(
       async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id,
@@ -487,7 +487,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     expect(await statusOf(byPolicy)).toBe('approved');
     // Nothing went back on the schedule, so nothing is due for the publisher.
     const scheduled = await admin(
-      async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM crove_social.post_variant WHERE org_id = $1 AND post_id = ANY($2::uuid[]) AND status = 'scheduled'", [o.orgId, [byPolicy, byToggle, byClient]])).rows[0]?.n,
+      async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM ludy_social.post_variant WHERE org_id = $1 AND post_id = ANY($2::uuid[]) AND status = 'scheduled'", [o.orgId, [byPolicy, byToggle, byClient]])).rows[0]?.n,
     );
     expect(Number(scheduled)).toBe(0);
   });
@@ -498,14 +498,14 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await publish(o, out);
     await admin((c) =>
       c.query(
-        "UPDATE crove_social.post_variant SET edit_state = 'pending', edit_body = 'Nội dung đã sửa', edit_content_hash = 'sha256:' || repeat('a', 64), edit_requested_at = now(), edit_requested_by = $3 WHERE org_id = $1 AND post_id = $2",
+        "UPDATE ludy_social.post_variant SET edit_state = 'pending', edit_body = 'Nội dung đã sửa', edit_content_hash = 'sha256:' || repeat('a', 64), edit_requested_at = now(), edit_requested_by = $3 WHERE org_id = $1 AND post_id = $2",
         [o.orgId, out, o.owner],
       ),
     );
     await expect(archive(o, o.owner, out)).rejects.toMatchObject({ code: 'POST_ARCHIVE_EDITING' });
     expect((await exec<BulkArchiveResult>(o, o.owner, 'social.post.bulk_archive', { postIds: [out] })).skipped).toEqual([{ postId: out, reason: 'in_flight' }]);
     // Once the platform's answer is in (here: refused), the post may be archived, and is not corrected from the archive.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET edit_state = 'failed', edit_error_code = 'X' WHERE org_id = $1 AND post_id = $2", [o.orgId, out]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET edit_state = 'failed', edit_error_code = 'X' WHERE org_id = $1 AND post_id = $2", [o.orgId, out]));
     await archive(o, o.owner, out);
     const v = (await get(o, o.owner, out)).variants[0] as PostView['variants'][number];
     await expect(exec(o, o.owner, 'social.variant.edit_published', { variantId: v.id, revision: v.revision, body: 'Sửa lại lần nữa' })).rejects.toMatchObject({ code: 'POST_ARCHIVED' });
@@ -553,7 +553,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
 
   it('counts an archived repeat copy as done, so turning the repeats back on is not stalled by it (#1341)', async () => {
     const o = await org();
-    const due = (fn: string) => admin(async (c) => (await c.query<{ post_id: string }>(`SELECT post_id FROM crove_social.${fn}(500, ARRAY[]::uuid[])`)).rows.map((r) => r.post_id));
+    const due = (fn: string) => admin(async (c) => (await c.query<{ post_id: string }>(`SELECT post_id FROM ludy_social.${fn}(500, ARRAY[]::uuid[])`)).rows.map((r) => r.post_id));
     const evergreen = await post(o, o.member, 'Bài đăng lại mãi');
     await publish(o, evergreen, new Date(Date.now() - 80 * DAY));
     await exec(o, o.member, 'social.post.set_evergreen', { postId: evergreen, days: 30 });
@@ -563,7 +563,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await exec(o, o.member, 'social.post.set_evergreen', { postId: evergreen, days: null });
     await archive(o, o.member, repost);
     await exec(o, o.member, 'social.post.set_evergreen', { postId: evergreen, days: 30 });
-    await admin((c) => c.query("UPDATE crove_social.post SET created_at = now() - interval '40 days' WHERE org_id = $1 AND id = $2", [o.orgId, repost]));
+    await admin((c) => c.query("UPDATE ludy_social.post SET created_at = now() - interval '40 days' WHERE org_id = $1 AND id = $2", [o.orgId, repost]));
     expect(await due('evergreen_due')).toContain(evergreen);
     const next = (await worker.execute<{ postId: string | null }>('social.post.repost_evergreen', { postId: evergreen }, { actor: system, orgId: o.orgId })).postId;
     expect(next).toBeTruthy();
@@ -600,7 +600,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await other.connect();
     try {
       await other.query('BEGIN');
-      await other.query('SELECT id FROM crove_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, evergreen]);
+      await other.query('SELECT id FROM ludy_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, evergreen]);
       let settled = false;
       const attempt = archive(o, o.member, repost).finally(() => {
         settled = true;
@@ -616,7 +616,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
       }
       expect(settled).toBe(false);
       expect(blocked).toBe(true);
-      await other.query('UPDATE crove_social.post SET evergreen_days = 30 WHERE org_id = $1 AND id = $2', [o.orgId, evergreen]);
+      await other.query('UPDATE ludy_social.post SET evergreen_days = 30 WHERE org_id = $1 AND id = $2', [o.orgId, evergreen]);
       await other.query('COMMIT');
       await expect(attempt).rejects.toMatchObject({ code: 'POST_ARCHIVE_REPEAT_COPY' });
     } finally {
@@ -645,12 +645,12 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await publish(o, kept, new Date(Date.now() - 7_200_000));
     const { token } = await exec<{ token: string }>(o, o.owner, 'social.calendar_feed.create', {});
     await exec(o, o.owner, 'social.bio.save', { slug: `bio-${randomUUID().slice(0, 8)}`, title: 'Tiệm', buttons: [], showPosts: true, published: true });
-    const slug = await admin(async (c) => (await c.query<{ slug: string }>('SELECT slug FROM crove_social.bio_page WHERE org_id = $1', [o.orgId])).rows[0]?.slug as string);
+    const slug = await admin(async (c) => (await c.query<{ slug: string }>('SELECT slug FROM ludy_social.bio_page WHERE org_id = $1', [o.orgId])).rows[0]?.slug as string);
     // As the API login role, the one the public routes use.
-    const feed = async () => ((await pool.query<{ f: { events: { postId: string }[] } }>('SELECT crove_social.calendar_feed_events($1) AS f', [token])).rows[0]?.f.events ?? []).map((e) => e.postId);
-    const bio = async () => ((await pool.query<{ v: { posts: { postId: string }[] } }>('SELECT crove_social.bio_page_view($1) AS v', [slug])).rows[0]?.v.posts ?? []).map((p) => p.postId);
-    const go = async () => (await pool.query<{ url: string | null }>('SELECT crove_social.bio_page_go($1, $2, false) AS url', [slug, `post:${out}`])).rows[0]?.url ?? null;
-    const file = async () => (await pool.query('SELECT storage_key FROM crove_social.bio_page_file($1, $2::uuid)', [slug, image])).rows.length;
+    const feed = async () => ((await pool.query<{ f: { events: { postId: string }[] } }>('SELECT ludy_social.calendar_feed_events($1) AS f', [token])).rows[0]?.f.events ?? []).map((e) => e.postId);
+    const bio = async () => ((await pool.query<{ v: { posts: { postId: string }[] } }>('SELECT ludy_social.bio_page_view($1) AS v', [slug])).rows[0]?.v.posts ?? []).map((p) => p.postId);
+    const go = async () => (await pool.query<{ url: string | null }>('SELECT ludy_social.bio_page_go($1, $2, false) AS url', [slug, `post:${out}`])).rows[0]?.url ?? null;
+    const file = async () => (await pool.query('SELECT storage_key FROM ludy_social.bio_page_file($1, $2::uuid)', [slug, image])).rows.length;
     expect(sorted(await feed())).toEqual(sorted([out, kept]));
     expect(await bio()).toEqual([out]);
     expect(await go()).toBe('https://tiembanh.example/moi');
@@ -671,7 +671,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
 
   it("leaves archived posts that never went out of the team report's assignments, and archived channels out of the waiting count (#1331)", async () => {
     const o = await org();
-    const assign = (postId: string, dueAt: Date) => admin((c) => c.query('UPDATE crove_social.post SET assignee_user_id = $3, due_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, postId, o.other, dueAt]));
+    const assign = (postId: string, dueAt: Date) => admin((c) => c.query('UPDATE ludy_social.post SET assignee_user_id = $3, due_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, postId, o.other, dueAt]));
     const shelved = await post(o, o.member, 'Giao việc rồi cất đi');
     await assign(shelved, new Date(Date.now() - DAY));
     const late = await post(o, o.member, 'Đăng trễ rồi cất đi');
@@ -696,7 +696,7 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     await setStatus(o, paused, 'paused', `, scheduled_at = now() + interval '1 day'`);
     const waiting = async () => (await query<{ connectionId: string; paused: number }[]>(o, o.owner, 'social.channel.waiting', {})).find((w) => w.connectionId === o.conn)?.paused ?? 0;
     expect(await waiting()).toBe(1);
-    await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $3 WHERE org_id = $1 AND id = $2', [o.orgId, paused, o.owner]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET archived_at = now(), archived_by = $3 WHERE org_id = $1 AND id = $2', [o.orgId, paused, o.owner]));
     expect(await waiting()).toBe(0);
   });
 
@@ -707,9 +707,9 @@ suite('social archived posts on PostgreSQL (#1299)', () => {
     // Its review clock moved back as if it went into review days ago (the trigger is skipped for this).
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_social.post_variant SET review_since = now() - interval '3 days' WHERE org_id = $1 AND post_id = $2", [o.orgId, reviewing]);
+      await c.query("UPDATE ludy_social.post_variant SET review_since = now() - interval '3 days' WHERE org_id = $1 AND post_id = $2", [o.orgId, reviewing]);
     });
-    const remindersDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM crove_social.review_reminders_due(1000)')).rows.map((r) => r.post_id));
+    const remindersDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM ludy_social.review_reminders_due(1000)')).rows.map((r) => r.post_id));
     const told = async () => Number(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*) AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.reminder'", [o.orgId])).rows[0]?.n));
     await archive(o, o.member, reviewing);
     // Archived: marked as reminded without telling anyone.

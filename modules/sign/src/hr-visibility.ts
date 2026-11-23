@@ -59,9 +59,9 @@ export function assertCanAccessEnvelopeRow(
 }
 
 export function applyEnvelopeVisibilityFilter<O>(
-  query: SelectQueryBuilder<Database, 'crove_sign.envelope', O>,
+  query: SelectQueryBuilder<Database, 'ludy_sign.envelope', O>,
   ctx: HrEnvelopeVisibilityCtx,
-): SelectQueryBuilder<Database, 'crove_sign.envelope', O> {
+): SelectQueryBuilder<Database, 'ludy_sign.envelope', O> {
   if (ctx.actor.type === 'system') return query;
   if (ctx.actor.type !== 'user') {
     return query.where('source_kind', '!=', 'hr_contract');

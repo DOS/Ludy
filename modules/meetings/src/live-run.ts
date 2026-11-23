@@ -70,7 +70,7 @@ export async function openLiveMeeting(ctx: CommandContext | QueryContext, meetin
   const userId = userOf(ctx.actor);
   await openMeeting(ctx.trx, ctx.orgId, meetingId);
   const row = await ctx.trx
-    .selectFrom('crove_meetings.meeting')
+    .selectFrom('ludy_meetings.meeting')
     .select(['recorder_user_id', 'live_notes', sql<string>`audio_retention_date::text`.as('audio_day')])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', meetingId)
@@ -84,15 +84,15 @@ export async function openLiveMeeting(ctx: CommandContext | QueryContext, meetin
 // Whether the recording has ended: its final audio or video is recorded (meetings.media.record, which also deleted the pieces), so no window follows.
 export async function recordingEnded(ctx: CommandContext | QueryContext, meetingId: string): Promise<boolean> {
   const { rows } = await sql<{ done: boolean }>`
-    SELECT (EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
-         OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)) AS done`.execute(ctx.trx);
+    SELECT (EXISTS (SELECT 1 FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
+         OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)) AS done`.execute(ctx.trx);
   return rows[0]?.done === true;
 }
 
 // The piece the preview has reached, so the next window asks for what follows it. -1: nothing copied yet.
 export async function lastLineSeq(ctx: CommandContext | QueryContext, meetingId: string): Promise<number> {
   const { rows } = await sql<{ seq: number | null }>`
-    SELECT MAX(seq)::int AS seq FROM crove_meetings.live_line WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
+    SELECT MAX(seq)::int AS seq FROM ludy_meetings.live_line WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
   return rows[0]?.seq ?? -1;
 }
 
@@ -101,7 +101,7 @@ export async function startWindow(ctx: CommandContext, meetingId: string, afterS
   const userId = userOf(ctx.actor);
   // Nothing new to transcribe: no run and no spend. The pane waits and ticks again.
   const { rows: next } = await sql<{ n: number }>`
-    SELECT COUNT(*)::int AS n FROM crove_meetings.live_chunk WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid AND seq > ${afterSeq}::int`.execute(ctx.trx);
+    SELECT COUNT(*)::int AS n FROM ludy_meetings.live_chunk WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid AND seq > ${afterSeq}::int`.execute(ctx.trx);
   if ((next[0]?.n ?? 0) === 0) return null;
   const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: LIVE_NOTES_FEATURE, subjectType: 'meeting', subjectId: meetingId });
   const agent = await ctx.trx
@@ -194,7 +194,7 @@ export const liveStatus = defineQuery({
     const userId = userOf(ctx.actor);
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['recorder_user_id', 'live_notes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -213,7 +213,7 @@ export const liveStatus = defineQuery({
     // Only the recorder sees the preview: an attendee, an owner, an admin and every other member get the empty pane, as they do for a draft.
     if (meeting.recorder_user_id !== userId) return zLiveStatus.parse(empty);
     const lines = await ctx.trx
-      .selectFrom('crove_meetings.live_line')
+      .selectFrom('ludy_meetings.live_line')
       .select(['id', 'seq', 'start_seconds', 'end_seconds', 'text'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -222,7 +222,7 @@ export const liveStatus = defineQuery({
       .orderBy('seq')
       .execute();
     const notes = await ctx.trx
-      .selectFrom('crove_meetings.meeting_result')
+      .selectFrom('ludy_meetings.meeting_result')
       .select(['updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -249,13 +249,13 @@ export const liveStatus = defineQuery({
 // the live notes do not fight it and read nothing, so nothing is spent.
 async function notesInput(ctx: CommandContext | QueryContext, meetingId: string): Promise<LiveNotesInput> {
   const meeting = await ctx.trx
-    .selectFrom('crove_meetings.meeting')
+    .selectFrom('ludy_meetings.meeting')
     .select(['language'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', meetingId)
     .executeTakeFirstOrThrow();
   const drafts = await ctx.trx
-    .selectFrom('crove_meetings.meeting_result')
+    .selectFrom('ludy_meetings.meeting_result')
     .select(['summary', 'decisions', 'updated_at', 'feature', 'source_run_id'])
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
@@ -272,7 +272,7 @@ async function notesInput(ctx: CommandContext | QueryContext, meetingId: string)
   }
   const items = draft
     ? await ctx.trx
-        .selectFrom('crove_meetings.action_item')
+        .selectFrom('ludy_meetings.action_item')
         .select(['title'])
         .where('org_id', '=', ctx.orgId)
         .where('meeting_id', '=', meetingId)
@@ -284,7 +284,7 @@ async function notesInput(ctx: CommandContext | QueryContext, meetingId: string)
   let lines: Array<{ start_seconds: number; end_seconds: number; text: string }> = [];
   if (!other) {
     let query = ctx.trx
-      .selectFrom('crove_meetings.live_line')
+      .selectFrom('ludy_meetings.live_line')
       .select(['start_seconds', 'end_seconds', 'text'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', meetingId)

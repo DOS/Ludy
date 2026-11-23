@@ -41,7 +41,7 @@ async function planMedia(trx: Trx, orgId: string, rows: readonly MediaRow[]): Pr
   const shared = new Map<string, PostMedia[]>();
   if (postIds.length > 0) {
     const list = await trx
-      .selectFrom('crove_social.post_media')
+      .selectFrom('ludy_social.post_media')
       .select(['post_id', 'file_id', 'alt_text'])
       .where('org_id', '=', orgId)
       .where('post_id', 'in', postIds)
@@ -125,12 +125,12 @@ export const planExport = defineCommand({
                CASE WHEN v.content_frozen THEN v.title ELSE coalesce(v.title, p.title) END AS title,
                CASE WHEN v.content_frozen THEN v.link_url ELSE coalesce(v.link_url, p.link_url) END AS link_url,
                CASE WHEN v.status IN ('published', 'removed') THEN v.published_at ELSE coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at) END AS at
-        FROM crove_social.post_variant v
-        JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+        FROM ludy_social.post_variant v
+        JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
         WHERE v.org_id = ${ctx.orgId}::uuid AND v.status <> 'cancelled' AND p.archived_at IS NULL
           ${connections.length > 0 ? sql`AND v.channel_connection_id = ANY(${connections}::uuid[])` : sql``}
           AND ${connectionInScope(scope, 'v.channel_connection_id')}
-          ${labels.length > 0 ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ANY(${labels}::uuid[]))` : sql``}
+          ${labels.length > 0 ? sql`AND EXISTS (SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ANY(${labels}::uuid[]))` : sql``}
       )
       SELECT v.id AS variant_id, v.post_id, v.channel_connection_id, v.provider, v.status, c.display_name, v.body, v.settings, v.title,
              v.link_url, v.at, v.assignee_user_id, v.media, v.content_frozen

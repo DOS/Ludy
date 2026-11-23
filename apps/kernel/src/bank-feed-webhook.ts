@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A bank feed provider's signed notice (ADR-0039 point 2, #2044 part 2b-ii). The API checks the adapter's signature before
 // anything else: a forged, stale or malformed notice is refused and stored nowhere. A verified one only names accounts of
-// the provider, and the API hands those ids to crove_finance.bank_feed_notice_enqueue() without a tenant context. The
+// the provider, and the API hands those ids to ludy_finance.bank_feed_notice_enqueue() without a tenant context. The
 // notice's body is stored nowhere and no transaction is read from it: it is a hint to pull. The worker relay claims the
 // ids, finds the connections whose listing holds them (the org comes from that stored listing, never from the notice)
 // and queues a sync of each (apps/kernel/src/worker.ts); a sync pulls what the provider reports, as the daily sweep does.
@@ -13,12 +13,12 @@ import type { Runtime } from '@ludy/kernel-runtime';
 // A notice names at most 100 accounts; this bounds what the API reads before checking its signature.
 export const MAX_BANK_FEED_WEBHOOK_BYTES = 64 * 1024;
 
-// The relay's claim of waiting accounts (crove_finance.bank_feed_notice_claim, the worker login's alone): one row per
+// The relay's claim of waiting accounts (ludy_finance.bank_feed_notice_claim, the worker login's alone): one row per
 // claimed account and connection that lists it, and one row of nulls for a claimed account no connection lists.
 export const BANK_FEED_NOTICE_CLAIM = 100;
 export async function claimBankFeedNotices(trx: Transaction<Database>): Promise<Array<{ orgId: string | null; connectionId: string | null; provider: string | null }>> {
   const { rows } = await sql<{ org_id: string | null; connection_id: string | null; provider: string | null }>`
-    SELECT org_id, connection_id, provider FROM crove_finance.bank_feed_notice_claim(${BANK_FEED_NOTICE_CLAIM}::int)`.execute(trx);
+    SELECT org_id, connection_id, provider FROM ludy_finance.bank_feed_notice_claim(${BANK_FEED_NOTICE_CLAIM}::int)`.execute(trx);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
 }
 
@@ -41,7 +41,7 @@ export async function acceptBankFeedWebhook(runtime: Runtime, provider: BankFeed
   if (accounts.length === 0) return { status: 200, queued: 0 };
   const queued = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ queued: number }>`
-      SELECT crove_finance.bank_feed_notice_enqueue(${provider.id}, ${accounts}::text[]) AS queued`.execute(db);
+      SELECT ludy_finance.bank_feed_notice_enqueue(${provider.id}, ${accounts}::text[]) AS queued`.execute(db);
     return Number(rows[0]?.queued ?? 0);
   });
   return { status: 202, queued };

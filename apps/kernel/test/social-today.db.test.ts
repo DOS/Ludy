@@ -79,8 +79,8 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     await exec(o, author, 'social.post.submit', { postId });
     return postId;
   }
-  const schedule = (postId: string, at: Date) => admin((c) => c.query('UPDATE crove_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
-  const setVariant = (postId: string, connectionId: string, status: string) => admin((c) => c.query('UPDATE crove_social.post_variant SET status = $3 WHERE post_id = $1 AND channel_connection_id = $2', [postId, connectionId, status]));
+  const schedule = (postId: string, at: Date) => admin((c) => c.query('UPDATE ludy_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
+  const setVariant = (postId: string, connectionId: string, status: string) => admin((c) => c.query('UPDATE ludy_social.post_variant SET status = $3 WHERE post_id = $1 AND channel_connection_id = $2', [postId, connectionId, status]));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -182,7 +182,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const list = await rt.query<unknown[]>('social.post.list', { stage: 'attention', limit: 200 }, { actor: asUser(o.limited), orgId: o.orgId });
     expect(list).toHaveLength(2);
     // An archived post leaves the count, and so does one that went out.
-    await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [other, o.owner]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [other, o.owner]));
     expect(block(await today(o, o.owner))[0]).toMatchObject({ count: 2 });
     await setVariant(own, mine, 'published');
     await setVariant(paused, mine, 'published');
@@ -210,21 +210,21 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const split = await submitted(o, o.owner, [mine, theirs], 'Hai kênh');
     await schedule(soon, hoursFromNow(10));
     await schedule(named, hoursFromNow(2));
-    await admin((c) => c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [named, '  Khuyến   mãi\ncuối \u202Etuần\u200B ']));
+    await admin((c) => c.query('UPDATE ludy_social.post SET title = $2 WHERE id = $1', [named, '  Khuyến   mãi\ncuối \u202Etuần\u200B ']));
     await schedule(later, hoursFromNow(30));
     await schedule(past, hoursFromNow(-1));
     await schedule(fewDays, hoursFromNow(-6 * 24));
-    await admin((c) => c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [fewDays, 'Bài cũ']));
+    await admin((c) => c.query('UPDATE ludy_social.post SET title = $2 WHERE id = $1', [fewDays, 'Bài cũ']));
     await schedule(longAgo, hoursFromNow(-8 * 24));
     await schedule(elsewhere, hoursFromNow(5));
     await schedule(viaVariant, hoursFromNow(40));
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [viaVariant, hoursFromNow(3)]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [viaVariant, hoursFromNow(3)]));
     await schedule(movedOut, hoursFromNow(3));
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [movedOut, hoursFromNow(40)]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [movedOut, hoursFromNow(40)]));
     await schedule(archived, hoursFromNow(4));
-    await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [archived, o.owner]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [archived, o.owner]));
     await schedule(split, hoursFromNow(6));
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'approved' WHERE post_id = $1 AND channel_connection_id = $2", [split, mine]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'approved' WHERE post_id = $1 AND channel_connection_id = $2", [split, mine]));
     const due = (items: TodayItem[]) => ofKind(items, 'deadline');
     const forOwner = due(await today(o, o.owner));
     // The oldest first; none for a post 8 days overdue, 30 hours away, with its channel's time 40 hours away, archived, or with no time.

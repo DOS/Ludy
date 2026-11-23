@@ -459,7 +459,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
 
     const dbTodos = await admin(async (c) =>
       (await c.query<{ title: string; priority: number; tainted: boolean }>(
-        `SELECT title, priority, tainted FROM crove_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY priority ASC`,
+        `SELECT title, priority, tainted FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY priority ASC`,
         [orgId, body.todoIds],
       )).rows,
     );

@@ -2,7 +2,7 @@
 // Sender-side Signer KYC Attachment Verification Check (Slice 5e, #4443).
 // - Workspace-authenticated members only (never exposed on public /-/sign routes).
 // - Enforces assertCanAccessEnvelopeRow, assertCanAccessMeetingMinutesEnvelopeRow, and
-//   crove_sign.can_read_sign_file(field.attachment_file_id) before reading metadata/bytes or running AI (404 parity).
+//   ludy_sign.can_read_sign_file(field.attachment_file_id) before reading metadata/bytes or running AI (404 parity).
 // - 100% AI-off deterministic flow: verifies MIME, size, and SHA-256 on PDF/PNG/JPEG attachments, extracts Vietnamese
 //   Tax IDs (MST 10/13 digits), CCCD (12 digits), and signer/entity name matches from crove-extract pdf_inspect or
 //   extracted PDF pages, and supports human confirmation ('matched' / 'mismatch' / 'needs_review').
@@ -80,7 +80,7 @@ const target = <T extends { fieldId: string }>(input: T) => ({
   id: input.fieldId,
 });
 
-const KYC_CHECK_UPSERT_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'kyc_check', [
+const KYC_CHECK_UPSERT_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'kyc_check', [
   'org_id',
   'envelope_id',
   'field_id',
@@ -672,7 +672,7 @@ function toCheckRecord(
 
 async function assertCanReadSignFileOrNotFound(trx: QueryContext['trx'], fileId: string): Promise<void> {
   const { rows } = await sql<{ allowed: boolean }>`
-    SELECT crove_sign.can_read_sign_file(${fileId}::uuid) AS allowed
+    SELECT ludy_sign.can_read_sign_file(${fileId}::uuid) AS allowed
   `.execute(trx);
   if (rows[0]?.allowed !== true) {
     throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
@@ -685,7 +685,7 @@ async function loadVerifiedAttachmentContext(
   fieldId: string,
 ) {
   const env = await ctx.trx
-    .selectFrom('crove_sign.envelope')
+    .selectFrom('ludy_sign.envelope')
     .select(['id', 'title', 'status', 'source_kind', 'source_id', 'created_by'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', envelopeId)
@@ -697,7 +697,7 @@ async function loadVerifiedAttachmentContext(
   await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
   const field = await ctx.trx
-    .selectFrom('crove_sign.field')
+    .selectFrom('ludy_sign.field')
     .select([
       'id',
       'envelope_id',
@@ -732,7 +732,7 @@ async function loadVerifiedAttachmentContext(
   }
 
   const signer = await ctx.trx
-    .selectFrom('crove_sign.signer')
+    .selectFrom('ludy_sign.signer')
     .select(['id', 'name', 'email', 'role_label'])
     .where('org_id', '=', ctx.orgId)
     .where('envelope_id', '=', env.id)
@@ -743,14 +743,14 @@ async function loadVerifiedAttachmentContext(
   }
 
   const obligation = await ctx.trx
-    .selectFrom('crove_sign.envelope_obligation')
+    .selectFrom('ludy_sign.envelope_obligation')
     .select(['counterparty_name', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('envelope_id', '=', env.id)
     .executeTakeFirst();
 
   const existing = await ctx.trx
-    .selectFrom('crove_sign.kyc_check')
+    .selectFrom('ludy_sign.kyc_check')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('field_id', '=', field.id)
@@ -790,7 +790,7 @@ export const signKycList = defineQuery({
   handler: async (ctx, input): Promise<SignKycListResultContract> => {
     const userId = assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -810,7 +810,7 @@ export const signKycList = defineQuery({
     const canWrite = Boolean(member && (member.role === 'owner' || member.role === 'admin' || member.role === 'member'));
 
     const fields = await ctx.trx
-      .selectFrom('crove_sign.field')
+      .selectFrom('ludy_sign.field')
       .select([
         'id',
         'signer_id',
@@ -838,7 +838,7 @@ export const signKycList = defineQuery({
     }
 
     const signers = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'name', 'email', 'role_label'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -846,7 +846,7 @@ export const signKycList = defineQuery({
     const signerById = new Map(signers.map((s) => [s.id, s]));
 
     const obligation = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .select(['counterparty_name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -854,7 +854,7 @@ export const signKycList = defineQuery({
     const obligationCounterpartyName = obligation?.status === 'confirmed' ? obligation.counterparty_name : null;
 
     const checks = await ctx.trx
-      .selectFrom('crove_sign.kyc_check')
+      .selectFrom('ludy_sign.kyc_check')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -863,7 +863,7 @@ export const signKycList = defineQuery({
 
     const fileIds = [...new Set(fields.map((f) => f.attachment_file_id!))];
     const { rows: accessRows } = await sql<{ allowed: boolean }>`
-      SELECT pg_catalog.bool_and(crove_sign.can_read_sign_file(u.id)) AS allowed
+      SELECT pg_catalog.bool_and(ludy_sign.can_read_sign_file(u.id)) AS allowed
       FROM pg_catalog.unnest(${fileIds}::uuid[]) AS u(id)
     `.execute(ctx.trx);
     if (accessRows[0]?.allowed !== true) {
@@ -969,7 +969,7 @@ export const signKycInspectJobData = defineQuery({
   handler: async (ctx, input): Promise<SignKycInspectJobData | null> => {
     assertSystem(ctx);
     const kycRow = await ctx.trx
-      .selectFrom('crove_sign.kyc_check')
+      .selectFrom('ludy_sign.kyc_check')
       .select(['id', 'envelope_id', 'field_id', 'file_id', 'file_sha256', 'status', 'mode'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', input.envelopeId)
@@ -1019,7 +1019,7 @@ async function upsertKycCheckRow(
 ): Promise<SignKycCheckRecordContract> {
   const findingsText = JSON.stringify(params.findings);
   const row = await ctx.trx
-    .insertInto('crove_sign.kyc_check')
+    .insertInto('ludy_sign.kyc_check')
     .values({
       org_id: ctx.orgId,
       envelope_id: params.envelopeId,
@@ -1155,7 +1155,7 @@ export const signKycInspectComplete = defineCommand({
   handler: async (ctx, input): Promise<SignKycCheckRecordContract | null> => {
     assertSystem(ctx);
     const existing = await ctx.trx
-      .selectFrom('crove_sign.kyc_check')
+      .selectFrom('ludy_sign.kyc_check')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', input.envelopeId)
@@ -1173,7 +1173,7 @@ export const signKycInspectComplete = defineCommand({
     }
 
     const field = await ctx.trx
-      .selectFrom('crove_sign.field')
+      .selectFrom('ludy_sign.field')
       .select([
         'id',
         'signer_id',
@@ -1205,7 +1205,7 @@ export const signKycInspectComplete = defineCommand({
     if (!fileRow) return null;
 
     const signer = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', input.envelopeId)
@@ -1214,7 +1214,7 @@ export const signKycInspectComplete = defineCommand({
     if (!signer) return null;
 
     const obligation = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .select(['counterparty_name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', input.envelopeId)

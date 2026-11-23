@@ -47,14 +47,14 @@ suite('stream hints of deals and contacts (#3293)', () => {
   }
 
   async function stage(orgId: string): Promise<string> {
-    return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Mới', 'open', 1) RETURNING id`, [orgId])).rows[0]!.id);
+    return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Mới', 'open', 1) RETURNING id`, [orgId])).rows[0]!.id);
   }
 
   async function deal(orgId: string, partyId: string, stageId: string, n = 1): Promise<string[]> {
     return admin(async (c) =>
       (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by)
+          `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by)
            SELECT $1::uuid, $2::uuid, 'Hợp đồng bí mật ' || i, 987654321, $3::uuid, 'V' || i, $4::uuid FROM generate_series(1, $5::integer) i RETURNING id`,
           [orgId, partyId, stageId, randomUUID(), n],
         )
@@ -126,9 +126,9 @@ suite('stream hints of deals and contacts (#3293)', () => {
     });
     expect(created).toEqual([`${orgId} crm_deal ${dealId}`]);
     // A move: the stage's sort key and the amount change; the hint is the same one, carrying no title or amount.
-    const moved = await hintsOf((c) => c.query(`UPDATE crove_crm.deal SET sort_key = 'W', amount = 5, version = version + 1 WHERE org_id = $1 AND id = $2`, [orgId, dealId]));
+    const moved = await hintsOf((c) => c.query(`UPDATE ludy_crm.deal SET sort_key = 'W', amount = 5, version = version + 1 WHERE org_id = $1 AND id = $2`, [orgId, dealId]));
     expect(moved).toEqual([`${orgId} crm_deal ${dealId}`]);
-    const removed = await hintsOf((c) => c.query('DELETE FROM crove_crm.deal WHERE org_id = $1 AND id = $2', [orgId, dealId]));
+    const removed = await hintsOf((c) => c.query('DELETE FROM ludy_crm.deal WHERE org_id = $1 AND id = $2', [orgId, dealId]));
     expect(removed).toEqual([`${orgId} crm_deal ${dealId}`]);
     for (const payload of [...created, ...moved, ...removed]) {
       expect(payload).not.toMatch(/bí mật|987654321|Hợp đồng/i);
@@ -140,7 +140,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
     const [first, second] = [await org(), await org()];
     const ids = new Map<string, string[]>();
     for (const orgId of [first, second]) ids.set(orgId, await deal(orgId, await party(orgId), await stage(orgId), 40));
-    const payloads = await hintsOf((c) => c.query('DELETE FROM crove_crm.deal WHERE org_id = ANY($1)', [[first, second]]));
+    const payloads = await hintsOf((c) => c.query('DELETE FROM ludy_crm.deal WHERE org_id = ANY($1)', [[first, second]]));
     expect(payloads).toHaveLength(2);
     for (const orgId of [first, second]) {
       const mine = payloads.map((p) => parseHint(p)).filter((h) => h?.orgId === orgId);

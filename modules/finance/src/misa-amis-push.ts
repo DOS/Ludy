@@ -130,7 +130,7 @@ export const misaAmisPush = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<MisaAmisPushResult> => {
     const connection = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.legal_entity_id', 'c.last_test_state', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -164,7 +164,7 @@ export const misaAmisPush = defineCommand({
     const result: MisaAmisPushResult = { queued: 0, requeued: 0, already: 0, revised: 0 };
     for (const part of chunks(rows, CHUNK)) {
       const inserted = await ctx.trx
-        .insertInto('crove_finance.misa_amis_push')
+        .insertInto('ludy_finance.misa_amis_push')
         .values(
           part.map((r) => ({
             org_id: ctx.orgId,
@@ -190,7 +190,7 @@ export const misaAmisPush = defineCommand({
       const rest = part.filter((r) => !fresh.has(r.orgRefid));
       if (rest.length === 0) continue;
       const existing = await ctx.trx
-        .selectFrom('crove_finance.misa_amis_push')
+        .selectFrom('ludy_finance.misa_amis_push')
         .select(['id', 'org_refid', 'state', 'payload_digest', 'connection_id'])
         .where('org_id', '=', ctx.orgId)
         .where('org_refid', 'in', rest.map((r) => r.orgRefid))
@@ -204,7 +204,7 @@ export const misaAmisPush = defineCommand({
         } else if (row.state === 'refused' || row.state === 'failed') {
           // A person's new confirmed push: one more attempt, with the digest and the choices approved now. Nothing else moves a refused or failed row.
           const moved = await ctx.trx
-            .updateTable('crove_finance.misa_amis_push')
+            .updateTable('ludy_finance.misa_amis_push')
             .set({ state: 'queued', reason: null, attempts: sql<number>`attempts + 1`, sent_at: null, answered_at: null, payload_digest: r.digest, params, requested_by: userId, requested_at: ctx.now, updated_at: ctx.now })
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', row.id)
@@ -239,7 +239,7 @@ export const misaAmisPushTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<MisaAmisPushTarget> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -281,7 +281,7 @@ export const misaAmisPushBegin = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<MisaAmisPushBegin> => {
     const connection = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_connection as c')
+      .selectFrom('ludy_finance.misa_amis_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.product', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -291,7 +291,7 @@ export const misaAmisPushBegin = defineCommand({
     if (!connection) return { action: 'none', reason: 'not_found', waiting: false };
     if (connection.status !== 'active') return { action: 'none', reason: 'not_active', waiting: false };
 
-    const table = 'crove_finance.misa_amis_push';
+    const table = 'ludy_finance.misa_amis_push';
     const windowStart = new Date(ctx.now.getTime() - PUSH_RESULT_WINDOW_HOURS * 3600 * 1000);
     // A batch begun and never answered for too long: its fate is unknown, so it is asked about and never sent again.
     await ctx.trx
@@ -466,7 +466,7 @@ export const misaAmisPushRecord = defineCommand({
       if (!ALLOWED[move.from].includes(move.to)) throw new DomainError('MISA_AMIS_PUSH_STATE', 422, 'Trạng thái chứng từ không hợp lệ');
       const answered = move.to === 'accepted' || move.to === 'refused';
       const done = await ctx.trx
-        .updateTable('crove_finance.misa_amis_push')
+        .updateTable('ludy_finance.misa_amis_push')
         .set({
           state: move.to,
           reason: move.reason === null ? null : move.reason.slice(0, REASON_MAX),
@@ -513,7 +513,7 @@ export const misaAmisPushResolve = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ resolved: boolean }> => {
     // The age is the database's own clock, as the guard's: a row the command takes is a row the guard lets through (no second of skew between the two).
-    const table = 'crove_finance.misa_amis_push';
+    const table = 'ludy_finance.misa_amis_push';
     const reasonOf = input.outcome === 'in_amis' ? 'CONFIRMED_IN_AMIS' : 'NOT_IN_AMIS';
     // 1. An `ambiguous` row (a call whose answer was lost) with no answer for more than three days. "In AMIS": `sent` (MISA's result is read as for any sent row); "not in AMIS": `failed`.
     const ambiguous = await ctx.trx
@@ -582,7 +582,7 @@ export const misaAmisPushList = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<MisaAmisPushRow[]> => {
     let query = ctx.trx
-      .selectFrom('crove_finance.misa_amis_push')
+      .selectFrom('ludy_finance.misa_amis_push')
       .select(['id', 'org_refid', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refno', 'state', 'reason', 'attempts', 'requested_at', 'sent_at', 'answered_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId);

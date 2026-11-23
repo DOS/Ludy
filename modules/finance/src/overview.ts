@@ -52,7 +52,7 @@ export async function financeOverview(ctx: QueryContext, input: { range: Finance
   const periods = overviewPeriods(input.range, today);
   const months = overviewMonths(periods.to);
   const rows = await overviewRows(ctx, entity, periods, months);
-  const any = await ctx.trx.selectFrom('crove_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
+  const any = await ctx.trx.selectFrom('ludy_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
   return buildOverview({
     range: input.range,
     periods,

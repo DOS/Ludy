@@ -571,7 +571,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
 
     const started1Hash = sha256Hex(Buffer.from(started1.token, 'utf8'));
     const resolved1Row = await pool!.query<{ v: { allowDelegation?: boolean; inPerson?: boolean } | null }>(
-      'SELECT crove_sign.public_token_resolve($1, false) AS v',
+      'SELECT ludy_sign.public_token_resolve($1, false) AS v',
       [started1Hash],
     );
     expect(resolved1Row.rows[0]?.v).toMatchObject({ inPerson: true, allowDelegation: false });
@@ -592,7 +592,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     await expect(delegateHttpRes.json()).resolves.toMatchObject({ code: 'SIGN_DELEGATION_DISABLED' });
 
     const delegateSqlRow = await pool!.query<{ result: Record<string, unknown> }>(
-      `SELECT crove_sign.public_delegate($1, 'Nguoi Uy Quyen', 'delegate-s4d@example.com', 'Thu uy quyen SQL', NULL, 'SignSlice4dTest/1.0', $2) AS result`,
+      `SELECT ludy_sign.public_delegate($1, 'Nguoi Uy Quyen', 'delegate-s4d@example.com', 'Thu uy quyen SQL', NULL, 'SignSlice4dTest/1.0', $2) AS result`,
       [started1Hash, DEFAULT_MESSAGE_ID_DOMAIN],
     );
     expect(delegateSqlRow.rows[0]?.result).toMatchObject({
@@ -603,12 +603,12 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
 
     await admin(async (c) => {
       const tokCheck = await c.query<{ used_at: string | null; revoked_at: string | null }>(
-        'SELECT used_at, revoked_at FROM crove_sign.signing_token WHERE org_id = $1 AND id = $2',
+        'SELECT used_at, revoked_at FROM ludy_sign.signing_token WHERE org_id = $1 AND id = $2',
         [orgId, started1.tokenId],
       );
       expect(tokCheck.rows[0]).toEqual({ used_at: null, revoked_at: null });
       const signerCheck = await c.query<{ name: string; delegation_count: number }>(
-        'SELECT name, delegation_count FROM crove_sign.signer WHERE org_id = $1 AND id = $2',
+        'SELECT name, delegation_count FROM ludy_sign.signer WHERE org_id = $1 AND id = $2',
         [orgId, s1.signerId],
       );
       expect(signerCheck.rows[0]).toEqual({ name: 'Nguyen Van Khach', delegation_count: 0 });
@@ -669,7 +669,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
       await workerClient.query('BEGIN');
       await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       const issuedRow = await workerClient.query<{ issued: unknown }>(
-        `SELECT crove_sign.public_mail_token_issue($1::uuid, $2::uuid, $3::uuid, now() + interval '7 days', now()) AS issued`,
+        `SELECT ludy_sign.public_mail_token_issue($1::uuid, $2::uuid, $3::uuid, now() + interval '7 days', now()) AS issued`,
         [envelopeId, s2.signerId, queuedInviteId],
       );
       expect(issuedRow.rows[0]?.issued).toBeNull();
@@ -707,7 +707,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
         used_at: string | null;
         revoked_at: string | null;
         in_person_host_user_id: string | null;
-      }>('SELECT used_at, revoked_at, in_person_host_user_id FROM crove_sign.signing_token WHERE org_id = $1 AND id = $2', [
+      }>('SELECT used_at, revoked_at, in_person_host_user_id FROM ludy_sign.signing_token WHERE org_id = $1 AND id = $2', [
         orgId,
         started2.tokenId,
       ]);

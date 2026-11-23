@@ -233,15 +233,15 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     try {
       await client.query('BEGIN');
       await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.admin, o.orgId)]);
-      const { rows } = await client.query<{ user_id: string }>('SELECT user_id FROM crove_social.notification');
+      const { rows } = await client.query<{ user_id: string }>('SELECT user_id FROM ludy_social.notification');
       expect(new Set(rows.map((r) => r.user_id))).toEqual(new Set([o.admin]));
-      await expect(client.query('UPDATE crove_social.notification SET user_id = $1', [o.owner])).rejects.toMatchObject({ code: '42501' });
+      await expect(client.query('UPDATE ludy_social.notification SET user_id = $1', [o.owner])).rejects.toMatchObject({ code: '42501' });
     } finally {
       await client.query('ROLLBACK');
       client.release();
     }
     await expect(
-      admin((c) => c.query('INSERT INTO crove_social.notification (org_id, user_id, kind, event_id) VALUES ($1, $2, $3, $4)', [o.orgId, o.owner, 'pinned', randomUUID()])),
+      admin((c) => c.query('INSERT INTO ludy_social.notification (org_id, user_id, kind, event_id) VALUES ($1, $2, $3, $4)', [o.orgId, o.owner, 'pinned', randomUUID()])),
     ).rejects.toMatchObject({ code: '23514' });
 
     // Turned off: the next one of that kind is not written; turned on again, it is.
@@ -260,7 +260,7 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     const five = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Năm', channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.submit', { postId: five.postId });
     await deliver(o);
-    const left = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.notification WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).rows[0]?.n);
+    const left = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.notification WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).rows[0]?.n);
     expect(left).toBe(3);
   });
 
@@ -300,9 +300,9 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
       await deliver(o);
       ids.push(((await list(o, o.owner)).items[0] as NotificationItem).id);
     }
-    await admin((c) => c.query("UPDATE crove_social.notification SET read_at = now() - interval '31 days' WHERE id = $1", [ids[0]]));
-    await admin((c) => c.query("UPDATE crove_social.notification SET created_at = now() - interval '91 days' WHERE id = $1", [ids[1]]));
-    await admin((c) => c.query("UPDATE crove_social.notification SET read_at = now() - interval '2 days' WHERE id = $1", [ids[2]]));
+    await admin((c) => c.query("UPDATE ludy_social.notification SET read_at = now() - interval '31 days' WHERE id = $1", [ids[0]]));
+    await admin((c) => c.query("UPDATE ludy_social.notification SET created_at = now() - interval '91 days' WHERE id = $1", [ids[1]]));
+    await admin((c) => c.query("UPDATE ludy_social.notification SET read_at = now() - interval '2 days' WHERE id = $1", [ids[2]]));
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Bài mới', channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.submit', { postId });
     await deliver(o);

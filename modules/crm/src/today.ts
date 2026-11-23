@@ -88,7 +88,7 @@ export const crmToday = defineQuery({
 
     // The member's own open deals that are to close today.
     const closing = await ctx.trx
-      .selectFrom('crove_crm.deal as d')
+      .selectFrom('ludy_crm.deal as d')
       .select(['d.id', 'd.amount'])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.owner_user_id', '=', me)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // HR end-of-probation review domain queries and commands (#4448, Stage 5B).
-// Pulls completed Ludy Cong tac (crove_projects) tasks via ctx.query respecting org_app_on and caller RLS,
+// Pulls completed Ludy Cong tac (ludy_projects) tasks via ctx.query respecting org_app_on and caller RLS,
 // aggregates deterministic attendance/leave/OT metrics, and stores human review decisions.
 import { sql } from 'kysely';
 import {
@@ -27,7 +27,7 @@ import { assertNotSelfApprover } from './leave-requests.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 
-const PROBATION = hrManifest.tables.crove_hr.probation_review;
+const PROBATION = hrManifest.tables.ludy_hr.probation_review;
 
 export interface HrProbationBriefSource {
   preview: HrProbationPreviewResult;
@@ -92,8 +92,8 @@ async function loadProbationFacts(
   requestedPeriodEnd?: string,
 ): Promise<HrProbationPreviewResult> {
   const emp = await ctx.trx
-    .selectFrom('crove_hr.payroll_employee as e')
-    .leftJoin('crove_hr.department as d', (j) =>
+    .selectFrom('ludy_hr.payroll_employee as e')
+    .leftJoin('ludy_hr.department as d', (j) =>
       j.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'),
     )
     .select([
@@ -115,7 +115,7 @@ async function loadProbationFacts(
   }
 
   const terms = await ctx.trx
-    .selectFrom('crove_hr.payroll_employment')
+    .selectFrom('ludy_hr.payroll_employment')
     .select(['effective_from', 'probation_end_on'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', '=', emp.id)
@@ -136,7 +136,7 @@ async function loadProbationFacts(
   const startMonth = periodStart.slice(0, 7);
   const endMonth = periodEnd.slice(0, 7);
   const leaveRows = await ctx.trx
-    .selectFrom('crove_hr.payroll_leave_entry')
+    .selectFrom('ludy_hr.payroll_leave_entry')
     .select(['month', 'kind', 'days', 'approved'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', '=', emp.id)
@@ -162,7 +162,7 @@ async function loadProbationFacts(
   }
 
   const otRows = await ctx.trx
-    .selectFrom('crove_hr.overtime_request')
+    .selectFrom('ludy_hr.overtime_request')
     .select(['month', 'hours'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', '=', emp.id)
@@ -308,7 +308,7 @@ export const probationDecide = defineCommand({
   permission: 'hr.payroll.run',
   target: (input) => ({ type: 'hr.payroll_employee', id: input.employeeId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'probation_review', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'probation_review', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -337,7 +337,7 @@ export const probationDecide = defineCommand({
 
     await lockEmployeeErasure(ctx.trx, ctx.orgId, input.employeeId);
     const lockedEmp = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
@@ -354,7 +354,7 @@ export const probationDecide = defineCommand({
     const facts = await loadProbationFacts(ctx, input.employeeId, input.periodStart, input.periodEnd);
 
     const inserted = await ctx.trx
-      .insertInto('crove_hr.probation_review')
+      .insertInto('ludy_hr.probation_review')
       .values({
         org_id: ctx.orgId,
         employee_id: input.employeeId,
@@ -404,8 +404,8 @@ export const probationList = defineQuery({
   handler: async (ctx, input): Promise<HrProbationReviewView[]> => {
     userOf(ctx.actor);
     let q = ctx.trx
-      .selectFrom('crove_hr.probation_review as r')
-      .innerJoin('crove_hr.payroll_employee as e', (j) =>
+      .selectFrom('ludy_hr.probation_review as r')
+      .innerJoin('ludy_hr.payroll_employee as e', (j) =>
         j.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'),
       )
       .select([

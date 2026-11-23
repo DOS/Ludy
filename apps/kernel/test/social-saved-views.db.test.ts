@@ -25,7 +25,7 @@ const rawViews = defineQuery({
   name: 'test.saved_view.raw',
   input: z.object({}),
   access: ['owner', 'admin', 'member', 'viewer'],
-  handler: async (ctx) => (await ctx.trx.selectFrom('crove_social.saved_view').select(['id', 'name']).orderBy('name').execute()).map((r) => r.name),
+  handler: async (ctx) => (await ctx.trx.selectFrom('ludy_social.saved_view').select(['id', 'name']).orderBy('name').execute()).map((r) => r.name),
 });
 
 suite('social saved views on PostgreSQL (#1300)', () => {
@@ -151,21 +151,21 @@ suite('social saved views on PostgreSQL (#1300)', () => {
     // A private view: nobody else changes or deletes it, an owner of the org neither.
     await expect(save(o, o.owner, { viewId: mine.viewId, name: 'Đổi tên' })).rejects.toMatchObject({ code: 'SAVED_VIEW_NOT_FOUND' });
     await expect(exec(o, o.owner, 'social.saved_view.delete', { viewId: mine.viewId })).rejects.toMatchObject({ code: 'SAVED_VIEW_NOT_FOUND' });
-    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query("UPDATE crove_social.saved_view SET name = 'x' WHERE id = $1", [mine.viewId])).rowCount)).toBe(0);
-    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query('DELETE FROM crove_social.saved_view WHERE id = $1', [mine.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query("UPDATE ludy_social.saved_view SET name = 'x' WHERE id = $1", [mine.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query('DELETE FROM ludy_social.saved_view WHERE id = $1', [mine.viewId])).rowCount)).toBe(0);
     // A shared view: another member may not change or delete it, in the command or in the table.
     await expect(save(o, o.minh, { viewId: team.viewId, name: 'Của Minh', shared: true })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(exec(o, o.minh, 'social.saved_view.delete', { viewId: team.viewId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE crove_social.saved_view SET name = 'x' WHERE id = $1", [team.viewId])).rowCount)).toBe(0);
-    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM crove_social.saved_view WHERE id = $1', [team.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE ludy_social.saved_view SET name = 'x' WHERE id = $1", [team.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM ludy_social.saved_view WHERE id = $1', [team.viewId])).rowCount)).toBe(0);
     // Nor write a view in someone else's name.
     await expect(
-      asApp(o.orgId, o.minh, (c) => c.query("INSERT INTO crove_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, 'Giả', '{}')", [o.orgId, o.lan])),
+      asApp(o.orgId, o.minh, (c) => c.query("INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, 'Giả', '{}')", [o.orgId, o.lan])),
     ).rejects.toThrow(/row-level security/);
     // The admin renames it and keeps it shared, but may not make it private (it would hide it from them) in either place.
     await save(o, o.admin, { viewId: team.viewId, name: 'Nhóm Lan (tuần)', filters: { tab: 'calendar', author: o.lan, view: 'week' }, shared: true });
     await expect(save(o, o.admin, { viewId: team.viewId, name: 'Nhóm Lan', shared: false })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(asApp(o.orgId, o.admin, (c) => c.query('UPDATE crove_social.saved_view SET shared = false WHERE id = $1', [team.viewId]))).rejects.toThrow(/row-level security/);
+    await expect(asApp(o.orgId, o.admin, (c) => c.query('UPDATE ludy_social.saved_view SET shared = false WHERE id = $1', [team.viewId]))).rejects.toThrow(/row-level security/);
     expect((await list(o, o.lan)).find((v) => v.id === team.viewId)).toMatchObject({ name: 'Nhóm Lan (tuần)', shared: true, ownerId: o.lan });
     // Its owner makes it private again; then only they see it.
     await save(o, o.lan, { viewId: team.viewId, name: 'Nhóm Lan (tuần)', filters: { tab: 'calendar' }, shared: false });
@@ -192,7 +192,7 @@ suite('social saved views on PostgreSQL (#1300)', () => {
     const both = await Promise.allSettled([save(o, o.lan, { name: 'Cuối A' }), save(o, o.lan, { name: 'Cuối B' })]);
     expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(both.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'SAVED_VIEW_LIMIT' } });
-    const count = async (user: string) => (await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.saved_view WHERE org_id = $1 AND user_id = $2', [o.orgId, user]))).rows[0]?.n;
+    const count = async (user: string) => (await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.saved_view WHERE org_id = $1 AND user_id = $2', [o.orgId, user]))).rows[0]?.n;
     expect(await count(o.lan)).toBe(String(SAVED_VIEW_LIMIT));
     // The limit counts the member's own views only: Minh's shared view did not take one of Lan's places, and Lan still
     // renames one at the limit.
@@ -201,9 +201,9 @@ suite('social saved views on PostgreSQL (#1300)', () => {
     // A shape the contract does not know is refused before the table; the table's own check holds without it.
     await expect(save(o, o.minh, { name: 'Lạ', filters: { tab: 'metrics' } })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(save(o, o.minh, { name: 'Lạ', filters: { extra: 1 } })).rejects.toMatchObject({ code: 'VALIDATION' });
-    await expect(admin((c) => c.query("INSERT INTO crove_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, 'Mảng', '[]')", [o.orgId, o.minh]))).rejects.toThrow(/check constraint/);
+    await expect(admin((c) => c.query("INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, 'Mảng', '[]')", [o.orgId, o.minh]))).rejects.toThrow(/check constraint/);
     await expect(
-      admin((c) => c.query('INSERT INTO crove_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, $3, $4)', [o.orgId, o.minh, 'To', JSON.stringify({ q: 'x'.repeat(5000) })])),
+      admin((c) => c.query('INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters) VALUES ($1, $2, $3, $4)', [o.orgId, o.minh, 'To', JSON.stringify({ q: 'x'.repeat(5000) })])),
     ).rejects.toThrow(/check constraint/);
     // A member who leaves takes their views along, shared ones too.
     await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
@@ -247,6 +247,6 @@ suite('social saved views on PostgreSQL (#1300)', () => {
 
   it('is purged with the org: the purge function lists the table among the Social rows it deletes', async () => {
     const { rows } = await admin((c) => c.query<{ src: string }>("SELECT prosrc AS src FROM pg_catalog.pg_proc WHERE oid = 'ludy_kernel.org_purge(integer)'::regprocedure"));
-    expect(rows[0]?.src).toContain("'crove_social.saved_view'");
+    expect(rows[0]?.src).toContain("'ludy_social.saved_view'");
   });
 });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Scoped external REST API edge helpers for /api/v1/sign/* (#4441, eSign Slice 5c).
-// Verifies Bearer ludy_sk_... API keys via SHA-256 against crove_sign.api_key_* SECURITY DEFINER
+// Verifies Bearer ludy_sk_... API keys via SHA-256 against ludy_sign.api_key_* SECURITY DEFINER
 // functions, enforces org_app_on('sign') + billing entitlements (opaque 404), scope separation
 // (sign:read vs sign:draft), per-IP + per-key rate limits, Cache-Control: no-store, strict
 // exclusion of hr_contract and meeting_minutes envelopes (404 non-existence parity), and
@@ -157,7 +157,7 @@ async function authenticateApiKey(
 
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ auth: RawAuthResult | null }>`
-      SELECT crove_sign.api_key_authenticate(${keySha256}) AS auth
+      SELECT ludy_sign.api_key_authenticate(${keySha256}) AS auth
     `.execute(db);
     return rows[0]?.auth ?? null;
   });
@@ -214,7 +214,7 @@ export async function runSignApiV1EnvelopesList(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ out: RawSqlActionResult }>`
-      SELECT crove_sign.api_key_envelopes_list(${auth.keySha256}, ${statusFilter}, ${limit}) AS out
+      SELECT ludy_sign.api_key_envelopes_list(${auth.keySha256}, ${statusFilter}, ${limit}) AS out
     `.execute(db);
     return rows[0]?.out;
   });
@@ -240,7 +240,7 @@ export async function runSignApiV1EnvelopeGet(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ out: RawSqlActionResult }>`
-      SELECT crove_sign.api_key_envelope_get(${auth.keySha256}, ${envelopeId}::uuid) AS out
+      SELECT ludy_sign.api_key_envelope_get(${auth.keySha256}, ${envelopeId}::uuid) AS out
     `.execute(db);
     return rows[0]?.out;
   });
@@ -270,7 +270,7 @@ export async function resolveSignApiV1FileSource(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ out: RawSqlActionResult }>`
-      SELECT crove_sign.api_key_envelope_file_source(${auth.keySha256}, ${envelopeId}::uuid, ${kind}) AS out
+      SELECT ludy_sign.api_key_envelope_file_source(${auth.keySha256}, ${envelopeId}::uuid, ${kind}) AS out
     `.execute(db);
     return rows[0]?.out;
   });
@@ -317,7 +317,7 @@ export async function runSignApiV1TemplatesList(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ out: RawSqlActionResult }>`
-      SELECT crove_sign.api_key_templates_list(${auth.keySha256}, ${limit}) AS out
+      SELECT ludy_sign.api_key_templates_list(${auth.keySha256}, ${limit}) AS out
     `.execute(db);
     return rows[0]?.out;
   });
@@ -356,7 +356,7 @@ export async function runSignApiV1FromTemplate(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ out: RawSqlActionResult }>`
-      SELECT crove_sign.api_key_create_draft_from_template(
+      SELECT ludy_sign.api_key_create_draft_from_template(
         ${auth.keySha256}::text,
         ${input.templateId}::uuid,
         ${input.title ?? null}::text,

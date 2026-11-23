@@ -23,7 +23,7 @@ export const misaGoodsCodesList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<MisaGoodsCode[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.misa_goods_code')
+      .selectFrom('ludy_finance.misa_goods_code')
       .select(['account_code', 'item_code', 'warehouse_code', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('account_code')
@@ -56,7 +56,7 @@ export const setMisaGoodsCode = defineCommand({
     await assertStockAccount(ctx, accountCode);
     const by = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const existing = await ctx.trx
-      .selectFrom('crove_finance.misa_goods_code')
+      .selectFrom('ludy_finance.misa_goods_code')
       .select(['id', 'item_code', 'warehouse_code'])
       .where('org_id', '=', ctx.orgId)
       .where('account_code', '=', accountCode)
@@ -65,7 +65,7 @@ export const setMisaGoodsCode = defineCommand({
     let updatedAt: Date;
     if (existing) {
       const row = await ctx.trx
-        .updateTable('crove_finance.misa_goods_code')
+        .updateTable('ludy_finance.misa_goods_code')
         .set({ item_code: itemCode, warehouse_code: warehouseCode, updated_by: by, updated_at: new Date() })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
@@ -74,7 +74,7 @@ export const setMisaGoodsCode = defineCommand({
       updatedAt = new Date(row.updated_at);
     } else {
       const row = await ctx.trx
-        .insertInto('crove_finance.misa_goods_code')
+        .insertInto('ludy_finance.misa_goods_code')
         .values({ org_id: ctx.orgId, account_code: accountCode, item_code: itemCode, warehouse_code: warehouseCode, updated_by: by })
         .returning('updated_at')
         .executeTakeFirstOrThrow()
@@ -105,7 +105,7 @@ export const removeMisaGoodsCode = defineCommand({
   access: MANAGERS,
   handler: async (ctx, { accountCode }) => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.misa_goods_code')
+      .deleteFrom('ludy_finance.misa_goods_code')
       .where('org_id', '=', ctx.orgId)
       .where('account_code', '=', accountCode)
       .returning(['item_code', 'warehouse_code'])

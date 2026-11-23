@@ -379,7 +379,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     const declineTokenHash = hashSigningToken(declinedStandalone.links[0]!.token);
     await runtime.orgless(async (orglessDb) => {
       await sql`
-        SELECT crove_sign.public_decline(
+        SELECT ludy_sign.public_decline(
           ${declineTokenHash},
           ${hrConfidentialDeclineNote},
           ${'a'.repeat(64)},
@@ -542,9 +542,9 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     );
     expect(updatedDetail.envelope.autoRemindBeforeExpiry).toBe(false);
 
-    // Non-worker role ludy_app cannot call crove_sign.pre_expiry_remind_due_orgs.
+    // Non-worker role ludy_app cannot call ludy_sign.pre_expiry_remind_due_orgs.
     await expect(
-      sql`SELECT * FROM crove_sign.pre_expiry_remind_due_orgs(10, now())`.execute(db),
+      sql`SELECT * FROM ludy_sign.pre_expiry_remind_due_orgs(10, now())`.execute(db),
     ).rejects.toThrow();
 
     // Direct tenant-user write to pre_expiry_reminded_at is blocked by signer_guard() (SIGNER_SYSTEM_ONLY),
@@ -568,12 +568,12 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
         await guardClient.query('RELEASE SAVEPOINT sign_3c_guard');
       };
       await expectGuardFailure(
-        'UPDATE crove_sign.envelope SET auto_remind_before_expiry = false WHERE org_id = $1 AND id = $2',
+        'UPDATE ludy_sign.envelope SET auto_remind_before_expiry = false WHERE org_id = $1 AND id = $2',
         [orgA, active.envelopeId],
         /ENVELOPE_FROZEN/,
       );
       await expectGuardFailure(
-        'UPDATE crove_sign.signer SET pre_expiry_reminded_at = now() WHERE org_id = $1 AND id = $2',
+        'UPDATE ludy_sign.signer SET pre_expiry_reminded_at = now() WHERE org_id = $1 AND id = $2',
         [orgA, active.signerIds[0]!],
         /SIGNER_SYSTEM_ONLY/,
       );
@@ -736,7 +736,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     const unverifiedCeremonyToken = generateRawSigningToken();
     const directStarted = await runtime.orgless(async (orglessDb) => {
       const { rows } = await sql<{ v: { status: string; envelopeId: string; signerId: string } }>`
-        SELECT crove_sign.public_direct_start(
+        SELECT ludy_sign.public_direct_start(
           ${directTokenHash},
           'Anonymous Visitor',
           'victim-n1a@sign-3c.test',
@@ -752,11 +752,11 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     // Force expires_at into the 24h window AND even flip delivery_mode + clear direct_link_id via superuser to test genesis-event N1(a) defense in depth!
     await withAdmin(async (c) => {
       await c.query(
-        'UPDATE crove_sign.envelope SET expires_at = $3::timestamptz, direct_link_id = NULL WHERE org_id = $1::uuid AND id = $2::uuid',
+        'UPDATE ludy_sign.envelope SET expires_at = $3::timestamptz, direct_link_id = NULL WHERE org_id = $1::uuid AND id = $2::uuid',
         [orgSweep, directStarted!.envelopeId, dueIso],
       );
       await c.query(
-        `UPDATE crove_sign.signer SET delivery_mode = 'email' WHERE org_id = $1::uuid AND id = $2::uuid`,
+        `UPDATE ludy_sign.signer SET delivery_mode = 'email' WHERE org_id = $1::uuid AND id = $2::uuid`,
         [orgSweep, directStarted!.signerId],
       );
     });
@@ -851,13 +851,13 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     const step1TokenHash = hashSigningToken(seqEnv.links[0]!.token);
     const step1View = await runtime.orgless(async (orglessDb) => {
       const { rows } = await sql<{ v: { fields: Array<{ id: string }> } }>`
-        SELECT crove_sign.public_record_view(${step1TokenHash}, ${'c'.repeat(64)}, 'SeqStep1/1.0') AS v
+        SELECT ludy_sign.public_record_view(${step1TokenHash}, ${'c'.repeat(64)}, 'SeqStep1/1.0') AS v
       `.execute(orglessDb);
       return rows[0]?.v ?? null;
     });
     await runtime.orgless(async (orglessDb) => {
       await sql`
-        SELECT crove_sign.public_submit(
+        SELECT ludy_sign.public_submit(
           ${step1TokenHash},
           true,
           'draw',
@@ -933,7 +933,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
 
     const { rows: offSignerRows } = await withAdmin((c) =>
       c.query<{ pre_expiry_reminded_at: Date | null }>(
-        'SELECT pre_expiry_reminded_at FROM crove_sign.signer WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
+        'SELECT pre_expiry_reminded_at FROM ludy_sign.signer WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
         [orgOff, offEnv.envelopeId],
       ),
     );
@@ -941,7 +941,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
 
     const { rows: healthySignerRows } = await withAdmin((c) =>
       c.query<{ pre_expiry_reminded_at: Date | null }>(
-        'SELECT pre_expiry_reminded_at FROM crove_sign.signer WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
+        'SELECT pre_expiry_reminded_at FROM ludy_sign.signer WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
         [orgHealthy, healthyEnv.envelopeId],
       ),
     );
@@ -1004,7 +1004,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
         for (let idx = 0; idx < 101; idx += 1) {
           const envId = randomUUID();
           await c.query(
-            `INSERT INTO crove_sign.envelope (
+            `INSERT INTO ludy_sign.envelope (
                org_id, id, title, status, routing_mode, source_kind, source_file_id,
                source_storage_key, source_generation, source_sha256, inspect_status, page_count,
                expires_at, auto_remind_before_expiry, sent_at, created_by
@@ -1017,7 +1017,7 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
             [orgBatch, envId, `Batch Env ${idx + 1}`, dueIso, ownerB, sourceFileId],
           );
           await c.query(
-            `INSERT INTO crove_sign.signer (
+            `INSERT INTO ludy_sign.signer (
                org_id, envelope_id, routing_order, signer_role, role_label, name, email, delivery_mode, status
              ) VALUES ($1::uuid, $2::uuid, 1, 'signer', 'Party B', $3, $4, 'email', 'pending')`,
             [orgBatch, envId, `Signer ${idx + 1}`, `batch-${idx + 1}@sign-3c.test`],

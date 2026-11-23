@@ -48,7 +48,7 @@ export const projectTaskSetDates = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_task', ['start_on']),
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['start_on']),
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'task', ['due']),
   ],
   target: (input) => ({ type: 'projects.project', id: input.projectId }),
@@ -68,7 +68,7 @@ export const projectTaskSetDates = defineCommand({
     if (!task) throw taskNotFound();
 
     const pt = await ctx.trx
-      .selectFrom('crove_projects.project_task')
+      .selectFrom('ludy_projects.project_task')
       .select(['id', 'start_on'])
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -101,7 +101,7 @@ export const projectTaskSetDates = defineCommand({
 
     if (startChanged) {
       await ctx.trx
-        .updateTable('crove_projects.project_task')
+        .updateTable('ludy_projects.project_task')
         .set({ start_on: nextStartOn })
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', project.id)
@@ -149,7 +149,7 @@ export const projectTimeline = defineQuery({
     const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
 
     const projectMemberRows = await ctx.trx
-      .selectFrom('crove_projects.project_member')
+      .selectFrom('ludy_projects.project_member')
       .select('user_id')
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', row.id)
@@ -211,7 +211,7 @@ export const projectTimeline = defineQuery({
         (t.checkout_run_id IS NOT NULL AND t.lock_expires_at > pg_catalog.now()) AS checked_out,
         t.created_at,
         t.updated_at
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
       JOIN ludy_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
       LEFT JOIN ludy_kernel.position pos
@@ -236,7 +236,7 @@ export const projectTimeline = defineQuery({
     if (truncated) {
       const { rows: countRows } = await sql<{ n: string }>`
         SELECT pg_catalog.count(*)::text AS n
-          FROM crove_projects.project_task pt
+          FROM ludy_projects.project_task pt
           JOIN ludy_kernel.task t
             ON t.org_id = pt.org_id AND t.id = pt.task_id
          WHERE pt.org_id = ${ctx.orgId}::uuid
@@ -262,7 +262,7 @@ export const projectTimeline = defineQuery({
         blocked_task_id: string;
       }>`
         SELECT d.id, d.blocker_task_id, d.blocked_task_id
-          FROM crove_projects.task_dependency d
+          FROM ludy_projects.task_dependency d
           JOIN ludy_kernel.task bt
             ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
           JOIN ludy_kernel.task dt

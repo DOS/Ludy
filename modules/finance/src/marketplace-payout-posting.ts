@@ -36,7 +36,7 @@ export interface PayoutProposalInput {
   platform: string;
   periodFrom: string;
   periodTo: string;
-  // The platform's party (crove_finance.marketplace_party): the settlement's posting created it, so a payout of a posted settlement has one.
+  // The platform's party (ludy_finance.marketplace_party): the settlement's posting created it, so a payout of a posted settlement has one.
   partyId: string | null;
   // The ledger account of the bank account that received the transfer (the bank line's own account).
   cashAccount: string;

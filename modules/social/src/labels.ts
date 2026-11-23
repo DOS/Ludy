@@ -84,18 +84,18 @@ function requireUser(ctx: CommandContext): string {
 }
 
 // One label write at a time per org, so the name and count checks below hold until the commit.
-const lockOrg = (ctx: CommandContext) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.label:${ctx.orgId}`}))`.execute(ctx.trx);
+const lockOrg = (ctx: CommandContext) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.label:${ctx.orgId}`}))`.execute(ctx.trx);
 
 // Compared as the unique index does (lower() in the database), whatever the client's casing rules.
 async function nameFree(ctx: CommandContext, name: string, except?: string) {
-  let q = ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where(sql<boolean>`lower(name) = lower(${name})`);
+  let q = ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where(sql<boolean>`lower(name) = lower(${name})`);
   if (except) q = q.where('id', '<>', except);
   if (await q.executeTakeFirst()) throw new DomainError('LABEL_NAME_TAKEN', 409, 'Đã có nhãn cùng tên', { name });
 }
 
 async function lockLabel(ctx: CommandContext, id: string) {
   const label = await ctx.trx
-    .selectFrom('crove_social.label')
+    .selectFrom('ludy_social.label')
     .select(['id', 'starts_on', 'ends_on', 'utm_campaign', 'utm_medium'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', id)
@@ -118,11 +118,11 @@ export const labelCreate = defineCommand({
     if (setsCampaign(input) && ctx.role !== 'owner' && ctx.role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu và quản trị viên mới đặt được ngày và UTM của chiến dịch');
     const campaign = campaignOf(NO_CAMPAIGN, input);
     await lockOrg(ctx);
-    const count = await ctx.trx.selectFrom('crove_social.label').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const count = await ctx.trx.selectFrom('ludy_social.label').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (Number(count.n) >= LABEL_LIMIT) throw new DomainError('LABEL_LIMIT', 409, `Mỗi tổ chức có tối đa ${LABEL_LIMIT} nhãn`);
     await nameFree(ctx, input.name);
     const row = await ctx.trx
-      .insertInto('crove_social.label')
+      .insertInto('ludy_social.label')
       .values({ org_id: ctx.orgId, name: input.name, color: input.color ?? 'gray', ...columns(campaign), created_by: userId, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -144,7 +144,7 @@ export const labelUpdate = defineCommand({
     await lockOrg(ctx);
     await nameFree(ctx, input.name, label.id);
     await ctx.trx
-      .updateTable('crove_social.label')
+      .updateTable('ludy_social.label')
       .set({ name: input.name, color: input.color, ...columns(campaign) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', label.id)
@@ -164,7 +164,7 @@ export const labelDelete = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const label = await lockLabel(ctx, input.labelId);
-    await ctx.trx.deleteFrom('crove_social.label').where('org_id', '=', ctx.orgId).where('id', '=', label.id).execute();
+    await ctx.trx.deleteFrom('ludy_social.label').where('org_id', '=', ctx.orgId).where('id', '=', label.id).execute();
     return { labelId: label.id };
   },
 });
@@ -186,24 +186,24 @@ export const postSetLabels = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     // One change of a post's labels at a time; its content and revision are left alone.
-    const post = await ctx.trx.selectFrom('crove_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).forUpdate().executeTakeFirst();
+    const post = await ctx.trx.selectFrom('ludy_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).forUpdate().executeTakeFirst();
     if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng này');
     // Only a post the caller may see (#1081).
     await refusePostOutside(ctx, post.id);
     if (input.labelIds.length > 0) {
       // Held until the commit, so a label deleted meanwhile waits instead of failing the insert below.
-      const found = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', input.labelIds).forKeyShare().execute();
+      const found = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', input.labelIds).forKeyShare().execute();
       if (found.length !== input.labelIds.length) throw new DomainError('LABEL_NOT_FOUND', 404, 'Có nhãn không tồn tại hoặc đã bị xóa');
     }
-    const current = await ctx.trx.selectFrom('crove_social.post_label').select('label_id').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).execute();
+    const current = await ctx.trx.selectFrom('ludy_social.post_label').select('label_id').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).execute();
     const have = new Set(current.map((r) => r.label_id));
     const want = new Set(input.labelIds);
     const gone = [...have].filter((id) => !want.has(id));
     const added = input.labelIds.filter((id) => !have.has(id));
-    if (gone.length > 0) await ctx.trx.deleteFrom('crove_social.post_label').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).where('label_id', 'in', gone).execute();
+    if (gone.length > 0) await ctx.trx.deleteFrom('ludy_social.post_label').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).where('label_id', 'in', gone).execute();
     if (added.length > 0) {
       await ctx.trx
-        .insertInto('crove_social.post_label')
+        .insertInto('ludy_social.post_label')
         .values(added.map((labelId) => ({ org_id: ctx.orgId, post_id: post.id, label_id: labelId, created_at: ctx.now })))
         .execute();
     }
@@ -218,8 +218,8 @@ export const labelList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<Label[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_social.label as l')
-      .leftJoin('crove_social.post_label as pl', (j) => j.onRef('pl.org_id', '=', 'l.org_id').onRef('pl.label_id', '=', 'l.id'))
+      .selectFrom('ludy_social.label as l')
+      .leftJoin('ludy_social.post_label as pl', (j) => j.onRef('pl.org_id', '=', 'l.org_id').onRef('pl.label_id', '=', 'l.id'))
       .select(['l.id', 'l.name', 'l.color', 'l.created_by', 'l.starts_on', 'l.ends_on', 'l.utm_campaign', 'l.utm_medium', (eb) => eb.fn.count<string>('pl.id').as('posts')])
       .where('l.org_id', '=', ctx.orgId)
       .groupBy(['l.org_id', 'l.id'])
@@ -246,8 +246,8 @@ export async function labelsOfPosts(trx: Trx, orgId: string, postIds: readonly s
   const out = new Map<string, { id: string; name: string }[]>();
   if (postIds.length === 0) return out;
   const rows = await trx
-    .selectFrom('crove_social.post_label as pl')
-    .innerJoin('crove_social.label as l', (j) => j.onRef('l.org_id', '=', 'pl.org_id').onRef('l.id', '=', 'pl.label_id'))
+    .selectFrom('ludy_social.post_label as pl')
+    .innerJoin('ludy_social.label as l', (j) => j.onRef('l.org_id', '=', 'pl.org_id').onRef('l.id', '=', 'pl.label_id'))
     .select(['pl.post_id', 'l.id', 'l.name'])
     .where('pl.org_id', '=', orgId)
     .where('pl.post_id', 'in', [...postIds])
@@ -267,8 +267,8 @@ export async function campaignsOfPosts(trx: Trx, orgId: string, postIds: readonl
   const out = new Map<string, Campaign[]>();
   if (postIds.length === 0) return out;
   const rows = await trx
-    .selectFrom('crove_social.post_label as pl')
-    .innerJoin('crove_social.label as l', (j) => j.onRef('l.org_id', '=', 'pl.org_id').onRef('l.id', '=', 'pl.label_id'))
+    .selectFrom('ludy_social.post_label as pl')
+    .innerJoin('ludy_social.label as l', (j) => j.onRef('l.org_id', '=', 'pl.org_id').onRef('l.id', '=', 'pl.label_id'))
     .select(['pl.post_id', 'l.name', 'l.starts_on', 'l.ends_on', 'l.utm_campaign', 'l.utm_medium'])
     .where('pl.org_id', '=', orgId)
     .where('pl.post_id', 'in', [...postIds])

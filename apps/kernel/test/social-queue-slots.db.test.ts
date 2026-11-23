@@ -87,7 +87,7 @@ suite('social open queue slots on PostgreSQL (#1158)', () => {
   }
 
   const toSlot = (o: Org, p: { postId: string; variantId: string }, slotAt: string, user = o.owner) => exec<Scheduled>(o, 'social.variant.schedule', { postId: p.postId, variantIds: [p.variantId], queue: true, slotAt }, user);
-  const row = (variantId: string) => admin(async (c) => (await c.query<Row>('SELECT status, queue_slot_at, scheduled_at FROM crove_social.post_variant WHERE id = $1', [variantId])).rows[0] as Row);
+  const row = (variantId: string) => admin(async (c) => (await c.query<Row>('SELECT status, queue_slot_at, scheduled_at FROM ludy_social.post_variant WHERE id = $1', [variantId])).rows[0] as Row);
   // One clock read for both ends: two reads a millisecond apart made a 31-day range a millisecond over the limit (#1828).
   const range = (days = 14) => {
     const now = Date.now();

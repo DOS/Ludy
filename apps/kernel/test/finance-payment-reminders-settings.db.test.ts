@@ -99,7 +99,7 @@ suite('payment reminder settings (#2488)', () => {
   it('defaults to 30 days and no weekly item, with no row made by reading', async () => {
     const o = await org();
     expect(await query<Setting>(o, 'finance.collection_setting.get', {}, o.viewer)).toEqual({ termsDays: 30, weeklyItem: false });
-    const rows = await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId])).rowCount);
+    const rows = await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.collection_setting WHERE org_id = $1', [o.orgId])).rowCount);
     expect(rows).toBe(0);
   });
 
@@ -111,7 +111,7 @@ suite('payment reminder settings (#2488)', () => {
     await expect(execute(o, 'finance.collection_setting.set', { termsDays: 10, weeklyItem: false }, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(execute(o, 'finance.collection_setting.set', { termsDays: 10, weeklyItem: false }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // One row, whoever wrote it.
-    const rows = await admin(async (c) => (await c.query('SELECT terms_days, weekly_item, set_by FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query('SELECT terms_days, weekly_item, set_by FROM ludy_finance.collection_setting WHERE org_id = $1', [o.orgId])).rows);
     expect(rows).toEqual([{ terms_days: 15, weekly_item: true, set_by: o.admin }]);
     // Each change is audited with the numbers and the switch.
     expect(await auditOf(o, 'finance.collection_setting.set')).toMatchObject([
@@ -137,7 +137,7 @@ suite('payment reminder settings (#2488)', () => {
     expect(await execute<Customer>(o, 'finance.customer_collection.set', { partyId: p, termsDays: 14, pausedUntil: null }, o.admin)).toEqual({ partyId: p, termsDays: 14, effectiveTermsDays: 14, pausedUntil: null });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: p }, o.viewer)).toMatchObject({ termsDays: 14, pausedUntil: null });
     await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 7, pausedUntil: null }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    const rows = await admin(async (c) => (await c.query('SELECT party_id, terms_days, paused_until::text AS paused_until FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query('SELECT party_id, terms_days, paused_until::text AS paused_until FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId])).rows);
     expect(rows).toEqual([{ party_id: p, terms_days: 14, paused_until: null }]);
     const audit = await auditOf(o, 'finance.customer_collection.set');
     expect(audit).toMatchObject([
@@ -151,11 +151,11 @@ suite('payment reminder settings (#2488)', () => {
     const o = await org();
     const p = await customer(o, 'Công ty Khách Hàng Hai');
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: null });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: daysFromNow(5) });
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: null });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: p })).toMatchObject({ termsDays: null, pausedUntil: null });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
   });
 
   it('refuses a pause that is not a date or runs past two years, and terms outside the range', async () => {
@@ -169,7 +169,7 @@ suite('payment reminder settings (#2488)', () => {
     await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: daysFromNow(800) })).rejects.toMatchObject({ code: 'PAUSE_TOO_LONG' });
     await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 0, pausedUntil: null })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 400, pausedUntil: null })).rejects.toMatchObject({ code: 'VALIDATION' });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
   });
 
   it('sits on the kept party of a duplicate group, whichever party is named', async () => {
@@ -180,7 +180,7 @@ suite('payment reminder settings (#2488)', () => {
     expect(await execute<Customer>(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 21, pausedUntil: null })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: dup })).toMatchObject({ partyId: kept, termsDays: 21 });
-    expect(await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rows)).toEqual([{ party_id: kept }]);
+    expect(await admin(async (c) => (await c.query('SELECT party_id FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId])).rows)).toEqual([{ party_id: kept }]);
   });
 
   // The runtime refuses a role before the database is asked; these go straight to SQL as ludy_app, in the context of each role's user, so the row policies and the
@@ -207,28 +207,28 @@ suite('payment reminder settings (#2488)', () => {
     const changed = (who: string, sqlText: string, params: unknown[]) => inContext(who, async (c) => (await c.query(sqlText, params)).rowCount);
 
     // The org's settings: an owner and an admin update the one row, a member and a viewer change none and insert none.
-    for (const who of [o.owner, o.admin]) expect(await changed(who, 'UPDATE crove_finance.collection_setting SET terms_days = 31 WHERE org_id = $1', [o.orgId]), who).toBe(1);
+    for (const who of [o.owner, o.admin]) expect(await changed(who, 'UPDATE ludy_finance.collection_setting SET terms_days = 31 WHERE org_id = $1', [o.orgId]), who).toBe(1);
     for (const who of [o.member, o.viewer]) {
-      expect(await changed(who, 'UPDATE crove_finance.collection_setting SET terms_days = 9 WHERE org_id = $1', [o.orgId]), who).toBe(0);
-      await refused(who, 'INSERT INTO crove_finance.collection_setting (org_id) VALUES ($1)', [o.orgId], 'row-level security');
+      expect(await changed(who, 'UPDATE ludy_finance.collection_setting SET terms_days = 9 WHERE org_id = $1', [o.orgId]), who).toBe(0);
+      await refused(who, 'INSERT INTO ludy_finance.collection_setting (org_id) VALUES ($1)', [o.orgId], 'row-level security');
     }
     // A customer's: a member and an owner insert and update, a viewer does neither.
-    expect(await changed(o.member, 'UPDATE crove_finance.customer_collection SET terms_days = 21 WHERE org_id = $1 AND party_id = $2', [o.orgId, p])).toBe(1);
-    expect(await changed(o.member, 'INSERT INTO crove_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 45)', [o.orgId, other])).toBe(1);
-    expect(await changed(o.viewer, 'UPDATE crove_finance.customer_collection SET terms_days = 9 WHERE org_id = $1 AND party_id = $2', [o.orgId, p])).toBe(0);
-    await refused(o.viewer, 'INSERT INTO crove_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 9)', [o.orgId, other], 'row-level security');
+    expect(await changed(o.member, 'UPDATE ludy_finance.customer_collection SET terms_days = 21 WHERE org_id = $1 AND party_id = $2', [o.orgId, p])).toBe(1);
+    expect(await changed(o.member, 'INSERT INTO ludy_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 45)', [o.orgId, other])).toBe(1);
+    expect(await changed(o.viewer, 'UPDATE ludy_finance.customer_collection SET terms_days = 9 WHERE org_id = $1 AND party_id = $2', [o.orgId, p])).toBe(0);
+    await refused(o.viewer, 'INSERT INTO ludy_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 9)', [o.orgId, other], 'row-level security');
     // Nobody deletes, whatever the role: there is no DELETE grant.
     for (const who of [o.owner, o.admin, o.member, o.viewer]) {
-      await refused(who, 'DELETE FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId], 'permission denied');
-      await refused(who, 'DELETE FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId], 'permission denied');
+      await refused(who, 'DELETE FROM ludy_finance.collection_setting WHERE org_id = $1', [o.orgId], 'permission denied');
+      await refused(who, 'DELETE FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId], 'permission denied');
     }
     // No key changes: only the value columns, who set them and when are granted.
-    await refused(o.owner, 'UPDATE crove_finance.customer_collection SET party_id = $2 WHERE org_id = $1 AND party_id = $3', [o.orgId, other, p], 'permission denied');
-    await refused(o.owner, 'UPDATE crove_finance.customer_collection SET org_id = org_id WHERE org_id = $1', [o.orgId], 'permission denied');
-    await refused(o.owner, 'UPDATE crove_finance.collection_setting SET org_id = org_id WHERE org_id = $1', [o.orgId], 'permission denied');
+    await refused(o.owner, 'UPDATE ludy_finance.customer_collection SET party_id = $2 WHERE org_id = $1 AND party_id = $3', [o.orgId, other, p], 'permission denied');
+    await refused(o.owner, 'UPDATE ludy_finance.customer_collection SET org_id = org_id WHERE org_id = $1', [o.orgId], 'permission denied');
+    await refused(o.owner, 'UPDATE ludy_finance.collection_setting SET org_id = org_id WHERE org_id = $1', [o.orgId], 'permission denied');
     // Another org's owner cannot even enter this org's context, so none of it is reached.
     const b = await org();
-    await expect(inContext(b.owner, async (c) => c.query('SELECT 1 FROM crove_finance.collection_setting'))).rejects.toMatchObject({ message: 'NOT_A_MEMBER' });
+    await expect(inContext(b.owner, async (c) => c.query('SELECT 1 FROM ludy_finance.collection_setting'))).rejects.toMatchObject({ message: 'NOT_A_MEMBER' });
   });
 
   it('does not find another org\'s party, and keeps each org\'s settings apart', async () => {
@@ -247,8 +247,8 @@ suite('payment reminder settings (#2488)', () => {
     await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 10, pausedUntil: null });
     await execute(o, 'finance.collection_setting.set', { termsDays: 40, weeklyItem: true });
     await admin((c) => c.query('DELETE FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, p]));
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_finance.collection_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
   });
 
   it('reads the settings a party held before it was merged, writes only on the kept party, audits "changed" only when something changed, and serializes two writers', async () => {
@@ -264,9 +264,9 @@ suite('payment reminder settings (#2488)', () => {
     await execute(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 10, pausedUntil: null });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ termsDays: 10, pausedUntil: null });
     // The same values again change nothing: audited as unchanged, and the row keeps who set it and when.
-    const before = await admin(async (c) => (await c.query('SELECT updated_at::text AS at FROM crove_finance.customer_collection WHERE org_id = $1 AND party_id = $2', [o.orgId, kept])).rows[0]);
+    const before = await admin(async (c) => (await c.query('SELECT updated_at::text AS at FROM ludy_finance.customer_collection WHERE org_id = $1 AND party_id = $2', [o.orgId, kept])).rows[0]);
     await execute(o, 'finance.customer_collection.set', { partyId: kept, termsDays: 10, pausedUntil: null }, o.member);
-    expect(await admin(async (c) => (await c.query('SELECT updated_at::text AS at, set_by FROM crove_finance.customer_collection WHERE org_id = $1 AND party_id = $2', [o.orgId, kept])).rows[0])).toMatchObject({ at: before?.at, set_by: o.owner });
+    expect(await admin(async (c) => (await c.query('SELECT updated_at::text AS at, set_by FROM ludy_finance.customer_collection WHERE org_id = $1 AND party_id = $2', [o.orgId, kept])).rows[0])).toMatchObject({ at: before?.at, set_by: o.owner });
     const audit = await auditOf(o, 'finance.customer_collection.set');
     expect(audit.map((a) => a.changed)).toEqual([true, true, false]);
     // Two writers at once: each audit row names what the other left (one chain, never two writers reading the same old value).

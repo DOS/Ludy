@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Files attached to a note on PostgreSQL 17 (Notes v2 E2, #3561, owner decision A3, ADR-0037): the bytes go through
-// POST /api/notes/:noteId/attachments into the blob store under notes/<org>/<attachment> and a crove_notes.attachment row,
+// POST /api/notes/:noteId/attachments into the blob store under notes/<org>/<attachment> and a ludy_notes.attachment row,
 // never ludy_kernel.file; GET /api/notes/attachments/:id serves them only to whoever reads the parent note, with nosniff,
 // no-store, a sandbox CSP, inline only for raster images, PDF and safe audio, and one uniform 404 for an id that is foreign,
 // unknown, unreadable or in the trash. The worker extracts text through crove-extract (a stand-in here) and the note's search
@@ -151,7 +151,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
   const search = async (o: Org, who: Person, q: string) =>
     (await rt.query<NoteSummary[]>('notes.note.search', { q }, { actor: asUser(who.id), orgId: o.orgId })).map((n) => n.id);
   const doomed = async (o: Org) =>
-    (await rows<{ storage_key: string }>('SELECT storage_key FROM crove_notes.attachment_blob_doomed WHERE storage_key LIKE $1 ORDER BY 1', [`notes/${o.orgId}/%`])).map((r) => r.storage_key);
+    (await rows<{ storage_key: string }>('SELECT storage_key FROM ludy_notes.attachment_blob_doomed WHERE storage_key LIKE $1 ORDER BY 1', [`notes/${o.orgId}/%`])).map((r) => r.storage_key);
   const blobsOf = (o: Org) => [...store.blobs.keys()].filter((k) => k.startsWith(`notes/${o.orgId}/`)).sort();
   const fileRows = async (o: Org) => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.file WHERE org_id = $1', [o.orgId]))[0]?.n);
 
@@ -314,7 +314,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(await search(o, o.author, 'doi soat')).toEqual([noteId]);
     expect(await search(o, o.author, 'noi dung moi')).toEqual([noteId]);
     // The worker definers hand back no note text and refuse any login but the worker's.
-    await expect(rows('SELECT * FROM crove_notes.attachment_for_extract($1::uuid)', [a.id])).rejects.toThrow();
+    await expect(rows('SELECT * FROM ludy_notes.attachment_for_extract($1::uuid)', [a.id])).rejects.toThrow();
   });
 
   it('asks again for the text of an attachment still pending after 10 minutes, outside the trash, once per attachment', async () => {
@@ -327,7 +327,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await rt.execute('notes.note.delete', { noteId: trashed }, { actor: asUser(o.author.id), orgId: o.orgId });
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_notes.attachment SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = ANY($2)", [o.orgId, [waiting.id, inTrash.id]]);
+      await c.query("UPDATE ludy_notes.attachment SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = ANY($2)", [o.orgId, [waiting.id, inTrash.id]]);
     });
     const sent: Array<{ name: string; data: unknown; key: unknown }> = [];
     const boss = { send: async (name: string, data?: object | null, options?: { singletonKey?: string }) => (sent.push({ name, data, key: options?.singletonKey }), 'job') };
@@ -338,7 +338,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(mine[0]?.key).toEqual(expect.stringContaining(waiting.id));
     expect(sent.some((s) => [fresh.id, inTrash.id].includes((s.data as { attachmentId: string }).attachmentId))).toBe(false);
     // The app login may not list them.
-    await expect(admin((c) => c.query('SET ROLE ludy_app').then(() => c.query('SELECT * FROM crove_notes.attachment_extract_due(10)')))).rejects.toThrow();
+    await expect(admin((c) => c.query('SET ROLE ludy_app').then(() => c.query('SELECT * FROM ludy_notes.attachment_extract_due(10)')))).rejects.toThrow();
   });
 
   it('queues the blob on attachment delete, on the trash purge and on a note delete, and the sweep removes it from the store', async () => {
@@ -358,7 +358,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await rt.execute('notes.note.delete', { noteId: noteA }, { actor: asUser(o.author.id), orgId: o.orgId });
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_notes.note SET deleted_at = now() - interval '40 days' WHERE org_id = $1 AND id = $2", [o.orgId, noteA]);
+      await c.query("UPDATE ludy_notes.note SET deleted_at = now() - interval '40 days' WHERE org_id = $1 AND id = $2", [o.orgId, noteA]);
     });
     await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId });
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${one.id}`, `notes/${o.orgId}/${two.id}`, `notes/${o.orgId}/${three.id}`].sort());
@@ -406,13 +406,13 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: sharedAtt.id });
 
     const found = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser(o.owner.id), orgId: o.orgId });
-    expect(found.matches.map((m) => m.column).sort()).toEqual(['crove_notes.attachment.extracted_text']);
+    expect(found.matches.map((m) => m.column).sort()).toEqual(['ludy_notes.attachment.extracted_text']);
     expect(found.privateItems).toEqual([{ authorUserId: o.author.id, notes: 1, todos: 0 }]);
     expect(JSON.stringify(found)).not.toContain('ho-so-');
 
     // First erase (before notice): removes shared attachment + queues its blob; keeps private attachment.
     const firstErase = await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
-    expect(firstErase.erased).toContainEqual({ column: 'crove_notes.attachment.extracted_text', rows: 1 });
+    expect(firstErase.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
     expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt.id}`]);
 
     // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob.

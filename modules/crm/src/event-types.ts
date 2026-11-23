@@ -177,13 +177,13 @@ function onWrite(slug: string) {
 const slugTaken = (slug: string) => new DomainError('EVENT_TYPE_SLUG_TAKEN', 409, `Đường dẫn "${slug}" đã dùng cho một loại lịch hẹn khác`);
 
 async function slugFree(ctx: Reader, slug: string, except: string | null): Promise<boolean> {
-  let q = ctx.trx.selectFrom('crove_crm.event_type').select('id').where('org_id', '=', ctx.orgId).where('slug', '=', slug);
+  let q = ctx.trx.selectFrom('ludy_crm.event_type').select('id').where('org_id', '=', ctx.orgId).where('slug', '=', slug);
   if (except) q = q.where('id', '<>', except);
   return (await q.executeTakeFirst()) === undefined;
 }
 
 async function load(ctx: Reader, eventTypeId: string, lock: boolean): Promise<Row> {
-  let q = ctx.trx.selectFrom('crove_crm.event_type').select(COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', eventTypeId);
+  let q = ctx.trx.selectFrom('ludy_crm.event_type').select(COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', eventTypeId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
   if (!row) throw new DomainError('EVENT_TYPE_NOT_FOUND', 404, 'Không tìm thấy loại lịch hẹn này');
@@ -195,7 +195,7 @@ export const eventTypeList = defineQuery({
   input: z.strictObject({}),
   access: ALL,
   handler: async (ctx): Promise<EventType[]> => {
-    const rows = await ctx.trx.selectFrom('crove_crm.event_type').select(COLUMNS).where('org_id', '=', ctx.orgId).orderBy('active', 'desc').orderBy('title').orderBy('id').limit(500).execute();
+    const rows = await ctx.trx.selectFrom('ludy_crm.event_type').select(COLUMNS).where('org_id', '=', ctx.orgId).orderBy('active', 'desc').orderBy('title').orderBy('id').limit(500).execute();
     return rows.map(view);
   },
 });
@@ -218,7 +218,7 @@ export const eventTypeCreate = defineCommand({
     for (const coHost of input.coHostUserIds) await assertHost(ctx, coHost);
     if (!(await slugFree(ctx, input.slug, null))) throw slugTaken(input.slug);
     const row = await ctx.trx
-      .insertInto('crove_crm.event_type')
+      .insertInto('ludy_crm.event_type')
       .values({ org_id: ctx.orgId, ...columnsOf(input), created_by: userId, created_at: ctx.now, updated_by: userId, updated_at: ctx.now })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow()
@@ -253,7 +253,7 @@ export const eventTypeUpdate = defineCommand({
     for (const coHost of fields.coHostUserIds) if (!before.co_host_user_ids.includes(coHost)) await assertHost(ctx, coHost);
     if (!(await slugFree(ctx, fields.slug, eventTypeId))) throw slugTaken(fields.slug);
     const row = await ctx.trx
-      .updateTable('crove_crm.event_type')
+      .updateTable('ludy_crm.event_type')
       .set({ ...columnsOf(fields), updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', eventTypeId)
@@ -292,7 +292,7 @@ export const eventTypeSetActive = defineCommand({
     // Turning a type back on needs a host who may still host.
     if (input.active && !before.active) await assertHost(ctx, before.host_user_id);
     const row = await ctx.trx
-      .updateTable('crove_crm.event_type')
+      .updateTable('ludy_crm.event_type')
       .set({ active: input.active, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.eventTypeId)

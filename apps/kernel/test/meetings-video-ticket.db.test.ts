@@ -563,16 +563,16 @@ suite('meeting video tickets (#2703)', () => {
     // Re-recorded: the meeting now names another file.
     await run((meetingId) =>
       admin(async (c) => {
-        const other = (await c.query<{ id: string }>('SELECT f.id FROM ludy_kernel.file f WHERE f.org_id = $1 AND f.id NOT IN (SELECT file_id FROM crove_meetings.meeting_video WHERE meeting_id = $2) LIMIT 1', [orgId, meetingId])).rows[0]!.id;
-        await c.query('UPDATE crove_meetings.meeting_video SET file_id = $1 WHERE meeting_id = $2', [other, meetingId]);
+        const other = (await c.query<{ id: string }>('SELECT f.id FROM ludy_kernel.file f WHERE f.org_id = $1 AND f.id NOT IN (SELECT file_id FROM ludy_meetings.meeting_video WHERE meeting_id = $2) LIMIT 1', [orgId, meetingId])).rows[0]!.id;
+        await c.query('UPDATE ludy_meetings.meeting_video SET file_id = $1 WHERE meeting_id = $2', [other, meetingId]);
       }),
     );
     // Resealed under another key id.
-    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.media_key SET key_id = 'k-resealed' WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
+    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE ludy_meetings.media_key SET key_id = 'k-resealed' WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
     // Retention date passed.
-    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting_video SET video_retention_date = current_date - 2 WHERE meeting_id = $1`, [meetingId]))));
+    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE ludy_meetings.meeting_video SET video_retention_date = current_date - 2 WHERE meeting_id = $1`, [meetingId]))));
     // Key shredded.
-    await run((meetingId) => admin(async (c) => void (await c.query(`DELETE FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
+    await run((meetingId) => admin(async (c) => void (await c.query(`DELETE FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
     // The meeting deleted.
     await run(async (meetingId) => void (await rpc('meetings/delete', 'recorder', { meetingId })));
   });

@@ -70,7 +70,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
   const duplicate = (o: Org, user: string, postId: string, scheduledAt?: string | null) => exec<DuplicateResult>(o, user, 'social.post.duplicate', { postId, ...(scheduledAt === undefined ? {} : { scheduledAt }) });
   const copiesOf = (o: Org, postId: string) =>
     admin(async (c) => (await c.query<{ post_id: string }>("SELECT detail->>'post_id' AS post_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.duplicate' AND outcome = 'ok' AND detail->>'copy_of' = $2", [o.orgId, postId])).rows.map((r) => r.post_id));
-  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const approveAll = async (o: Org, postId: string) => {
     const view = await get(o, postId);
     await exec(o, o.owner, 'social.variant.decide', { postId, decision: 'approved', variants: view.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
@@ -197,7 +197,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
       ['draft', [], null, null],
     ]);
     // No channel has a time of its own: the planned time is the post's, for a person to schedule once approved.
-    const own = await admin(async (c) => (await c.query<{ scheduled_at: Date | null }>('SELECT scheduled_at FROM crove_social.post_variant WHERE post_id = $1', [copy.id])).rows);
+    const own = await admin(async (c) => (await c.query<{ scheduled_at: Date | null }>('SELECT scheduled_at FROM ludy_social.post_variant WHERE post_id = $1', [copy.id])).rows);
     expect(own.map((r) => r.scheduled_at)).toEqual([null, null]);
     await expect(exec(o, o.owner, 'social.variant.schedule', { postId: copy.id, at: planned })).rejects.toBeDefined();
     // Once sent to review and approved, it schedules as any post.
@@ -214,8 +214,8 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Thực đơn thứ Hai', channels: [{ connectionId: x }, { connectionId: o.a }] });
     await admin((c) =>
       c.query(
-        `UPDATE crove_social.post_variant v SET status = 'published', published_at = now() - interval '6 days', content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
-           FROM crove_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.post_id = $1`,
+        `UPDATE ludy_social.post_variant v SET status = 'published', published_at = now() - interval '6 days', content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
+           FROM ludy_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.post_id = $1`,
         [postId],
       ),
     );

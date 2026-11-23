@@ -63,9 +63,9 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         const entry = randomUUID();
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'secret text', 'finance.test', $4, $5)`, [orgId, entry, date, randomUUID(), entity]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'secret text', 'finance.test', $4, $5)`, [orgId, entry, date, randomUUID(), entity]);
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, legal_entity_id) VALUES ($1, $2, 1, $3, $5, 0, $6), ($1, $2, 2, $4, 0, $5, $6)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, legal_entity_id) VALUES ($1, $2, 1, $3, $5, 0, $6), ($1, $2, 2, $4, 0, $5, $6)`,
           [orgId, entry, debit, credit, amount, entity],
         );
         await c.query('COMMIT');
@@ -133,7 +133,7 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     const today = (await rows<{ d: string }>("SELECT to_char((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS d"))[0]?.d as string;
     // The same period as the answer's, so the expected figure is read from the books themselves (trial of account 3331 by SQL), not from the code under test.
     const seen = await o.read(o.owner, { range: 'this_year' });
-    const sums = async (to: string) => (await rows<{ n: string | null }>("SELECT sum(l.credit - l.debit)::text AS n FROM crove_finance.journal_line l JOIN crove_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id WHERE l.org_id = $1 AND l.account_code LIKE '3331%' AND j.entry_date <= $2", [o.orgId, to]))[0]?.n ?? '0';
+    const sums = async (to: string) => (await rows<{ n: string | null }>("SELECT sum(l.credit - l.debit)::text AS n FROM ludy_finance.journal_line l JOIN ludy_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id WHERE l.org_id = $1 AND l.account_code LIKE '3331%' AND j.entry_date <= $2", [o.orgId, to]))[0]?.n ?? '0';
     const vat = seen.outputVatUnsettled as { amount: string; previous: string; change: string };
     expect(Number(vat.amount)).toBe(Number(await sums(seen.to as string)));
     expect(Number(vat.previous)).toBe(Number(await sums(seen.previousTo as string)));

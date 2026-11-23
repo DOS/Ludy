@@ -142,7 +142,7 @@ async function knownOrders(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntity
   const out = new Map<string, string>();
   for (let i = 0; i < orderNos.length; i += 1000) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.channel_order')
+      .selectFrom('ludy_finance.channel_order')
       .select(['id', 'order_no'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -171,10 +171,10 @@ async function standingOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, staged: Stag
   let overlap: MarketplaceIncomePreview['overlap'] = null;
   if (period !== null) {
     const { rows } = await sql<{ period_start: unknown; period_end: unknown }>`
-      SELECT s.period_start, s.period_end FROM crove_finance.channel_settlement s
+      SELECT s.period_start, s.period_end FROM ludy_finance.channel_settlement s
       WHERE s.org_id = ${ctx.orgId}::uuid AND s.legal_entity_id = ${legalEntityId}::uuid AND s.platform = ${platform} AND s.reversal_of IS NULL
         AND s.period_start <= ${period.end}::date AND s.period_end >= ${period.start}::date
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
       ORDER BY s.period_start LIMIT 1`.execute(ctx.trx);
     const hit = rows[0];
     if (hit) {
@@ -189,11 +189,11 @@ async function standingOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, staged: Stag
     const ids = [...new Set(lines.flatMap((l) => (money(l.sales).gt(0) && orderIds.has(l.orderNo) ? [orderIds.get(l.orderNo) as string] : [])))];
     for (let i = 0; i < ids.length; i += 1000) {
       const { rows } = await sql<{ order_id: string; line_key: string }>`
-        SELECT l.order_id::text AS order_id, l.line_key FROM crove_finance.channel_settlement_line l
-        JOIN crove_finance.channel_settlement s ON s.org_id = l.org_id AND s.legal_entity_id = l.legal_entity_id AND s.id = l.settlement_id
+        SELECT l.order_id::text AS order_id, l.line_key FROM ludy_finance.channel_settlement_line l
+        JOIN ludy_finance.channel_settlement s ON s.org_id = l.org_id AND s.legal_entity_id = l.legal_entity_id AND s.id = l.settlement_id
         WHERE l.org_id = ${ctx.orgId}::uuid AND l.legal_entity_id = ${legalEntityId}::uuid AND l.order_id = ANY(${ids.slice(i, i + 1000)}::uuid[])
           AND NOT l.adjustment AND l.sales > 0 AND s.reversal_of IS NULL
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`.execute(ctx.trx);
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`.execute(ctx.trx);
       for (const r of rows) if (wanted.has(`${r.order_id}\u0000${r.line_key}`)) repeated += 1;
     }
   }
@@ -305,14 +305,14 @@ export const marketplaceIncomeConfirm = defineCommand({
     let settlementId: string;
     try {
       const settlement = await ctx.trx
-        .insertInto('crove_finance.channel_settlement')
+        .insertInto('ludy_finance.channel_settlement')
         .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, platform: staged.platform, period_start: period.start, period_end: period.end, report_net: standing.preview.reportNet, source_sha256: staged.sha256 })
         .returning('id')
         .executeTakeFirstOrThrow();
       settlementId = settlement.id;
       for (let i = 0; i < staged.lines.length; i += BATCH) {
         await ctx.trx
-          .insertInto('crove_finance.channel_settlement_line')
+          .insertInto('ludy_finance.channel_settlement_line')
           .values(
             staged.lines.slice(i, i + BATCH).map((line) => ({
               org_id: ctx.orgId,

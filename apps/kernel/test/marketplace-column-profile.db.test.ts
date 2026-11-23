@@ -80,7 +80,7 @@ suite('the confirmed column mapping (#4037)', () => {
     }
   }
   const rows = (text: string, values: unknown[] = []) => admin(async (c) => (await c.query(text, values)).rows);
-  const stored = async (org = orgId) => Number((await rows('SELECT count(*) AS n FROM crove_finance.marketplace_column_profile WHERE org_id = $1', [org]))[0]?.n);
+  const stored = async (org = orgId) => Number((await rows('SELECT count(*) AS n FROM ludy_finance.marketplace_column_profile WHERE org_id = $1', [org]))[0]?.n);
 
   // An org's own spreadsheet that no reader of the worker took, and the check a person asked for and the worker recorded as done (the sheet and the preview), as the screen leaves them.
   async function fileOf(org: string): Promise<string> {
@@ -90,7 +90,7 @@ suite('the confirmed column mapping (#4037)', () => {
     await rows("INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, 'unsupported', 'failed', NULL, '[]')", [org, id]);
     return id;
   }
-  const requestedAt = async (fileId: string, org = orgId) => new Date((await rows('SELECT requested_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [org, fileId]))[0]?.requested_at).toISOString();
+  const requestedAt = async (fileId: string, org = orgId) => new Date((await rows('SELECT requested_at FROM ludy_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [org, fileId]))[0]?.requested_at).toISOString();
   async function checked(
     assignments: unknown,
     opts: { platform?: string; sheet?: unknown; refusal?: string; noMapping?: boolean; noPreview?: boolean; org?: string; who?: string; record?: boolean } = {},
@@ -106,7 +106,7 @@ suite('the confirmed column mapping (#4037)', () => {
     await worker.execute('finance.marketplace.columns_record', { fileId, requestedAt: await requestedAt(fileId, org), result }, { actor: SYSTEM, orgId: org });
     return fileId;
   }
-  const checkRows = async (fileId: string) => Number((await rows('SELECT count(*) AS n FROM crove_finance.marketplace_column_check WHERE file_id = $1', [fileId]))[0]?.n);
+  const checkRows = async (fileId: string) => Number((await rows('SELECT count(*) AS n FROM ludy_finance.marketplace_column_check WHERE file_id = $1', [fileId]))[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -169,7 +169,7 @@ suite('the confirmed column mapping (#4037)', () => {
       { index: 3, header: 'Quantity', field: 'quantity' },
       { index: 5, header: 'Product', field: 'itemName' },
     ]);
-    expect((await rows('SELECT header_digest FROM crove_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, first.id]))[0]?.header_digest).toBe(DIGEST);
+    expect((await rows('SELECT header_digest FROM ludy_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, first.id]))[0]?.header_digest).toBe(DIGEST);
     // The file's check row (its sheet and its preview lines, personal data) is gone with the decision.
     expect(await checkRows(fileId)).toBe(0);
     // Another platform of the same org has none.
@@ -193,7 +193,7 @@ suite('the confirmed column mapping (#4037)', () => {
     expect((await latest('shopee'))?.id).toBe(changed.id);
     expect(await checkRows(other)).toBe(0);
     // The earlier confirmation is still there, never edited.
-    expect(await rows('SELECT 1 FROM crove_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, again.id])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, again.id])).toHaveLength(1);
     // The same mapping on another header row (another digest) is another layout: a new row, though the mapping is the one saved last.
     expect((await confirm(await checked(ASSIGN), 'shopee', ASSIGN)).added).toBe(true);
     const moved = await checked(ASSIGN, { sheet: { ...SIGNED_SHEET, headerDigest: 'd'.repeat(64) } });
@@ -302,7 +302,7 @@ suite('the confirmed column mapping (#4037)', () => {
     const fileId = await checked(ASSIGN, { sheet: { ...SIGNED_SHEET, headerDigest: 'e'.repeat(64) } });
     const saved = await confirm(fileId, 'shopee', ASSIGN, admin2);
     expect(saved.added).toBe(true);
-    expect((await rows('SELECT confirmed_by FROM crove_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, saved.id]))[0]?.confirmed_by).toBe(admin2);
+    expect((await rows('SELECT confirmed_by FROM ludy_finance.marketplace_column_profile WHERE org_id = $1 AND id = $2', [orgId, saved.id]))[0]?.confirmed_by).toBe(admin2);
     expect(await checkRows(fileId)).toBe(0);
   });
 
@@ -328,14 +328,14 @@ suite('the confirmed column mapping (#4037)', () => {
     expect(audit.length).toBeGreaterThan(0);
     expect(audit.some((r) => String(r.detail).includes(PLANTED_HEADER) || String(r.detail).includes('Bút'))).toBe(false);
     // The header text is in the profile row itself, which is where it belongs.
-    expect(await rows('SELECT 1 FROM crove_finance.marketplace_column_profile WHERE org_id = $1 AND columns::text LIKE $2', [orgId, `%${PLANTED_HEADER}%`])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.marketplace_column_profile WHERE org_id = $1 AND columns::text LIKE $2', [orgId, `%${PLANTED_HEADER}%`])).toHaveLength(1);
   });
 
   it('keeps the shape in the table itself: no sample, no extra key, no field or column twice, bounded text', async () => {
     const insert = (columns: unknown, over: { platform?: string; digest?: string; row?: number } = {}) =>
       admin((c) =>
         c.query(
-          'INSERT INTO crove_finance.marketplace_column_profile (org_id, platform, header_row, columns, header_digest) VALUES ($1, $2, $3, $4::jsonb, $5)',
+          'INSERT INTO ludy_finance.marketplace_column_profile (org_id, platform, header_row, columns, header_digest) VALUES ($1, $2, $3, $4::jsonb, $5)',
           [orgId, over.platform ?? 'shopee', over.row ?? 1, JSON.stringify(columns), over.digest ?? DIGEST],
         ),
       );

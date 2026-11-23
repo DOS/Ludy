@@ -34,15 +34,15 @@ export const supplierPaymentPayable = defineQuery({
     // One more than the cap says that older invoices were left out.
     const { rows } = await sql<Row>`
       SELECT d.id, d.party_id, pa.name AS party_name, d.invoice_number, d.invoice_date::text AS invoice_date, d.total::text AS total, d.currency,
-             (SELECT count(*)::int FROM crove_finance.supplier_bank_account a WHERE a.org_id = d.org_id AND a.party_id = d.party_id AND a.status = 'active') AS accounts,
+             (SELECT count(*)::int FROM ludy_finance.supplier_bank_account a WHERE a.org_id = d.org_id AND a.party_id = d.party_id AND a.status = 'active') AS accounts,
              (SELECT to_char(max(c.changed_at) AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD')
-                FROM crove_finance.supplier_bank_account_change c
+                FROM ludy_finance.supplier_bank_account_change c
                WHERE c.org_id = d.org_id AND c.party_id = d.party_id AND c.changed_at >= pg_catalog.now() - (${SUPPLIER_BANK_CHANGE_DAYS}::int * interval '1 day')) AS changed_on
-        FROM crove_finance.purchase_document d
+        FROM ludy_finance.purchase_document d
         LEFT JOIN ludy_kernel.party pa ON pa.org_id = d.org_id AND pa.id = d.party_id
        WHERE d.org_id = ${ctx.orgId}::uuid AND d.direction = 'purchase' AND d.total > 0
-         AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
-         AND NOT EXISTS (SELECT 1 FROM crove_finance.supplier_payment sp WHERE sp.org_id = d.org_id AND sp.purchase_document_id = d.id AND sp.status IN ('approved', 'paid'))
+         AND NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
+         AND NOT EXISTS (SELECT 1 FROM ludy_finance.supplier_payment sp WHERE sp.org_id = d.org_id AND sp.purchase_document_id = d.id AND sp.status IN ('approved', 'paid'))
          AND NOT EXISTS (SELECT 1 FROM ludy_kernel.proposal q WHERE q.org_id = d.org_id AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'
                            AND pg_catalog.lower(q.payload ->> 'purchaseDocumentId') = d.id::text)
        ORDER BY d.invoice_date, d.id

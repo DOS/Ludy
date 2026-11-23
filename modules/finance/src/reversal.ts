@@ -45,7 +45,7 @@ const PARTIAL_MIRROR = () =>
 // The entry as the caller sees it (RLS), and whether it may be reversed. The database re-checks all of it.
 async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select(['id', 'entry_date', 'description', 'reverses_entry_id', 'source_type', 'source_id', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', reversal.entryId)
@@ -58,7 +58,7 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   // right with a move of a later month.
   if (entry.source_type === 'finance.journal_voucher') {
     const posted = await ctx.trx
-      .selectFrom('crove_finance.journal_voucher')
+      .selectFrom('ludy_finance.journal_voucher')
       .select(['stock_closing_month', 'stock_count_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', entry.source_id)
@@ -68,7 +68,7 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
     if (posted?.stock_count_id) throw new DomainError('STOCK_COUNT_ENTRY', 409, 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại');
   }
   const reversed = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('reverses_entry_id', '=', reversal.entryId)
@@ -122,7 +122,7 @@ async function refuseOpenReversal(ctx: CommandContext, entryId: string): Promise
 async function documentDirection(ctx: CommandContext, entry: { source_type: string; source_id: string }): Promise<DocumentDirection | null> {
   if (entry.source_type !== PURCHASE_SOURCE) return null;
   const document = await ctx.trx
-    .selectFrom('crove_finance.purchase_document')
+    .selectFrom('ludy_finance.purchase_document')
     .select('direction')
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', entry.source_id)
@@ -191,7 +191,7 @@ export async function postReversal(
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const lines = await ctx.trx
-    .selectFrom('crove_finance.journal_line')
+    .selectFrom('ludy_finance.journal_line')
     .select(['line_no', 'account_code', 'debit', 'credit', 'party_id', 'memo'])
     .where('org_id', '=', ctx.orgId)
     .where('entry_id', '=', entry.id)
@@ -230,7 +230,7 @@ export async function postReversal(
   let stockReversed = 0;
   if (voidedDocumentId) {
     await ctx.trx
-      .insertInto('crove_finance.purchase_document_void')
+      .insertInto('ludy_finance.purchase_document_void')
       .values({
         org_id: ctx.orgId,
         document_id: voidedDocumentId,

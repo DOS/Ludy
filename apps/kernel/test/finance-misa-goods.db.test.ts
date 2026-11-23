@@ -271,10 +271,10 @@ suite('MISA SME goods purchases: codes per stock account and the goods template 
     expect((await rpc('misaGoodsCodes/remove', member, { accountCode: '156' })).status).toBe(403);
     // The database holds the same formats, whatever writes the row.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '6422', 'X')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '6422', 'X')`, [org.orgId])),
     ).rejects.toThrow(/misa_goods_code_account_format/);
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '152', '=1+1 ')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '152', '=1+1 ')`, [org.orgId])),
     ).rejects.toThrow(/misa_goods_code_item_format/);
   });
 

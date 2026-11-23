@@ -45,7 +45,7 @@ export async function yearToDateBlock(
   },
 ): Promise<{ block: HouseholdYearToDate; unconfirmed: YearUnconfirmed[] }> {
   const thresholdRows = await ctx.trx
-    .selectFrom('crove_finance.household_threshold')
+    .selectFrom('ludy_finance.household_threshold')
     .select(['code', 'effective_from', 'amount', 'status'])
     .where('code', '=', THRESHOLD_CODE)
     .where('effective_from', '<=', args.to)

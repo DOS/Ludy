@@ -684,7 +684,7 @@ suite("member-scoped agent actor in the runtime", () => {
       const noteId = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Của tôi', 'riêng', '{}')`,
+          `INSERT INTO ludy_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Của tôi', 'riêng', '{}')`,
           [orgId, noteId, member],
         ),
       );

@@ -96,7 +96,7 @@ export function normalizeAttendanceQrToken(raw: string): string {
   return trimmed;
 }
 
-/** Deterministic SHA-256 hash stored and matched against `crove_hr.attendance_qr_config.qr_secret_hash`. */
+/** Deterministic SHA-256 hash stored and matched against `ludy_hr.attendance_qr_config.qr_secret_hash`. */
 export function hashAttendanceQrSecret(orgId: string, legalEntityId: string, rawToken: string): string {
   const token = normalizeAttendanceQrToken(rawToken);
   return createHash('sha256').update(`${QR_HASH_PREFIX}${orgId}:${legalEntityId}:${token}`).digest('hex');
@@ -430,7 +430,7 @@ export const selfAttendanceCheckIn = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'attendance_log', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'attendance_log', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -453,7 +453,7 @@ export const selfAttendanceCheckIn = defineCommand({
     if (parsed.method === 'qr') {
       const qrHash = hashAttendanceQrSecret(ctx.orgId, emp.legal_entity_id, parsed.qrToken ?? '');
       const { rows } = await sql<{ ok: boolean }>`
-        SELECT crove_hr.verify_attendance_qr(${ctx.orgId}::uuid, ${emp.legal_entity_id}::uuid, ${qrHash}) AS ok
+        SELECT ludy_hr.verify_attendance_qr(${ctx.orgId}::uuid, ${emp.legal_entity_id}::uuid, ${qrHash}) AS ok
       `.execute(ctx.trx);
       if (!rows[0]?.ok) {
         throw new DomainError('HR_ATTENDANCE_QR_INVALID', 400, 'Mã QR điểm danh không hợp lệ hoặc đã thay đổi');
@@ -461,7 +461,7 @@ export const selfAttendanceCheckIn = defineCommand({
     }
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.attendance_log')
+      .selectFrom('ludy_hr.attendance_log')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -474,7 +474,7 @@ export const selfAttendanceCheckIn = defineCommand({
     // Handle concurrent check-ins on the same (org_id, employee_id, work_date) atomically with ON CONFLICT DO NOTHING
     // instead of selecting FOR UPDATE on payroll_employee (read-only for non-admin members under RLS).
     const inserted = await ctx.trx
-      .insertInto('crove_hr.attendance_log')
+      .insertInto('ludy_hr.attendance_log')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: emp.legal_entity_id,
@@ -514,7 +514,7 @@ export const selfAttendanceCheckOut = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'attendance_log', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'attendance_log', [
       'checked_out_at',
       'worked_minutes',
       'status',
@@ -533,7 +533,7 @@ export const selfAttendanceCheckOut = defineCommand({
     }
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.attendance_log')
+      .selectFrom('ludy_hr.attendance_log')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -554,7 +554,7 @@ export const selfAttendanceCheckOut = defineCommand({
     const mins = elapsedMinutes(existing.checked_in_at, ctx.now);
     const nextStatus: HrAttendanceStatus = mins >= HALF_DAY_THRESHOLD_MINUTES ? 'present' : 'half_day';
     const [updated] = await ctx.trx
-      .updateTable('crove_hr.attendance_log')
+      .updateTable('ludy_hr.attendance_log')
       .set({
         checked_out_at: ctx.now,
         worked_minutes: mins,
@@ -593,7 +593,7 @@ export const selfAttendanceList = defineQuery({
     const { start, end } = monthRange(month);
 
     const rows = await ctx.trx
-      .selectFrom('crove_hr.attendance_log')
+      .selectFrom('ludy_hr.attendance_log')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -604,7 +604,7 @@ export const selfAttendanceList = defineQuery({
 
     const logs = rows.map((r) => toAttendanceLogView(r, today));
     const recentOpenRows = await ctx.trx
-      .selectFrom('crove_hr.attendance_log')
+      .selectFrom('ludy_hr.attendance_log')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -660,8 +660,8 @@ async function loadAdminAttendanceData(
   const { start, end } = monthRange(opts.month);
 
   let q = ctx.trx
-    .selectFrom('crove_hr.attendance_log as a')
-    .innerJoin('crove_hr.payroll_employee as e', (j) => j.onRef('e.org_id', '=', 'a.org_id').onRef('e.id', '=', 'a.employee_id'))
+    .selectFrom('ludy_hr.attendance_log as a')
+    .innerJoin('ludy_hr.payroll_employee as e', (j) => j.onRef('e.org_id', '=', 'a.org_id').onRef('e.id', '=', 'a.employee_id'))
     .select([
       'a.id',
       'a.legal_entity_id',
@@ -691,7 +691,7 @@ async function loadAdminAttendanceData(
   const payBasisByEmp = new Map<string, HrPayBasis>();
   if (empIds.length > 0) {
     const terms = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(['employee_id', 'pay_basis', 'effective_from'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', 'in', empIds)
@@ -745,7 +745,7 @@ export const attendanceList = defineQuery({
     });
 
     const activeQr = await ctx.trx
-      .selectFrom('crove_hr.attendance_qr_config')
+      .selectFrom('ludy_hr.attendance_qr_config')
       .select(['id', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -779,7 +779,7 @@ export const attendanceAdjust = defineCommand({
   permission: 'hr.payroll.run',
   target: (input) => ({ type: 'hr.attendance_log', id: input.employeeId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'attendance_log', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'attendance_log', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -800,7 +800,7 @@ export const attendanceAdjust = defineCommand({
     const today = vietnamToday(ctx.now);
 
     const emp = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'legal_entity_id', 'display_name', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', parsed.employeeId)
@@ -814,7 +814,7 @@ export const attendanceAdjust = defineCommand({
     }
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.attendance_log')
+      .selectFrom('ludy_hr.attendance_log')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -890,7 +890,7 @@ export const attendanceAdjust = defineCommand({
     let saved;
     if (existing) {
       const [updated] = await ctx.trx
-        .updateTable('crove_hr.attendance_log')
+        .updateTable('ludy_hr.attendance_log')
         .set({
           checked_in_at: checkedInAt,
           checked_out_at: checkedOutAt,
@@ -907,7 +907,7 @@ export const attendanceAdjust = defineCommand({
       saved = updated!;
     } else {
       const [inserted] = await ctx.trx
-        .insertInto('crove_hr.attendance_log')
+        .insertInto('ludy_hr.attendance_log')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: emp.legal_entity_id,
@@ -928,7 +928,7 @@ export const attendanceAdjust = defineCommand({
     }
 
     const term = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(['pay_basis'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -962,7 +962,7 @@ export const attendanceQrRotate = defineCommand({
   permission: 'hr.payroll.run',
   target: (input) => (input.legalEntityId ? { type: 'hr.attendance_qr_config', id: input.legalEntityId } : null),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'attendance_qr_config', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'attendance_qr_config', [
       'org_id',
       'legal_entity_id',
       'qr_secret_hash',
@@ -986,7 +986,7 @@ export const attendanceQrRotate = defineCommand({
       .executeTakeFirst();
 
     await ctx.trx
-      .updateTable('crove_hr.attendance_qr_config')
+      .updateTable('ludy_hr.attendance_qr_config')
       .set({ active: false, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -996,7 +996,7 @@ export const attendanceQrRotate = defineCommand({
     const secret = randomBytes(24).toString('base64url');
     const hash = hashAttendanceQrSecret(ctx.orgId, legalEntityId, secret);
     const [inserted] = await ctx.trx
-      .insertInto('crove_hr.attendance_qr_config')
+      .insertInto('ludy_hr.attendance_qr_config')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -1062,8 +1062,8 @@ export const attendanceRollupToPayroll = defineCommand({
   permission: 'hr.payroll.run',
   target: (input) => ({ type: 'hr.payroll_run', id: input.runId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['updated_at']),
   ],
   handler: async (ctx, input: HrAttendanceRollupToPayroll): Promise<HrAttendanceRollupResult> => {
     const parsed = zHrAttendanceRollupToPayroll.parse(input);
@@ -1082,7 +1082,7 @@ export const attendanceRollupToPayroll = defineCommand({
       payableEmpIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_hr.attendance_log')
+            .selectFrom('ludy_hr.attendance_log')
             .select(['employee_id', 'work_date', 'checked_in_at', 'checked_out_at', 'worked_minutes', 'status'])
             .where('org_id', '=', ctx.orgId)
             .where('legal_entity_id', '=', payRun.legal_entity_id)
@@ -1097,7 +1097,7 @@ export const attendanceRollupToPayroll = defineCommand({
     const firstHireByEmpId = new Map<string, string>();
     if (empIds.length > 0) {
       const empRows = await ctx.trx
-        .selectFrom('crove_hr.payroll_employee')
+        .selectFrom('ludy_hr.payroll_employee')
         .select(['id', 'display_name'])
         .where('org_id', '=', ctx.orgId)
         .where('id', 'in', empIds)
@@ -1105,7 +1105,7 @@ export const attendanceRollupToPayroll = defineCommand({
       for (const er of empRows) nameByEmpId.set(er.id, er.display_name);
 
       const employmentRows = await ctx.trx
-        .selectFrom('crove_hr.payroll_employment')
+        .selectFrom('ludy_hr.payroll_employment')
         .select(['employee_id', 'effective_from'])
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', 'in', empIds)
@@ -1168,7 +1168,7 @@ export const attendanceRollupToPayroll = defineCommand({
       payableEmpIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_hr.payroll_leave_entry')
+            .selectFrom('ludy_hr.payroll_leave_entry')
             .select(['employee_id', 'kind', 'days'])
             .where('org_id', '=', ctx.orgId)
             .where('legal_entity_id', '=', payRun.legal_entity_id)

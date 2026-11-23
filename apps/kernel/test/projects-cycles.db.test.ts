@@ -315,7 +315,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       await workerClient.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agentActor.agentId, agentActor.runId]);
       await expect(
         workerClient.query(
-          `INSERT INTO crove_projects.project_cycle (org_id, project_id, number, name, starts_on, ends_on, created_by)
+          `INSERT INTO ludy_projects.project_cycle (org_id, project_id, number, name, starts_on, ends_on, created_by)
            VALUES ($1, $2, 99, 'Direct Agent Cycle', '2027-03-01', '2027-03-14', $3)`,
           [orgId, projectId, owner.userId],
         ),
@@ -481,22 +481,22 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       { actor: asUser(owner.userId), orgId, idempotencyKey: randomUUID() },
     );
     expect(found.matches.map((m) => m.column)).toEqual(
-      expect.arrayContaining(['crove_projects.project_cycle.name', 'crove_projects.project_cycle.goal']),
+      expect.arrayContaining(['ludy_projects.project_cycle.name', 'ludy_projects.project_cycle.goal']),
     );
     const erased = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: piiEmail },
       { actor: asMfa(owner.userId), orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased.some((r) => r.column === 'crove_projects.project_cycle.name' && r.rows === 1)).toBe(true);
-    expect(erased.erased.some((r) => r.column === 'crove_projects.project_cycle.goal' && r.rows === 1)).toBe(true);
+    expect(erased.erased.some((r) => r.column === 'ludy_projects.project_cycle.name' && r.rows === 1)).toBe(true);
+    expect(erased.erased.some((r) => r.column === 'ludy_projects.project_cycle.goal' && r.rows === 1)).toBe(true);
 
-    // Vy cycle summary never reads crove_notes and degrades gracefully when AI is off.
+    // Vy cycle summary never reads ludy_notes and degrades gracefully when AI is off.
     const adminClient = new pg.Client({ connectionString: adminUrl });
     await adminClient.connect();
     try {
       await adminClient.query(
-        `INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title, body)
+        `INSERT INTO ludy_notes.note (org_id, author_user_id, visibility, title, body)
          VALUES ($1, $2, 'org', 'TOP_SECRET_NOTE_999', 'Secret note text TOP_SECRET_NOTE_999')`,
         [orgId, owner.userId],
       );
@@ -550,7 +550,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     await exec(member.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tBot, cycleId: s2.id });
     await exec(member.userId, orgId, 'projects.task.set_points', { projectId, taskId: tBot, storyPoints: 3 });
 
-    // Export, offboard, and backdate audit events so ludy_kernel.org_purge deletes crove_projects.project_cycle rows cleanly.
+    // Export, offboard, and backdate audit events so ludy_kernel.org_purge deletes ludy_projects.project_cycle rows cleanly.
     const sealer = new ExportSealer(randomBytes(32));
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, orgId, {
@@ -589,7 +589,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     await verifyAdmin.connect();
     try {
       const { rows } = await verifyAdmin.query<{ n: string }>(
-        'SELECT count(*)::text AS n FROM crove_projects.project_cycle WHERE org_id = $1',
+        'SELECT count(*)::text AS n FROM ludy_projects.project_cycle WHERE org_id = $1',
         [orgId],
       );
       expect(rows[0]?.n).toBe('0');

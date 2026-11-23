@@ -76,7 +76,7 @@ export async function dispatchRoadmapAnnouncementNotifications(
     publishedAt: string;
   };
   const { rows: ctxRows } = await sql<{ ctx: DispatchContext | null }>`
-    SELECT crove_projects.worker_roadmap_announcement_context(
+    SELECT ludy_projects.worker_roadmap_announcement_context(
       ${job.orgId}::uuid,
       ${eventInfo.announcementId}::uuid
     ) AS ctx`.execute(deps.workerDb);
@@ -99,7 +99,7 @@ export async function dispatchRoadmapAnnouncementNotifications(
       mail_hash: string | null;
     }>`
       SELECT id, voter_email_hash, email_sealed, unsub_token_sealed, mail_hash
-      FROM crove_projects.worker_roadmap_announcement_subscribers(
+      FROM ludy_projects.worker_roadmap_announcement_subscribers(
         ${job.orgId}::uuid,
         ${ctx.boardId}::uuid,
         ${afterId}::uuid,
@@ -129,7 +129,7 @@ export async function dispatchRoadmapAnnouncementNotifications(
         });
         const unsubTokenSealed = `crove:cs1:${sealedUnsub.keyId}:${sealedUnsub.envelope.toString('base64url')}`;
         const { rows: sealRows } = await sql<{ sealed: string | null }>`
-          SELECT crove_projects.worker_roadmap_subscriber_seal_unsub(
+          SELECT ludy_projects.worker_roadmap_subscriber_seal_unsub(
             ${job.orgId}::uuid,
             ${ctx.boardId}::uuid,
             ${sub.id}::uuid,
@@ -189,7 +189,7 @@ export async function sweepRoadmapOtpCleanup(deps: {
   const cutoff = new Date(nowMs - ROADMAP_OTP_RETENTION_HOURS * 3_600_000);
   const { rows: orgs } = await sql<{ org_id: string }>`
     SELECT org_id
-      FROM crove_projects.cleanup_roadmap_otp_due_orgs(${cutoff}::timestamptz, ${SWEEP_ORG_BATCH}::int)
+      FROM ludy_projects.cleanup_roadmap_otp_due_orgs(${cutoff}::timestamptz, ${SWEEP_ORG_BATCH}::int)
      ORDER BY org_id ASC`.execute(deps.workerDb);
 
   const totals = { orgs: 0, deleted: 0 };

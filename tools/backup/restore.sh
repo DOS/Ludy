@@ -299,7 +299,12 @@ rows="$(awk -F'\t' '{s += $2} END {print s + 0}' "$WORK/counts.restored.tsv")"
 tables="$(wc -l <"$WORK/counts.restored.tsv")"
 log "row counts match counts.tsv: $tables tables, $rows rows"
 STEP="ledger stamps (docs/runbooks/ledger-after-restore.md)"
-future="$(db_psql -d postgres -tA -c 'SELECT count(*) FROM crove_finance.journal_entry WHERE created_xact_start >= now()')"
+je_table="$(db_psql -d postgres -tA -c "SELECT CASE WHEN pg_catalog.to_regclass('ludy_finance.journal_entry') IS NOT NULL THEN 'ludy_finance.journal_entry' ELSE 'crove_finance.journal_entry' END")"
+case "$je_table" in
+  ludy_finance.journal_entry|crove_finance.journal_entry) ;;
+  *) STEP="ledger stamps: unexpected table name '$je_table'"; false ;;
+esac
+future="$(db_psql -d postgres -tA -c "SELECT count(*) FROM ${je_table} WHERE created_xact_start >= now()")"
 [ "$future" = 0 ] || { STEP="ledger stamps: $future journal entries are stamped in the future of this cluster; fix the clock (NTP) first"; false; }
 log "ledger: no journal entry stamped in the future"
 STEP="new context key (docs/runbooks/context-key-rotation.md)"

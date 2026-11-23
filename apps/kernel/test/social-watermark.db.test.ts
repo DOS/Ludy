@@ -93,7 +93,7 @@ suite('social logo watermark on PostgreSQL (#834)', () => {
     const other = await socialFile(o.orgId, o.owner, 'image/webp');
     await exec(o.owner, 'social.watermark.save', { fileId: other, corner: 'top_left', scalePercent: 50, opacityPercent: 10 });
     expect(await get(o.member)).toMatchObject({ fileId: other, mime: 'image/webp', corner: 'top_left', scalePercent: 50, opacityPercent: 10 });
-    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_social.watermark WHERE org_id = $1', [o.orgId])).rows[0].n)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_social.watermark WHERE org_id = $1', [o.orgId])).rows[0].n)).toBe(1);
 
     await expect(exec(o.member, 'social.watermark.save', { fileId: logo, corner: 'bottom_right', scalePercent: 20, opacityPercent: 80 })).rejects.toMatchObject({ status: 403 });
     await expect(exec(o.member, 'social.watermark.remove', {})).rejects.toMatchObject({ status: 403 });

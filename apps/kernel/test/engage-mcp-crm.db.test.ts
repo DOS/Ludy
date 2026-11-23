@@ -207,10 +207,10 @@ suite('the CRM MCP reads (#3860)', () => {
     await exec('member', 'crm.deal.move', { dealId: d4.id, version: d4.version, stageId: stage.lost, lostReason: 'Giá cao' }, orgA);
     await make('b1', 'foreign', orgB, party.b1 as string, `${CANARY} cơ hội của B`, '9000000', openB.id);
     // Typed text with characters nobody sees, set directly (the commands already trim); creation times a known hour apart, so the order is the test's.
-    await sqlAdmin(`UPDATE crove_crm.deal SET title = $3 WHERE org_id = $1 AND id = $2`, [orgA, deal.d1, `Gói kế${DIRTY} toán năm`]);
-    await sqlAdmin(`UPDATE crove_crm.deal SET lost_reason = $3 WHERE org_id = $1 AND id = $2`, [orgA, deal.d4, `Giá${DIRTY} cao`]);
+    await sqlAdmin(`UPDATE ludy_crm.deal SET title = $3 WHERE org_id = $1 AND id = $2`, [orgA, deal.d1, `Gói kế${DIRTY} toán năm`]);
+    await sqlAdmin(`UPDATE ludy_crm.deal SET lost_reason = $3 WHERE org_id = $1 AND id = $2`, [orgA, deal.d4, `Giá${DIRTY} cao`]);
     for (const [i, key] of ['d1', 'd2', 'd3', 'd4'].entries()) {
-      await sqlAdmin(`UPDATE crove_crm.deal SET created_at = now() - make_interval(hours => $3) WHERE org_id = $1 AND id = $2`, [orgA, deal[key], 10 - i]);
+      await sqlAdmin(`UPDATE ludy_crm.deal SET created_at = now() - make_interval(hours => $3) WHERE org_id = $1 AND id = $2`, [orgA, deal[key], 10 - i]);
     }
 
     // ---- quotes: a draft on d1, a sent one on d2 (with a link), a draft on d3 ----
@@ -232,17 +232,17 @@ suite('the CRM MCP reads (#3860)', () => {
     const qb = await exec<Quote>('foreign', 'crm.quote.save', { dealId: deal.b1, lines: [] }, orgB);
     quote.b1 = qb.id;
     // Typed text with hidden characters, an id of a stock item and a canary in what the customer never sees here; creation times a known hour apart.
-    await sqlAdmin(`UPDATE crove_crm.quote SET remarks = $3, terms = $4 WHERE org_id = $1 AND id = $2`, [orgA, quote.q1, `Ghi chú${DIRTY}\nhai dòng`, `Thanh toán${DIRTY} 7 ngày`]);
-    await sqlAdmin(`UPDATE crove_crm.quote_line SET description = $3, stock_item_id = $4 WHERE org_id = $1 AND quote_id = $2 AND line_no = 1`, [orgA, quote.q1, `Gói${DIRTY} kế toán`, randomUUID()]);
+    await sqlAdmin(`UPDATE ludy_crm.quote SET remarks = $3, terms = $4 WHERE org_id = $1 AND id = $2`, [orgA, quote.q1, `Ghi chú${DIRTY}\nhai dòng`, `Thanh toán${DIRTY} 7 ngày`]);
+    await sqlAdmin(`UPDATE ludy_crm.quote_line SET description = $3, stock_item_id = $4 WHERE org_id = $1 AND quote_id = $2 AND line_no = 1`, [orgA, quote.q1, `Gói${DIRTY} kế toán`, randomUUID()]);
     for (const [i, key] of ['q1', 'q2', 'q3'].entries()) {
-      await sqlAdmin(`UPDATE crove_crm.quote SET created_at = now() - make_interval(hours => $3) WHERE org_id = $1 AND id = $2`, [orgA, quote[key], 10 - i]);
+      await sqlAdmin(`UPDATE ludy_crm.quote SET created_at = now() - make_interval(hours => $3) WHERE org_id = $1 AND id = $2`, [orgA, quote[key], 10 - i]);
     }
 
     // ---- bookings: straight rows (the public page and the worker make them in their own tests) ----
     const eventType = async (org: string, host: string, createdBy: string) =>
       (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, location_value, host_user_id, created_by) VALUES ($1, 'tu-van', $2, 30, $3, $4, $5) RETURNING id`,
+          `INSERT INTO ludy_crm.event_type (org_id, slug, title, duration_min, location_value, host_user_id, created_by) VALUES ($1, 'tu-van', $2, 30, $3, $4, $5) RETURNING id`,
           [org, `Tư vấn${DIRTY}`, `https://meet.example.test/${CANARY}`, host, createdBy],
         )
       ).rows[0]?.id as string;
@@ -270,7 +270,7 @@ suite('the CRM MCP reads (#3860)', () => {
       }
       booking[key] = randomUUID();
       await sqlAdmin(
-        `INSERT INTO crove_crm.booking (org_id, id, event_type_id, starts_at, ends_at, status, refusal, calendar_event_id, party_id, visitor_name, email, phone, note, time_zone, deal_id, meeting_state, meeting_url, cancelled_at)
+        `INSERT INTO ludy_crm.booking (org_id, id, event_type_id, starts_at, ends_at, status, refusal, calendar_event_id, party_id, visitor_name, email, phone, note, time_zone, deal_id, meeting_state, meeting_url, cancelled_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'Asia/Ho_Chi_Minh', $14, $15, $16, $17)`,
         [
           org,
@@ -391,7 +391,7 @@ suite('the CRM MCP reads (#3860)', () => {
 
       // The default is 25 and the hard maximum is 50: 26 more deals make 30.
       await sqlAdmin(
-        `INSERT INTO crove_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, created_at)
+        `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, created_at)
          SELECT $1, $2, 'Hàng loạt ' || g, 1000, $3, 'zz' || g, $4, now() - make_interval(days => g) FROM generate_series(1, 26) AS g`,
         [orgA, party.a1, stage.open, users.owner],
       );
@@ -403,7 +403,7 @@ suite('the CRM MCP reads (#3860)', () => {
         expect(max.deals).toHaveLength(30);
         expect(max.next).toBeNull();
       } finally {
-        await sqlAdmin(`DELETE FROM crove_crm.deal WHERE org_id = $1 AND title LIKE 'Hàng loạt %'`, [orgA]);
+        await sqlAdmin(`DELETE FROM ludy_crm.deal WHERE org_id = $1 AND title LIKE 'Hàng loạt %'`, [orgA]);
       }
       expect((await refusal(deals('owner', 'company', { limit: 51 }))).status).toBeLessThan(500);
       await refusal(deals('owner', 'company', { limit: 0 }));

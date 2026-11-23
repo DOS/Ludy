@@ -244,7 +244,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
   it('tells the importer and the owners and admins about a portal list with missing invoices or that failed to read', async () => {
     const pendingList = async () => {
       const fileId = await ingest(people.member, new TextEncoder().encode(`list ${randomUUID()}`), 'bang-ke.xlsx');
-      return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, created_by) VALUES ($1, '2026-09', $2, 'bang-ke.xlsx', $3) RETURNING id`, [org.orgId, fileId, people.member])).rows[0]?.id as string);
+      return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_finance.portal_invoice_list (org_id, period, file_id, filename, created_by) VALUES ($1, '2026-09', $2, 'bang-ke.xlsx', $3) RETURNING id`, [org.orgId, fileId, people.member])).rows[0]?.id as string);
     };
     const failed = await pendingList();
     await workerRuntime.execute('finance.portal_list.record', { listId: failed, status: 'failed', error: 'Không đọc được' }, { actor: SYSTEM, orgId: org.orgId });
@@ -291,7 +291,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     await admin(async (c) => {
       const { rows } = await c.query<{ role: string }>(
         `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
-         WHERE has_function_privilege(r, 'crove_finance.period_close_due(uuid, int)', 'EXECUTE')`,
+         WHERE has_function_privilege(r, 'ludy_finance.period_close_due(uuid, int)', 'EXECUTE')`,
       );
       expect(rows.map((r) => r.role)).toEqual(['ludy_worker']);
     });
@@ -308,7 +308,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     const lock = (entity: string | null, from: string | null, through: string | null) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through)
+          `INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through)
            VALUES ($1, coalesce($2::uuid, (SELECT e.id FROM ludy_kernel.legal_entity e WHERE e.org_id = $1 AND e.is_default)), $3::date, $4::date)
            ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = EXCLUDED.locked_from, locked_through = EXCLUDED.locked_through`,
           [org.orgId, entity, from, through],
@@ -323,7 +323,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
       let after: string | null = null;
       for (;;) {
         const { rows }: { rows: Array<{ org_id: string; locked_through: string | null }> } = await sql<{ org_id: string; locked_through: string | null }>`
-          SELECT org_id, pg_catalog.to_char(locked_through, 'YYYY-MM-DD') AS locked_through FROM crove_finance.period_close_due(${after}::uuid, ${page}::int)`.execute(workerDb);
+          SELECT org_id, pg_catalog.to_char(locked_through, 'YYYY-MM-DD') AS locked_through FROM ludy_finance.period_close_due(${after}::uuid, ${page}::int)`.execute(workerDb);
         if (rows.length === 0) return seen;
         seen.push(...rows);
         after = rows.at(-1)?.org_id ?? null;

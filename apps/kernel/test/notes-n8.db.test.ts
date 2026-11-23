@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Notes N8 (#1677, ADR-0037, ADR-0049) end-to-end DB tests on PostgreSQL 17:
-// 1. Monotonic taint trigger (crove_notes.note.b_taint) and crove_notes.todo taint immutability;
+// 1. Monotonic taint trigger (ludy_notes.note.b_taint) and ludy_notes.todo taint immutability;
 // 2. Member-scoped Vy summarize / suggestTodos / vyResults privacy and prompt-injection/HTML/date/cap guards;
 // 3. Author-only note.accept_summary vs shared-note reader personal todo.accept_suggestions;
 // 4. Revoked note readability hiding stored Vy results immediately, stale revisions, trash, AI controls & zero log/audit/outbox leakage.
@@ -443,12 +443,12 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       // non-author / out-of-context updates fail with NOTES_TAINT_AUTHOR_ONLY.
       await expect(
         withTenantUser(orgId, alice.userId, (c) =>
-          c.query(`UPDATE crove_notes.note SET tainted = false WHERE org_id = $1 AND id = $2`, [orgId, privateNoteId]),
+          c.query(`UPDATE ludy_notes.note SET tainted = false WHERE org_id = $1 AND id = $2`, [orgId, privateNoteId]),
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('NOTES_TAINT_EDIT_REQUIRED') });
 
       await expect(
-        sqlAdmin(`UPDATE crove_notes.note SET tainted = false WHERE org_id = $1 AND id = $2`, [orgId, privateNoteId]),
+        sqlAdmin(`UPDATE ludy_notes.note SET tainted = false WHERE org_id = $1 AND id = $2`, [orgId, privateNoteId]),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('NOTES_TAINT_AUTHOR_ONLY') });
 
       // DB trigger b_taint: non-author cannot flip tainted on an untainted note even if RLS were bypassed!
@@ -459,14 +459,14 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       });
       await expect(
         withAdminUserCtx(orgId, owner.userId, (c) =>
-          c.query(`UPDATE crove_notes.note SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, untaintedNoteId]),
+          c.query(`UPDATE ludy_notes.note SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, untaintedNoteId]),
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('NOTES_TAINT_AUTHOR_ONLY') });
 
       // Author CAN set tainted false -> true under ludy_tenant (trigger allows author false -> true).
       await expect(
         withTenantUser(orgId, alice.userId, (c) =>
-          c.query(`UPDATE crove_notes.note SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, untaintedNoteId]),
+          c.query(`UPDATE ludy_notes.note SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, untaintedNoteId]),
         ),
       ).resolves.toBeTruthy();
 
@@ -536,7 +536,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
           runId: trashSum.runId!,
         }),
       ).rejects.toMatchObject({ code: 'NOTE_IN_TRASH', status: 409 });
-      await sqlAdmin(`DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2`, [orgId, trashNote.noteId]);
+      await sqlAdmin(`DELETE FROM ludy_notes.note WHERE org_id = $1 AND id = $2`, [orgId, trashNote.noteId]);
       await expect(readNotesVyResults(deps, orgId, asUser(owner.userId), trashNote.noteId)).rejects.toMatchObject({
         code: 'NOTE_NOT_FOUND',
       });
@@ -570,7 +570,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       ).toBe(true);
       await expect(
         withTenantUser(orgId, alice.userId, (c) =>
-          c.query(`UPDATE crove_notes.todo SET tainted = false WHERE org_id = $1 AND id = $2`, [
+          c.query(`UPDATE ludy_notes.todo SET tainted = false WHERE org_id = $1 AND id = $2`, [
             orgId,
             acceptedTodos.todoIds[0]!,
           ]),

@@ -531,7 +531,7 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
     expect(otpReq.status).toBe(200);
     await admin(async (client) => {
       await client.query(
-        `UPDATE crove_sign.signing_otp
+        `UPDATE ludy_sign.signing_otp
             SET otp_sha256 = encode(sha256(convert_to('crove:sign:otp:v1:' || signer_id::text || ':' || id::text || ':654321', 'UTF8')), 'hex')
           WHERE org_id = $1 AND signer_id = $2 AND verified_at IS NULL AND invalidated_at IS NULL`,
         [org.orgId, signer2Id],

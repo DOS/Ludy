@@ -23,8 +23,8 @@ export const stockCloseCheck = defineQuery({
     const { regime } = await booksOn(ctx, legalEntityId, last);
     const { rows } = await sql<{ debit: string; credit: string }>`
       SELECT l.debit::text AS debit, l.credit::text AS credit
-      FROM crove_finance.journal_line l
-      JOIN crove_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
+      FROM ludy_finance.journal_line l
+      JOIN ludy_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
       WHERE l.org_id = ${ctx.orgId}::uuid AND l.legal_entity_id = ${legalEntityId}::uuid AND l.account_code = ${WAITING_SHORTAGE_ACCOUNT} AND e.entry_date <= ${last}::date`.execute(ctx.trx);
     const balance1381 = balanceOf(rows);
     return { month, legalEntityId, regime, balance1381, applies: closeCheckApplies(regime, balance1381) };

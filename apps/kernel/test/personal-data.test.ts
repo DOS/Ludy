@@ -46,21 +46,21 @@ describe('personal-data registry: legal entities (#1312)', () => {
   });
 });
 
-// Notes and to-dos (#1874): crove_notes is in the schemas the invariant scan covers, and every column the notes
+// Notes and to-dos (#1874): ludy_notes is in the schemas the invariant scan covers, and every column the notes
 // manifest classifies as personal data is either registered or waits for notes step N9 (#1678), so a new one needs a
 // decision too, whatever its name.
 describe('personal-data registry: notes (#1874)', () => {
-  const classified = Object.entries(notesManifest.tables.crove_notes).flatMap(([table, cols]) =>
+  const classified = Object.entries(notesManifest.tables.ludy_notes).flatMap(([table, cols]) =>
     Object.entries(cols as Record<string, string>)
       .filter(([, cls]) => cls !== 'internal')
-      .map(([column]) => `crove_notes.${table}.${column}`),
+      .map(([column]) => `ludy_notes.${table}.${column}`),
   );
 
-  it('scans crove_notes for columns named like personal data', () => {
-    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_notes');
+  it('scans ludy_notes for columns named like personal data', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('ludy_notes');
   });
 
-  it('registers every personal-data column of crove_notes, or lists it as waiting for notes step N9', () => {
+  it('registers every personal-data column of ludy_notes, or lists it as waiting for notes step N9', () => {
     expect(classified.length).toBeGreaterThan(0);
     const undecided = classified.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING));
     expect(undecided, 'register these in PERSONAL_DATA_COLUMNS, or list them in PERSONAL_DATA_PENDING with the step that will').toEqual([]);
@@ -73,29 +73,29 @@ describe('personal-data registry: notes (#1874)', () => {
   });
 });
 
-// Meetings (ADR-0047 point 7, #2578): crove_meetings is scanned, and every column its manifest classifies as personal data
+// Meetings (ADR-0047 point 7, #2578): ludy_meetings is scanned, and every column its manifest classifies as personal data
 // (a title, the transcript's text and speaker label) is registered with its handling, so a new one needs a decision too.
 describe('personal-data registry: meetings (#2578)', () => {
-  const personal = Object.entries(meetingsManifest.tables.crove_meetings).flatMap(([table, cols]) =>
+  const personal = Object.entries(meetingsManifest.tables.ludy_meetings).flatMap(([table, cols]) =>
     Object.entries(cols as Record<string, string>)
       .filter(([, cls]) => cls === 'pii' || cls === 'contact' || cls === 'national_id' || cls === 'payment')
-      .map(([column]) => `crove_meetings.${table}.${column}`),
+      .map(([column]) => `ludy_meetings.${table}.${column}`),
   );
 
-  it('scans crove_meetings and registers every personal-data column of it, the transcript included', () => {
-    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_meetings');
-    expect(personal).toEqual(expect.arrayContaining(['crove_meetings.meeting.title', 'crove_meetings.transcript_segment.text', 'crove_meetings.transcript_segment.speaker_label']));
+  it('scans ludy_meetings and registers every personal-data column of it, the transcript included', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('ludy_meetings');
+    expect(personal).toEqual(expect.arrayContaining(['ludy_meetings.meeting.title', 'ludy_meetings.transcript_segment.text', 'ludy_meetings.transcript_segment.speaker_label']));
     expect(personal.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING)), 'register these in PERSONAL_DATA_COLUMNS').toEqual([]);
     // The finder searches every meeting text column as free text (#2594): the rows an actor reads are listed, the rest counted per recorder.
     for (const key of [
-      'crove_meetings.meeting.title',
-      'crove_meetings.transcript_segment.text',
-      'crove_meetings.transcript_segment.speaker_label',
-      'crove_meetings.meeting_result.summary',
-      'crove_meetings.meeting_result.decisions',
-      'crove_meetings.action_item.title',
-      'crove_meetings.action_item.who_drafted',
-      'crove_meetings.action_item.when_drafted',
+      'ludy_meetings.meeting.title',
+      'ludy_meetings.transcript_segment.text',
+      'ludy_meetings.transcript_segment.speaker_label',
+      'ludy_meetings.meeting_result.summary',
+      'ludy_meetings.meeting_result.decisions',
+      'ludy_meetings.action_item.title',
+      'ludy_meetings.action_item.who_drafted',
+      'ludy_meetings.action_item.when_drafted',
     ]) {
       expect(entries[key], key).toMatchObject({ kind: 'free_text', handling: 'erase' });
       expect(entries[key]!.reason.length, key).toBeGreaterThan(20);
@@ -115,21 +115,21 @@ describe('sealed columns (ADR-0017, #2640)', () => {
   });
 });
 
-// The people payroll is run for (#2530): crove_hr is scanned, and every column its manifest classifies as personal data (pii, a national id, a payment account) is either
+// The people payroll is run for (#2530): ludy_hr is scanned, and every column its manifest classifies as personal data (pii, a national id, a payment account) is either
 // registered with its handling or sealed under the person's key and listed as such, never both and never neither. The wage is `sensitive`, an amount that ties to no
 // person once the name is gone, so it is in neither.
 describe('personal-data registry: payroll people (#2530)', () => {
-  const personal = Object.entries(hrManifest.tables.crove_hr).flatMap(([table, cols]) =>
+  const personal = Object.entries(hrManifest.tables.ludy_hr).flatMap(([table, cols]) =>
     Object.entries(cols as Record<string, string>)
       .filter(([, cls]) => cls === 'pii' || cls === 'national_id' || cls === 'payment' || cls === 'contact')
-      .map(([column]) => `crove_hr.${table}.${column}`),
+      .map(([column]) => `ludy_hr.${table}.${column}`),
   );
 
-  it('scans crove_hr for columns named like personal data', () => {
-    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_hr');
+  it('scans ludy_hr for columns named like personal data', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('ludy_hr');
   });
 
-  it('registers or seals every personal-data column of crove_hr, and none twice', () => {
+  it('registers or seals every personal-data column of ludy_hr, and none twice', () => {
     expect(personal.length).toBeGreaterThan(0);
     for (const key of personal) {
       const registered = key in PERSONAL_DATA_COLUMNS;
@@ -141,92 +141,92 @@ describe('personal-data registry: payroll people (#2530)', () => {
 
   it('seals the two numbers, and clears the names and the address with the employee erasure', () => {
     expect(Object.keys(SEALED_COLUMNS).sort()).toEqual([
-      'crove_finance.supplier_bank_account.account_holder_sealed',
-      'crove_finance.supplier_bank_account.number_sealed',
-      'crove_hr.onboarding_submission.bank_account_sealed',
-      'crove_hr.onboarding_submission.insurance_number_sealed',
-      'crove_hr.onboarding_submission.national_id_sealed',
-      'crove_hr.onboarding_submission.tax_code_sealed',
-      'crove_hr.payroll_employee.bank_account_sealed',
-      'crove_hr.payroll_employee.insurance_number_sealed',
-      'crove_hr.payroll_employee.national_id_sealed',
-      'crove_hr.payroll_employee.tax_code_sealed',
-      'crove_hr.payroll_employee.work_permit_number_sealed',
+      'ludy_finance.supplier_bank_account.account_holder_sealed',
+      'ludy_finance.supplier_bank_account.number_sealed',
+      'ludy_hr.onboarding_submission.bank_account_sealed',
+      'ludy_hr.onboarding_submission.insurance_number_sealed',
+      'ludy_hr.onboarding_submission.national_id_sealed',
+      'ludy_hr.onboarding_submission.tax_code_sealed',
+      'ludy_hr.payroll_employee.bank_account_sealed',
+      'ludy_hr.payroll_employee.insurance_number_sealed',
+      'ludy_hr.payroll_employee.national_id_sealed',
+      'ludy_hr.payroll_employee.tax_code_sealed',
+      'ludy_hr.payroll_employee.work_permit_number_sealed',
     ]);
-    for (const key of ['crove_hr.payroll_employee.display_name', 'crove_hr.payroll_employee.address', 'crove_hr.payroll_dependent.display_name']) {
+    for (const key of ['ludy_hr.payroll_employee.display_name', 'ludy_hr.payroll_employee.address', 'ludy_hr.payroll_dependent.display_name']) {
       expect(entries[key]?.handling, key).toBe('erase');
     }
   });
 });
 
 describe('personal-data registry: projects (#2591)', () => {
-  const personal = Object.entries(projectsManifest.tables.crove_projects).flatMap(([table, cols]) =>
+  const personal = Object.entries(projectsManifest.tables.ludy_projects).flatMap(([table, cols]) =>
     Object.entries(cols as Record<string, string>)
       .filter(([, cls]) => cls === 'pii' || cls === 'national_id' || cls === 'payment' || cls === 'contact')
-      .map(([column]) => `crove_projects.${table}.${column}`),
+      .map(([column]) => `ludy_projects.${table}.${column}`),
   );
 
-  it('scans crove_projects for columns named like personal data', () => {
-    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_projects');
+  it('scans ludy_projects for columns named like personal data', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('ludy_projects');
   });
 
-  it('registers every personal-data column of crove_projects for erasure', () => {
+  it('registers every personal-data column of ludy_projects for erasure', () => {
     expect(personal.length).toBe(16);
     expect(personal).toEqual(
       expect.arrayContaining([
-        'crove_projects.project.name',
-        'crove_projects.project.description',
-        'crove_projects.project.template_tasks',
-        'crove_projects.project_column.name',
-        'crove_projects.project_cycle.name',
-        'crove_projects.project_cycle.goal',
-        'crove_projects.roadmap_board.title',
-        'crove_projects.roadmap_board.description',
-        'crove_projects.roadmap_item.public_title',
-        'crove_projects.roadmap_item.public_summary',
-        'crove_projects.roadmap_item.submitter_display_name',
-        'crove_projects.roadmap_announcement.title',
-        'crove_projects.roadmap_announcement.body_md',
-        'crove_projects.roadmap_otp.email',
-        'crove_projects.roadmap_subscriber.email_sealed',
-        'crove_projects.time_entry.note',
+        'ludy_projects.project.name',
+        'ludy_projects.project.description',
+        'ludy_projects.project.template_tasks',
+        'ludy_projects.project_column.name',
+        'ludy_projects.project_cycle.name',
+        'ludy_projects.project_cycle.goal',
+        'ludy_projects.roadmap_board.title',
+        'ludy_projects.roadmap_board.description',
+        'ludy_projects.roadmap_item.public_title',
+        'ludy_projects.roadmap_item.public_summary',
+        'ludy_projects.roadmap_item.submitter_display_name',
+        'ludy_projects.roadmap_announcement.title',
+        'ludy_projects.roadmap_announcement.body_md',
+        'ludy_projects.roadmap_otp.email',
+        'ludy_projects.roadmap_subscriber.email_sealed',
+        'ludy_projects.time_entry.note',
       ]),
     );
     for (const key of personal) {
-      if (key === 'crove_projects.roadmap_otp.email' || key === 'crove_projects.roadmap_subscriber.email_sealed') {
+      if (key === 'ludy_projects.roadmap_otp.email' || key === 'ludy_projects.roadmap_subscriber.email_sealed') {
         expect(entries[key]).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
       } else {
         expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
       }
     }
-    expect(entries['crove_projects.roadmap_vote.voter_email_hash']).toMatchObject({ kind: 'other', handling: 'hashed' });
-    expect(entries['crove_projects.roadmap_subscriber.mail_hash']).toMatchObject({ kind: 'other', handling: 'hashed', machinery: true });
+    expect(entries['ludy_projects.roadmap_vote.voter_email_hash']).toMatchObject({ kind: 'other', handling: 'hashed' });
+    expect(entries['ludy_projects.roadmap_subscriber.mail_hash']).toMatchObject({ kind: 'other', handling: 'hashed', machinery: true });
   });
 });
 
 describe('personal-data registry: sign (#3323)', () => {
-  const personal = Object.entries(signManifest.tables.crove_sign).flatMap(([table, cols]) =>
+  const personal = Object.entries(signManifest.tables.ludy_sign).flatMap(([table, cols]) =>
     Object.entries(cols as Record<string, string>)
       .filter(([, cls]) => cls === 'pii' || cls === 'contact' || cls === 'national_id' || cls === 'payment' || cls === 'sensitive')
-      .map(([column]) => `crove_sign.${table}.${column}`),
+      .map(([column]) => `ludy_sign.${table}.${column}`),
   );
 
-  it('scans crove_sign and registers every personal-data and hashed column', () => {
-    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_sign');
+  it('scans ludy_sign and registers every personal-data and hashed column', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('ludy_sign');
     expect(personal).toEqual(
       expect.arrayContaining([
-        'crove_sign.signer.name',
-        'crove_sign.signer.email',
-        'crove_sign.signer.phone',
-        'crove_sign.signing_otp.email',
-        'crove_sign.signing_event.actor_label',
+        'ludy_sign.signer.name',
+        'ludy_sign.signer.email',
+        'ludy_sign.signer.phone',
+        'ludy_sign.signing_otp.email',
+        'ludy_sign.signing_event.actor_label',
       ]),
     );
-    const nonToken = personal.filter((key) => key !== 'crove_sign.signing_token.token_sha256' && key !== 'crove_sign.signing_otp.otp_sha256');
+    const nonToken = personal.filter((key) => key !== 'ludy_sign.signing_token.token_sha256' && key !== 'ludy_sign.signing_otp.otp_sha256');
     expect(nonToken.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING))).toEqual([]);
-    expect(entries['crove_sign.signing_otp.email']).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
-    expect(entries['crove_sign.signer.email']).toMatchObject({ kind: 'email', handling: 'keep_record' });
-    expect(entries['crove_sign.signer.phone']).toMatchObject({ kind: 'phone', handling: 'keep_record' });
-    expect(entries['crove_sign.signer.email']?.reason).toContain('unsealed envelope is erased');
+    expect(entries['ludy_sign.signing_otp.email']).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
+    expect(entries['ludy_sign.signer.email']).toMatchObject({ kind: 'email', handling: 'keep_record' });
+    expect(entries['ludy_sign.signer.phone']).toMatchObject({ kind: 'phone', handling: 'keep_record' });
+    expect(entries['ludy_sign.signer.email']?.reason).toContain('unsealed envelope is erased');
   });
 });

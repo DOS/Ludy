@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Every account of the shipped marketplace posting maps exists in the chart of its books regime (#3711 slice 4), on PostgreSQL 17: the TT133 map in crove_finance.account (the TT133 2026.1 chart every org
-// shares) and the TT99 map in crove_finance.chart_account (regime tt99, version 2026.1). A code that is not in its chart would be refused by the database when a posting names it
-// (crove_finance.check_account_ref), at the day the accountant confirms the map; this pins it before then. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// Every account of the shipped marketplace posting maps exists in the chart of its books regime (#3711 slice 4), on PostgreSQL 17: the TT133 map in ludy_finance.account (the TT133 2026.1 chart every org
+// shares) and the TT99 map in ludy_finance.chart_account (regime tt99, version 2026.1). A code that is not in its chart would be refused by the database when a posting names it
+// (ludy_finance.check_account_ref), at the day the accountant confirms the map; this pins it before then. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -49,7 +49,7 @@ suite('the marketplace posting maps against their charts on PostgreSQL (#3711)',
   const codesOf = (map: MarketplacePostingMap) => ROWS.map((key) => [key, map[key].code] as const);
 
   it('has every account of the TT133 map in the TT133 chart', async () => {
-    const chart = new Set((await rows<{ code: string }>('SELECT code FROM crove_finance.account')).map((r) => r.code));
+    const chart = new Set((await rows<{ code: string }>('SELECT code FROM ludy_finance.account')).map((r) => r.code));
     const map = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
     for (const [key, code] of codesOf(map)) expect(chart.has(code), `${key} ${code}`).toBe(true);
     // Revenue and returns are 5111 (Doanh thu bán hàng hóa) under TT133, which has no 521.
@@ -58,7 +58,7 @@ suite('the marketplace posting maps against their charts on PostgreSQL (#3711)',
   });
 
   it('has every account of the TT99 map in the TT99 2026.1 chart, and the fee expense is 641 / 6417, not the staff cost 6421', async () => {
-    const chart = new Map((await rows<{ code: string; name: string }>("SELECT code, name FROM crove_finance.chart_account WHERE regime = 'tt99' AND version = '2026.1'")).map((r) => [r.code, r.name]));
+    const chart = new Map((await rows<{ code: string; name: string }>("SELECT code, name FROM ludy_finance.chart_account WHERE regime = 'tt99' AND version = '2026.1'")).map((r) => [r.code, r.name]));
     const map = MARKETPLACE_POSTING_MAPS.tt99 as MarketplacePostingMap;
     for (const [key, code] of codesOf(map)) expect(chart.has(code), `${key} ${code}`).toBe(true);
     expect(map.feeExpense.code).toBe('6417');

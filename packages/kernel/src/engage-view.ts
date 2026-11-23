@@ -120,8 +120,8 @@ async function bookingAbout(trx: Transaction<Database>, orgId: string, p: Record
   if (!bookingId) return [];
   const { rows } = await sql<{ guest: string | null; email: string | null; title: string | null; starts: string | null }>`
     SELECT b.visitor_name AS guest, b.email AS email, t.title AS title, to_char(b.starts_at AT TIME ZONE 'UTC', ${ISO_UTC}) AS starts
-    FROM crove_crm.booking b
-    LEFT JOIN crove_crm.event_type t ON t.org_id = b.org_id AND t.id = b.event_type_id
+    FROM ludy_crm.booking b
+    LEFT JOIN ludy_crm.event_type t ON t.org_id = b.org_id AND t.id = b.event_type_id
     WHERE b.org_id = ${orgId}::uuid AND b.id = ${bookingId}::uuid
     LIMIT 1`.execute(trx);
   const row = rows[0];
@@ -140,7 +140,7 @@ async function quoteAbout(trx: Transaction<Database>, orgId: string, p: Record<s
   if (!quoteId) return [];
   const { rows } = await sql<{ number: string | null; status: string | null; total: string | null; party: string | null; email: string | null }>`
     SELECT q.number AS number, q.status AS status, q.total::text AS total, pa.name AS party, pa.email AS email
-    FROM crove_crm.quote q
+    FROM ludy_crm.quote q
     LEFT JOIN ludy_kernel.party pa ON pa.org_id = q.org_id AND pa.id = q.party_id
     WHERE q.org_id = ${orgId}::uuid AND q.id = ${quoteId}::uuid
     LIMIT 1`.execute(trx);
@@ -163,14 +163,14 @@ async function postAbout(trx: Transaction<Database>, orgId: string, p: Record<st
   const variantIds = Array.isArray(p.variantIds) ? named : null;
   const { rows: posts } = await sql<{ shown: string | null }>`
     SELECT COALESCE(NULLIF(pg_catalog.btrim(p.title), ''), NULLIF(pg_catalog.left(p.body, 120), '')) AS shown
-    FROM crove_social.post p
+    FROM ludy_social.post p
     WHERE p.org_id = ${orgId}::uuid AND p.id = ${postId}::uuid
     LIMIT 1`.execute(trx);
   const post = posts[0];
   if (!post) return [];
   const { rows: channels } = await sql<{ name: string | null }>`
     SELECT COALESCE(cc.display_name, v.provider) AS name
-    FROM crove_social.post_variant v
+    FROM ludy_social.post_variant v
     LEFT JOIN ludy_kernel.channel_connection cc ON cc.org_id = v.org_id AND cc.id = v.channel_connection_id
     WHERE v.org_id = ${orgId}::uuid AND v.post_id = ${postId}::uuid AND (${variantIds}::uuid[] IS NULL OR v.id = ANY(${variantIds}::uuid[]))
     ORDER BY v.position, v.id
@@ -187,8 +187,8 @@ async function changeAbout(trx: Transaction<Database>, orgId: string, p: Record<
   if (!changeId) return [];
   const { rows } = await sql<{ launch_id: string; kind: string; state: string; slot: string; budget: string | null; ends: string | null; currency: string | null }>`
     SELECT c.launch_id AS launch_id, c.kind AS kind, c.state AS state, c.slot AS slot, c.to_budget::text AS budget, c.to_end_on::text AS ends, l.currency AS currency
-    FROM crove_ads.ad_manage_change c
-    LEFT JOIN crove_ads.ad_launch l ON l.org_id = c.org_id AND l.id = c.launch_id
+    FROM ludy_ads.ad_manage_change c
+    LEFT JOIN ludy_ads.ad_launch l ON l.org_id = c.org_id AND l.id = c.launch_id
     WHERE c.org_id = ${orgId}::uuid AND c.id = ${changeId}::uuid
     LIMIT 1`.execute(trx);
   const row = rows[0];
@@ -206,9 +206,9 @@ async function launchAbout(trx: Transaction<Database>, orgId: string, command: s
   if (!launchId) return [];
   const { rows } = await sql<{ name: string | null; account: string | null; state: string | null; budget: string | null; currency: string | null; ends: string | null }>`
     SELECT d.name AS name, a.name AS account, l.state AS state, l.daily_budget::text AS budget, l.currency AS currency, l.end_on::text AS ends
-    FROM crove_ads.ad_launch l
-    LEFT JOIN crove_ads.ad_campaign_draft d ON d.org_id = l.org_id AND d.id = l.draft_id
-    LEFT JOIN crove_ads.ad_account a ON a.org_id = l.org_id AND a.id = l.ad_account_id
+    FROM ludy_ads.ad_launch l
+    LEFT JOIN ludy_ads.ad_campaign_draft d ON d.org_id = l.org_id AND d.id = l.draft_id
+    LEFT JOIN ludy_ads.ad_account a ON a.org_id = l.org_id AND a.id = l.ad_account_id
     WHERE l.org_id = ${orgId}::uuid AND l.id = ${launchId}::uuid
     LIMIT 1`.execute(trx);
   const row = rows[0];

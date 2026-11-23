@@ -2,7 +2,7 @@
 // per channel, the three with the most engagement and the failures; this week's posts per day, the queue days still
 // empty, and for owners and admins the posts waiting for their review.
 //
-// The worker's hourly sweep pages through crove_social.digest_due (active orgs with Social activity, past Monday 08:00
+// The worker's hourly sweep pages through ludy_social.digest_due (active orgs with Social activity, past Monday 08:00
 // in their zone, without a marker for that week) and runs social.digest.send for each in the org's system context.
 // The command works the zone and the ISO week out again from its own clock, in its transaction, with the same rule as
 // the scan (the org-wide goal's zone, else a report schedule's, else Asia/Ho_Chi_Minh; only a zone PostgreSQL knows),
@@ -71,8 +71,8 @@ async function weekOf(ctx: CommandContext): Promise<DigestWeek> {
     WITH zones AS MATERIALIZED (SELECT z.name FROM pg_catalog.pg_timezone_names z),
     picked AS (
       SELECT coalesce(
-        (SELECT g.time_zone FROM crove_social.goal g WHERE g.org_id = ${ctx.orgId}::uuid AND g.connection_id IS NULL AND g.time_zone IN (SELECT zones.name FROM zones)),
-        (SELECT s.time_zone FROM crove_social.report_schedule s WHERE s.org_id = ${ctx.orgId}::uuid AND s.time_zone IN (SELECT zones.name FROM zones) ORDER BY s.created_at, s.id LIMIT 1),
+        (SELECT g.time_zone FROM ludy_social.goal g WHERE g.org_id = ${ctx.orgId}::uuid AND g.connection_id IS NULL AND g.time_zone IN (SELECT zones.name FROM zones)),
+        (SELECT s.time_zone FROM ludy_social.report_schedule s WHERE s.org_id = ${ctx.orgId}::uuid AND s.time_zone IN (SELECT zones.name FROM zones) ORDER BY s.created_at, s.id LIMIT 1),
         ${DIGEST_DEFAULT_ZONE}::text) AS zone
     ),
     here AS (SELECT p.zone, pg_catalog.timezone(p.zone, ${ctx.now}::timestamptz) AS local_at FROM picked p)
@@ -103,10 +103,10 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
     sql<{ variant_id: string; post_id: string; connection_id: string; title: string | null; body: string | null; status: string; metrics: Record<string, number> | null }>`
       SELECT v.id AS variant_id, v.post_id, v.channel_connection_id AS connection_id, coalesce(v.title, p.title) AS title,
              coalesce(v.body, p.body) AS body, v.status, s.metrics
-      FROM crove_social.post_variant v
-      JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+      FROM ludy_social.post_variant v
+      JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
       LEFT JOIN LATERAL (
-        SELECT m.metrics FROM crove_social.metric_snapshot m
+        SELECT m.metrics FROM ludy_social.metric_snapshot m
         WHERE m.org_id = v.org_id AND m.variant_id = v.id
         ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
       ) s ON true
@@ -116,8 +116,8 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
       LIMIT ${SCAN_MAX}::int`.execute(ctx.trx),
     sql<{ variant_id: string; post_id: string; connection_id: string; title: string | null; body: string | null }>`
       SELECT v.id AS variant_id, v.post_id, v.channel_connection_id AS connection_id, coalesce(v.title, p.title) AS title, coalesce(v.body, p.body) AS body
-      FROM crove_social.post_variant v
-      JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+      FROM ludy_social.post_variant v
+      JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
       WHERE v.org_id = ${org}::uuid AND v.status IN ('failed', 'needs_attention') AND p.archived_at IS NULL
         AND v.updated_at >= ${week.lastStart}::timestamptz AND v.updated_at < ${week.thisStart}::timestamptz
       ORDER BY v.updated_at DESC, v.id
@@ -126,7 +126,7 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
     sql<{ connection_id: string; day: string }>`
       SELECT v.channel_connection_id AS connection_id,
              pg_catalog.to_char(pg_catalog.timezone(${week.zone}::text, coalesce(v.queue_slot_at, v.scheduled_at)), 'YYYY-MM-DD') AS day
-      FROM crove_social.post_variant v
+      FROM ludy_social.post_variant v
       WHERE v.org_id = ${org}::uuid AND v.status IN ('scheduled', 'publishing', 'processing', 'published')
         AND coalesce(v.queue_slot_at, v.scheduled_at) >= ${week.thisStart}::timestamptz
         AND coalesce(v.queue_slot_at, v.scheduled_at) < ${week.nextStart}::timestamptz
@@ -134,7 +134,7 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
   ]);
   // The queues of active channels, not paused: their posting days left this week with no post.
   const queues = await ctx.trx
-    .selectFrom('crove_social.queue as q')
+    .selectFrom('ludy_social.queue as q')
     .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'q.org_id').onRef('c.id', '=', 'q.channel_connection_id'))
     .select(['q.id', 'q.channel_connection_id', 'q.time_zone'])
     .where('q.org_id', '=', org)
@@ -144,7 +144,7 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
   const emptyDays: { connectionId: string; days: string[] }[] = [];
   if (queues.length > 0) {
     const slots = await ctx.trx
-      .selectFrom('crove_social.queue_slot')
+      .selectFrom('ludy_social.queue_slot')
       .select(['queue_id', 'weekday', 'minute', 'label_id'])
       .where('org_id', '=', org)
       .where(
@@ -155,7 +155,7 @@ async function weekData(ctx: CommandContext, week: DigestWeek): Promise<DigestWe
       .where('active', '=', true)
       .execute();
     const held = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['channel_connection_id', 'queue_slot_at'])
       .where('org_id', '=', org)
       .where(
@@ -190,8 +190,8 @@ async function reviewsFor(ctx: CommandContext, approvers: readonly string[]): Pr
   const out = new Map<string, DigestReviewItem[]>(approvers.map((u) => [u, []]));
   if (approvers.length === 0) return out;
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant as v')
-    .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+    .selectFrom('ludy_social.post_variant as v')
+    .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
     .select(['v.id as variant_id', 'v.post_id', 'v.revision', 'v.content_hash', 'v.channel_connection_id', 'p.title', 'p.body', 'p.author_user_id'])
     .where('v.org_id', '=', ctx.orgId)
     .where('v.status', '=', 'in_review')
@@ -260,7 +260,7 @@ export const digestSend = defineCommand({
     if (org?.status !== 'active') return { state: 'not_due', ...none };
     // The claim: one command per org and week gets the row, and only it sends.
     const marker = await ctx.trx
-      .insertInto('crove_social.digest_week')
+      .insertInto('ludy_social.digest_week')
       .values({ org_id: ctx.orgId, iso_week: week.isoWeek, sent_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'iso_week']).doNothing())
       .returning('id')
@@ -269,8 +269,8 @@ export const digestSend = defineCommand({
     const { rows: recipients } = await sql<{ user_id: string; role: string }>`
       SELECT m.user_id, m.role FROM ludy_kernel.tenant_member m
       WHERE m.org_id = ${ctx.orgId}::uuid AND m.role IN ('owner', 'admin', 'member')
-        AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${DIGEST_KIND})
-        AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mail_off o WHERE o.org_id = m.org_id AND o.user_id = m.user_id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${DIGEST_KIND})
+        AND NOT EXISTS (SELECT 1 FROM ludy_social.notification_mail_off o WHERE o.org_id = m.org_id AND o.user_id = m.user_id)
       ORDER BY m.user_id`.execute(ctx.trx);
     if (recipients.length === 0) return { state: 'sent', ...none };
     const ids = recipients.map((r) => r.user_id);
@@ -332,7 +332,7 @@ export async function sweepDigests(deps: { runtime: Runtime; workerDb: Db }): Pr
   let after: string | null = null;
   let sent = 0;
   for (let page = 0; page < DIGEST_MAX_PAGES; page++) {
-    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_social.digest_due(${after}::uuid, ${DIGEST_PAGE}::int)`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_social.digest_due(${after}::uuid, ${DIGEST_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.

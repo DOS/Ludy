@@ -113,7 +113,7 @@ suite('social link previews on PostgreSQL (#641)', () => {
     expect(await requests(o)).toHaveLength(1);
 
     // A day later it is read again, keeping the old answer meanwhile.
-    await admin((c) => c.query("UPDATE crove_social.link_preview SET fetched_at = now() - interval '25 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.link_preview SET fetched_at = now() - interval '25 hours' WHERE org_id = $1", [o.orgId]));
     expect(await request(o, o.owner, url)).toMatchObject({ status: 'pending', title: 'Khai trương cửa hàng' });
     expect(await requests(o)).toHaveLength(2);
   });
@@ -153,7 +153,7 @@ suite('social link previews on PostgreSQL (#641)', () => {
 
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_social.link_preview (org_id, url, url_sha256, status, requested_at) SELECT $1, 'https://n.example/' || g, md5(g::text) || md5((g + 1)::text), 'pending', now() FROM generate_series(1, $2) g",
+        "INSERT INTO ludy_social.link_preview (org_id, url, url_sha256, status, requested_at) SELECT $1, 'https://n.example/' || g, md5(g::text) || md5((g + 1)::text), 'pending', now() FROM generate_series(1, $2) g",
         [o.orgId, LINK_PREVIEW_PER_MINUTE],
       ),
     );
@@ -164,7 +164,7 @@ suite('social link previews on PostgreSQL (#641)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ privilege_type: string }>(
-          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'link_preview' ORDER BY 1",
+          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'link_preview' ORDER BY 1",
         )
       ).rows.map((r) => r.privilege_type),
     );

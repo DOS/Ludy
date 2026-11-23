@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Employees, their employment terms and their dependents (issue #2530; payroll plan docs/plan/payroll.md §6.1 and §6.6, ADR-0046, ADR-0017). Owners and admins only: the commands'
-// and queries' access says so and so do the database's policies (crove_hr's owner_admin), so a member, a viewer, an agent or the system reads and writes none of it.
+// and queries' access says so and so do the database's policies (ludy_hr's owner_admin), so a member, a viewer, an agent or the system reads and writes none of it.
 //
 // What a person's record holds, and where:
 // - the identity number and the bank account number are sealed under the person's own key (ctx.seal under the subject `employee:<id>`, ADR-0017). A command takes them as input
@@ -62,11 +62,12 @@ import { isoDate as iso, monthEnd, previousMonth, termsInForceForMonth } from '.
 
 export const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 export const OWNERS: readonly MemberRole[] = ['owner'];
-export const EMPLOYEE = hrManifest.tables.crove_hr.payroll_employee;
-const DEPENDENT = hrManifest.tables.crove_hr.payroll_dependent;
-export const EMPLOYMENT = hrManifest.tables.crove_hr.payroll_employment;
+export const EMPLOYEE = hrManifest.tables.ludy_hr.payroll_employee;
+const DEPENDENT = hrManifest.tables.ludy_hr.payroll_dependent;
+export const EMPLOYMENT = hrManifest.tables.ludy_hr.payroll_employment;
 
 // Where the sealed values are stored: a value opens only at the place it was sealed for (ctx.open), so a sealed text copied to another column never reads.
+// Category B (ADR-0054 section 2): immutable AES-256-GCM SubjectVault AAD place strings; kept as crove_hr.* so pre-cutover sealed PII continues to open.
 export const IDENTITY_PLACE = 'crove_hr.payroll_employee.national_id_sealed';
 export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.bank_account_sealed';
 export const TAX_CODE_PLACE = 'crove_hr.payroll_employee.tax_code_sealed';
@@ -283,7 +284,7 @@ export function requireKnownBank(code: string | null | undefined): void {
 // An employee row, locked for the change that follows. An erased one cannot be changed any more.
 async function loadEmployee(ctx: Ctx, employeeId: string, options: { allowErased?: boolean } = {}) {
   const row = await ctx.trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'legal_entity_id', 'department_id', 'status', 'ended_on', 'erased_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', employeeId)
@@ -301,7 +302,7 @@ export async function resolveDepartment(
   currentDepartmentId: string | null = null,
 ): Promise<{ id: string; name: string; payFunction: HrPayFunction }> {
   const dept = await ctx.trx
-    .selectFrom('crove_hr.department')
+    .selectFrom('ludy_hr.department')
     .select(['id', 'legal_entity_id', 'name', 'pay_function', 'archived_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', departmentId)
@@ -337,8 +338,8 @@ export const employeeAdd = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', EMPLOYEE_COLUMNS),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', EMPLOYEE_COLUMNS),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
   ],
   handler: async (ctx, input): Promise<HrWritten> => {
     const userId = userOf(ctx.actor);
@@ -357,7 +358,7 @@ export const employeeAdd = defineCommand({
     const insuranceSealed = input.insuranceNumber === undefined ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
     const workPermitSealed = input.workPermitNumber === undefined ? null : await ctx.seal(subject, WORK_PERMIT_PLACE, input.workPermitNumber);
     await ctx.trx
-      .insertInto('crove_hr.payroll_employee')
+      .insertInto('ludy_hr.payroll_employee')
       .values({
         org_id: ctx.orgId,
         id: employeeId,
@@ -382,7 +383,7 @@ export const employeeAdd = defineCommand({
       })
       .execute();
     const employment = await ctx.trx
-      .insertInto('crove_hr.payroll_employment')
+      .insertInto('ludy_hr.payroll_employment')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -441,7 +442,7 @@ export const employeeEdit = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'is_foreign', 'work_permit_exempt', 'work_permit_number_sealed', 'work_permit_expires_on', 'department_id', 'job_title', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'is_foreign', 'work_permit_exempt', 'work_permit_number_sealed', 'work_permit_expires_on', 'department_id', 'job_title', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address; the owner's erasure is the way out. The one
     // exceptions are what a leaver still needs: for the declarations (#2533) the birth date, the tax code and the insurance number, and for paying what is still owed (a final month, a
@@ -542,7 +543,7 @@ export const employeeEdit = defineCommand({
       set.job_title = input.jobTitle;
       changed.push('jobTitle');
     }
-    await ctx.trx.updateTable('crove_hr.payroll_employee').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).execute();
+    await ctx.trx.updateTable('ludy_hr.payroll_employee').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).execute();
     ctx.audit({ employeeId: input.employeeId, changed });
     return { employeeId: input.employeeId };
   },
@@ -558,17 +559,17 @@ export const employeeFinalizationSet = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['finalization_authorized_years', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', ['finalization_authorized_years', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     requireActive(await loadEmployee(ctx, input.employeeId));
     // A year that has not begun cannot be authorized yet (Vietnam's year).
     if (input.year > Number(vietnamDay(ctx.now).slice(0, 4))) throw new DomainError('HR_YEAR_NOT_BEGUN', 422, 'Chưa thể ghi nhận ủy quyền cho một năm chưa bắt đầu');
-    const row = await ctx.trx.selectFrom('crove_hr.payroll_employee').select('finalization_authorized_years').where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('ludy_hr.payroll_employee').select('finalization_authorized_years').where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).executeTakeFirstOrThrow();
     const years = new Set<number>(row.finalization_authorized_years);
     if (input.authorized) years.add(input.year);
     else years.delete(input.year);
     await ctx.trx
-      .updateTable('crove_hr.payroll_employee')
+      .updateTable('ludy_hr.payroll_employee')
       .set({ finalization_authorized_years: [...years].sort((a, b) => a - b), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
@@ -586,13 +587,13 @@ export const employmentAdd = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employment', EMPLOYMENT_COLUMNS)],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employment', EMPLOYMENT_COLUMNS)],
   handler: async (ctx, input): Promise<HrWritten> => {
     const employee = await loadEmployee(ctx, input.employeeId);
     requireActive(employee);
     // A new row starts after the newest one: a past month keeps the figures it was computed with.
     const newest = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select('effective_from')
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -604,7 +605,7 @@ export const employmentAdd = defineCommand({
     }
     const prepared = prepareEmploymentTerms(input);
     const row = await ctx.trx
-      .insertInto('crove_hr.payroll_employment')
+      .insertInto('ludy_hr.payroll_employment')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: employee.legal_entity_id,
@@ -647,13 +648,13 @@ export const employeeEnd = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['status', 'ended_on', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', ['status', 'ended_on', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     const employee = await loadEmployee(ctx, input.employeeId);
     requireActive(employee);
     // The last day of work cannot come before the first day of the first terms. A raise already scheduled after it stays as it is: its row cannot be changed.
     const first = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select('effective_from')
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -664,7 +665,7 @@ export const employeeEnd = defineCommand({
       throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc');
     }
     await ctx.trx
-      .updateTable('crove_hr.payroll_employee')
+      .updateTable('ludy_hr.payroll_employee')
       .set({ status: 'ended', ended_on: input.endedOn, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
@@ -682,12 +683,12 @@ export const dependentAdd = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', DEPENDENT_COLUMNS)],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_dependent', DEPENDENT_COLUMNS)],
   handler: async (ctx, input): Promise<HrWritten> => {
     const employee = await loadEmployee(ctx, input.employeeId);
     requireActive(employee);
     const row = await ctx.trx
-      .insertInto('crove_hr.payroll_dependent')
+      .insertInto('ludy_hr.payroll_dependent')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: employee.legal_entity_id,
@@ -719,10 +720,10 @@ export const dependentEnd = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: (input: { dependentId: string }) => ({ type: 'hr.payroll_dependent', id: input.dependentId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['ended_on'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_dependent', ['ended_on'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     const dependent = await ctx.trx
-      .selectFrom('crove_hr.payroll_dependent')
+      .selectFrom('ludy_hr.payroll_dependent')
       .select(['id', 'employee_id', 'registered_on', 'ended_on'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dependentId)
@@ -732,7 +733,7 @@ export const dependentEnd = defineCommand({
     await loadEmployee(ctx, dependent.employee_id);
     if (dependent.ended_on !== null) throw new DomainError('HR_DEPENDENT_ENDED', 409, 'Người phụ thuộc này đã được kết thúc');
     if (input.endedOn < iso(dependent.registered_on)) throw new DomainError('HR_DEPENDENT_END_BEFORE_START', 422, 'Ngày kết thúc không thể trước ngày đăng ký');
-    await ctx.trx.updateTable('crove_hr.payroll_dependent').set({ ended_on: input.endedOn }).where('org_id', '=', ctx.orgId).where('id', '=', input.dependentId).execute();
+    await ctx.trx.updateTable('ludy_hr.payroll_dependent').set({ ended_on: input.endedOn }).where('org_id', '=', ctx.orgId).where('id', '=', input.dependentId).execute();
     ctx.audit({ employeeId: dependent.employee_id, dependentId: input.dependentId, endedOn: input.endedOn });
     return { employeeId: dependent.employee_id, dependentId: input.dependentId };
   },
@@ -766,13 +767,13 @@ export const employeeErase = defineCommand({
   access: OWNERS,
   target: targetOf,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'work_permit_expires_on', 'department_id', 'job_title', 'user_id', 'erased_at', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['status', 'reason', 'decision_note', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'attendance_log', ['note', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'onboarding_submission', ['status', 'address', 'birth_date', 'national_id_sealed', 'bank_code', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'note', 'decision_note', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', ['status', 'reason', 'decision_note', 'updated_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'probation_review', ['completed_tasks_snapshot', 'attendance_snapshot', 'review_note', 'ai_draft_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'work_permit_expires_on', 'department_id', 'job_title', 'user_id', 'erased_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_dependent', ['display_name']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', ['status', 'reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'attendance_log', ['note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'onboarding_submission', ['status', 'address', 'birth_date', 'national_id_sealed', 'bank_code', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'note', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', ['status', 'reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'probation_review', ['completed_tasks_snapshot', 'attendance_snapshot', 'review_note', 'ai_draft_note', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
@@ -788,7 +789,7 @@ export const employeeErase = defineCommand({
       throw new DomainError('HR_RETENTION_NOT_PASSED', 409, `Hồ sơ phải được giữ đến hết ngày ${until} (thời hạn lưu trữ ${HR_RETENTION_YEARS} năm sau ngày nghỉ việc)`);
     }
     const dependents = await ctx.trx
-      .updateTable('crove_hr.payroll_dependent')
+      .updateTable('ludy_hr.payroll_dependent')
       .set({ display_name: HR_ERASED_NAME })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -797,7 +798,7 @@ export const employeeErase = defineCommand({
     // Cancel non-terminal requests first (ahead of erased_at so transition triggers allow cancellation cleanly),
     // then mark payroll_employee erased_at and wipe free-text/sealed/snapshot PII across all HR tables.
     const cancelledRequests = await ctx.trx
-      .updateTable('crove_hr.leave_request')
+      .updateTable('ludy_hr.leave_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -805,7 +806,7 @@ export const employeeErase = defineCommand({
       .returning('id')
       .execute();
     const cancelledOnboarding = await ctx.trx
-      .updateTable('crove_hr.onboarding_submission')
+      .updateTable('ludy_hr.onboarding_submission')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -813,7 +814,7 @@ export const employeeErase = defineCommand({
       .returning('id')
       .execute();
     const cancelledOvertime = await ctx.trx
-      .updateTable('crove_hr.overtime_request')
+      .updateTable('ludy_hr.overtime_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -821,27 +822,27 @@ export const employeeErase = defineCommand({
       .returning('id')
       .execute();
     await ctx.trx
-      .updateTable('crove_hr.payroll_employee')
+      .updateTable('ludy_hr.payroll_employee')
       .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, work_permit_expires_on: null, department_id: null, job_title: null, user_id: null, erased_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
     await ctx.trx
-      .updateTable('crove_hr.leave_request')
+      .updateTable('ludy_hr.leave_request')
       .set({ reason: null, decision_note: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
       .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
       .execute();
     await ctx.trx
-      .updateTable('crove_hr.attendance_log')
+      .updateTable('ludy_hr.attendance_log')
       .set({ note: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
       .where('note', 'is not', null)
       .execute();
     const erasedOnboarding = await ctx.trx
-      .updateTable('crove_hr.onboarding_submission')
+      .updateTable('ludy_hr.onboarding_submission')
       .set({
         address: null,
         birth_date: null,
@@ -872,14 +873,14 @@ export const employeeErase = defineCommand({
       .returning('id')
       .execute();
     await ctx.trx
-      .updateTable('crove_hr.overtime_request')
+      .updateTable('ludy_hr.overtime_request')
       .set({ reason: null, decision_note: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
       .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
       .execute();
     const erasedProbation = await ctx.trx
-      .updateTable('crove_hr.probation_review')
+      .updateTable('ludy_hr.probation_review')
       .set({
         completed_tasks_snapshot: '[]',
         attendance_snapshot: '{}',
@@ -941,7 +942,7 @@ export const employeeLinkMember = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['user_id', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', ['user_id', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     const employee = await loadEmployee(ctx, input.employeeId);
     if (input.userId !== null) {
@@ -961,7 +962,7 @@ export const employeeLinkMember = defineCommand({
     }
     try {
       await ctx.trx
-        .updateTable('crove_hr.payroll_employee')
+        .updateTable('ludy_hr.payroll_employee')
         .set({ user_id: input.userId, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.employeeId)
@@ -1153,8 +1154,8 @@ export const employeeList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrEmployeeSummary[]> => {
     let q = ctx.trx
-      .selectFrom('crove_hr.payroll_employee as e')
-      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .selectFrom('ludy_hr.payroll_employee as e')
+      .leftJoin('ludy_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
       .select([
         'e.id',
         'e.legal_entity_id',
@@ -1179,7 +1180,7 @@ export const employeeList = defineQuery({
     const employees = await q.orderBy('e.display_name').orderBy('e.id').limit(input.limit).execute();
     if (employees.length === 0) return [];
     const terms = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(TERMS_SELECT_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -1238,8 +1239,8 @@ export const employeeGet = defineQuery({
   target: (input: { employeeId: string }) => ({ type: 'hr.payroll_employee', id: input.employeeId }),
   handler: async (ctx, input): Promise<HrEmployee> => {
     const e = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee as e')
-      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .selectFrom('ludy_hr.payroll_employee as e')
+      .leftJoin('ludy_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
       .select([
         'e.id',
         'e.legal_entity_id',
@@ -1270,7 +1271,7 @@ export const employeeGet = defineQuery({
     if (!e) throw notFound();
     const terms = (
       await ctx.trx
-        .selectFrom('crove_hr.payroll_employment')
+        .selectFrom('ludy_hr.payroll_employment')
         .select(TERMS_SELECT_COLUMNS)
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', '=', input.employeeId)
@@ -1279,7 +1280,7 @@ export const employeeGet = defineQuery({
     ).map((t) => termsView(t as TermsRow));
     const dependents: HrDependentView[] = (
       await ctx.trx
-        .selectFrom('crove_hr.payroll_dependent')
+        .selectFrom('ludy_hr.payroll_dependent')
         .select(['id', 'display_name', 'relation', 'registered_on', 'ended_on'])
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', '=', input.employeeId)
@@ -1392,7 +1393,7 @@ async function loadEmployeeTerminationBasis(
   input: EmployeeTerminationBasisInput,
 ): Promise<EmployeeTerminationBasis> {
   const e = await ctx.trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', input.employeeId)
@@ -1400,7 +1401,7 @@ async function loadEmployeeTerminationBasis(
   if (!e) throw notFound();
   if (e.erased_at !== null) throw erasedError();
   const termsAsc = await ctx.trx
-    .selectFrom('crove_hr.payroll_employment')
+    .selectFrom('ludy_hr.payroll_employment')
     .select(['effective_from', 'base_wage'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', '=', e.id)
@@ -1428,8 +1429,8 @@ async function loadEmployeeTerminationBasis(
   const wageMonthsCount = totalWorkedMonths >= 6 ? 6 : Math.max(1, totalWorkedMonths);
   const months = recentCompletedMonths(effectiveEndedOn, wageMonthsCount);
   const payLines = await ctx.trx
-    .selectFrom('crove_hr.payroll_line as l')
-    .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
+    .selectFrom('ludy_hr.payroll_line as l')
+    .innerJoin('ludy_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
     .select(['r.month', 'l.inputs'])
     .where('l.org_id', '=', ctx.orgId)
     .where('r.legal_entity_id', '=', e.legal_entity_id)
@@ -1542,8 +1543,8 @@ export const employeeContractPdf = defineQuery({
   target: targetOf,
   handler: async (ctx, input): Promise<HrEmployeeContractPdf> => {
     const e = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee as e')
-      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .selectFrom('ludy_hr.payroll_employee as e')
+      .leftJoin('ludy_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
       .select([
         'e.id',
         'e.legal_entity_id',
@@ -1562,7 +1563,7 @@ export const employeeContractPdf = defineQuery({
     if (e.erased_at !== null) throw erasedError();
 
     const termRow = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(TERMS_SELECT_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', e.id)
@@ -1583,7 +1584,7 @@ export const employeeContractPdf = defineQuery({
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirst(),
       ctx.trx
-        .selectFrom('crove_hr.candidate')
+        .selectFrom('ludy_hr.candidate')
         .select(['email'])
         .where('org_id', '=', ctx.orgId)
         .where('legal_entity_id', '=', e.legal_entity_id)

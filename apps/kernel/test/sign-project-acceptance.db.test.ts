@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PostgreSQL 17 integration tests for Ludy eSign Slice 3b (#3812):
-//   - crove_sign.envelope source_kind = 'project_acceptance' constraint + sign.envelope.by_source org isolation
+//   - ludy_sign.envelope source_kind = 'project_acceptance' constraint + sign.envelope.by_source org isolation
 //   - os.sign.acceptance.draft_summary end-to-end HTTP oRPC: 100% AI-off parity, no_tasks, metered 'sign.acceptance_draft'
 //     usage recording under module 'sign', kill-switch stop, AI budget exhaustion, viewer 403, cross-org 404,
 //     and le_scope entity-restricted completed task isolation.
@@ -327,7 +327,7 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
     await expect(
       admin((c) =>
         c.query(
-          `UPDATE crove_sign.envelope SET source_kind = 'unknown_kind' WHERE org_id = $1 AND id = $2`,
+          `UPDATE ludy_sign.envelope SET source_kind = 'unknown_kind' WHERE org_id = $1 AND id = $2`,
           [org.orgId, envelopeId],
         ),
       ),
@@ -408,7 +408,7 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
       );
       const tId = insertedTask.rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)`,
+        `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)`,
         [org.orgId, projectId, tId],
       );
       return tId;

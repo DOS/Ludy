@@ -5,7 +5,7 @@
 //   32-byte random `whsec_<base64url>` secret and a public `whk_<8 hex>` hint, and sealing the secret through
 //   CredentialBroker bound to (orgId, 'sign-webhook', webhookId). Plaintext secrets never enter Runtime.execute(),
 //   the database, audit_event, outbox_event, or idempotency_key.
-// - Two-stage delivery: runSignHookSweep (egress: 'none') reads queued/stale/expired rows via crove_sign.webhook_open,
+// - Two-stage delivery: runSignHookSweep (egress: 'none') reads queued/stale/expired rows via ludy_sign.webhook_open,
 //   skips orgs where eSign is switched off, and hands singleton jobs to sign-hook-deliver; runSignHookDelivery
 //   (egress: ['tenant_url']) opens the active and grace-window secrets via ludy_worker-only definers, re-validates
 //   the canonical payload through signWebhookBody, and calls postSigned from mcp-wake.ts.
@@ -81,7 +81,7 @@ export async function runSignHookSweep(
 ): Promise<{ handedOver: number; expired: number; failures: number }> {
   const done = { handedOver: 0, expired: 0, failures: 0 };
   const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' }>`
-    SELECT org_id, id, kind FROM crove_sign.webhook_open(${PER_PASS}::int)
+    SELECT org_id, id, kind FROM ludy_sign.webhook_open(${PER_PASS}::int)
   `.execute(deps.workerDb);
   for (const row of open.rows) {
     const ctx = { actor: ACTOR, orgId: row.org_id };

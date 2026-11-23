@@ -107,7 +107,7 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
       const channel = randomUUID();
       await admin(async (c) => {
         await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
-        await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
+        await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
     const o = { orgId, owner, admin: adminUser, entityId: entity, seriesId: '' };
@@ -142,7 +142,7 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     await asked(o, draft.id);
     const { provider } = createSandboxEInvoiceProvider();
     expect(await runEInvoiceIssue({ runtime: worker, broker, store, providers: { sandbox: provider } }, { orgId: o.orgId, draftId: draft.id })).toEqual({ action: 'issue', state: 'issued' });
-    const row = (await rows<{ signed_file_id: string; issued_number: string }>('SELECT signed_file_id, issued_number FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draft.id]))[0] as { signed_file_id: string; issued_number: string };
+    const row = (await rows<{ signed_file_id: string; issued_number: string }>('SELECT signed_file_id, issued_number FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draft.id]))[0] as { signed_file_id: string; issued_number: string };
     const read = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => today() }, o.orgId, row.signed_file_id);
     const approved = await rt.execute<{ documentId: string }>('kernel.proposal.approve', { acceptUnverifiedSignature: true, id: String(read.proposalId), revision: 1 }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
     return { draftId: draft.id, documentId: approved.documentId, number: String(Number(row.issued_number)) };
@@ -200,8 +200,8 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     const sameDay = await execute<{ saleDate: string | null; lateReason: string | null; lateSale: boolean }>(o, 'finance.einvoice_draft.save', form(o, { saleDate: today(), lateReason: 'không cần' }));
     expect(sameDay).toMatchObject({ saleDate: null, lateReason: null, lateSale: false });
     // The database holds the rule too: a sale after its invoice, or a reason with no sale date.
-    await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET sale_date = invoice_date + 1 WHERE org_id = $1 AND id = $2", [o.orgId, noReason.id]))).rejects.toMatchObject({ code: '23514' });
-    await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET late_reason = 'x', sale_date = NULL WHERE org_id = $1 AND id = $2", [o.orgId, noReason.id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_finance.einvoice_draft SET sale_date = invoice_date + 1 WHERE org_id = $1 AND id = $2", [o.orgId, noReason.id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_finance.einvoice_draft SET late_reason = 'x', sale_date = NULL WHERE org_id = $1 AND id = $2", [o.orgId, noReason.id]))).rejects.toMatchObject({ code: '23514' });
   });
 
   it('audits the sale date and the reason at the approval, and freezes both once the draft is sent', async () => {
@@ -211,8 +211,8 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     expect(audit).toHaveLength(1);
     expect(audit[0]?.detail).toMatchObject({ draftId: sale.draftId, saleDate: SALE_DATE, lateReason: { redacted: 'pii' } });
     // Once the draft has left draft, neither column changes, by any writer.
-    await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET sale_date = $3 WHERE org_id = $1 AND id = $2", [o.orgId, sale.draftId, `${prevMonth}-01`]))).rejects.toThrow();
-    await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET late_reason = 'đổi' WHERE org_id = $1 AND id = $2", [o.orgId, sale.draftId]))).rejects.toThrow();
+    await expect(admin((c) => c.query("UPDATE ludy_finance.einvoice_draft SET sale_date = $3 WHERE org_id = $1 AND id = $2", [o.orgId, sale.draftId, `${prevMonth}-01`]))).rejects.toThrow();
+    await expect(admin((c) => c.query("UPDATE ludy_finance.einvoice_draft SET late_reason = 'đổi' WHERE org_id = $1 AND id = $2", [o.orgId, sale.draftId]))).rejects.toThrow();
   });
 
   it('counts the invoice in the period of its sale, not of its issue date', async () => {
@@ -271,7 +271,7 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
       expect(issued.lateSales).toEqual([expect.objectContaining({ number: sale.number, originalPeriod: prevMonth, supplementary: true })]);
       if (how === 'locked') {
         // Nothing reopened the month.
-        const lock = (await rows<{ locked_through: string }>('SELECT locked_through::text FROM crove_finance.period_lock WHERE org_id = $1', [o.orgId]))[0];
+        const lock = (await rows<{ locked_through: string }>('SELECT locked_through::text FROM ludy_finance.period_lock WHERE org_id = $1', [o.orgId]))[0];
         expect(lock?.locked_through?.slice(0, 7)).toBe(prevMonth);
       } else {
         expect((await vat(o, prevMonth)).filed).not.toBeNull();
@@ -320,7 +320,7 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     const quarter = `${prevMonth.slice(0, 4)}-Q${Math.ceil(Number(prevMonth.slice(5)) / 3)}`;
     // The return of the quarter is marked filed (a fixture row when the quarter has not ended, which the command would refuse), then the sale is recorded.
     await fixture(
-      `INSERT INTO crove_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
+      `INSERT INTO ludy_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
        VALUES ($1::uuid, $2::uuid, $3, 'filed', 'entered', 0, 0, 0, $4::uuid)`,
       [o.orgId, o.entityId, quarter, o.owner],
     );
@@ -335,16 +335,16 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     const o = await org();
     const sale = await lateSale(o);
     // An earlier issued draft of the same entity with the same symbol and number under another template number, and no sale date of its own.
-    const seriesRow = (await rows<{ symbol: string }>('SELECT symbol FROM crove_finance.einvoice_series WHERE org_id = $1 AND id = $2', [o.orgId, o.seriesId]))[0] as { symbol: string };
+    const seriesRow = (await rows<{ symbol: string }>('SELECT symbol FROM ludy_finance.einvoice_series WHERE org_id = $1 AND id = $2', [o.orgId, o.seriesId]))[0] as { symbol: string };
     const other = randomUUID();
     await fixture(
-      `INSERT INTO crove_finance.einvoice_series (org_id, id, legal_entity_id, provider, template_no, symbol, description) SELECT org_id, $3, legal_entity_id, provider, '9', symbol, 'mẫu khác' FROM crove_finance.einvoice_series WHERE org_id = $1 AND id = $2`,
+      `INSERT INTO ludy_finance.einvoice_series (org_id, id, legal_entity_id, provider, template_no, symbol, description) SELECT org_id, $3, legal_entity_id, provider, '9', symbol, 'mẫu khác' FROM ludy_finance.einvoice_series WHERE org_id = $1 AND id = $2`,
       [o.orgId, o.seriesId, other],
     );
     await fixture(
-      `INSERT INTO crove_finance.einvoice_draft (org_id, legal_entity_id, state, series_id, invoice_date, currency, buyer_kind, subtotal, vat_amount, total, provider_ref, issued_number, issued_at, submitted_at)
+      `INSERT INTO ludy_finance.einvoice_draft (org_id, legal_entity_id, state, series_id, invoice_date, currency, buyer_kind, subtotal, vat_amount, total, provider_ref, issued_number, issued_at, submitted_at)
        SELECT org_id, legal_entity_id, 'issued', $3, invoice_date, currency, buyer_kind, subtotal, vat_amount, total, 'ref-earlier', issued_number, issued_at - interval '1 hour', submitted_at - interval '1 hour'
-       FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2`,
+       FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2`,
       [o.orgId, sale.draftId, other],
     );
     expect(seriesRow.symbol).toMatch(/^C/);

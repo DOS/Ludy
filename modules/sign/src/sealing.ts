@@ -164,7 +164,7 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
         if (!f.signature_png_base64 && f.value_text === null) {
           throw new Error(`Initials field ${f.id} requires image or text before sealing`);
         }
-        // crove_sign stores 'initials'; @ludy/extract-contract names the pdf_seal variant 'initial'.
+        // ludy_sign stores 'initials'; @ludy/extract-contract names the pdf_seal variant 'initial'.
         out.push({
           type: 'initial',
           page: f.page_number,

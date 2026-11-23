@@ -161,7 +161,7 @@ export const mcpSignEnvelopes = defineQuery({
     requireCompanyGrant(ctx);
     const filtered = () => {
       let q = ctx.trx
-        .selectFrom('crove_sign.envelope as e')
+        .selectFrom('ludy_sign.envelope as e')
         .where('e.org_id', '=', ctx.orgId)
         .where('e.source_kind', 'not in', [...CONFIDENTIAL_SOURCE_KINDS]);
       if (input.status) q = q.where('e.status', '=', input.status);
@@ -193,7 +193,7 @@ export const mcpSignEnvelopes = defineQuery({
     }
 
     const signerRows = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['envelope_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -241,7 +241,7 @@ export const mcpSignEnvelopeGet = defineQuery({
   handler: async (ctx, input): Promise<McpSignEnvelopeDetail> => {
     requireCompanyGrant(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope as e')
+      .selectFrom('ludy_sign.envelope as e')
       .select([
         'e.id',
         'e.title',
@@ -270,7 +270,7 @@ export const mcpSignEnvelopeGet = defineQuery({
     }
 
     const signerRows = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select([
         'id',
         'routing_order',
@@ -288,7 +288,7 @@ export const mcpSignEnvelopeGet = defineQuery({
       .orderBy('id', 'asc')
       .execute();
     const obligationRow = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -369,8 +369,8 @@ export const mcpSignRenewals = defineQuery({
     const todayVn = vietnamToday(new Date());
 
     const rows = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation as o')
-      .innerJoin('crove_sign.envelope as e', (join) =>
+      .selectFrom('ludy_sign.envelope_obligation as o')
+      .innerJoin('ludy_sign.envelope as e', (join) =>
         join.onRef('e.org_id', '=', 'o.org_id').onRef('e.id', '=', 'o.envelope_id'),
       )
       .selectAll('o')
@@ -439,7 +439,7 @@ export const mcpSignTemplates = defineQuery({
     requireCompanyGrant(ctx);
     const base = () =>
       ctx.trx
-        .selectFrom('crove_sign.template as t')
+        .selectFrom('ludy_sign.template as t')
         .where('t.org_id', '=', ctx.orgId)
         .where('t.status', '=', 'active');
 
@@ -449,7 +449,7 @@ export const mcpSignTemplates = defineQuery({
         't.title',
         't.routing_mode',
         't.updated_at',
-        sql<boolean>`crove_sign.template_direct_link_enabled(t.id)`.as('direct_link_enabled'),
+        sql<boolean>`ludy_sign.template_direct_link_enabled(t.id)`.as('direct_link_enabled'),
       ])
       .orderBy('t.updated_at', 'desc')
       .orderBy('t.id', 'desc')
@@ -465,7 +465,7 @@ export const mcpSignTemplates = defineQuery({
     }
 
     const roleRows = await ctx.trx
-      .selectFrom('crove_sign.template_role')
+      .selectFrom('ludy_sign.template_role')
       .select(['template_id'])
       .where('org_id', '=', ctx.orgId)
       .where(

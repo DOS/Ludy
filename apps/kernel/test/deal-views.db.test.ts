@@ -120,7 +120,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     await exec(o, o.lan, 'crm.deal.move', { dealId: e.id, version: e.version, stageId: lost, lostReason: 'Giá cao' });
     // Creation dates a view can tell apart.
     for (const [title, days] of [['Hợp đồng Trần', 40], ['Đã thắng Phạm', 100], ['Mất Hoàng 50%', 200]] as const) {
-      await admin((c) => c.query(`UPDATE crove_crm.deal SET created_at = now() - make_interval(days => $3) WHERE org_id = $1 AND title = $2`, [o.orgId, title, days]));
+      await admin((c) => c.query(`UPDATE ludy_crm.deal SET created_at = now() - make_interval(days => $3) WHERE org_id = $1 AND title = $2`, [o.orgId, title, days]));
     }
     // Another org's deal that every filter below could match.
     const otherStages = await exec<Array<{ id: string; kind: string }>>(other, other.owner, 'crm.pipeline.setup', {});
@@ -140,7 +140,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     expect(await q('xyz')).toEqual([]);
     expect(await q('%')).toEqual(['Mất Hoàng 50%']);
     expect(await q('_')).toEqual([]);
-    expect(await q("'; DROP TABLE crove_crm.deal; --")).toEqual([]);
+    expect(await q("'; DROP TABLE ludy_crm.deal; --")).toEqual([]);
   });
 
   it('matches stage, status, owner and contact', async () => {
@@ -282,7 +282,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     // before it reaches a cast, and so is a cursor naming a sort the registry does not know.
     const sort = (field: string) => ({ field, dir: 'asc' as const });
     await refused({ after: { id: 'không-phải-id', value: 'x' } });
-    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: '1; DROP TABLE crove_crm.deal' } });
+    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: '1; DROP TABLE ludy_crm.deal' } });
     await refused({ sort: sort('amount'), after: { id: randomUUID(), value: 'abc' } });
     await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-13-45T00:00:00.000000Z' } });
     await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-11-01 00:00:00+00' } });

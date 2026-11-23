@@ -100,9 +100,9 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const entry = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query("INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`, total]);
-      await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`, total]);
+      await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
       await c.query('COMMIT');
     });
     return doc;
@@ -111,7 +111,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
   const approve = (o: Org, proposalId: string, who = o.owner) => execute<{ id: string; status: string }>(o, 'kernel.proposal.approve', { id: proposalId, revision: 1 }, who);
   type Payment = { id: string; status: string; payable_after: Date | null; hold_reason: string | null; bank_account_id: string; amount: string; approved_at: Date; stale_at: Date | null; paid_at: Date | null; confirmed_at: Date | null };
   const payments = (o: Org) =>
-    rows<Payment>('SELECT id, status, payable_after, hold_reason, bank_account_id, amount::text, approved_at, stale_at, paid_at, confirmed_at FROM crove_finance.supplier_payment WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+    rows<Payment>('SELECT id, status, payable_after, hold_reason, bank_account_id, amount::text, approved_at, stale_at, paid_at, confirmed_at FROM ludy_finance.supplier_payment WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
   // Asks and approves one invoice end to end, as the right pair of people for the org.
   async function pay(o: Org, doc: string): Promise<Payment> {
     const { proposalId } = await request(o, doc);
@@ -155,7 +155,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
   const fileOf = (o: Org, ids: string[], who = o.owner, fresh = true) => rt.query<BankFile>('finance.supplier_payment.bank_file.get', { paymentIds: ids }, { actor: user(who, fresh), orgId: o.orgId });
   const refusalOf = async (promise: Promise<unknown>) => promise.then(() => ({ code: 'accepted', paymentId: undefined as string | undefined }), (error: { code?: string; details?: { paymentId?: string } }) => ({ code: error.code, paymentId: error.details?.paymentId }));
   // The hold passed (arranged as only the database owner can), so the payment is one a file may carry.
-  const released = (o: Org, id: string) => unguarded((c) => c.query('UPDATE crove_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [o.orgId, id]));
+  const released = (o: Org, id: string) => unguarded((c) => c.query('UPDATE ludy_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [o.orgId, id]));
   const auditRows = (o: Org, command: string) => rows<{ detail: unknown; facts: unknown }>('SELECT to_jsonb(a) - \'org_id\' AS detail, to_jsonb(a) AS facts FROM ludy_kernel.audit_event a WHERE a.org_id = $1 AND a.command = $2', [o.orgId, command]);
   // A second supplier of the org with its own account and a received invoice.
   async function otherSupplier(o: Org, number: string, holder: string, total = '220'): Promise<{ party: string; doc: string }> {
@@ -166,9 +166,9 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const entry = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query("INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-02', $5::numeric - 20, 20, $5)", [o.orgId, doc, party, `inv-b-${doc.slice(0, 6)}`, total]);
-      await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-02', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 200, 0), ($1, $2, 2, '331', 0, 200)", [o.orgId, entry]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-02', $5::numeric - 20, 20, $5)", [o.orgId, doc, party, `inv-b-${doc.slice(0, 6)}`, total]);
+      await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-02', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 200, 0), ($1, $2, 2, '331', 0, 200)", [o.orgId, entry]);
       await c.query('COMMIT');
     });
     return { party, doc };
@@ -259,7 +259,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const acc2 = await addAccount(o2);
     const third = await pay(o2, await invoice(o2));
     await released(o2, third.id);
-    await unguarded((c) => c.query("UPDATE crove_finance.supplier_bank_account SET status = 'retired', retired_at = now() WHERE org_id = $1 AND id = $2", [o2.orgId, acc2.id]));
+    await unguarded((c) => c.query("UPDATE ludy_finance.supplier_bank_account SET status = 'retired', retired_at = now() WHERE org_id = $1 AND id = $2", [o2.orgId, acc2.id]));
     expect((await payments(o2))[0]?.status).toBe('approved');
     expect(await refusalOf(fileOf(o2, [third.id]))).toEqual({ code: 'SUPPLIER_PAYMENT_ACCOUNT_CHANGED', paymentId: third.id });
     // A voided invoice.
@@ -268,14 +268,14 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const voidedDoc = await invoice(o3);
     const fourth = await pay(o3, voidedDoc);
     await released(o3, fourth.id);
-    await unguarded((c) => c.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai hóa đơn')", [o3.orgId, voidedDoc, randomUUID()]));
+    await unguarded((c) => c.query("INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai hóa đơn')", [o3.orgId, voidedDoc, randomUUID()]));
     expect(await refusalOf(fileOf(o3, [fourth.id]))).toEqual({ code: 'SUPPLIER_PAYMENT_DOCUMENT', paymentId: fourth.id });
     // An amount that is no longer the amount frozen in the approved request.
     const o4 = await org(false);
     await addAccount(o4);
     const fifth = await pay(o4, await invoice(o4));
     await released(o4, fifth.id);
-    await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET amount = 109 WHERE org_id = $1 AND id = $2", [o4.orgId, fifth.id]));
+    await unguarded((c) => c.query("UPDATE ludy_finance.supplier_payment SET amount = 109 WHERE org_id = $1 AND id = $2", [o4.orgId, fifth.id]));
     expect(await refusalOf(fileOf(o4, [fifth.id]))).toEqual({ code: 'SUPPLIER_PAYMENT_AMOUNT_MISMATCH', paymentId: fifth.id });
     // Two currencies in one file.
     const o5 = await org(false);
@@ -287,7 +287,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     await approve(o5, proposalId);
     const seventh = (await payments(o5)).find((p) => p.id !== sixth.id) as Payment;
     await released(o5, seventh.id);
-    await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET currency = 'USD' WHERE org_id = $1 AND id = $2", [o5.orgId, seventh.id]));
+    await unguarded((c) => c.query("UPDATE ludy_finance.supplier_payment SET currency = 'USD' WHERE org_id = $1 AND id = $2", [o5.orgId, seventh.id]));
     expect((await refusalOf(fileOf(o5, [sixth.id, seventh.id]))).code).toBe('SUPPLIER_PAYMENT_CURRENCY_MIXED');
   });
 
@@ -311,7 +311,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
 
   const exportOf = (o: Org, ids: string[], extra: { reexport?: boolean } = {}, who: string = o.owner) =>
     execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: ids, rows: ids.length, currency: 'VND', ...extra }, who);
-  const markers = (o: Org, id: string) => rows<{ exported_at: Date | null; exported_by: string | null; export_count: number }>('SELECT exported_at, exported_by, export_count FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0]);
+  const markers = (o: Org, id: string) => rows<{ exported_at: Date | null; exported_by: string | null; export_count: number }>('SELECT exported_at, exported_by, export_count FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0]);
 
   it('marks each payment and writes the audit row of a handed-over file in one step, with a count and the currency only, for an owner or an admin', async () => {
     const o = await org(true);
@@ -389,7 +389,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const o = await org(true);
     await addAccount(o, NUMBER);
     const first = await pay(o, await invoice(o));
-    const touch = (set: string) => admin((c) => c.query(`UPDATE crove_finance.supplier_payment SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, first.id]));
+    const touch = (set: string) => admin((c) => c.query(`UPDATE ludy_finance.supplier_payment SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, first.id]));
     await expect(touch('export_count = 5')).rejects.toThrow(/SUPPLIER_PAYMENT_STATE|supplier_payment_export_ck/);
     await expect(touch("exported_at = '2020-01-01'")).rejects.toThrow(/SUPPLIER_PAYMENT_STATE|supplier_payment_export_ck/);
     await expect(touch(`export_count = 1`)).rejects.toThrow(/SUPPLIER_PAYMENT_STATE/);
@@ -411,7 +411,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     await released(o, held.id);
     expect(await refusal(execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: [held.id], rows: 1, currency: 'VND' }, o.owner, false))).toBe('STEP_UP_REQUIRED');
     expect((await markers(o, held.id))?.export_count).toBe(0);
-    await unguarded((c) => c.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, voided_by, reason) SELECT org_id, purchase_document_id, gen_random_uuid(), $3, 'test' FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, held.id, o.owner]));
+    await unguarded((c) => c.query("INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, voided_by, reason) SELECT org_id, purchase_document_id, gen_random_uuid(), $3, 'test' FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, held.id, o.owner]));
     expect(await refusal(exportOf(o, [held.id]))).toBe('SUPPLIER_PAYMENT_DOCUMENT');
     expect((await markers(o, held.id))?.export_count).toBe(0);
   });

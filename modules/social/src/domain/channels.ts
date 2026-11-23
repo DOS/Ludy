@@ -870,7 +870,7 @@ export function editRefusal(provider: string, settings: Readonly<Record<string, 
 // REMOVE_AT_MAX_MS) after the time the post goes out. The commands check that where the time becomes known (a time, a
 // queue slot, a retry now); the worker's sweep checks it again against the time the post really went out, which a rate
 // limit, a paused channel or a queue edit can move, and leaves a post outside it up. The same pattern guards the
-// database's crove_social.remove_at_of.
+// database's ludy_social.remove_at_of.
 export const REMOVE_AT_MIN_GAP_MS = 5 * 60_000;
 // The furthest a takedown may be planned, so stale or far values never stay in the worker's scan.
 export const REMOVE_AT_MAX_MS = 365 * 24 * 3_600_000;

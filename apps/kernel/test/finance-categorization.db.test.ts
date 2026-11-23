@@ -166,7 +166,7 @@ suite('learned account rules with provenance (#1399)', () => {
       (
         await c.query<{ vendor: boolean; match_kind: string; match_text: string; label: string | null; debit_account: string; confirmed_by: string | null; source_document_id: string | null }>(
           `SELECT vendor_party_id IS NOT NULL AS vendor, match_kind, match_text, label, debit_account, confirmed_by, source_document_id
-             FROM crove_finance.categorization_rule WHERE org_id = $1 ORDER BY match_text`,
+             FROM ludy_finance.categorization_rule WHERE org_id = $1 ORDER BY match_text`,
           [org.orgId],
         )
       ).rows,
@@ -364,11 +364,11 @@ suite('learned account rules with provenance (#1399)', () => {
   it('keeps the rule text in normalized form and the rows inside their org at the database', async () => {
     // The CHECK refuses text that is not normalized, whoever writes it.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'Chiết khấu', '6422')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'Chiết khấu', '6422')`, [org.orgId])),
     ).rejects.toThrow(/categorization_rule_match_text_check/);
     // An account outside the chart is refused like every other account reference.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'abc', '9999')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'abc', '9999')`, [org.orgId])),
     ).rejects.toThrow(/not in the chart of accounts/);
     // What a rule matches never changes in place for the tenant role.
     const client = new pg.Client({ connectionString: new URL(adminUrl).toString() });
@@ -376,7 +376,7 @@ suite('learned account rules with provenance (#1399)', () => {
     try {
       await client.query('BEGIN');
       await client.query('SET LOCAL ROLE ludy_tenant');
-      await expect(client.query(`UPDATE crove_finance.categorization_rule SET match_text = 'x y'`)).rejects.toThrow(/permission denied/);
+      await expect(client.query(`UPDATE ludy_finance.categorization_rule SET match_text = 'x y'`)).rejects.toThrow(/permission denied/);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
       await client.end();

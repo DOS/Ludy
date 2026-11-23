@@ -78,7 +78,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
   const queueOf = (o: Org, user: string, connectionId: string) => rt.query<Queue>('social.queue.get', { connectionId }, { actor: asUser(user), orgId: o.orgId });
   type List = { items: NotificationItem[]; unread: number };
   const lows = async (o: Org, user: string) => (await rt.query<List>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((i) => i.kind === 'queue_low');
-  const marker = (queueId: string) => admin(async (c) => (await c.query<{ at: Date | null }>('SELECT low_alerted_at AS at FROM crove_social.queue WHERE id = $1', [queueId])).rows[0]?.at ?? null);
+  const marker = (queueId: string) => admin(async (c) => (await c.query<{ at: Date | null }>('SELECT low_alerted_at AS at FROM ludy_social.queue WHERE id = $1', [queueId])).rows[0]?.at ?? null);
 
   // A daily slot two hours from now (local time), so the next two days hold exactly two posting days.
   const SLOT_MINUTE = (() => {
@@ -315,7 +315,7 @@ suite('social queue running low on PostgreSQL (#1079)', () => {
     const { queueId } = await setQueue(o, o.owner, conn, { lowDays: 2 });
     const { rows } = await admin((c) =>
       c.query<{ role: string; ok: boolean }>(
-        "SELECT r AS role, has_function_privilege(r, 'crove_social.queue_low_due(uuid, uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_worker', 'ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) r",
+        "SELECT r AS role, has_function_privilege(r, 'ludy_social.queue_low_due(uuid, uuid, int)', 'EXECUTE') AS ok FROM unnest(ARRAY['ludy_worker', 'ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) r",
       ),
     );
     expect(Object.fromEntries(rows.map((r) => [r.role, r.ok]))).toEqual({ ludy_worker: true, ludy_app: false, ludy_tenant: false, ludy_definer_tenant: false });

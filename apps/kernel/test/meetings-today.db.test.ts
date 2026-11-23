@@ -45,18 +45,18 @@ suite('the Today view of the meetings page (#3955)', () => {
   async function meeting(title: string, daysAgo: number, recorder: string, readers: string[], series: string | null): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
        VALUES ($1, $2, $4, 'vi', now() - ($5 || ' days')::interval, now() - ($5 || ' days')::interval + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, current_date + 365, $6)`,
       [orgId, id, users[recorder], title, String(daysAgo), series],
     );
-    for (const who of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
+    for (const who of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
     return id;
   }
   // An agenda event of `lan` starting `startExpr` (a SQL expression) and lasting `minutes`.
   async function event(title: string, startExpr: string, minutes: number, over: { series?: string | null; meetingId?: string | null; who?: string; connection?: string } = {}): Promise<string> {
     return (
       await sqlAdmin<{ id: string }>(
-        `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id, meeting_id)
+        `INSERT INTO ludy_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id, meeting_id)
          VALUES ($1, $2, $3, $4, $5, ${startExpr}, ${startExpr} + ($6 || ' minutes')::interval, 'Asia/Ho_Chi_Minh', $7, $8) RETURNING id`,
         [orgId, over.connection ?? connection, users[over.who ?? 'lan'], randomUUID(), title, String(minutes), over.series ?? null, over.meetingId ?? null],
       )
@@ -91,15 +91,15 @@ suite('the Today view of the meetings page (#3955)', () => {
     const series = randomUUID();
     ids.series = series;
     ids.earlier = await meeting('Giao ban tuần trước', 7, 'rec', ['lan'], series);
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', $3::jsonb, 'manual', 'published')`, [orgId, ids.earlier, JSON.stringify(['Chốt giá gói kế toán 15.000.000 đồng'])]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', $3::jsonb, 'manual', 'published')`, [orgId, ids.earlier, JSON.stringify(['Chốt giá gói kế toán 15.000.000 đồng'])]);
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, tainted, transcript_seconds)
        VALUES ($1, $2, $3, 'Gửi báo giá bản cuối', 'Lan', $4, 'thứ sáu', 'published', 'suggested', false, 10)`,
       [orgId, randomUUID(), ids.earlier, users.lan],
     );
     ids.current = await meeting('Giao ban hôm nay', 0, 'rec', ['lan'], series);
     // This morning's meeting starts at 13:00 Vietnam time, like its event, so it is after the first event and never that event's previous meeting, whatever the hour the test runs at.
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET started_at = ${VN_NINE} + interval '4 hours', ended_at = ${VN_NINE} + interval '4 hours 30 minutes' WHERE org_id = $1 AND id = $2`, [orgId, ids.current]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET started_at = ${VN_NINE} + interval '4 hours', ended_at = ${VN_NINE} + interval '4 hours 30 minutes' WHERE org_id = $1 AND id = $2`, [orgId, ids.current]);
     ids.hidden = await meeting('Họp riêng của rec', 1, 'rec', [], null);
     connection = randomUUID();
     await sqlAdmin(`INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'lan@calendar.test', 'lan', '{}', true)`, [orgId, connection, users.lan]);
@@ -167,6 +167,6 @@ suite('the Today view of the meetings page (#3955)', () => {
     expect(item?.brief.empty).toBe(true);
     expect(out.items.map((i) => i.event.id)).toContain(stray);
     expect(out.items.filter((i) => i.event.id !== stray)).toHaveLength(3);
-    await sqlAdmin('DELETE FROM crove_meetings.calendar_agenda WHERE org_id = $1 AND id = $2', [orgId, stray]);
+    await sqlAdmin('DELETE FROM ludy_meetings.calendar_agenda WHERE org_id = $1 AND id = $2', [orgId, stray]);
   });
 });

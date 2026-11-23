@@ -153,7 +153,7 @@ export async function postJournalVoucher(
   const journal = buildJournalVoucherJournal(payload);
   if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
   const voucher = await ctx.trx
-    .insertInto('crove_finance.journal_voucher')
+    .insertInto('ludy_finance.journal_voucher')
     .values({
       org_id: ctx.orgId,
       legal_entity_id: legalEntityId,

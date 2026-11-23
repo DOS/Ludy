@@ -41,7 +41,7 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
   const entries = new Map<string, { sourceType: string; sourceId: string | null; reverses: string | null }>();
   for (const ids of chunks(entryIds)) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.journal_entry')
+      .selectFrom('ludy_finance.journal_entry')
       .select(['id', 'source_type', 'source_id', 'reverses_entry_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', ids)
@@ -52,7 +52,7 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
   const originals = [...new Set([...entries.values()].map((e) => e.reverses).filter((id): id is string => id !== null && !entries.has(id)))];
   for (const ids of chunks(originals)) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.journal_entry')
+      .selectFrom('ludy_finance.journal_entry')
       .select(['id', 'source_type', 'source_id', 'reverses_entry_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', ids)
@@ -69,14 +69,14 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
   // Only sale documents carry revenue; a purchase document is never a source of a 511 credit, and is not read.
   const saleDocs = new Set<string>();
   for (const ids of chunks(documentIds)) {
-    const rows = await ctx.trx.selectFrom('crove_finance.purchase_document').select('id').where('org_id', '=', ctx.orgId).where('direction', '=', 'sale').where('id', 'in', ids).execute();
+    const rows = await ctx.trx.selectFrom('ludy_finance.purchase_document').select('id').where('org_id', '=', ctx.orgId).where('direction', '=', 'sale').where('id', 'in', ids).execute();
     for (const r of rows) saleDocs.add(r.id);
   }
   const weightsOfDoc = new Map<string, SplitWeight[]>();
   for (const ids of chunks([...saleDocs])) {
     const lines = await ctx.trx
-      .selectFrom('crove_finance.purchase_line as l')
-      .leftJoin('crove_finance.stock_move as m', (join) =>
+      .selectFrom('ludy_finance.purchase_line as l')
+      .leftJoin('ludy_finance.stock_move as m', (join) =>
         join
           .onRef('m.org_id', '=', 'l.org_id')
           .onRef('m.document_id', '=', 'l.document_id')
@@ -88,7 +88,7 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
               'm.line_attempt',
               '=',
               eb
-                .selectFrom('crove_finance.stock_move as a')
+                .selectFrom('ludy_finance.stock_move as a')
                 .select((e) => e.fn.max('a.line_attempt').as('latest'))
                 .whereRef('a.org_id', '=', 'l.org_id')
                 .whereRef('a.document_id', '=', 'l.document_id')
@@ -97,7 +97,7 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
             ),
           ),
       )
-      .leftJoin('crove_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
+      .leftJoin('ludy_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
       .select(['l.document_id', 'l.line_no', 'l.amount', 'i.trade'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.document_id', 'in', ids)
@@ -158,7 +158,7 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
 
   // The percentage of each trade the profile names, in force on the period's last day.
   const rateRows = await ctx.trx
-    .selectFrom('crove_finance.household_trade_rate')
+    .selectFrom('ludy_finance.household_trade_rate')
     .select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'status'])
     .where('effective_from', '<=', w.to)
     .execute();
@@ -203,7 +203,7 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
 
   const unconfirmed: HouseholdS2a['unconfirmed'] = [];
   // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
-  const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', book).where('effective_from', '<=', w.to).execute();
+  const formRows = await ctx.trx.selectFrom('ludy_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', book).where('effective_from', '<=', w.to).execute();
   const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
   // The layout shown is the one in force on the last day too (the profile view's rule is read on the first day or on the last profile change), so the book, its status and its label agree.
   const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;

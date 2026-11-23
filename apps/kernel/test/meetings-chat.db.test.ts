@@ -94,12 +94,12 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
   async function seedMeeting(published: boolean, summary = 'Chốt báo giá tuần này.'): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp giao ban tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users.recorder],
     );
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 5, 'Người nói 1', 'BẢN GHI BÍ MẬT không được rời Ludy', 'draft')`, [orgId, randomUUID(), meetingId]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 5, 'Người nói 1', 'BẢN GHI BÍ MẬT không được rời Ludy', 'draft')`, [orgId, randomUUID(), meetingId]);
     if (published) await publish(meetingId, summary);
     return meetingId;
   }
@@ -113,8 +113,8 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const view = await preview(meetingId);
     return postMinutesFromClick(deps(), scope('recorder'), { meetingId, channelId, factsKey: over.factsKey ?? view.factsKey, confirmRepeat: over.confirmRepeat ?? false });
   };
-  const posts = async (meetingId: string) => (await sqlAdmin<{ state: string; attempts: number; http_status: number | null; code: string | null; settled_at: Date | null }>('SELECT state, attempts, http_status, code, settled_at FROM crove_meetings.chat_post WHERE org_id = $1 AND meeting_id = $2 ORDER BY created_at, id', [orgId, meetingId])).rows;
-  const bodies = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.chat_post_body WHERE org_id = $1', [orgId])).rows[0]?.n);
+  const posts = async (meetingId: string) => (await sqlAdmin<{ state: string; attempts: number; http_status: number | null; code: string | null; settled_at: Date | null }>('SELECT state, attempts, http_status, code, settled_at FROM ludy_meetings.chat_post WHERE org_id = $1 AND meeting_id = $2 ORDER BY created_at, id', [orgId, meetingId])).rows;
+  const bodies = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.chat_post_body WHERE org_id = $1', [orgId])).rows[0]?.n);
   const status = (meetingId: string, channelId: string) => query<ChatStatus>('recorder', 'meetings.chat.status', { meetingId, channelId });
 
   beforeAll(async () => {
@@ -147,7 +147,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
       handler: async (ctx, input) => {
         const stamp = (on: boolean) => (on ? sql`pg_catalog.now()` : sql`NULL`);
         await sql`
-          INSERT INTO crove_meetings.chat_post (org_id, meeting_id, channel_id, user_id, facts_key, text_hash, handed_at, sending_at)
+          INSERT INTO ludy_meetings.chat_post (org_id, meeting_id, channel_id, user_id, facts_key, text_hash, handed_at, sending_at)
           VALUES (${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.channelId}::uuid, ${ctx.actor.type === 'user' ? ctx.actor.userId : null}::uuid, ${'a'.repeat(64)}, ${'b'.repeat(64)}, ${stamp(input.handedAt)}, ${stamp(input.sendingAt)})`.execute(ctx.trx);
         return { ok: true };
       },
@@ -163,7 +163,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
   beforeEach(async () => {
     sent = [];
     next = { status: 200 };
-    await sqlAdmin('DELETE FROM crove_meetings.chat_channel WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_meetings.chat_channel WHERE org_id = $1', [orgId]);
     await sqlAdmin(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
     await sqlAdmin('UPDATE ludy_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
   });
@@ -192,7 +192,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     expect(await refuses(saveChannel('owner', 'slack', `http://hooks.slack.com/${SVC}`))).toBe('CHAT_URL_INVALID');
     expect(await refuses(saveChannel('owner', 'teams', SLACK_URL))).toBe('CHAT_URL_INVALID');
     // The address is in no readable column, no audit row and no event: only sealed bytes in the definer-only table.
-    const stored = await sqlAdmin<{ envelope: Buffer }>('SELECT envelope FROM crove_meetings.chat_channel_target WHERE org_id = $1', [orgId]);
+    const stored = await sqlAdmin<{ envelope: Buffer }>('SELECT envelope FROM ludy_meetings.chat_channel_target WHERE org_id = $1', [orgId]);
     expect(stored.rows).toHaveLength(2);
     for (const row of stored.rows) for (const bit of SECRET_BITS) expect(row.envelope.toString('latin1')).not.toContain(bit);
     const audit = await sqlAdmin<{ text: string }>(`SELECT (a::text) AS text FROM ludy_kernel.audit_event a WHERE org_id = $1`, [orgId]);
@@ -237,7 +237,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     expect(await runJob(queued.postId)).toBe('skipped');
     expect(sent).toHaveLength(1);
     // The log holds hashes and ids: no word of the minutes in any column of any post row, and the audit names ids and counts.
-    const row = await sqlAdmin<{ text: string }>('SELECT (p::text) AS text FROM crove_meetings.chat_post p WHERE org_id = $1', [orgId]);
+    const row = await sqlAdmin<{ text: string }>('SELECT (p::text) AS text FROM ludy_meetings.chat_post p WHERE org_id = $1', [orgId]);
     expect(row.rows[0]?.text).not.toMatch(/Chốt báo giá|Giữ giá cũ|Họp giao ban/);
     const audit = await sqlAdmin<{ text: string }>(`SELECT (a::text) AS text FROM ludy_kernel.audit_event a WHERE org_id = $1 AND (a::text) LIKE '%meetings.chat%'`, [orgId]);
     expect(audit.rows.length).toBeGreaterThan(0);
@@ -309,7 +309,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const queued = await post(meeting, channel);
     expect(await bodies()).toBe(1);
     // A personal-data erasure redacts the published summary: the message is a copy of that text and must not outlive it.
-    await sqlAdmin(`UPDATE crove_meetings.meeting_result SET summary = '[đã xóa]' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meeting]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting_result SET summary = '[đã xóa]' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meeting]);
     expect(await posts(meeting)).toEqual([expect.objectContaining({ state: 'dropped', code: 'POST_DROPPED' })]);
     expect(await bodies()).toBe(0);
     expect(await runJob(queued.postId)).toBe('skipped');
@@ -318,7 +318,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     // A title rename drops a queued post too.
     const other = await seedMeeting(true);
     await post(other, channel);
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET title = 'Tên khác' WHERE org_id = $1 AND id = $2`, [orgId, other]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET title = 'Tên khác' WHERE org_id = $1 AND id = $2`, [orgId, other]);
     expect(await posts(other)).toEqual([expect.objectContaining({ state: 'dropped' })]);
     expect(await bodies()).toBe(0);
   });
@@ -348,7 +348,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     // Failed put nothing in the channel: a new post needs no tick.
     next = { status: 429, headers: { 'retry-after': '17' } };
     q = await post(meeting, channel);
-    await sqlAdmin(`UPDATE crove_meetings.chat_post SET handed_at = now() WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
+    await sqlAdmin(`UPDATE ludy_meetings.chat_post SET handed_at = now() WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
     expect(await runJob(q.postId, 0)).toBe('retry');
     expect(await posts(meeting)).toEqual([expect.anything(), expect.objectContaining({ state: 'queued', attempts: 1, code: 'CHANNEL_RATE_LIMITED', settled_at: null })]);
     expect(await bodies()).toBe(1);
@@ -485,10 +485,10 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const handed: string[] = [];
     const sweep = () => runMeetingChatSweep({ runtime: worker, workerDb, send: async (job) => void handed.push(job.id) });
     expect(await sweep()).toEqual({ handedOver: 0, expired: 0, lost: 0, failures: 0 });
-    await sqlAdmin(`UPDATE crove_meetings.chat_post SET created_at = now() - interval '9 hours', sending_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
+    await sqlAdmin(`UPDATE ludy_meetings.chat_post SET created_at = now() - interval '9 hours', sending_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
     expect(await sweep()).toEqual({ handedOver: 0, expired: 0, lost: 0, failures: 0 });
     // After three minutes the sweep settles it ambiguous, with the body gone, and never hands it over.
-    await sqlAdmin(`UPDATE crove_meetings.chat_post SET sending_at = now() - interval '4 minutes' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
+    await sqlAdmin(`UPDATE ludy_meetings.chat_post SET sending_at = now() - interval '4 minutes' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
     expect(await sweep()).toEqual({ handedOver: 0, expired: 0, lost: 1, failures: 0 });
     expect(handed).toEqual([]);
     // (the backdated post is the oldest row now)
@@ -502,17 +502,17 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
     const q = await post(meeting, channel);
     await worker.execute('meetings.chat.record', { id: q.postId, outcome: 'begin', httpStatus: null, code: null }, { actor: { type: 'system', component: 'meetings.chat' }, orgId });
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET title = 'Họp giao ban tuần (đã sửa)' WHERE org_id = $1 AND id = $2`, [orgId, meeting]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET title = 'Họp giao ban tuần (đã sửa)' WHERE org_id = $1 AND id = $2`, [orgId, meeting]);
     expect((await posts(meeting)).at(-1)).toMatchObject({ state: 'queued' });
     expect(await bodies()).toBe(1);
     // Publishing again, or unsharing, deletes the published rows: a queued message of the old version is dropped.
     const other = await seedMeeting(true);
     await post(other, channel);
-    await sqlAdmin(`DELETE FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, other]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, other]);
     expect((await posts(other)).at(-1)).toMatchObject({ state: 'dropped', code: 'POST_DROPPED' });
     const third = await seedMeeting(true);
     await post(third, channel);
-    await sqlAdmin(`DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, third]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, third]);
     expect((await posts(third)).at(-1)).toMatchObject({ state: 'dropped' });
   });
 
@@ -531,7 +531,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     expect(await record(q.postId, 'sent')).toBe(true);
     // A post older than eight hours cannot begin: only the sweep expires it, so the job and the sweep agree on one rule.
     const old = await post(meeting, channel, { confirmRepeat: true });
-    await sqlAdmin(`UPDATE crove_meetings.chat_post SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, old.postId]);
+    await sqlAdmin(`UPDATE ludy_meetings.chat_post SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, old.postId]);
     expect(await record(old.postId, 'begin')).toBe(false);
     expect(await runJob(old.postId)).toBe('skipped');
     expect(await record(old.postId, 'expired')).toBe(true);
@@ -542,7 +542,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const meeting = await seedMeeting(true);
     const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
     const system = { actor: { type: 'system' as const, component: 'meetings.chat' }, orgId };
-    const bodyRows = async (postId: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.chat_post_body WHERE org_id = $1 AND post_id = $2', [orgId, postId])).rows[0]?.n);
+    const bodyRows = async (postId: string) => Number((await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.chat_post_body WHERE org_id = $1 AND post_id = $2', [orgId, postId])).rows[0]?.n);
     for (const outcome of ['sent', 'failed', 'ambiguous', 'dropped', 'expired'] as const) {
       const q = await post(meeting, channel, { confirmRepeat: true });
       expect(await bodyRows(q.postId), `${outcome}: queued keeps its body`).toBe(1);
@@ -583,10 +583,10 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const sweep = () => runMeetingChatSweep({ runtime: worker, workerDb, send: async (job) => void handed.push(job.id) });
     expect(await sweep()).toEqual({ handedOver: 1, expired: 0, lost: 0, failures: 0 });
     expect(await sweep()).toEqual({ handedOver: 0, expired: 0, lost: 0, failures: 0 });
-    await sqlAdmin(`UPDATE crove_meetings.chat_post SET handed_at = now() - interval '4 minutes' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
+    await sqlAdmin(`UPDATE ludy_meetings.chat_post SET handed_at = now() - interval '4 minutes' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
     expect(await sweep()).toEqual({ handedOver: 1, expired: 0, lost: 0, failures: 0 });
     expect(handed).toEqual([q.postId, q.postId]);
-    await sqlAdmin(`UPDATE crove_meetings.chat_post SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
+    await sqlAdmin(`UPDATE ludy_meetings.chat_post SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, q.postId]);
     expect(await sweep()).toEqual({ handedOver: 0, expired: 1, lost: 0, failures: 0 });
     expect(await posts(meeting)).toEqual([expect.objectContaining({ state: 'failed', code: 'POST_EXPIRED' })]);
     expect(await bodies()).toBe(0);
@@ -609,22 +609,22 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
       const c = new pg.Client({ connectionString: url(user, password) });
       await c.connect();
       try {
-        for (const table of ['chat_channel_target', 'chat_post_body']) await expect(c.query(`SELECT * FROM crove_meetings.${table}`)).rejects.toThrow(/permission denied/);
-        await expect(c.query('UPDATE crove_meetings.chat_post SET state = \'sent\'')).rejects.toThrow(/permission denied/);
+        for (const table of ['chat_channel_target', 'chat_post_body']) await expect(c.query(`SELECT * FROM ludy_meetings.${table}`)).rejects.toThrow(/permission denied/);
+        await expect(c.query('UPDATE ludy_meetings.chat_post SET state = \'sent\'')).rejects.toThrow(/permission denied/);
         const callable = async (sql: string, params: unknown[]) => c.query(sql, sql.includes('$1') ? params : []).then(() => true, (e: Error) => !/permission denied/.test(e.message));
         const uuid = randomUUID();
         // The API's two: sealing an address in and storing the message of the recorder's own click.
-        expect(await callable('SELECT crove_meetings.chat_target_put($1::uuid, $2, $3)', [uuid, 'k', Buffer.from('x')]), `${user} chat_target_put`).toBe(user === 'ludy_app');
-        expect(await callable('SELECT crove_meetings.chat_post_enqueue($1::uuid, $2::jsonb)', [uuid, '{}']), `${user} chat_post_enqueue`).toBe(user === 'ludy_app');
+        expect(await callable('SELECT ludy_meetings.chat_target_put($1::uuid, $2, $3)', [uuid, 'k', Buffer.from('x')]), `${user} chat_target_put`).toBe(user === 'ludy_app');
+        expect(await callable('SELECT ludy_meetings.chat_post_enqueue($1::uuid, $2::jsonb)', [uuid, '{}']), `${user} chat_post_enqueue`).toBe(user === 'ludy_app');
         // The worker's: reading the address and the message out, the sweep, the outcome, the rotation pass.
-        expect(await callable('SELECT * FROM crove_meetings.chat_target_get($1::uuid)', [uuid]), `${user} chat_target_get`).toBe(user === 'ludy_worker');
-        expect(await callable('SELECT * FROM crove_meetings.chat_post_get($1::uuid, $2::uuid)', [uuid, uuid]), `${user} chat_post_get`).toBe(user === 'ludy_worker');
-        expect(await callable('SELECT * FROM crove_meetings.chat_open(5)', []), `${user} chat_open`).toBe(user === 'ludy_worker');
-        expect(await callable('SELECT crove_meetings.chat_touch($1::uuid)', [uuid]), `${user} chat_touch`).toBe(user === 'ludy_worker');
-        expect(await callable('SELECT crove_meetings.chat_record($1::uuid, $2, NULL, NULL)', [uuid, 'sent']), `${user} chat_record`).toBe(user === 'ludy_worker');
-        expect(await callable('SELECT * FROM crove_meetings.chat_target_key_counts()', []), `${user} chat_target_key_counts`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM ludy_meetings.chat_target_get($1::uuid)', [uuid]), `${user} chat_target_get`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM ludy_meetings.chat_post_get($1::uuid, $2::uuid)', [uuid, uuid]), `${user} chat_post_get`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM ludy_meetings.chat_open(5)', []), `${user} chat_open`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT ludy_meetings.chat_touch($1::uuid)', [uuid]), `${user} chat_touch`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT ludy_meetings.chat_record($1::uuid, $2, NULL, NULL)', [uuid, 'sent']), `${user} chat_record`).toBe(user === 'ludy_worker');
+        expect(await callable('SELECT * FROM ludy_meetings.chat_target_key_counts()', []), `${user} chat_target_key_counts`).toBe(user === 'ludy_worker');
         // No login role runs the helpers that only the others call.
-        for (const call of ['crove_meetings.chat_standing($1::uuid, $1::uuid)', 'crove_meetings.chat_system()', 'crove_meetings.chat_drop_queued($1::uuid, $1::uuid)']) expect(await callable(`SELECT ${call}`, [uuid]), `${user} ${call}`).toBe(false);
+        for (const call of ['ludy_meetings.chat_standing($1::uuid, $1::uuid)', 'ludy_meetings.chat_system()', 'ludy_meetings.chat_drop_queued($1::uuid, $1::uuid)']) expect(await callable(`SELECT ${call}`, [uuid]), `${user} ${call}`).toBe(false);
       } finally {
         await c.end();
       }
@@ -640,13 +640,13 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     // Seal both under the old key.
     for (const [id, who] of [[stands, 'owner'], [demoted, 'admin']] as const) {
       const sealed = oldVault.seal(SLACK_URL, { orgId, provider: 'meeting-chat', externalAccountId: id });
-      await sqlAdmin(`UPDATE crove_meetings.chat_channel SET created_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, id, users[who]]);
-      await sqlAdmin(`UPDATE crove_meetings.chat_channel_target SET key_id = $3, envelope = $4 WHERE org_id = $1 AND channel_id = $2`, [orgId, id, sealed.keyId, sealed.envelope]);
+      await sqlAdmin(`UPDATE ludy_meetings.chat_channel SET created_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, id, users[who]]);
+      await sqlAdmin(`UPDATE ludy_meetings.chat_channel_target SET key_id = $3, envelope = $4 WHERE org_id = $1 AND channel_id = $2`, [orgId, id, sealed.keyId, sealed.envelope]);
     }
     const next = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64')), oldKey]);
     const outcome = await resealCredentials({ runtime: worker, broker: next, workerDb });
     expect(outcome.resealed).toBeGreaterThanOrEqual(1);
-    const keyOf = async (id: string) => (await sqlAdmin<{ key_id: string; envelope: Buffer }>('SELECT key_id, envelope FROM crove_meetings.chat_channel_target WHERE org_id = $1 AND channel_id = $2', [orgId, id])).rows[0];
+    const keyOf = async (id: string) => (await sqlAdmin<{ key_id: string; envelope: Buffer }>('SELECT key_id, envelope FROM ludy_meetings.chat_channel_target WHERE org_id = $1 AND channel_id = $2', [orgId, id])).rows[0];
     const now = await keyOf(stands);
     expect(now?.key_id).toBe(next.keyId);
     expect(next.open({ keyId: now?.key_id as string, envelope: now?.envelope as Buffer }, { orgId, provider: 'meeting-chat', externalAccountId: stands })).toBe(SLACK_URL);
@@ -671,7 +671,7 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     expect(await bodies()).toBe(1);
     expect(await refuses(exec('recorder', 'meetings.chat.channel_remove', { id: channel }))).not.toBeNull();
     await exec('admin', 'meetings.chat.channel_remove', { id: channel });
-    expect((await sqlAdmin('SELECT 1 FROM crove_meetings.chat_channel_target WHERE org_id = $1 AND channel_id = $2', [orgId, channel])).rowCount).toBe(0);
+    expect((await sqlAdmin('SELECT 1 FROM ludy_meetings.chat_channel_target WHERE org_id = $1 AND channel_id = $2', [orgId, channel])).rowCount).toBe(0);
     expect(await posts(meeting)).toEqual([]);
     expect(await bodies()).toBe(0);
     expect(await runJob(q.postId)).toBe('skipped');

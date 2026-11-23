@@ -162,7 +162,7 @@ suite('crm event types on PostgreSQL (#1314)', () => {
     await app.connect();
     try {
       await app.query('SET ROLE ludy_tenant');
-      await expect(app.query('DELETE FROM crove_crm.event_type WHERE org_id = $1', [o.orgId])).rejects.toThrow(/permission denied/);
+      await expect(app.query('DELETE FROM ludy_crm.event_type WHERE org_id = $1', [o.orgId])).rejects.toThrow(/permission denied/);
     } finally {
       await app.end();
     }
@@ -171,7 +171,7 @@ suite('crm event types on PostgreSQL (#1314)', () => {
   it('checks slugs, lengths and limits in the database too', async () => {
     const o = await org();
     const insert = (cols: string, values: string) =>
-      admin((c) => c.query(`INSERT INTO crove_crm.event_type (org_id, host_user_id, created_by, title, ${cols}) VALUES ($1, $2, $2, 'T', ${values})`, [o.orgId, o.owner]));
+      admin((c) => c.query(`INSERT INTO ludy_crm.event_type (org_id, host_user_id, created_by, title, ${cols}) VALUES ($1, $2, $2, 'T', ${values})`, [o.orgId, o.owner]));
     await expect(insert('slug, duration_min', "'Bad Slug', 30")).rejects.toThrow(/event_type_slug_check/);
     await expect(insert('slug, duration_min', "'ok', 4")).rejects.toThrow(/event_type_duration_min_check/);
     await expect(insert('slug, duration_min, daily_limit', "'ok', 30, 0")).rejects.toThrow(/event_type_daily_limit_check/);

@@ -132,7 +132,7 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     await exec(owner, 'social.variant.decide', { postId: forClient, decision: 'approved', variants: seen(await query<PostView>(owner, 'social.post.get', { postId: forClient })) });
     // A post on A and B whose B channel failed: it needs attention, but not for the freelancer, who cannot see B.
     const failed = await post(owner, [ch.a, ch.b], 'Bài lỗi trên B');
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'failed', error_code = 'TOKEN_EXPIRED' WHERE post_id = $1 AND channel_connection_id = $2", [failed, ch.b]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed', error_code = 'TOKEN_EXPIRED' WHERE post_id = $1 AND channel_connection_id = $2", [failed, ch.b]));
     // Scheduled in the next 7 days on A and on B, and one later on B: the agenda's lines.
     const scheduled = async (connection: string, body: string, days: number) => {
       const postId = await post(owner, [connection], body);
@@ -150,7 +150,7 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     const outA = await post(owner, [ch.a], 'Bài đã đăng trên A');
     const outB = await post(owner, [ch.b], 'Bài đã đăng trên B');
     const published = async (postId: string, daysAgo: number) =>
-      admin(async (c) => (await c.query<{ at: Date }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING published_at AS at", [postId, daysAgo])).rows[0]?.at.toISOString() ?? '');
+      admin(async (c) => (await c.query<{ at: Date }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING published_at AS at", [postId, daysAgo])).rows[0]?.at.toISOString() ?? '');
     at.lastByFreelancer = await published(outA, 3);
     at.lastByOwner = await published(outB, 1);
   });

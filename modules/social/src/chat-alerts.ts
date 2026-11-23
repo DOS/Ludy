@@ -5,8 +5,8 @@
 //
 // The chat is a Telegram chat (a bot's token and the chat's id) or a Discord webhook (its id and token), sealed by the
 // deployment's credential broker for the binding (org, CHAT_ALERT_PROVIDER, the alert's id), and kept the way a
-// channel credential is (ADR-0025): crove_social.chat_alert holds no secret, and the sealed target sits in the
-// definer-only crove_social.chat_alert_target. The API checks a target with the platform and seals it, and the save
+// channel credential is (ADR-0025): ludy_social.chat_alert holds no secret, and the sealed target sits in the
+// definer-only ludy_social.chat_alert_target. The API checks a target with the platform and seals it, and the save
 // command seals it in (chat_alert_target_put); nothing in the API reads it back. Only the worker does, through
 // chat_alert_target_get (granted to ludy_worker alone, refused once the member who saved it is no longer an owner or
 // admin): social.chat_alert.prepare for an alert, social.chat_alert.target for an owner's test line, which the test
@@ -97,15 +97,15 @@ function targetError(error: unknown): never {
 }
 
 async function lockChatAlert(ctx: CommandContext) {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.chat_alert:${ctx.orgId}`}))`.execute(ctx.trx);
-  return ctx.trx.selectFrom('crove_social.chat_alert').select(['id', 'created_at']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.chat_alert:${ctx.orgId}`}))`.execute(ctx.trx);
+  return ctx.trx.selectFrom('ludy_social.chat_alert').select(['id', 'created_at']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
 }
 
 async function deleteAlerts(ctx: CommandContext, ids: readonly string[]) {
   if (ids.length === 0) return;
   // The cascade drops the targets too; dropping them first says so in the definer's own terms.
-  for (const id of ids) await sql`SELECT crove_social.chat_alert_target_drop(${id}::uuid)`.execute(ctx.trx).catch(targetError);
-  await ctx.trx.deleteFrom('crove_social.chat_alert').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  for (const id of ids) await sql`SELECT ludy_social.chat_alert_target_drop(${id}::uuid)`.execute(ctx.trx).catch(targetError);
+  await ctx.trx.deleteFrom('ludy_social.chat_alert').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
 }
 
 // Saves the org's chat in place of the one before. The envelope is bound to the alert's id, so the alert takes the id
@@ -124,7 +124,7 @@ export const chatAlertSave = defineCommand({
       existing.map((r) => r.id),
     );
     await ctx.trx
-      .insertInto('crove_social.chat_alert')
+      .insertInto('ludy_social.chat_alert')
       .values({
         org_id: ctx.orgId,
         id: input.id,
@@ -136,7 +136,7 @@ export const chatAlertSave = defineCommand({
         updated_at: ctx.now,
       })
       .execute();
-    await sql`SELECT crove_social.chat_alert_target_put(${input.id}::uuid, ${input.keyId}, decode(${input.envelope}, 'base64'))`.execute(ctx.trx).catch(targetError);
+    await sql`SELECT ludy_social.chat_alert_target_put(${input.id}::uuid, ${input.keyId}, decode(${input.envelope}, 'base64'))`.execute(ctx.trx).catch(targetError);
     ctx.audit({ kind: input.kind, events: input.events });
     return { saved: true };
   },
@@ -161,7 +161,7 @@ export const chatAlertRemove = defineCommand({
 });
 
 async function alertOf(ctx: CommandContext | QueryContext) {
-  return ctx.trx.selectFrom('crove_social.chat_alert').select(['id', 'kind', 'events']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst();
+  return ctx.trx.selectFrom('ludy_social.chat_alert').select(['id', 'kind', 'events']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst();
 }
 
 // An owner or admin asks for a test line: audited here and written as an event; the worker sends it and records the
@@ -191,7 +191,7 @@ export const chatAlertTested = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   handler: async (ctx, input) => {
-    const done = await ctx.trx.updateTable('crove_social.chat_alert').set({ last_test_at: ctx.now, last_test_code: input.code }).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const done = await ctx.trx.updateTable('ludy_social.chat_alert').set({ last_test_at: ctx.now, last_test_code: input.code }).where('org_id', '=', ctx.orgId).executeTakeFirst();
     ctx.audit({ code: input.code });
     return { recorded: Number(done.numUpdatedRows) > 0 };
   },
@@ -208,7 +208,7 @@ export interface SealedChatAlert {
 
 async function sealedOf(ctx: QueryContext, row: { id: string; kind: ChatAlertTarget }): Promise<SealedChatAlert> {
   const { rows } = await sql<{ key_id: string; envelope: Buffer }>`
-    SELECT key_id, envelope FROM crove_social.chat_alert_target_get(${row.id}::uuid)`
+    SELECT key_id, envelope FROM ludy_social.chat_alert_target_get(${row.id}::uuid)`
     .execute(ctx.trx)
     .catch(targetError);
   const target = rows[0];
@@ -225,7 +225,7 @@ export const chatAlertTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<SealedChatAlert> => {
     const row = input.alertId
-      ? await ctx.trx.selectFrom('crove_social.chat_alert').select(['id', 'kind', 'events']).where('org_id', '=', ctx.orgId).where('id', '=', input.alertId).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_social.chat_alert').select(['id', 'kind', 'events']).where('org_id', '=', ctx.orgId).where('id', '=', input.alertId).executeTakeFirst()
       : await alertOf(ctx);
     if (!row) throw new DomainError('CHAT_ALERT_NOT_SET', 404, 'Chưa có nhóm chat nào nhận tin báo');
     return sealedOf(ctx, row);
@@ -245,7 +245,7 @@ export const chatAlertReseal = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const { rows } = await sql<{ resealed: boolean }>`
-      SELECT crove_social.chat_alert_target_reseal(${input.alertId}::uuid, ${input.fromKeyId}, ${input.fromEnvelopeSha256}, ${input.keyId}, decode(${input.envelope}, 'base64')) AS resealed`
+      SELECT ludy_social.chat_alert_target_reseal(${input.alertId}::uuid, ${input.fromKeyId}, ${input.fromEnvelopeSha256}, ${input.keyId}, decode(${input.envelope}, 'base64')) AS resealed`
       .execute(ctx.trx)
       .catch(targetError);
     const resealed = rows[0]?.resealed === true;
@@ -273,7 +273,7 @@ export const chatAlertGet = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<ChatAlertView | null> => {
     const row = await ctx.trx
-      .selectFrom('crove_social.chat_alert')
+      .selectFrom('ludy_social.chat_alert')
       .select(['kind', 'events', 'label', 'updated_at', 'last_test_at', 'last_test_code'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at')
@@ -317,7 +317,7 @@ const CHANNELS_NAMED = 3;
 
 async function channelNames(ctx: QueryContext, postId: string, filter: { variantId: string } | { status: 'in_review' }): Promise<string[]> {
   let q = ctx.trx
-    .selectFrom('crove_social.post_variant as v')
+    .selectFrom('ludy_social.post_variant as v')
     .leftJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
     .select(['v.provider', 'c.display_name'])
     .where('v.org_id', '=', ctx.orgId)
@@ -359,7 +359,7 @@ async function factsOf(ctx: QueryContext, type: string, payload: unknown): Promi
       const e = z.object({ post_id: zId, feedback_id: zId }).safeParse(payload);
       if (!e.success) return null;
       const f = await ctx.trx
-        .selectFrom('crove_social.review_feedback')
+        .selectFrom('ludy_social.review_feedback')
         .select(['reviewer_name', 'verdict'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.data.feedback_id)
@@ -389,7 +389,7 @@ export const chatAlertPrepare = defineQuery({
     if (!row || !row.events.includes(kind)) return null;
     const facts = await factsOf(ctx, event.type, event.payload);
     if (!facts) return null;
-    const post = facts.postId === null ? null : await ctx.trx.selectFrom('crove_social.post').select(['title', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', facts.postId).executeTakeFirst();
+    const post = facts.postId === null ? null : await ctx.trx.selectFrom('ludy_social.post').select(['title', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', facts.postId).executeTakeFirst();
     // Gone since (deleted): nothing to open. A combined alert (no post) has none to find.
     if (facts.postId !== null && !post) return null;
     const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('slug').where('org_id', '=', ctx.orgId).executeTakeFirst();

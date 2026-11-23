@@ -2,9 +2,9 @@
 // Projects module (ADR-0048, docs/plan/projects.md step P2, #2591) on a real PostgreSQL 17:
 // 1) Solo owner creates a project, creates/adds 5 tasks with zero chart setup, drags one to Done.
 // 2) Another org's member reads and changes nothing.
-// 3) Agent contexts are refused on commands and direct writes to all three crove_projects tables.
+// 3) Agent contexts are refused on commands and direct writes to all three ludy_projects tables.
 // 4) Entity-limited members (le_scope) read the project but not another entity's task, and board counts hidden tasks.
-// 5) Org export includes crove_projects tables; PDPL erase redacts project PII; org_purge removes projects before tasks.
+// 5) Org export includes ludy_projects tables; PDPL erase redacts project PII; org_purge removes projects before tasks.
 // 6) Omitting projects from CROVE_MODULES returns 404 on /api/rpc/projects/* while kernel tasks work unchanged.
 // 7) Member removal clears owner_user_id and lets org owners manage; archived/duplicate/role guards hold.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
@@ -370,7 +370,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
     });
   });
 
-  it('refuses agent contexts on commands and direct writes across all three crove_projects tables (AC 3)', async () => {
+  it('refuses agent contexts on commands and direct writes across all three ludy_projects tables (AC 3)', async () => {
     const owner = await newPerson('agent-owner');
     const org = await createOrg(rt, asUser(owner.userId), 'Công ty AI');
     const { projectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', { name: 'Agent Guard' });
@@ -405,11 +405,11 @@ suite('projects module on PostgreSQL (#2591)', () => {
       rt.execute('projects.task.create', { projectId, title: 'By agent', assigneePositionId: null }, { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
-    // Direct SQL inside ludy_worker agent context cannot INSERT into any crove_projects.* table.
+    // Direct SQL inside ludy_worker agent context cannot INSERT into any ludy_projects.* table.
     const statements: Array<[string, unknown[]]> = [
-      ['INSERT INTO crove_projects.project (org_id, name, created_by) VALUES ($1, $2, $3)', [org.orgId, 'Direct', owner.userId]],
-      ['INSERT INTO crove_projects.project_member (org_id, project_id, user_id) VALUES ($1, $2, $3)', [org.orgId, projectId, owner.userId]],
-      ['INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by) VALUES ($1, $2, $3, $4)', [org.orgId, projectId, taskId, owner.userId]],
+      ['INSERT INTO ludy_projects.project (org_id, name, created_by) VALUES ($1, $2, $3)', [org.orgId, 'Direct', owner.userId]],
+      ['INSERT INTO ludy_projects.project_member (org_id, project_id, user_id) VALUES ($1, $2, $3)', [org.orgId, projectId, owner.userId]],
+      ['INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by) VALUES ($1, $2, $3, $4)', [org.orgId, projectId, taskId, owner.userId]],
     ];
     for (const [sqlText, params] of statements) {
       const c = new pg.Client({ connectionString: workerUrl });
@@ -532,15 +532,15 @@ suite('projects module on PostgreSQL (#2591)', () => {
     // PDPL lookup finds both name and description, and erase redacts them.
     const found = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: targetEmail }, { actor: asUser(owner.userId), orgId: org.orgId });
     expect(found.matches.map((m) => m.column)).toEqual(
-      expect.arrayContaining(['crove_projects.project.name', 'crove_projects.project.description']),
+      expect.arrayContaining(['ludy_projects.project.name', 'ludy_projects.project.description']),
     );
     const erased = await rt.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: targetEmail },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased.some((r) => r.column === 'crove_projects.project.name' && r.rows === 1)).toBe(true);
-    expect(erased.erased.some((r) => r.column === 'crove_projects.project.description' && r.rows === 1)).toBe(true);
+    expect(erased.erased.some((r) => r.column === 'ludy_projects.project.name' && r.rows === 1)).toBe(true);
+    expect(erased.erased.some((r) => r.column === 'ludy_projects.project.description' && r.rows === 1)).toBe(true);
 
     // Org export includes all three projects.* tables.
     expect(EXPORT_TABLE_NAMES).toEqual(expect.arrayContaining(['projects.project', 'projects.project_member', 'projects.project_task']));
@@ -613,7 +613,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
     expect(purged).toMatchObject({ kind: 'purged', orgId: org.orgId });
 
     await withAdmin(async (c) => {
-      for (const tbl of ['crove_projects.project', 'crove_projects.project_member', 'crove_projects.project_task', 'ludy_kernel.task']) {
+      for (const tbl of ['ludy_projects.project', 'ludy_projects.project_member', 'ludy_projects.project_task', 'ludy_kernel.task']) {
         const { rows } = await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${tbl} WHERE org_id = $1`, [org.orgId]);
         expect(rows[0]?.n, tbl).toBe('0');
       }

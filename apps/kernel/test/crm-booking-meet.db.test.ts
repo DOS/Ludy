@@ -121,9 +121,9 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
   async function book(o: Org) {
     const day = freshDay();
     await bookingRequest(app, o.slug, 'tu-van', { startsAt: at(day, 540), name: 'Nguyễn Văn Khách', email: 'Khach@Example.test', phone: '0901234567', note: null, timeZone: VN });
-    const id = (await rows<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id LIMIT 1', [o.orgId]))[0]?.id as string;
+    const id = (await rows<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id LIMIT 1', [o.orgId]))[0]?.id as string;
     const confirmed = await worker.execute<{ status: string }>('crm.booking.confirm', { bookingId: id }, { actor: SYSTEM, orgId: o.orgId });
-    const state = () => rows<{ meeting_state: string; meeting_url: string | null; calendar_event_id: string }>('SELECT meeting_state, meeting_url, calendar_event_id FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0] as { meeting_state: string; meeting_url: string | null; calendar_event_id: string });
+    const state = () => rows<{ meeting_state: string; meeting_url: string | null; calendar_event_id: string }>('SELECT meeting_state, meeting_url, calendar_event_id FROM ludy_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0] as { meeting_state: string; meeting_url: string | null; calendar_event_id: string });
     const mails = () => rows<{ recipient: string }>("SELECT payload->>'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.confirmed' AND source_id = $2 ORDER BY payload->>'recipient'", [o.orgId, id]).then((r) => r.map((m) => m.recipient));
     return { id, day, confirmed, state, mails };
   }
@@ -273,7 +273,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
         );
       const newStart = at(b.day, 600);
       await app.execute('crm.booking.move', { bookingId: b.id, startsAt: newStart }, { actor: asUser(o.host), orgId: o.orgId });
-      expect(await rows<{ revision: number }>('SELECT revision FROM crove_crm.booking WHERE id = $1', [b.id])).toEqual([{ revision: 1 }]);
+      expect(await rows<{ revision: number }>('SELECT revision FROM ludy_crm.booking WHERE id = $1', [b.id])).toEqual([{ revision: 1 }]);
       // Nothing was told yet: not the confirmation (held), and not the move (the visitor never heard of the first time).
       expect(await mailsOf('crm.booking.moved')).toEqual([]);
       expect(await mailsOf('crm.booking.confirmed')).toEqual([]);
@@ -293,7 +293,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       await connect(o);
       await createType(o, o.host);
       const b = await book(o);
-      const startsAt = new Date((await rows<{ starts_at: Date }>('SELECT starts_at FROM crove_crm.booking WHERE id = $1', [b.id]))[0]?.starts_at as Date).toISOString();
+      const startsAt = new Date((await rows<{ starts_at: Date }>('SELECT starts_at FROM ludy_crm.booking WHERE id = $1', [b.id]))[0]?.starts_at as Date).toISOString();
       const remind = () => worker.execute<{ sent: boolean }>('crm.booking.remind', { bookingId: b.id, startsAt, lead: '1h' }, { actor: SYSTEM, orgId: o.orgId });
       expect(await remind()).toEqual({ sent: false });
       expect(await rows("SELECT 1 FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h' AND source_id = $2", [o.orgId, b.id])).toEqual([]);
@@ -362,7 +362,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       await connect(o);
       await createType(o, o.host);
       const b = await book(o);
-      const set = (sql: string) => rows(`UPDATE crove_crm.booking SET ${sql} WHERE id = $1`, [b.id]);
+      const set = (sql: string) => rows(`UPDATE ludy_crm.booking SET ${sql} WHERE id = $1`, [b.id]);
       await expect(set("meeting_state = 'ready'")).rejects.toMatchObject({ code: '23514' });
       await expect(set("meeting_url = 'https://meet.google.com/abc-defg-hij'")).rejects.toMatchObject({ code: '23514' });
       await expect(set("meeting_state = 'ready', meeting_url = 'https://evil.example/abc-defg-hij'")).rejects.toMatchObject({ code: '23514' });

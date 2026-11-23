@@ -5,7 +5,7 @@
 // later never changes a published result. The text is the org's layout, not personal data; the settings screen says so.
 //
 // A title is shown to every reader of the minutes and a hint reaches the instruction of another member's Vy, so both are plain text only: control characters, line and paragraph
-// separators and bidirectional controls are stripped, whitespace is collapsed and the caps hold. The same rules are in the database (crove_meetings.minutes_sections_ok).
+// separators and bidirectional controls are stripped, whitespace is collapsed and the caps hold. The same rules are in the database (ludy_meetings.minutes_sections_ok).
 import { z } from 'zod';
 import { INVISIBLE_PATTERN } from './invisible-chars.ts';
 import { SECTIONS_MAX, type TemplateSection } from './meeting-templates.ts';
@@ -19,7 +19,7 @@ export const TEMPLATES_ACTIVE_MAX = 50;
 
 // What is stripped from a title, a hint or a name: the invisible-character class of ./invisible-chars.ts (controls, separators, bidirectional controls, zero-width characters, the invisible
 // fillers and operators, tag characters; a line break is one of them), and an unpaired surrogate (which PostgreSQL refuses in a jsonb value). Variation selectors stay: emoji need them.
-// Whitespace left is collapsed to single spaces. The database refuses the same set (crove_meetings.minutes_sections_ok and the name CHECK of minutes_template).
+// Whitespace left is collapsed to single spaces. The database refuses the same set (ludy_meetings.minutes_sections_ok and the name CHECK of minutes_template).
 const STRIP = new RegExp(INVISIBLE_PATTERN, 'gu');
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 export function cleanTemplateText(raw: string): string {

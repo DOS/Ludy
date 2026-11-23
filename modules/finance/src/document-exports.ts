@@ -20,7 +20,7 @@ export const documentExports = defineQuery({
   handler: async (ctx, input): Promise<DocumentExport[]> => {
     // The document, its entry's date and when it was posted and voided, all read in the query so dates stay dates.
     const found = await ctx.trx
-      .selectFrom('crove_finance.purchase_document')
+      .selectFrom('ludy_finance.purchase_document')
       .select(['id', 'direction'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.documentId)
@@ -36,13 +36,13 @@ export const documentExports = defineQuery({
     const { rows } = await sql<{ id: string; occurred_at: Date; actor_id: string | null; format: string | null; from: string | null; to: string | null }>`
       WITH doc AS (
         SELECT j.entry_date, j.created_at AS posted_at, r.created_at AS reversed_at, v.created_at AS voided_at,
-          EXISTS (SELECT 1 FROM crove_finance.purchase_line l WHERE l.org_id = j.org_id AND l.document_id = j.source_id
+          EXISTS (SELECT 1 FROM ludy_finance.purchase_line l WHERE l.org_id = j.org_id AND l.document_id = j.source_id
             AND l.debit_account ~ '^15[236]') AS has_stock,
-          EXISTS (SELECT 1 FROM crove_finance.purchase_line l WHERE l.org_id = j.org_id AND l.document_id = j.source_id
+          EXISTS (SELECT 1 FROM ludy_finance.purchase_line l WHERE l.org_id = j.org_id AND l.document_id = j.source_id
             AND (l.debit_account IS NULL OR l.debit_account !~ '^15[236]')) AS has_other
-        FROM crove_finance.journal_entry j
-        LEFT JOIN crove_finance.journal_entry r ON r.org_id = j.org_id AND r.reverses_entry_id = j.id
-        LEFT JOIN crove_finance.purchase_document_void v ON v.org_id = j.org_id AND v.document_id = j.source_id
+        FROM ludy_finance.journal_entry j
+        LEFT JOIN ludy_finance.journal_entry r ON r.org_id = j.org_id AND r.reverses_entry_id = j.id
+        LEFT JOIN ludy_finance.purchase_document_void v ON v.org_id = j.org_id AND v.document_id = j.source_id
         WHERE j.org_id = ${ctx.orgId}::uuid AND j.source_type = 'finance.purchase_document' AND j.source_id = ${found.id}::uuid
           AND j.reverses_entry_id IS NULL
       )

@@ -102,29 +102,29 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query("INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', 100, 10, 110)", [orgId, doc, party, `inv-${doc.slice(0, 8)}`]);
-      await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [orgId, entry, doc]);
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [orgId, entry]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', 100, 10, 110)", [orgId, doc, party, `inv-${doc.slice(0, 8)}`]);
+      await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [orgId, entry, doc]);
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [orgId, entry]);
       await c.query('COMMIT');
     } finally {
       await c.end();
     }
     const { proposalId } = await exec<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: doc } });
     await exec('kernel.proposal.approve', { id: proposalId, revision: 1 });
-    const id = (await rows<{ id: string }>('SELECT id FROM crove_finance.supplier_payment WHERE org_id = $1 AND purchase_document_id = $2', [orgId, doc]))[0]?.id as string;
+    const id = (await rows<{ id: string }>('SELECT id FROM ludy_finance.supplier_payment WHERE org_id = $1 AND purchase_document_id = $2', [orgId, doc]))[0]?.id as string;
     const c2 = new pg.Client({ connectionString: adminUrl });
     await c2.connect();
     try {
       await c2.query('BEGIN');
       await c2.query('SET LOCAL session_replication_role = replica');
-      await c2.query('UPDATE crove_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [orgId, id]);
+      await c2.query('UPDATE ludy_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [orgId, id]);
       await c2.query('COMMIT');
     } finally {
       await c2.end();
     }
     return id;
   }
-  const markers = async (id: string) => (await rows<{ export_count: number; exported_by: string | null; exported_at: Date | null }>('SELECT export_count, exported_by, exported_at FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [orgId, id]))[0];
+  const markers = async (id: string) => (await rows<{ export_count: number; exported_by: string | null; exported_at: Date | null }>('SELECT export_count, exported_by, exported_at FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2', [orgId, id]))[0];
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });

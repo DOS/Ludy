@@ -71,7 +71,7 @@ export function socialFiguresQuery(options: { now?: () => Date } = {}) {
             .executeTakeFirstOrThrow()
         : { n: '0' };
       const last = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(sql<Date | null>`max(published_at)`.as('at'))
         .where('org_id', '=', ctx.orgId)
         .where('status', 'in', ['published', 'removed'])
@@ -88,13 +88,13 @@ export function socialFiguresQuery(options: { now?: () => Date } = {}) {
 async function upcomingCount(ctx: Parameters<typeof channelScope>[0], scope: ChannelScope, from: Date, to: Date): Promise<number> {
   const mine = connectionInScope(scope, 'v.channel_connection_id');
   const posts = ctx.trx
-    .selectFrom('crove_social.post as p')
+    .selectFrom('ludy_social.post as p')
     .select('p.id')
     .where('p.org_id', '=', ctx.orgId)
     .where('p.archived_at', 'is', null)
     .where(postInScope(scope))
     .where(
-      sql<boolean>`EXISTS (SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND ${mine} AND v.status IN (${sql.join([...AGENDA_STATUSES])}) AND coalesce(v.error_retry_at, v.queue_slot_at, v.scheduled_at, p.scheduled_at) >= ${from} AND coalesce(v.error_retry_at, v.queue_slot_at, v.scheduled_at, p.scheduled_at) < ${to})`,
+      sql<boolean>`EXISTS (SELECT 1 FROM ludy_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND ${mine} AND v.status IN (${sql.join([...AGENDA_STATUSES])}) AND coalesce(v.error_retry_at, v.queue_slot_at, v.scheduled_at, p.scheduled_at) >= ${from} AND coalesce(v.error_retry_at, v.queue_slot_at, v.scheduled_at, p.scheduled_at) < ${to})`,
     )
     .limit(SOCIAL_FIGURE_MAX);
   const row = await ctx.trx.selectFrom(posts.as('x')).select(sql<string>`count(*)`.as('n')).executeTakeFirstOrThrow();
@@ -113,8 +113,8 @@ async function waitingClient(ctx: Parameters<typeof channelScope>[0], scope: Cha
     .execute();
   if (page.length === 0) return 0;
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant as v')
-    .innerJoin('crove_social.channel_policy as cp', (j) => j.onRef('cp.org_id', '=', 'v.org_id').onRef('cp.channel_connection_id', '=', 'v.channel_connection_id'))
+    .selectFrom('ludy_social.post_variant as v')
+    .innerJoin('ludy_social.channel_policy as cp', (j) => j.onRef('cp.org_id', '=', 'v.org_id').onRef('cp.channel_connection_id', '=', 'v.channel_connection_id'))
     .select(['v.id', 'v.post_id', 'v.channel_connection_id', 'v.revision', 'v.content_hash'])
     .where('v.org_id', '=', ctx.orgId)
     .where(

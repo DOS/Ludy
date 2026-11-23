@@ -95,7 +95,7 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
       const channel = randomUUID();
       await admin(async (c) => {
         await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
-        await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
+        await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
     const o = { orgId, owner, admin: adminUser, entityId: entity, seriesId: '' };
@@ -118,7 +118,7 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
   const draftRow = async (o: Org, id: string) =>
     (
       await rows<DraftRow>(
-        'SELECT state, provider_ref, issued_number, authority_code, signed_file_id, pdf_file_id, error_code, idempotency_key, next_check_at, check_attempts, submitted_at FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2',
+        'SELECT state, provider_ref, issued_number, authority_code, signed_file_id, pdf_file_id, error_code, idempotency_key, next_check_at, check_attempts, submitted_at FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2',
         [o.orgId, id],
       )
     )[0] as DraftRow;
@@ -196,11 +196,11 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
   it('records an error on an issued invoice with the right text and two steps to do, ticks each once, and makes no new invoice', async () => {
     const o = await org();
     const original = await issued(o, sandbox());
-    const before = (await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.einvoice_draft WHERE org_id = $1', [o.orgId]))[0]?.n;
+    const before = (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_finance.einvoice_draft WHERE org_id = $1', [o.orgId]))[0]?.n;
     const notice = await open(o, original.draftId, 'buyer_address', '2 Phố Thử, Hà Nội');
     expect(notice).toMatchObject({ draftId: original.draftId, field: 'buyer_address', correctText: '2 Phố Thử, Hà Nội', buyerNoticeState: 'todo', buyerNotifiedAt: null, formState: 'todo', formFiledAt: null });
     // No invoice was made and the original is untouched.
-    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.einvoice_draft WHERE org_id = $1', [o.orgId]))[0]?.n).toBe(before);
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_finance.einvoice_draft WHERE org_id = $1', [o.orgId]))[0]?.n).toBe(before);
     expect((await draftRow(o, original.draftId)).state).toBe('issued');
 
     const sent = await execute<Notice>(o, 'finance.einvoice.notice_step', { noticeId: notice.id, step: 'buyer_notice' });
@@ -237,9 +237,9 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     const original = await issued(o, sandbox());
     const notice = await open(o, original.draftId);
     // The field, the text and the invoice are fixed; a step is never taken back.
-    await expect(rows("UPDATE crove_finance.einvoice_notice SET correct_text = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
+    await expect(rows("UPDATE ludy_finance.einvoice_notice SET correct_text = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
     await execute(o, 'finance.einvoice.notice_step', { noticeId: notice.id, step: 'tax_form' });
-    await expect(rows("UPDATE crove_finance.einvoice_notice SET form_state = 'todo', form_filed_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
+    await expect(rows("UPDATE ludy_finance.einvoice_notice SET form_state = 'todo', form_filed_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
   });
 
   it('keeps a notice when its author leaves the org: created_by is cleared and nothing else moves', async () => {
@@ -249,7 +249,7 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, author]);
     const notice = await open(o, original.draftId, 'buyer_name', 'Tên Mới', author);
     await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, author]);
-    const [row] = await rows<{ created_by: string | null; correct_text: string }>('SELECT created_by, correct_text FROM crove_finance.einvoice_notice WHERE org_id = $1 AND id = $2', [o.orgId, notice.id]);
+    const [row] = await rows<{ created_by: string | null; correct_text: string }>('SELECT created_by, correct_text FROM ludy_finance.einvoice_notice WHERE org_id = $1 AND id = $2', [o.orgId, notice.id]);
     expect(row).toEqual({ created_by: null, correct_text: 'Tên Mới' });
   });
 });

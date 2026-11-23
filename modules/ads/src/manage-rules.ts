@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure rules of managing a running ad (ads W4, issue #3835, ADR-0043, plan docs/plan/ads-write.md sections 3.1, 3.3 and 3.4): what a launch holds against the caps once changes
 // were asked for, what state each object is in, and what a budget or an end date may be changed to. No database and no platform: the same changes always give the same answer,
-// and money is a decimal string whose products and comparisons go through decimal.js (AGENTS.md "Money"). The database computes the same hold (crove_ads.launch_hold) for the
+// and money is a decimal string whose products and comparisons go through decimal.js (AGENTS.md "Money"). The database computes the same hold (ludy_ads.launch_hold) for the
 // caps and the guard; the tests pin the two to each other.
 import { Decimal } from 'decimal.js';
 import type { AdsManageKind, AdsManageObjectView, AdsManageSlot } from '@ludy/kernel-contract';
@@ -9,7 +9,7 @@ import { ADS_PLAN_LIMITS } from '@ludy/kernel-contract';
 import { addDays, currencyDecimals } from './domain.ts';
 import type { Commitment } from './launch-caps.ts';
 
-// A change as the rules read it (the columns of crove_ads.ad_manage_change that matter here), in the order they were asked for (`seq`).
+// A change as the rules read it (the columns of ludy_ads.ad_manage_change that matter here), in the order they were asked for (`seq`).
 export interface ChangeRow {
   seq: number;
   kind: AdsManageKind;

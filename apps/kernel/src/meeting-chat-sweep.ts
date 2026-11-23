@@ -27,7 +27,7 @@ export interface ChatSweepDeps {
 // One pass. Returns what it did, for the log and the tests.
 export async function runMeetingChatSweep(deps: ChatSweepDeps): Promise<{ handedOver: number; expired: number; lost: number; failures: number }> {
   const done = { handedOver: 0, expired: 0, lost: 0, failures: 0 };
-  const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' | 'lost' }>`SELECT org_id, id, kind FROM crove_meetings.chat_open(${PER_PASS}::int)`.execute(deps.workerDb);
+  const open = await sql<{ org_id: string; id: string; kind: 'send' | 'expire' | 'lost' }>`SELECT org_id, id, kind FROM ludy_meetings.chat_open(${PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of open.rows) {
     const ctx = { actor: ACTOR, orgId: row.org_id };
     try {

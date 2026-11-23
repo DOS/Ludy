@@ -27,7 +27,7 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await expect(page.getByText('Lên lịch 1 kênh đã duyệt')).toBeVisible();
   await page.getByRole('button', { name: 'Lên lịch', exact: true }).click();
   const postId = new URL(page.url()).pathname.split('/').pop() ?? '';
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   await expect(page.getByTestId('channel-card').filter({ hasText: channel }).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
   return postId;
 }

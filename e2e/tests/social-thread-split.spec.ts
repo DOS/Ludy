@@ -69,13 +69,13 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   const posted = channelCard(page, channel);
   await expect(posted.getByText('Đã lên lịch', { exact: true })).toBeVisible();
   const postId = new URL(page.url()).pathname.split('/').pop() ?? '';
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   await expect(posted.getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
 
   // What was stored and sent: the first post as the channel's text, the rest as its one thread part, together the
   // whole text, and the part's call succeeded.
   const [variant] = sql<{ body: string; parts: string[]; id: string }>(
-    `SELECT id, body, settings->'threadParts' AS parts FROM crove_social.post_variant WHERE post_id = :'post'`,
+    `SELECT id, body, settings->'threadParts' AS parts FROM ludy_social.post_variant WHERE post_id = :'post'`,
     { post: postId },
   );
   expect(variant?.parts).toHaveLength(1);

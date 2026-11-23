@@ -205,7 +205,7 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
       });
       dungId = dung.employeeId as string;
       await exec(owner, 'hr.payroll.employee.end', { employeeId: dungId, endedOn: '2016-01-01' });
-      await withAdmin((c) => c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [dungId]));
+      await withAdmin((c) => c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [dungId]));
       await exec(owner, 'hr.payroll.employee.erase', { employeeId: dungId }, asMfa(owner));
     }
 
@@ -1449,7 +1449,7 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
     });
     await exec(owner, 'hr.payroll.employee.end', { employeeId: erased.employeeId, endedOn: '2016-01-01' });
     await withAdmin((c) =>
-      c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [erased.employeeId]),
+      c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [erased.employeeId]),
     );
     await exec(owner, 'hr.payroll.employee.erase', { employeeId: erased.employeeId }, asMfa(owner));
 

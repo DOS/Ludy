@@ -68,7 +68,7 @@ export const zMonth = z.string().regex(/^(20\d{2}|2100)-(0[1-9]|1[0-2])$/, 'YYYY
 export const zDepreciationRequest = z.object({ month: zMonth, legalEntityId: zId.optional() });
 export type DepreciationRequest = z.infer<typeof zDepreciationRequest>;
 // The proposal (kind finance.journal_voucher, shown as one) with the month and each asset's amount, which recording
-// writes to crove_finance.depreciation_line.
+// writes to ludy_finance.depreciation_line.
 export const zDepreciationProposal = zJournalVoucherProposal.extend({
   depreciationMonth: zMonth,
   assets: z.array(z.object({ assetId: zId, amount: zJournalAmount })).min(1).max(2000),

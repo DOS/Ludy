@@ -4,10 +4,10 @@
 // from. The rest of the shape is in live-run.ts.
 //
 // Two commands, both the recorder's own, both in their user context:
-//   meetings.live.tick         the finished window, if there is one, is copied: its lines become crove_meetings.live_line rows (the recorder's alone, "Bản nháp
+//   meetings.live.tick         the finished window, if there is one, is copied: its lines become ludy_meetings.live_line rows (the recorder's alone, "Bản nháp
 //                              trực tiếp"); then the next window is started, unless the recording has ended, the pieces are gone or the recorder stopped.
 //   meetings.live.notes_copy   the finished notes run (feature meetings.live_summary, made by the route of apps/kernel from the new lines and the previous notes
-//                              only) replaces the earlier live draft: crove_meetings.meeting_result and action_item, feature meetings.live_notes, stage draft,
+//                              only) replaces the earlier live draft: ludy_meetings.meeting_result and action_item, feature meetings.live_notes, stage draft,
 //                              tainted, with the checks of plan section 5.3 the batch summary uses.
 // Nothing here creates a task: an item is a suggestion until the recorder accepts it (meetings.action_item.accept), exactly as for the batch summary.
 import { sql } from 'kysely';
@@ -74,7 +74,7 @@ export const liveTick = defineCommand({
         }
         // One copy of a window: a run whose lines are already here is not copied twice (two tabs ticking at once).
         const already = await ctx.trx
-          .selectFrom('crove_meetings.live_line')
+          .selectFrom('ludy_meetings.live_line')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('meeting_id', '=', input.meetingId)
@@ -83,7 +83,7 @@ export const liveTick = defineCommand({
         if (!already) {
           for (const [seq, startSeconds, endSeconds, text] of body.lines) {
             await ctx.trx
-              .insertInto('crove_meetings.live_line')
+              .insertInto('ludy_meetings.live_line')
               .values({
                 org_id: ctx.orgId,
                 meeting_id: input.meetingId,
@@ -134,9 +134,9 @@ async function replaceLiveNotes(
   notes: SummaryResult,
   userId: string,
 ): Promise<boolean> {
-  const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at']).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
+  const row = await ctx.trx.selectFrom('ludy_meetings.meeting').select(['started_at']).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
   const meetingDay = vnDay(row.started_at ?? new Date());
-  const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
+  const readers = await ctx.trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
   const ids = [userId, ...readers.map((r) => r.user_id)];
   const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(
     ctx.trx,
@@ -145,7 +145,7 @@ async function replaceLiveNotes(
 
   // The earlier live draft goes; the batch summary's draft (another feature) and anything the recorder typed stay.
   await ctx.trx
-    .deleteFrom('crove_meetings.meeting_result')
+    .deleteFrom('ludy_meetings.meeting_result')
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
     .where('feature', '=', LIVE_NOTES_FEATURE)
@@ -153,7 +153,7 @@ async function replaceLiveNotes(
     .where('tainted', '=', true)
     .execute();
   await ctx.trx
-    .deleteFrom('crove_meetings.action_item')
+    .deleteFrom('ludy_meetings.action_item')
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
     .where('stage', '=', 'draft')
@@ -165,7 +165,7 @@ async function replaceLiveNotes(
         eb
           .selectFrom('ludy_kernel.ai_run as r')
           .select('r.id')
-          .whereRef('r.id', '=', 'crove_meetings.action_item.source_run_id')
+          .whereRef('r.id', '=', 'ludy_meetings.action_item.source_run_id')
           .where('r.org_id', '=', ctx.orgId)
           .where('r.feature', '=', LIVE_SUMMARY_FEATURE),
       ),
@@ -174,7 +174,7 @@ async function replaceLiveNotes(
   if (notes.summary === '' && notes.decisions.length === 0 && notes.items.length === 0) return false;
   // A summary draft the recorder keeps is theirs: the live notes do not fight it, they only skip their own summary this time.
   const mine = await ctx.trx
-    .selectFrom('crove_meetings.meeting_result')
+    .selectFrom('ludy_meetings.meeting_result')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
@@ -182,7 +182,7 @@ async function replaceLiveNotes(
     .executeTakeFirst();
   if (!mine) {
     await ctx.trx
-      .insertInto('crove_meetings.meeting_result')
+      .insertInto('ludy_meetings.meeting_result')
       .values({
         org_id: ctx.orgId,
         meeting_id: meetingId,
@@ -201,14 +201,14 @@ async function replaceLiveNotes(
       });
   }
   const kept = await ctx.trx
-    .selectFrom('crove_meetings.action_item')
+    .selectFrom('ludy_meetings.action_item')
     .select(sql<number>`count(*)::int`.as('n'))
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
     .executeTakeFirstOrThrow();
   for (const item of notes.items.slice(0, Math.max(0, ITEMS_PER_MEETING_MAX - kept.n))) {
     await ctx.trx
-      .insertInto('crove_meetings.action_item')
+      .insertInto('ludy_meetings.action_item')
       .values({
         org_id: ctx.orgId,
         meeting_id: meetingId,
@@ -262,7 +262,7 @@ export const liveNotesCopy = defineCommand({
     }
     // One copy of a run: the rows carry the run they came from (source_run_id) and the taint, so a second click is not a second copy.
     const alreadyResult = await ctx.trx
-      .selectFrom('crove_meetings.meeting_result')
+      .selectFrom('ludy_meetings.meeting_result')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -272,7 +272,7 @@ export const liveNotesCopy = defineCommand({
     // Notes that held only items left no result row: their items carry the run too.
     const alreadyItem = alreadyResult
       ? undefined
-      : await ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
+      : await ctx.trx.selectFrom('ludy_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
     if (alreadyResult || alreadyItem) throw new DomainError('LIVE_NOTES_ALREADY_COPIED', 409, 'These live notes were already copied into the draft');
     await replaceLiveNotes(ctx, input.meetingId, input.runId, notes, userId);
     ctx.audit({ meetingId: input.meetingId, runId: input.runId, decisionCount: notes.decisions.length, itemCount: notes.items.length, dropped: notes.dropped });

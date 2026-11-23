@@ -93,7 +93,7 @@ export async function settlementMonthsFor(ctx: Ctx, settlements: ReadonlyArray<{
   const byId = new Map<string, SettlementMonthLine[]>(ids.map((id) => [id, []]));
   for (let i = 0; i < ids.length; i += 500) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.channel_settlement_line as l')
+      .selectFrom('ludy_finance.channel_settlement_line as l')
       .select((eb) => [
         'l.settlement_id',
         'l.sales',
@@ -101,7 +101,7 @@ export async function settlementMonthsFor(ctx: Ctx, settlements: ReadonlyArray<{
         'l.refund',
         'l.tax_withheld',
         eb
-          .selectFrom('crove_finance.channel_order_line as ol')
+          .selectFrom('ludy_finance.channel_order_line as ol')
           .select((x) => x.fn.max('ol.delivered_at').as('d'))
           .whereRef('ol.org_id', '=', 'l.org_id')
           .whereRef('ol.legal_entity_id', '=', 'l.legal_entity_id')
@@ -130,7 +130,7 @@ export async function postingsOf(ctx: Ctx, settlementIds: readonly string[]): Pr
   const out = new Map<string, SettlementPostings[]>(settlementIds.map((id) => [id, []]));
   for (let i = 0; i < settlementIds.length; i += 500) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.journal_voucher as j')
+      .selectFrom('ludy_finance.journal_voucher as j')
       .select(['j.settlement_id', 'j.settlement_month', reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed')])
       .where('j.org_id', '=', ctx.orgId)
       .where('j.settlement_id', 'in', settlementIds.slice(i, i + 500))
@@ -151,11 +151,11 @@ export const settlementPosted = (postings: readonly SettlementPostings[]): boole
 // sub-account counts with its parent). The payout debits these amounts, so the accounts net to zero whatever rounding each month's split did. Zero when the settlement credited none.
 export async function postedSettlementTax(ctx: Ctx, settlementId: string, vatCode: string, pitCode: string, outputVatCode?: string): Promise<{ vat: string; pit: string }> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
-    .innerJoin('crove_finance.journal_entry as e', (join) =>
+    .selectFrom('ludy_finance.journal_voucher as j')
+    .innerJoin('ludy_finance.journal_entry as e', (join) =>
       join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null),
     )
-    .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
+    .innerJoin('ludy_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
     .select(['l.account_code'])
     .select((eb) => eb.fn.sum<string>('l.credit').as('credit'))
     .where('j.org_id', '=', ctx.orgId)

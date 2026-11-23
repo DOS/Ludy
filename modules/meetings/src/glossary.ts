@@ -5,7 +5,7 @@
 // meetings.glossary.update       rewrites a term (same rules); the identity and the author stay
 // meetings.glossary.remove       deletes a term (affects future glossary reads only; words already written into existing drafts or published results are not rewritten)
 // meetings.glossary.list         the terms, for an owner or admin only; a member gets 403 (the database policy says the same: nobody else reads the table)
-// meetings.glossary.for_meeting  the terms for the recorder's own Vy run only, sensitive (audited), reading only `term text` through crove_meetings.glossary_for_recorder
+// meetings.glossary.for_meeting  the terms for the recorder's own Vy run only, sensitive (audited), reading only `term text` through ludy_meetings.glossary_for_recorder
 //
 // The audit row of a command carries the term's id and the number of terms, never the text (a term can be a customer's or a product's name). Step 3b reads the terms for the recorder's
 // own run through a narrow definer; nothing here is exposed through MCP or HTTP for member runs.
@@ -42,13 +42,13 @@ function termTaken(error: unknown): never {
 }
 
 async function termInUse(trx: Trx, orgId: string, term: string, exceptId: string | null): Promise<boolean> {
-  let q = trx.selectFrom('crove_meetings.glossary_term').select('id').where('org_id', '=', orgId).where(sql<boolean>`pg_catalog.lower(term) = pg_catalog.lower(${term})`);
+  let q = trx.selectFrom('ludy_meetings.glossary_term').select('id').where('org_id', '=', orgId).where(sql<boolean>`pg_catalog.lower(term) = pg_catalog.lower(${term})`);
   if (exceptId !== null) q = q.where('id', '<>', exceptId);
   return (await q.executeTakeFirst()) !== undefined;
 }
 
 async function countTerms(trx: Trx, orgId: string): Promise<number> {
-  const row = await trx.selectFrom('crove_meetings.glossary_term').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', orgId).executeTakeFirstOrThrow();
+  const row = await trx.selectFrom('ludy_meetings.glossary_term').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', orgId).executeTakeFirstOrThrow();
   return Number(row.n);
 }
 
@@ -67,7 +67,7 @@ export const glossaryAdd = defineCommand({
     if (count >= GLOSSARY_TERMS_MAX) throw new DomainError('GLOSSARY_MAX', 422, `An organization keeps at most ${GLOSSARY_TERMS_MAX} terms; remove one first`);
     if (await termInUse(ctx.trx, ctx.orgId, input.term, null)) throw taken();
     const row = await ctx.trx
-      .insertInto('crove_meetings.glossary_term')
+      .insertInto('ludy_meetings.glossary_term')
       .values({ org_id: ctx.orgId, term: input.term, created_by: userId, created_at: ctx.now, updated_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow()
@@ -87,11 +87,11 @@ export const glossaryUpdate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     await requireOwnerOrAdmin(ctx.trx, ctx.orgId, userId);
-    const row = await ctx.trx.selectFrom('crove_meetings.glossary_term').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.termId).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_meetings.glossary_term').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.termId).forUpdate().executeTakeFirst();
     if (!row) throw notFound();
     if (await termInUse(ctx.trx, ctx.orgId, input.term, input.termId)) throw taken();
     await ctx.trx
-      .updateTable('crove_meetings.glossary_term')
+      .updateTable('ludy_meetings.glossary_term')
       .set({ term: input.term, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.termId)
@@ -112,7 +112,7 @@ export const glossaryRemove = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     await requireOwnerOrAdmin(ctx.trx, ctx.orgId, userId);
-    const gone = await ctx.trx.deleteFrom('crove_meetings.glossary_term').where('org_id', '=', ctx.orgId).where('id', '=', input.termId).returning('id').executeTakeFirst();
+    const gone = await ctx.trx.deleteFrom('ludy_meetings.glossary_term').where('org_id', '=', ctx.orgId).where('id', '=', input.termId).returning('id').executeTakeFirst();
     if (!gone) throw notFound();
     ctx.audit({ termId: input.termId, termCount: await countTerms(ctx.trx, ctx.orgId) });
     return zGlossaryDone.parse({ termId: input.termId });
@@ -127,7 +127,7 @@ export const glossaryList = defineQuery({
     const userId = userOf(ctx.actor);
     await requireOwnerOrAdmin(ctx.trx, ctx.orgId, userId);
     const rows = await ctx.trx
-      .selectFrom('crove_meetings.glossary_term')
+      .selectFrom('ludy_meetings.glossary_term')
       .select(['id', 'term', 'created_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy(sql`pg_catalog.lower(term)`)
@@ -148,7 +148,7 @@ export const glossaryForMeeting = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read the glossary for this meeting');
-    const { rows } = await sql<{ term: string }>`SELECT term FROM crove_meetings.glossary_for_recorder(${input.meetingId}::uuid)`.execute(ctx.trx);
+    const { rows } = await sql<{ term: string }>`SELECT term FROM ludy_meetings.glossary_for_recorder(${input.meetingId}::uuid)`.execute(ctx.trx);
     return { meetingId: input.meetingId, terms: rows.map((r) => r.term) };
   },
 });

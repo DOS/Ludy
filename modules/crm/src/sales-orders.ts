@@ -79,7 +79,7 @@ interface QuoteForDecision {
 
 async function loadQuoteForDecision(ctx: Pick<CommandContext, 'trx' | 'orgId'>, quoteId: string): Promise<QuoteForDecision> {
   const quote = await ctx.trx
-    .selectFrom('crove_crm.quote')
+    .selectFrom('ludy_crm.quote')
     .select(['id', 'deal_id', 'party_id', 'status', 'version', 'valid_until', 'subtotal', 'vat_amount', 'total', 'issuer_entity_id', 'sent_at', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', quoteId)
@@ -92,7 +92,7 @@ async function loadQuoteForDecision(ctx: Pick<CommandContext, 'trx' | 'orgId'>, 
 // The refusals every decision shares, in the order a person should meet them. An accepted quote names its order, so a second accept is told which one.
 async function checkDecidable(ctx: Pick<CommandContext, 'trx' | 'orgId' | 'now'>, quote: QuoteForDecision, version: number): Promise<void> {
   if (quote.status === 'accepted') {
-    const order = await ctx.trx.selectFrom('crove_crm.sales_order').select('number').where('org_id', '=', ctx.orgId).where('quote_id', '=', quote.id).executeTakeFirst();
+    const order = await ctx.trx.selectFrom('ludy_crm.sales_order').select('number').where('org_id', '=', ctx.orgId).where('quote_id', '=', quote.id).executeTakeFirst();
     throw new DomainError('QUOTE_ALREADY_ACCEPTED', 409, order ? `Báo giá này đã được ghi nhận chấp nhận (đơn ${order.number})` : 'Báo giá này đã được ghi nhận chấp nhận');
   }
   if (quote.status === 'declined') throw new DomainError('QUOTE_ALREADY_DECLINED', 409, 'Báo giá này đã được ghi nhận từ chối');
@@ -120,7 +120,7 @@ export const quoteAccept = defineCommand({
     if (quote.sent_at && acceptedOn < vietnamToday(quote.sent_at)) throw new DomainError('ORDER_DATE_INVALID', 422, 'Ngày khách đồng ý không được trước ngày gửi báo giá');
     // A newer revision (a draft being written or one already sent) replaces this quote: accepting the old one would freeze a price the seller has withdrawn.
     const newer = await ctx.trx
-      .selectFrom('crove_crm.quote')
+      .selectFrom('ludy_crm.quote')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('revises_id', '=', quote.id)
@@ -129,7 +129,7 @@ export const quoteAccept = defineCommand({
     if (newer) throw new DomainError('QUOTE_HAS_NEWER_REVISION', 409, 'Báo giá này đã có bản sửa đổi mới; hãy ghi nhận trên bản mới nhất');
     if (!quote.issuer_entity_id || !quote.buyer_name) throw new DomainError('QUOTE_INCOMPLETE', 422, 'Báo giá chưa đủ thông tin người bán và người mua');
     const lines = await ctx.trx
-      .selectFrom('crove_crm.quote_line')
+      .selectFrom('ludy_crm.quote_line')
       .select(['line_no', 'kind', 'description', 'unit', 'quantity', 'unit_price', 'discount_percent', 'vat_rate', 'amount', 'vat_amount', 'stock_item_id'])
       .where('org_id', '=', ctx.orgId)
       .where('quote_id', '=', quote.id)
@@ -146,7 +146,7 @@ export const quoteAccept = defineCommand({
     const year = /^\d{4}/.test(allocated.periodKey) ? allocated.periodKey.slice(0, 4) : acceptedOn.slice(0, 4);
     const number = `DH-${year}-${String(allocated.number).padStart(4, '0')}`;
     await ctx.trx
-      .insertInto('crove_crm.sales_order')
+      .insertInto('ludy_crm.sales_order')
       .values({
         org_id: ctx.orgId,
         id: orderId,
@@ -176,7 +176,7 @@ export const quoteAccept = defineCommand({
       });
     if (lines.length > 0) {
       await ctx.trx
-        .insertInto('crove_crm.sales_order_line')
+        .insertInto('ludy_crm.sales_order_line')
         .values(
           lines.map((l) => ({
             org_id: ctx.orgId,
@@ -197,7 +197,7 @@ export const quoteAccept = defineCommand({
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_crm.quote')
+      .updateTable('ludy_crm.quote')
       .set({ status: 'accepted', decided_at: ctx.now, version: quote.version + 1, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', quote.id)
@@ -221,7 +221,7 @@ export const quoteDecline = defineCommand({
     await checkDecidable(ctx, quote, input.version);
     const reason = input.reason === undefined || input.reason === null || input.reason === '' ? null : input.reason;
     await ctx.trx
-      .updateTable('crove_crm.quote')
+      .updateTable('ludy_crm.quote')
       .set({ status: 'declined', decided_at: ctx.now, decline_reason: reason, version: quote.version + 1, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', quote.id)
@@ -258,9 +258,9 @@ interface OrderRow {
 
 function base(ctx: Reader) {
   return ctx.trx
-    .selectFrom('crove_crm.sales_order as o')
-    .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'o.org_id').onRef('d.id', '=', 'o.deal_id'))
-    .innerJoin('crove_crm.quote as q', (j) => j.onRef('q.org_id', '=', 'o.org_id').onRef('q.id', '=', 'o.quote_id'))
+    .selectFrom('ludy_crm.sales_order as o')
+    .innerJoin('ludy_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'o.org_id').onRef('d.id', '=', 'o.deal_id'))
+    .innerJoin('ludy_crm.quote as q', (j) => j.onRef('q.org_id', '=', 'o.org_id').onRef('q.id', '=', 'o.quote_id'))
     .select([
       'o.id',
       'o.number',
@@ -278,7 +278,7 @@ function base(ctx: Reader) {
       'o.cancelled_at',
       'd.title as deal_title',
       'q.number as quote_number',
-      sql<number>`(SELECT pg_catalog.count(*)::int FROM crove_crm.sales_order_line l WHERE l.org_id = o.org_id AND l.order_id = o.id)`.as('line_count'),
+      sql<number>`(SELECT pg_catalog.count(*)::int FROM ludy_crm.sales_order_line l WHERE l.org_id = o.org_id AND l.order_id = o.id)`.as('line_count'),
     ])
     .where('o.org_id', '=', ctx.orgId);
 }
@@ -316,7 +316,7 @@ const buyerOf = (r: { buyer_name: string; buyer_tax_code: string | null; buyer_a
 
 async function loadLines(ctx: Reader, orderId: string) {
   const rows = await ctx.trx
-    .selectFrom('crove_crm.sales_order_line')
+    .selectFrom('ludy_crm.sales_order_line')
     .select(['line_no', 'kind', 'description', 'unit', 'quantity', 'unit_price', 'discount_percent', 'vat_rate', 'amount', 'vat_amount', 'stock_item_id'])
     .where('org_id', '=', ctx.orgId)
     .where('order_id', '=', orderId)
@@ -340,8 +340,8 @@ async function loadLines(ctx: Reader, orderId: string) {
 // The deliveries of an order's lines, by line: the day it was delivered, and whether the mark was taken back. A line with no delivery row is not delivered.
 async function loadDeliveries(ctx: Reader, orderId: string): Promise<SalesOrderDelivery[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_crm.sales_order_delivery as d')
-    .leftJoin('crove_crm.sales_order_delivery as r', (j) => j.onRef('r.org_id', '=', 'd.org_id').onRef('r.reverses_id', '=', 'd.id').on('r.kind', '=', 'reversal'))
+    .selectFrom('ludy_crm.sales_order_delivery as d')
+    .leftJoin('ludy_crm.sales_order_delivery as r', (j) => j.onRef('r.org_id', '=', 'd.org_id').onRef('r.reverses_id', '=', 'd.id').on('r.kind', '=', 'reversal'))
     .select(['d.line_no', 'd.delivered_on', 'r.id as reversal_id'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.order_id', '=', orderId)
@@ -355,7 +355,7 @@ async function loadOrder(ctx: Reader, orderId: string): Promise<SalesOrder> {
   const row = await base(ctx).where('o.id', '=', orderId).executeTakeFirst();
   if (!row) throw orderNotFound();
   const extra = await ctx.trx
-    .selectFrom('crove_crm.sales_order')
+    .selectFrom('ludy_crm.sales_order')
     .select(['issuer_entity_id', 'buyer_tax_code', 'buyer_address', 'buyer_email', 'accepted_via', 'cancel_reason'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', orderId)
@@ -466,7 +466,7 @@ export const salesOrderCancel = defineCommand({
   handler: async (ctx, input): Promise<SalesOrderSummary> => {
     const userId = userOf(ctx.actor);
     const order = await ctx.trx
-      .selectFrom('crove_crm.sales_order')
+      .selectFrom('ludy_crm.sales_order')
       .select(['id', 'deal_id', 'party_id', 'status', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.orderId)
@@ -478,7 +478,7 @@ export const salesOrderCancel = defineCommand({
     // A delivery nobody took back means goods left: the order is kept (the database guard says the same).
     if ((await loadDeliveries(ctx, order.id)).some((d) => !d.reversed)) throw new DomainError('ORDER_DELIVERED', 409, 'Đơn hàng đã giao hàng nên không hủy được');
     await ctx.trx
-      .updateTable('crove_crm.sales_order')
+      .updateTable('ludy_crm.sales_order')
       .set({ status: 'cancelled', cancelled_at: ctx.now, cancel_reason: input.reason, version: order.version + 1, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', order.id)
@@ -498,7 +498,7 @@ export const salesOrderCancel = defineCommand({
 // not exist are each refused with their own error, nothing written.
 async function lockedGoodsLine(ctx: Pick<CommandContext, 'trx' | 'orgId'>, orderId: string, lineNo: number) {
   const order = await ctx.trx
-    .selectFrom('crove_crm.sales_order')
+    .selectFrom('ludy_crm.sales_order')
     .select(['id', 'party_id', 'status', 'order_date'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', orderId)
@@ -507,7 +507,7 @@ async function lockedGoodsLine(ctx: Pick<CommandContext, 'trx' | 'orgId'>, order
   if (!order) throw orderNotFound();
   if (order.status !== 'confirmed') throw new DomainError('ORDER_CANCELLED', 409, 'Đơn hàng đã hủy nên không ghi giao hàng được');
   const line = await ctx.trx
-    .selectFrom('crove_crm.sales_order_line')
+    .selectFrom('ludy_crm.sales_order_line')
     .select(['line_no', 'kind'])
     .where('org_id', '=', ctx.orgId)
     .where('order_id', '=', orderId)
@@ -520,8 +520,8 @@ async function lockedGoodsLine(ctx: Pick<CommandContext, 'trx' | 'orgId'>, order
 
 async function deliveryOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, orderId: string, lineNo: number): Promise<{ id: string; delivered_on: Date | string; reversed: boolean } | undefined> {
   const row = await ctx.trx
-    .selectFrom('crove_crm.sales_order_delivery as d')
-    .leftJoin('crove_crm.sales_order_delivery as r', (j) => j.onRef('r.org_id', '=', 'd.org_id').onRef('r.reverses_id', '=', 'd.id').on('r.kind', '=', 'reversal'))
+    .selectFrom('ludy_crm.sales_order_delivery as d')
+    .leftJoin('ludy_crm.sales_order_delivery as r', (j) => j.onRef('r.org_id', '=', 'd.org_id').onRef('r.reverses_id', '=', 'd.id').on('r.kind', '=', 'reversal'))
     .select(['d.id', 'd.delivered_on', 'r.id as reversal_id'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.order_id', '=', orderId)
@@ -553,7 +553,7 @@ export const salesOrderDeliver = defineCommand({
     if (existing?.reversed) throw new DomainError('ORDER_LINE_DELIVERY_REVERSED', 409, 'Dòng này đã được hoàn giao; bản này chưa cho giao lại');
     if (existing) throw new DomainError('ORDER_LINE_ALREADY_DELIVERED', 409, 'Dòng này đã được ghi giao hàng');
     await ctx.trx
-      .insertInto('crove_crm.sales_order_delivery')
+      .insertInto('ludy_crm.sales_order_delivery')
       .values({ org_id: ctx.orgId, id: randomUUID(), order_id: input.orderId, line_no: input.lineNo, kind: 'delivery', delivered_on: deliveredOn, reverses_id: null, created_by: userId })
       .execute();
     ctx.audit({ orderId: input.orderId, lineNo: input.lineNo, partyId: order.party_id });
@@ -577,7 +577,7 @@ export const salesOrderUndeliver = defineCommand({
     if (!existing) throw new DomainError('ORDER_LINE_NOT_DELIVERED', 409, 'Dòng này chưa được ghi giao hàng');
     if (existing.reversed) throw new DomainError('ORDER_LINE_DELIVERY_REVERSED', 409, 'Dòng này đã được hoàn giao rồi');
     await ctx.trx
-      .insertInto('crove_crm.sales_order_delivery')
+      .insertInto('ludy_crm.sales_order_delivery')
       .values({ org_id: ctx.orgId, id: randomUUID(), order_id: input.orderId, line_no: input.lineNo, kind: 'reversal', delivered_on: null, reverses_id: existing.id, created_by: userId })
       .execute();
     ctx.audit({ orderId: input.orderId, lineNo: input.lineNo, partyId: order.party_id });

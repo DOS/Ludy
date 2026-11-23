@@ -843,19 +843,19 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     expect(stListMember.status).toBe(200);
     const stFileId = (stListMember.body as unknown as SignKycListResultContract).items[0]!.fileId;
 
-    // Direct tenant SQL as non-creator member sees 0 rows on crove_sign.kyc_check, false on can_read_sign_file,
+    // Direct tenant SQL as non-creator member sees 0 rows on ludy_sign.kyc_check, false on can_read_sign_file,
     // and is rejected by RLS (42501) if attempting cross-envelope field_id hijack or non-attachment field binding.
     const tenantClient = await pool.connect();
     try {
       await tenantClient.query('BEGIN');
       await tenantClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [otherMember.userId, org.orgId]);
       const rlsRows = await tenantClient.query(
-        'SELECT id FROM crove_sign.kyc_check WHERE org_id = $1 AND envelope_id = $2',
+        'SELECT id FROM ludy_sign.kyc_check WHERE org_id = $1 AND envelope_id = $2',
         [org.orgId, hrSetup.envelopeId],
       );
       expect(rlsRows.rows).toEqual([]);
       const canRead = await tenantClient.query<{ allowed: boolean }>(
-        'SELECT crove_sign.can_read_sign_file($1::uuid) AS allowed',
+        'SELECT ludy_sign.can_read_sign_file($1::uuid) AS allowed',
         [hrFileId],
       );
       expect(canRead.rows[0]?.allowed).toBe(false);
@@ -863,7 +863,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       await tenantClient.query('SAVEPOINT sp_cross_env_hijack');
       await expect(
         tenantClient.query(
-          `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+          `INSERT INTO ludy_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
            VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
           [org.orgId, standalone.envelopeId, hrUncheckedFieldId, stFileId, 'a'.repeat(64)],
         ),
@@ -873,7 +873,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       await tenantClient.query('SAVEPOINT sp_non_attachment_rls');
       await expect(
         tenantClient.query(
-          `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+          `INSERT INTO ludy_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
            VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
           [org.orgId, standalone.envelopeId, standalone.sigFieldId, stFileId, 'a'.repeat(64)],
         ),
@@ -891,7 +891,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
         await c.query('SAVEPOINT sp_admin_mismatch');
         await expect(
           c.query(
-            `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+            `INSERT INTO ludy_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
              VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
             [org.orgId, standalone.envelopeId, hrUncheckedFieldId, stFileId, 'b'.repeat(64)],
           ),
@@ -901,7 +901,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
         await c.query('SAVEPOINT sp_admin_update_mismatch');
         await expect(
           c.query(
-            `UPDATE crove_sign.kyc_check SET envelope_id = $2::uuid WHERE org_id = $1::uuid AND field_id = $3::uuid`,
+            `UPDATE ludy_sign.kyc_check SET envelope_id = $2::uuid WHERE org_id = $1::uuid AND field_id = $3::uuid`,
             [org.orgId, standalone.envelopeId, hrFieldId],
           ),
         ).rejects.toMatchObject({ code: '23514' });
@@ -910,7 +910,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
         await c.query('SAVEPOINT sp_admin_non_attachment');
         await expect(
           c.query(
-            `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+            `INSERT INTO ludy_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
              VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
             [org.orgId, standalone.envelopeId, standalone.sigFieldId, stFileId, 'b'.repeat(64)],
           ),
@@ -920,7 +920,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
         await c.query('SAVEPOINT sp_admin_missing_file');
         await expect(
           c.query(
-            `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+            `INSERT INTO ludy_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
              VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
             [org.orgId, standalone.envelopeId, stFieldId, randomUUID(), 'b'.repeat(64)],
           ),
@@ -1131,7 +1131,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     );
     expect(found.matches).toContainEqual(
       expect.objectContaining({
-        column: 'crove_sign.kyc_check.findings_json',
+        column: 'ludy_sign.kyc_check.findings_json',
         handling: 'erase',
       }),
     );
@@ -1142,13 +1142,13 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       { actor: asMfa(owner), orgId: org.orgId },
     );
     expect(erased.erased).toContainEqual({
-      column: 'crove_sign.kyc_check.findings_json',
+      column: 'ludy_sign.kyc_check.findings_json',
       rows: 2,
     });
 
     const remainingKycRows = await admin((c) =>
       c.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM crove_sign.kyc_check WHERE org_id = $1 AND findings_json::text ILIKE $2`,
+        `SELECT count(*)::text AS count FROM ludy_sign.kyc_check WHERE org_id = $1 AND findings_json::text ILIKE $2`,
         [org.orgId, `%${pdplMarker}%`],
       ),
     );
@@ -1157,7 +1157,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     // Sealed PDF evidence on completed envelope remains intact after KYC erasure!
     const sealedRow = await admin((c) =>
       c.query<{ seal_status: string; sealed_file_id: string | null }>(
-        `SELECT seal_status, sealed_file_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2`,
+        `SELECT seal_status, sealed_file_id FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2`,
         [org.orgId, completedSetup.envelopeId],
       ),
     );
@@ -1187,7 +1187,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       );
     }
 
-    // ludy_kernel.org_purge deletes crove_sign.kyc_check cleanly with zero FK violations.
+    // ludy_kernel.org_purge deletes ludy_sign.kyc_check cleanly with zero FK violations.
     const purgeSetup = await createEnvelopeWithAttachmentSlots(owner, {
       title: 'Purge Org KYC Envelope',
       slots: [{ label: 'CCCD Purge' }],
@@ -1240,7 +1240,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     expect(purgeCode, purgeLogs.join('\n')).toBe(0);
 
     const leftKyc = await admin((c) =>
-      c.query<{ count: string }>(`SELECT count(*)::text AS count FROM crove_sign.kyc_check WHERE org_id = $1`, [
+      c.query<{ count: string }>(`SELECT count(*)::text AS count FROM ludy_sign.kyc_check WHERE org_id = $1`, [
         purgeOrg.orgId,
       ]),
     );

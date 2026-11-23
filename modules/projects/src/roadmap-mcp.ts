@@ -114,11 +114,11 @@ export const mcpRoadmapIdeas = defineQuery({
         i.submitter_display_name,
         i.created_at,
         i.updated_at
-      FROM crove_projects.roadmap_item i
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_item i
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = i.org_id
        AND b.id = i.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
@@ -181,8 +181,8 @@ export const mcpRoadmapDemandSummary = defineQuery({
 
     const { rows: boards } = await sql<{ id: string; slug: string; title: string; enabled: boolean }>`
       SELECT b.id, b.slug, b.title, b.enabled
-      FROM crove_projects.roadmap_board b
-      LEFT JOIN crove_projects.project p
+      FROM ludy_projects.roadmap_board b
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE b.org_id = ${ctx.orgId}::uuid
@@ -217,11 +217,11 @@ export const mcpRoadmapDemandSummary = defineQuery({
         pg_catalog.count(*) FILTER (WHERE i.moderation_status = 'published' AND i.stage = 'shipped')::text AS shipped_count,
         COALESCE(pg_catalog.sum(i.vote_count) FILTER (WHERE i.moderation_status = 'published'), 0)::text AS total_published_votes,
         pg_catalog.count(*) FILTER (WHERE i.tainted = true)::text AS tainted_items_count
-      FROM crove_projects.roadmap_item i
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_item i
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = i.org_id
        AND b.id = i.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
@@ -239,11 +239,11 @@ export const mcpRoadmapDemandSummary = defineQuery({
       tainted: boolean;
     }>`
       SELECT i.id, i.board_id, b.title AS board_title, i.stage, i.category, i.public_title, i.vote_count, i.tainted
-      FROM crove_projects.roadmap_item i
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_item i
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = i.org_id
        AND b.id = i.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
@@ -260,11 +260,11 @@ export const mcpRoadmapDemandSummary = defineQuery({
       published_at: Date;
     }>`
       SELECT a.id, a.board_id, a.title, a.published_at
-      FROM crove_projects.roadmap_announcement a
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_announcement a
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = a.org_id
        AND b.id = a.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE a.org_id = ${ctx.orgId}::uuid

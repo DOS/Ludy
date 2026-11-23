@@ -53,7 +53,7 @@ export const PAYROLL_POSTING_MAPS: Record<PayrollRegime, PostingMap> = {
   tt133: {
     regime: 'tt133',
     status: 'commentary',
-    cite: 'Circular 133/2016 chart as in crove_finance.account (3385 unemployment insurance); the pay expense accounts are commentary (AMIS, MISA) and the sources conflict: 154, 631 and 642 only, or the full set (row 18).',
+    cite: 'Circular 133/2016 chart as in ludy_finance.account (3385 unemployment insurance); the pay expense accounts are commentary (AMIS, MISA) and the sources conflict: 154, 631 and 642 only, or the full set (row 18).',
     expense: { admin: '6422', sales: '6421', production: '154', overhead: '154', construction: '241' },
     wages: '334',
     social: '3383',
@@ -70,7 +70,7 @@ export const PAYROLL_POSTING_MAPS: Record<PayrollRegime, PostingMap> = {
   tt99: {
     regime: 'tt99',
     status: 'commentary',
-    cite: 'Circular 99/2025 chart as in crove_finance.chart_account (3386 unemployment insurance, no 3385, no sub-accounts of 334); the expense accounts are commentary (AMIS, MISA) until the accountant confirms row 18.',
+    cite: 'Circular 99/2025 chart as in ludy_finance.chart_account (3386 unemployment insurance, no 3385, no sub-accounts of 334); the expense accounts are commentary (AMIS, MISA) until the accountant confirms row 18.',
     expense: { admin: '6421', sales: '6411', production: '622', overhead: '6271', construction: '241' },
     wages: '334',
     social: '3383',

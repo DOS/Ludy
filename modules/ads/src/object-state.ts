@@ -47,7 +47,7 @@ export const adsObjectSyncTarget = defineQuery({
   handler: async (ctx, input): Promise<StateSyncTarget | null> => {
     // The account is found by the connection the hourly sync runs for (the read connection); the objects were made through the write connection.
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'write_connection_id'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
@@ -63,7 +63,7 @@ export const adsObjectSyncTarget = defineQuery({
     if (!write || write.status !== 'active') return null;
     const since = new Date(Date.now() - STOPPED_READ_DAYS * 86_400_000);
     const launches = await ctx.trx
-      .selectFrom('crove_ads.ad_launch')
+      .selectFrom('ludy_ads.ad_launch')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('ad_account_id', '=', account.id)
@@ -74,7 +74,7 @@ export const adsObjectSyncTarget = defineQuery({
       .execute();
     if (launches.length === 0) return null;
     const objects = await ctx.trx
-      .selectFrom('crove_ads.ad_object')
+      .selectFrom('ludy_ads.ad_object')
       .select(['launch_id', 'level', 'external_id'])
       .where('org_id', '=', ctx.orgId)
       .where('launch_id', 'in', launches.map((l) => l.id))
@@ -140,12 +140,12 @@ export const adsObjectSyncState = defineCommand({
   handler: async (ctx, input): Promise<ObjectSynced> => {
     requireSystem(ctx);
     const launchId = input.launchId.toLowerCase();
-    const launch = await ctx.trx.selectFrom('crove_ads.ad_launch').select(['id', 'ad_account_id']).where('org_id', '=', ctx.orgId).where('id', '=', launchId).executeTakeFirst();
+    const launch = await ctx.trx.selectFrom('ludy_ads.ad_launch').select(['id', 'ad_account_id']).where('org_id', '=', ctx.orgId).where('id', '=', launchId).executeTakeFirst();
     if (!launch) return { recorded: false, reason: 'not_found' };
     // The launch's own recorded objects, locked: an answer is matched to one by its platform id and level, never by a name, and an id the launch has no record of is counted
     // and ignored (nothing is created from what a platform says).
     const objects = await ctx.trx
-      .selectFrom('crove_ads.ad_object')
+      .selectFrom('ludy_ads.ad_object')
       .select(['id', 'level', 'external_id', 'effective_status', 'review_reason'])
       .where('org_id', '=', ctx.orgId)
       .where('launch_id', '=', launchId)
@@ -168,7 +168,7 @@ export const adsObjectSyncState = defineCommand({
         unchanged += 1;
         continue;
       }
-      await ctx.trx.updateTable('crove_ads.ad_object').set({ effective_status: status, review_reason: reason, last_seen_at: ctx.now, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_object').set({ effective_status: status, review_reason: reason, last_seen_at: ctx.now, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
       changed += 1;
     }
     const failed = input.failed.length;

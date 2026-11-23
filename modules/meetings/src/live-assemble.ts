@@ -55,14 +55,14 @@ export interface AssembleFacts {
 // anyone else the list is empty and the reason is `no_pieces`).
 export async function assembleFacts(ctx: CommandContext | QueryContext, meetingId: string, now: Date): Promise<AssembleFacts> {
   const meeting = await ctx.trx
-    .selectFrom('crove_meetings.meeting')
+    .selectFrom('ludy_meetings.meeting')
     .select(['recorder_user_id', 'started_at', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', meetingId)
     .executeTakeFirst();
   if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
   const rows = await ctx.trx
-    .selectFrom('crove_meetings.live_chunk')
+    .selectFrom('ludy_meetings.live_chunk')
     .select(['seq', 'length_seconds', 'file_id', 'size_bytes', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
@@ -75,8 +75,8 @@ export async function assembleFacts(ctx: CommandContext | QueryContext, meetingI
   const missing: number[] = [];
   for (let seq = 0; seq <= last; seq += 1) if (!have.has(seq)) missing.push(seq);
   const { rows: ended } = await sql<{ done: boolean }>`
-    SELECT (EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
-         OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)) AS done`.execute(ctx.trx);
+    SELECT (EXISTS (SELECT 1 FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
+         OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)) AS done`.execute(ctx.trx);
   // The window counts from the start; a meeting with no start time counts from its last piece, so the final recording is never raced.
   const lastPieceAt = pieces.reduce<number>((at, p) => Math.max(at, p.createdAt.getTime()), 0);
   const reference = meeting.started_at ? new Date(meeting.started_at).getTime() : lastPieceAt;
@@ -137,7 +137,7 @@ export const liveAssemblePlan = defineQuery({
     for (const piece of facts.pieces) {
       const file = byFile.get(piece.fileId);
       const { rows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-        SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${`live:${piece.seq}`})`.execute(ctx.trx);
+        SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${`live:${piece.seq}`})`.execute(ctx.trx);
       const key = rows[0];
       // A piece with no file row or no key is lost as far as the recording goes: it is a gap, and piece 0 cannot be one.
       if (!file || !key) {

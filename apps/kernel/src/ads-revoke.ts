@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The revoke at the platform of the token of a closed ads connection (ADR-0043 point 4, ADR-0025's amendment of 2026-11-03, issue #2296, W2-1), run by the
 // worker as the system, once a minute. When an ads write connection is closed (or a Meta read connection whose token holds a spend permission), the database
-// copies its sealed token into a holding of its own in the statement that drops it (crove_ads.token_hold); this sweep removes the person's permissions at
+// copies its sealed token into a holding of its own in the statement that drops it (ludy_ads.token_hold); this sweep removes the person's permissions at
 // the platform from that copy, and the copy is wiped when it worked, when the person had already removed the app, when another live connection of the same
 // person needs the grant, when the platform refuses the token or the copy does not open (nothing can be revoked from it), and after ten tries or seven days
 // (modules/ads/src/token-revoke.ts is the policy). A deployment that lacks the platform app's secret or the credential key records nothing: the copies wait.
 //
-// What this file may do with a token is one thing: open the copy of one claimed obligation through the worker-only definer `crove_ads.token_seal_get`, in
+// What this file may do with a token is one thing: open the copy of one claimed obligation through the worker-only definer `ludy_ads.token_seal_get`, in
 // the org's system context, with the credential broker, and hand it to the narrowed `AdRevoker` of its provider (`revokeToken` and no other call). The
 // definer counts the try as it opens, so a crash, a retry and a failed call all count. The secret lives in one function's scope, is never logged, never put
 // in an error, and never reaches a command: the outcome that is recorded (ads.token_revoke.record) is a state, a kind of error and the platform's own error
@@ -73,9 +73,9 @@ const codeOf = (error: unknown): string => {
 };
 const messageOf = (error: unknown): string | undefined => (error as { message?: unknown } | null)?.message as string | undefined;
 
-// Whether another live connection of the same grantor, in any org, needs the grant (crove_ads.token_grant_shared: a boolean and nothing else).
+// Whether another live connection of the same grantor, in any org, needs the grant (ludy_ads.token_grant_shared: a boolean and nothing else).
 async function sharedGrant(deps: AdsRevokeDeps, row: { orgId: string; id: string }): Promise<boolean> {
-  const { rows } = await sql<{ shared: boolean }>`SELECT crove_ads.token_grant_shared(${row.orgId}::uuid, ${row.id}::uuid) AS shared`.execute(deps.workerDb);
+  const { rows } = await sql<{ shared: boolean }>`SELECT ludy_ads.token_grant_shared(${row.orgId}::uuid, ${row.id}::uuid) AS shared`.execute(deps.workerDb);
   return rows[0]?.shared === true;
 }
 
@@ -88,7 +88,7 @@ async function openCopy(deps: AdsRevokeDeps, row: { orgId: string; id: string; l
     const { rows } = await sql<{ key_id: string; envelope: Buffer; provider: string; external_account_id: string }>`
       WITH entered AS (SELECT ludy_kernel.enter_system_context(${row.orgId}::uuid))
       SELECT s.key_id, s.envelope, s.provider, s.external_account_id
-      FROM crove_ads.token_seal_get((SELECT ${row.orgId}::uuid FROM entered), ${row.id}::uuid, ${row.leaseToken}::uuid) s`.execute(deps.workerDb);
+      FROM ludy_ads.token_seal_get((SELECT ${row.orgId}::uuid FROM entered), ${row.id}::uuid, ${row.leaseToken}::uuid) s`.execute(deps.workerDb);
     const sealed = rows[0];
     return sealed ? { keyId: sealed.key_id, envelope: sealed.envelope, provider: sealed.provider, externalAccountId: sealed.external_account_id } : null;
   } catch (error) {
@@ -192,14 +192,14 @@ export async function runAdsRevoke(deps: AdsRevokeDeps): Promise<AdsRevokeResult
   const result: AdsRevokeResult = { expired: 0, closed: 0, tried: 0, done: 0 };
 
   // 1. Past their age or their tries: settled, the copies wiped.
-  const { rows: expired } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb);
+  const { rows: expired } = await sql<{ n: number }>`SELECT ludy_ads.token_revoke_expire() AS n`.execute(deps.workerDb);
   result.expired = expired[0]?.n ?? 0;
 
   // 2. Write connections of people who left: closed, so the holding is made and the revoke below finds it.
   let after = null as { orgId: string; connectionId: string } | null;
   for (let page = 0; page < ADS_ORPHAN_MAX_PAGES; page++) {
     const { rows } = await sql<{ org_id: string; connection_id: string }>`
-      SELECT org_id, connection_id FROM crove_ads.write_orphans(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${ADS_ORPHAN_PAGE}::int)`.execute(deps.workerDb);
+      SELECT org_id, connection_id FROM ludy_ads.write_orphans(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${ADS_ORPHAN_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         const closed = await deps.runtime.execute<{ closed: boolean }>('kernel.channel.close_orphan', { connectionId: row.connection_id }, { actor: SYSTEM, orgId: row.org_id });
@@ -216,7 +216,7 @@ export async function runAdsRevoke(deps: AdsRevokeDeps): Promise<AdsRevokeResult
 
   // 3. Due obligations.
   for (let batch = 0; batch < ADS_REVOKE_MAX_BATCHES; batch++) {
-    const { rows } = await sql<{ org_id: string; id: string; provider: string; lease_token: string }>`SELECT org_id, id, provider, lease_token FROM crove_ads.token_revoke_due(${ADS_REVOKE_BATCH}::int)`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string; id: string; provider: string; lease_token: string }>`SELECT org_id, id, provider, lease_token FROM ludy_ads.token_revoke_due(${ADS_REVOKE_BATCH}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       let outcome: Outcome | null;
       try {

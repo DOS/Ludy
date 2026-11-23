@@ -478,7 +478,7 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
       // - End + erase Cũ (must disappear from Oct and show masked HR_ERASED_NAME as terminated)
       await orgA.exec(orgA.owner, 'hr.payroll.employee.end', { employeeId: empCu.employeeId, endedOn: '2026-09-25' });
       await adminPool.query(
-        `UPDATE crove_hr.payroll_employee
+        `UPDATE ludy_hr.payroll_employee
          SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
          WHERE org_id = $1 AND id = $2`,
         [orgA.orgId, empCu.employeeId],
@@ -497,7 +497,7 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
 
       // - Link member user to empAn and submit a PENDING leave request -> must NOT alter projected snapshot until approved!
       await adminPool.query(
-        `UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3`,
+        `UPDATE ludy_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3`,
         [orgA.member, orgA.orgId, empAn.employeeId],
       );
       const pendingLeave = await orgA.exec<{ requestId: string }>(orgA.member, 'hr.self.leave.request_submit', {
@@ -510,7 +510,7 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
       expect(pendingLeave.requestId).toBeTruthy();
 
       const runsBeforeProjected = await adminPool.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count FROM crove_hr.payroll_run WHERE org_id = $1`,
+        `SELECT COUNT(*)::text AS count FROM ludy_hr.payroll_run WHERE org_id = $1`,
         [orgA.orgId],
       );
 
@@ -518,7 +518,7 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
         month: '2026-10',
       });
       const runsAfterProjected = await adminPool.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count FROM crove_hr.payroll_run WHERE org_id = $1`,
+        `SELECT COUNT(*)::text AS count FROM ludy_hr.payroll_run WHERE org_id = $1`,
         [orgA.orgId],
       );
       expect(runsAfterProjected.rows[0]?.count).toBe(runsBeforeProjected.rows[0]?.count); // Zero DB writes!

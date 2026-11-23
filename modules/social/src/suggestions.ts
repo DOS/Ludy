@@ -48,12 +48,12 @@ export const commentSuggest = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const s = input.suggestion;
-    const post = await ctx.trx.selectFrom('crove_social.post').select(['id', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
+    const post = await ctx.trx.selectFrom('ludy_social.post').select(['id', 'body']).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
     if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng');
     // As for any comment (#1081): a post and a channel the member may use.
     await refusePostOutside(ctx, post.id);
     const variants = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['id', 'channel_connection_id', 'body', 'status', 'content_frozen'])
       .where('org_id', '=', ctx.orgId)
       .where('post_id', '=', post.id)
@@ -75,7 +75,7 @@ export const commentSuggest = defineCommand({
     if (text.slice(s.start, s.end) !== s.quote) throw new DomainError('SUGGESTION_STALE', 409, 'Nội dung đã đổi từ lúc bạn chọn đoạn này; hãy tải lại rồi chọn lại');
     const body = input.body ?? '';
     const row = await ctx.trx
-      .insertInto('crove_social.post_comment')
+      .insertInto('ludy_social.post_comment')
       .values({
         org_id: ctx.orgId,
         post_id: post.id,
@@ -115,11 +115,11 @@ interface OpenSuggestion {
 // The suggestion and its post, both locked (the post first, as every edit locks it), on a post and a channel the member
 // may use. Refuses a comment that is no suggestion and one already closed.
 async function lockSuggestion(ctx: CommandContext, commentId: string): Promise<{ s: OpenSuggestion; post: PostRow }> {
-  const found = await ctx.trx.selectFrom('crove_social.post_comment').select('post_id').where('org_id', '=', ctx.orgId).where('id', '=', commentId).executeTakeFirst();
+  const found = await ctx.trx.selectFrom('ludy_social.post_comment').select('post_id').where('org_id', '=', ctx.orgId).where('id', '=', commentId).executeTakeFirst();
   if (!found) throw new DomainError('COMMENT_NOT_FOUND', 404, 'Không tìm thấy bình luận này');
   const post = await lockPost(ctx.trx, ctx.orgId, found.post_id);
   const c = await ctx.trx
-    .selectFrom('crove_social.post_comment')
+    .selectFrom('ludy_social.post_comment')
     .select(['id', 'post_id', 'variant_id', 'suggest_field', 'suggest_start', 'suggest_end', 'suggest_quote', 'suggest_text', 'suggest_state'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', commentId)
@@ -127,7 +127,7 @@ async function lockSuggestion(ctx: CommandContext, commentId: string): Promise<{
     .executeTakeFirstOrThrow();
   await refusePostOutside(ctx, c.post_id);
   if (c.variant_id) {
-    const v = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', c.variant_id).executeTakeFirst();
+    const v = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', c.variant_id).executeTakeFirst();
     if (v) await refuseChannels(ctx, [v.channel_connection_id]);
   }
   if (c.suggest_field === null || c.suggest_start === null || c.suggest_end === null || c.suggest_quote === null || c.suggest_text === null) {
@@ -147,7 +147,7 @@ function currentText(s: OpenSuggestion, post: { body: string; revision: number }
 }
 
 async function close(ctx: CommandContext, s: OpenSuggestion, state: Exclude<SocialSuggestState, 'open'>, userId: string): Promise<void> {
-  await ctx.trx.updateTable('crove_social.post_comment').set({ suggest_state: state, resolved_at: ctx.now, resolved_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', s.id).execute();
+  await ctx.trx.updateTable('ludy_social.post_comment').set({ suggest_state: state, resolved_at: ctx.now, resolved_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', s.id).execute();
 }
 
 // The statuses from which an accepted change goes back to review by itself: the channel was being reviewed, or was

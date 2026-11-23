@@ -178,7 +178,7 @@ export const DEFAULT_VIETNAM_SME_PLAYBOOK_RULES: readonly DefaultVietnamSmePlayb
 
 const PLAYBOOK_RULE_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'playbook_rule',
   [
     'org_id',
@@ -196,7 +196,7 @@ const PLAYBOOK_RULE_WRITE = tableWrite(
 
 const PLAYBOOK_CHECK_RECORD_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'playbook_check',
   [
     'org_id',
@@ -214,7 +214,7 @@ const PLAYBOOK_CHECK_RECORD_WRITE = tableWrite(
 
 const PLAYBOOK_CHECK_OVERRIDE_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'playbook_check',
   ['mode', 'findings_json', 'updated_at'],
 );
@@ -337,6 +337,7 @@ function assertPlaybookAdmin(ctx: CommandContext): string {
 
 export function deterministicPlaybookRuleId(orgId: string, slot: DefaultPlaybookRuleSlot): string {
   const hex = createHash('sha256')
+    // Category B (ADR-0054 section 2): keep crove_sign.playbook_rule: hash domain so seeded rule UUIDs stay stable across cutover.
     .update(`crove_sign.playbook_rule:${orgId.toLowerCase()}:${slot}`)
     .digest('hex');
   const timeLow = hex.slice(0, 8);
@@ -442,7 +443,7 @@ async function listEffectivePlaybookRulesOnTrx(
   orgId: string,
 ): Promise<{ items: SignPlaybookRuleRecord[]; isSeeded: boolean }> {
   const rows = await trx
-    .selectFrom('crove_sign.playbook_rule')
+    .selectFrom('ludy_sign.playbook_rule')
     .selectAll()
     .where('org_id', '=', orgId)
     .orderBy('created_at', 'asc')
@@ -476,7 +477,7 @@ async function ensurePlaybookRulesMaterialized(
   userId: string,
 ): Promise<void> {
   const existing = await ctx.trx
-    .selectFrom('crove_sign.playbook_rule')
+    .selectFrom('ludy_sign.playbook_rule')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .limit(1)
@@ -489,7 +490,7 @@ async function ensurePlaybookRulesMaterialized(
   for (const [index, spec] of DEFAULT_VIETNAM_SME_PLAYBOOK_RULES.entries()) {
     const createdAt = new Date(baseTimeMs + index);
     await ctx.trx
-      .insertInto('crove_sign.playbook_rule')
+      .insertInto('ludy_sign.playbook_rule')
       .values({
         org_id: ctx.orgId,
         id: deterministicPlaybookRuleId(ctx.orgId, spec.slot),
@@ -1791,7 +1792,7 @@ export const playbookGet = defineQuery({
   handler: async (ctx, input): Promise<SignPlaybookGetResult> => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -1804,7 +1805,7 @@ export const playbookGet = defineQuery({
 
     const [row, effectiveRules] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_sign.playbook_check')
+        .selectFrom('ludy_sign.playbook_check')
         .selectAll()
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', env.id)
@@ -1828,7 +1829,7 @@ export const playbookSource = defineQuery({
   access: WRITERS,
   handler: async (ctx, input): Promise<SignPlaybookSource> => {
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'status',
@@ -1914,7 +1915,7 @@ export const playbookRuleUpsert = defineCommand({
 
     if (input.ruleId) {
       const existing = await ctx.trx
-        .selectFrom('crove_sign.playbook_rule')
+        .selectFrom('ludy_sign.playbook_rule')
         .selectAll()
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.ruleId)
@@ -1925,7 +1926,7 @@ export const playbookRuleUpsert = defineCommand({
       }
 
       const updated = await ctx.trx
-        .updateTable('crove_sign.playbook_rule')
+        .updateTable('ludy_sign.playbook_rule')
         .set({
           title,
           guidance,
@@ -1953,7 +1954,7 @@ export const playbookRuleUpsert = defineCommand({
     }
 
     const currentRows = await ctx.trx
-      .selectFrom('crove_sign.playbook_rule')
+      .selectFrom('ludy_sign.playbook_rule')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .limit(SIGN_MAX_PLAYBOOK_RULES + 1)
@@ -1967,7 +1968,7 @@ export const playbookRuleUpsert = defineCommand({
     }
 
     const inserted = await ctx.trx
-      .insertInto('crove_sign.playbook_rule')
+      .insertInto('ludy_sign.playbook_rule')
       .values({
         org_id: ctx.orgId,
         id: randomUUID(),
@@ -2010,7 +2011,7 @@ export const playbookRuleDelete = defineCommand({
     await ensurePlaybookRulesMaterialized(ctx, userId);
 
     const deleted = await ctx.trx
-      .deleteFrom('crove_sign.playbook_rule')
+      .deleteFrom('ludy_sign.playbook_rule')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.ruleId)
       .returning('id')
@@ -2038,7 +2039,7 @@ export const playbookSeedDefaults = defineCommand({
   handler: async (ctx): Promise<SignPlaybookRulesListResult> => {
     const userId = assertPlaybookAdmin(ctx);
     const existingRows = await ctx.trx
-      .selectFrom('crove_sign.playbook_rule')
+      .selectFrom('ludy_sign.playbook_rule')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .limit(SIGN_MAX_PLAYBOOK_RULES + 5)
@@ -2061,7 +2062,7 @@ export const playbookSeedDefaults = defineCommand({
       const ruleId = deterministicPlaybookRuleId(ctx.orgId, spec.slot);
       const ts = new Date(baseTimeMs + index);
       await ctx.trx
-        .insertInto('crove_sign.playbook_rule')
+        .insertInto('ludy_sign.playbook_rule')
         .values({
           org_id: ctx.orgId,
           id: ruleId,
@@ -2113,7 +2114,7 @@ export const playbookRecordCheck = defineCommand({
     }
 
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -2164,7 +2165,7 @@ export const playbookRecordCheck = defineCommand({
     }
 
     const lockedExisting = await ctx.trx
-      .selectFrom('crove_sign.playbook_check')
+      .selectFrom('ludy_sign.playbook_check')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -2267,7 +2268,7 @@ export const playbookRecordCheck = defineCommand({
 
     let saved = lockedExisting
       ? await ctx.trx
-          .updateTable('crove_sign.playbook_check')
+          .updateTable('ludy_sign.playbook_check')
           .set({
             id: nextCheckId,
             source_sha256: env.source_sha256,
@@ -2282,7 +2283,7 @@ export const playbookRecordCheck = defineCommand({
           .returningAll()
           .executeTakeFirst()
       : await ctx.trx
-          .insertInto('crove_sign.playbook_check')
+          .insertInto('ludy_sign.playbook_check')
           .values({
             org_id: ctx.orgId,
             id: nextCheckId,
@@ -2302,7 +2303,7 @@ export const playbookRecordCheck = defineCommand({
     // Handle concurrent first-insert race on (org_id, envelope_id).
     if (!saved) {
       const racedRow = await ctx.trx
-        .selectFrom('crove_sign.playbook_check')
+        .selectFrom('ludy_sign.playbook_check')
         .selectAll()
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', env.id)
@@ -2326,7 +2327,7 @@ export const playbookRecordCheck = defineCommand({
         }
       }
       saved = await ctx.trx
-        .updateTable('crove_sign.playbook_check')
+        .updateTable('ludy_sign.playbook_check')
         .set({
           id: nextCheckId,
           source_sha256: env.source_sha256,
@@ -2369,7 +2370,7 @@ export const playbookOverrideFinding = defineCommand({
   handler: async (ctx, input): Promise<SignEnvelopePlaybookCheckRecord> => {
     const userId = assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -2382,7 +2383,7 @@ export const playbookOverrideFinding = defineCommand({
 
     const [existing, effectiveRules] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_sign.playbook_check')
+        .selectFrom('ludy_sign.playbook_check')
         .selectAll()
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', env.id)
@@ -2433,7 +2434,7 @@ export const playbookOverrideFinding = defineCommand({
     );
 
     const updated = await ctx.trx
-      .updateTable('crove_sign.playbook_check')
+      .updateTable('ludy_sign.playbook_check')
       .set({
         mode: 'manual',
         findings_json: serializeStoredFindings(nextItems),

@@ -44,7 +44,7 @@ export const einvoiceNoticeOpen = defineCommand({
   target: (input) => ({ type: 'finance.einvoice_draft', id: input.draftId }),
   handler: async (ctx, input): Promise<EInvoiceNotice> => {
     const draft = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select(['legal_entity_id', 'state', 'issued_number'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.draftId.toLowerCase())
@@ -54,7 +54,7 @@ export const einvoiceNoticeOpen = defineCommand({
     if (draft.state !== 'issued' || draft.issued_number === null) throw new DomainError('EINVOICE_ORIGINAL_NOT_ISSUED', 409, 'Chỉ ghi nhận sai sót cho hóa đơn đã phát hành');
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const row = await ctx.trx
-      .insertInto('crove_finance.einvoice_notice')
+      .insertInto('ludy_finance.einvoice_notice')
       .values({ org_id: ctx.orgId, legal_entity_id: draft.legal_entity_id, draft_id: input.draftId.toLowerCase(), field: input.field, correct_text: input.correctText, created_by: userId })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -72,7 +72,7 @@ export const einvoiceNoticeStep = defineCommand({
   access: EDITORS,
   handler: async (ctx, input): Promise<EInvoiceNotice> => {
     const existing = await ctx.trx
-      .selectFrom('crove_finance.einvoice_notice')
+      .selectFrom('ludy_finance.einvoice_notice')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noticeId.toLowerCase())
@@ -82,7 +82,7 @@ export const einvoiceNoticeStep = defineCommand({
     const done = input.step === 'buyer_notice' ? existing.buyer_notice_state === 'sent' : existing.form_state === 'filed';
     if (done) return view(existing);
     const row = await ctx.trx
-      .updateTable('crove_finance.einvoice_notice')
+      .updateTable('ludy_finance.einvoice_notice')
       .set(input.step === 'buyer_notice' ? { buyer_notice_state: 'sent', buyer_notified_at: ctx.now } : { form_state: 'filed', form_filed_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
@@ -95,14 +95,14 @@ export const einvoiceNoticeStep = defineCommand({
 
 async function loadList(ctx: Ctx, draftId: string): Promise<EInvoiceNoticeList> {
   const draft = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft as d')
-    .leftJoin('crove_finance.einvoice_series as s', (join) => join.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.series_id'))
+    .selectFrom('ludy_finance.einvoice_draft as d')
+    .leftJoin('ludy_finance.einvoice_series as s', (join) => join.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.series_id'))
     .select(['d.issued_number', 'd.invoice_date', 'd.buyer_name', 'd.buyer_email', 's.template_no', 's.symbol', 'd.state'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.id', '=', draftId)
     .executeTakeFirst();
   if (!draft || draft.state !== 'issued' || draft.issued_number === null) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy hóa đơn');
-  const rows = await ctx.trx.selectFrom('crove_finance.einvoice_notice').selectAll().where('org_id', '=', ctx.orgId).where('draft_id', '=', draftId).orderBy('created_at').orderBy('id').execute();
+  const rows = await ctx.trx.selectFrom('ludy_finance.einvoice_notice').selectAll().where('org_id', '=', ctx.orgId).where('draft_id', '=', draftId).orderBy('created_at').orderBy('id').execute();
   return {
     reference: { number: draft.issued_number, templateNo: draft.template_no ?? null, symbol: draft.symbol ?? null, date: draft.invoice_date, buyerName: draft.buyer_name, buyerEmail: draft.buyer_email },
     notices: rows.map(view),

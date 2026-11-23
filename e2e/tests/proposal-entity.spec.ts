@@ -63,7 +63,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
   await test.step('the entry is in the branch books only', async () => {
     const rows = sql<{ entity: string }>(
       `SELECT e.name AS entity
-       FROM crove_finance.journal_entry j
+       FROM ludy_finance.journal_entry j
        JOIN ludy_kernel.tenant t ON t.org_id = j.org_id
        JOIN ludy_kernel.legal_entity e ON e.org_id = j.org_id AND e.id = j.legal_entity_id
        WHERE t.slug = :'slug'`,

@@ -31,7 +31,7 @@ export interface BioView {
 export async function bioView(runtime: Runtime, slug: string): Promise<BioView | null> {
   if (!SLUG.test(slug)) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ page: BioView | null }>`SELECT crove_social.bio_page_view(${slug}) AS page`.execute(db);
+    const { rows } = await sql<{ page: BioView | null }>`SELECT ludy_social.bio_page_view(${slug}) AS page`.execute(db);
     return rows[0]?.page ?? null;
   });
 }
@@ -41,7 +41,7 @@ export async function bioGo(runtime: Runtime, slug: string, target: string, user
   if (!SLUG.test(slug) || !TARGET.test(target)) return null;
   const count = Boolean(userAgent) && !AUTOMATED.test(userAgent as string);
   const url = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ url: string | null }>`SELECT crove_social.bio_page_go(${slug}, ${target}, ${count}) AS url`.execute(db);
+    const { rows } = await sql<{ url: string | null }>`SELECT ludy_social.bio_page_go(${slug}, ${target}, ${count}) AS url`.execute(db);
     return rows[0]?.url ?? null;
   });
   return url && /^https?:\/\//.test(url) ? url : null;
@@ -52,7 +52,7 @@ export async function bioImage(runtime: Runtime, store: BlobStore, slug: string,
   if (!SLUG.test(slug) || !UUID.test(fileId)) return null;
   const file = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ storage_key: string; generation: string | null; sha256: string; content_type: string; size_bytes: string }>`
-      SELECT storage_key, generation, sha256, content_type, size_bytes FROM crove_social.bio_page_file(${slug}, ${fileId}::uuid)`.execute(db);
+      SELECT storage_key, generation, sha256, content_type, size_bytes FROM ludy_social.bio_page_file(${slug}, ${fileId}::uuid)`.execute(db);
     return rows[0] ?? null;
   });
   if (!file || Number(file.size_bytes) > MAX_IMAGE_BYTES) return null;

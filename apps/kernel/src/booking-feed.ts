@@ -33,7 +33,7 @@ export interface BookingFeed {
 export async function bookingFeed(runtime: Runtime, token: string): Promise<BookingFeed | null> {
   if (!TOKEN.test(token)) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ feed: BookingFeed | null }>`SELECT crove_crm.booking_feed_events(${token}) AS feed`.execute(db);
+    const { rows } = await sql<{ feed: BookingFeed | null }>`SELECT ludy_crm.booking_feed_events(${token}) AS feed`.execute(db);
     return rows[0]?.feed ?? null;
   });
 }

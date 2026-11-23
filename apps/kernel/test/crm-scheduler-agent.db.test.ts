@@ -81,7 +81,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     const book = async (startsAt: string) => {
       const request = await bookingRequest(app, slug, 'tu-van', { startsAt, name: 'Chị Lan Bí Mật', email: `lan-${randomUUID().slice(0, 6)}@khach.test`, phone: '0901234567', timeZone: VN });
       if (!request) throw new Error('no request');
-      const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
+      const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
       const bookingId = rows[0]?.id as string;
       expect(await worker.execute('crm.booking.confirm', { bookingId }, { actor: SYSTEM, orgId })).toMatchObject({ status: 'confirmed' });
       return bookingId;
@@ -160,7 +160,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     const after = await admin(async (c) => ({
       comments: (await c.query<{ body: string; author_type: string }>(`SELECT body, author_type FROM ludy_kernel.task_comment WHERE org_id = $1`, [o.orgId])).rows,
       escalations: (await c.query(`SELECT title, created_by_type FROM ludy_kernel.task WHERE org_id = $1 AND kind = 'escalation'`, [o.orgId])).rows,
-      bookings: (await c.query<{ id: string; status: string }>(`SELECT id, status FROM crove_crm.booking WHERE org_id = $1 ORDER BY starts_at`, [o.orgId])).rows,
+      bookings: (await c.query<{ id: string; status: string }>(`SELECT id, status FROM ludy_crm.booking WHERE org_id = $1 ORDER BY starts_at`, [o.orgId])).rows,
     }));
     expect(after.comments).toEqual([{ body: proposalText(next), author_type: 'agent' }]);
     expect(after.comments[0]?.body).toContain('Khách đã hủy lịch hẹn "Tư vấn thuế" lúc 10:00 ');
@@ -209,7 +209,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     };
     expect(await runAgentWake({ runtime: worker, programs: { 'crm.scheduler': tries } }, o.orgId, o.agentId)).toMatchObject({ outcome: 'succeeded' });
     expect(refused).toEqual(['crm.booking.cancel: 403', 'crm.booking.move: 403', 'crm.event_type.set_active: 403']);
-    const status = await admin(async (c) => (await c.query<{ status: string }>(`SELECT status FROM crove_crm.booking WHERE org_id = $1 AND id = $2`, [o.orgId, standing])).rows[0]?.status);
+    const status = await admin(async (c) => (await c.query<{ status: string }>(`SELECT status FROM ludy_crm.booking WHERE org_id = $1 AND id = $2`, [o.orgId, standing])).rows[0]?.status);
     expect(status).toBe('confirmed');
   });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // One meeting, one live capture (ADR-0055 slice 1, issue #4123): the shapes of the capture a client starts when it records a call, the heartbeat that keeps it alive, and the one rule that reads which call
 // a join address names. The server decides: a second capture of a call that is already being captured is refused, naming the kind of client and since when, never a person and never the other meeting.
-// The table is crove_meetings.capture_session; nothing here calls a model.
+// The table is ludy_meetings.capture_session; nothing here calls a model.
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 

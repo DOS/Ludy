@@ -17,8 +17,8 @@ export interface SalesEntry {
 // `from` and `to` are days (inclusive); with `before` instead of `to` the range stops the day before it.
 export async function salesEntriesOf(ctx: Ctx, entity: string, range: { from: string; to: string } | { from: string; before: string }): Promise<SalesEntry[]> {
   let query = ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select(['j.id', 'j.entry_date'])
     .select(sql<string>`SUM(l.credit - l.debit)::text`.as('amount'))
     .where('l.org_id', '=', ctx.orgId)
@@ -27,7 +27,7 @@ export async function salesEntriesOf(ctx: Ctx, entity: string, range: { from: st
     .where((eb) =>
       eb.or([
         eb('l.account_code', 'like', '511%'),
-        eb('l.account_code', 'in', eb.selectFrom('crove_finance.org_account').select('code').where('org_id', '=', ctx.orgId).where('root_code', '=', '511')),
+        eb('l.account_code', 'in', eb.selectFrom('ludy_finance.org_account').select('code').where('org_id', '=', ctx.orgId).where('root_code', '=', '511')),
       ]),
     );
   query = 'to' in range ? query.where('j.entry_date', '<=', range.to) : query.where('j.entry_date', '<', range.before);
@@ -41,7 +41,7 @@ export async function tradesDifferEarlierInYear(ctx: Ctx, entity: string, year: 
   const jan1 = `${year}-01-01`;
   if (from <= jan1) return false;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.household_profile')
+    .selectFrom('ludy_finance.household_profile')
     .select(['effective_from', 'trades'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)

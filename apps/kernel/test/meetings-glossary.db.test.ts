@@ -45,8 +45,8 @@ suite('the glossary an organization keeps (#4043)', () => {
   type Done = { termId: string };
   const add = (who: string, term: string, org = orgId) => exec<Done>(who, 'meetings.glossary.add', { term }, org);
   const list = (who: string, org = orgId) => query<GlossaryTerms>(who, 'meetings.glossary.list', {}, org).then((r) => r.terms);
-  const stored = async (termId: string) => (await sqlAdmin<{ term: string }>('SELECT term FROM crove_meetings.glossary_term WHERE id = $1', [termId])).rows[0]?.term;
-  const wipe = (org = orgId) => sqlAdmin('DELETE FROM crove_meetings.glossary_term WHERE org_id = $1', [org]);
+  const stored = async (termId: string) => (await sqlAdmin<{ term: string }>('SELECT term FROM ludy_meetings.glossary_term WHERE id = $1', [termId])).rows[0]?.term;
+  const wipe = (org = orgId) => sqlAdmin('DELETE FROM ludy_meetings.glossary_term WHERE org_id = $1', [org]);
 
   // A plain statement in a member's sealed context, with no command in between; rolled back whatever happens.
   async function asContext(who: string, org: string, fn: (run: (statement: string, params?: unknown[]) => Promise<pg.QueryResult>) => Promise<void>) {
@@ -164,22 +164,22 @@ suite('the glossary an organization keeps (#4043)', () => {
     const one = await add('owner', 'Crove');
     // The table's own CHECK refuses what the contract refuses, whatever wrote it (the admin connection skips the policy, not the CHECK).
     for (const bad of ['', ' Crove', 'x'.repeat(41), '12345', 'an@example.com', 'an＠example.com', 'a\u200bb', 'a\u206ab', 'a\uffa0b', 'see www.example.com', 'www．example.com', 'www․example.com', 'Crove\n']) {
-      const code = await sqlAdmin(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3)`, [orgId, bad, users.owner]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR');
+      const code = await sqlAdmin(`INSERT INTO ludy_meetings.glossary_term (org_id, term, created_by) VALUES ($1, $2, $3)`, [orgId, bad, users.owner]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR');
       expect(code, JSON.stringify(bad)).toBe('23514');
     }
-    expect((await sqlAdmin('SELECT count(*)::int AS n FROM crove_meetings.glossary_term WHERE org_id = $1', [orgId])).rows[0]?.n).toBe(1);
+    expect((await sqlAdmin('SELECT count(*)::int AS n FROM ludy_meetings.glossary_term WHERE org_id = $1', [orgId])).rows[0]?.n).toBe(1);
     // A member's own statements: no row to read, no row to change, no row to add.
     await asContext('rec', orgId, async (run) => {
-      expect((await run('SELECT count(*)::int AS n FROM crove_meetings.glossary_term')).rows[0]?.n).toBe(0);
-      expect((await run(`UPDATE crove_meetings.glossary_term SET term = 'Hỏng' WHERE id = $1`, [one.termId])).rowCount).toBe(0);
-      expect((await run('DELETE FROM crove_meetings.glossary_term WHERE id = $1', [one.termId])).rowCount).toBe(0);
+      expect((await run('SELECT count(*)::int AS n FROM ludy_meetings.glossary_term')).rows[0]?.n).toBe(0);
+      expect((await run(`UPDATE ludy_meetings.glossary_term SET term = 'Hỏng' WHERE id = $1`, [one.termId])).rowCount).toBe(0);
+      expect((await run('DELETE FROM ludy_meetings.glossary_term WHERE id = $1', [one.termId])).rowCount).toBe(0);
     });
     await asContext('rec', orgId, async (run) => {
-      await expect(run(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, 'Của member', $2)`, [orgId, users.rec])).rejects.toMatchObject({ code: '42501' });
+      await expect(run(`INSERT INTO ludy_meetings.glossary_term (org_id, term, created_by) VALUES ($1, 'Của member', $2)`, [orgId, users.rec])).rejects.toMatchObject({ code: '42501' });
     });
     // An owner's own statements see their org's rows and no other org's.
     await asContext('owner', orgId, async (run) => {
-      expect((await run('SELECT count(*)::int AS n FROM crove_meetings.glossary_term')).rows[0]?.n).toBe(1);
+      expect((await run('SELECT count(*)::int AS n FROM ludy_meetings.glossary_term')).rows[0]?.n).toBe(1);
     });
     expect(await stored(one.termId)).toBe('Crove');
   });

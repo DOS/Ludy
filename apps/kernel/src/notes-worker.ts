@@ -53,7 +53,7 @@ export function queueNotesMemberPurge(boss: JobSender, row: { org_id: string; ev
 // One pass of the trash: every org with notes in the trash past the limit, emptied in its own system context. Logs ids
 // and codes only.
 export async function sweepNotesTrash(deps: { runtime: Runtime; workerDb: Db }, now = new Date()): Promise<number> {
-  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_notes.trash_due(${trashCutoff(now)}::timestamptz, ${TRASH_SWEEP_ORGS}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_notes.trash_due(${trashCutoff(now)}::timestamptz, ${TRASH_SWEEP_ORGS}::int)`.execute(deps.workerDb);
   let removed = 0;
   for (const row of rows) {
     try {
@@ -66,13 +66,13 @@ export async function sweepNotesTrash(deps: { runtime: Runtime; workerDb: Db }, 
   return removed;
 }
 
-// One pass of the reminders: the due ones, claimed (marked sent) by crove_notes.todo_reminders_claim, each becoming one
+// One pass of the reminders: the due ones, claimed (marked sent) by ludy_notes.todo_reminders_claim, each becoming one
 // notification for its owner through notes.todo.remind in the org's system context, tried twice (a lock timeout, a
 // serialization failure). A failure after that skips the reminder rather than retry it on every pass (notes.md §3.8:
 // at most once). The claim returns ids, owners and times, never text; logs carry ids and codes only.
 export async function sweepNotesReminders(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   const { rows } = await sql<{ org_id: string; id: string; remind_at: Date }>`
-    SELECT org_id, id, remind_at FROM crove_notes.todo_reminders_claim(${REMIND_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+    SELECT org_id, id, remind_at FROM ludy_notes.todo_reminders_claim(${REMIND_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
   let sent = 0;
   for (const row of rows) {
     // The claim marked the reminder sent; an org whose Notes is off (ADR-0053) does not get it late either, and nothing is logged for it.
@@ -97,7 +97,7 @@ export async function sweepNotesReminders(deps: { runtime: Runtime; workerDb: Db
 // and codes only.
 export async function sweepNotesFormerMembers(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   const { rows } = await sql<{ org_id: string; user_id: string; recorded: boolean }>`
-    SELECT org_id, user_id, recorded FROM crove_notes.former_members_due(${FORMER_MEMBER_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+    SELECT org_id, user_id, recorded FROM ludy_notes.former_members_due(${FORMER_MEMBER_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
   let removed = 0;
   for (const row of rows) {
     if (!row.recorded) {
@@ -227,7 +227,7 @@ export async function runNoteAttachmentExtract(
 // for the orgs that have Notes on, on the reminders' 5-minute tick. The singleton key keeps one job per attachment.
 export async function requestDueNoteAttachmentExtracts(deps: { runtime: Runtime; workerDb: Db; boss: JobSender }): Promise<number> {
   const { rows } = await sql<{ org_id: string; id: string }>`
-    SELECT org_id, id FROM crove_notes.attachment_extract_due(200)
+    SELECT org_id, id FROM ludy_notes.attachment_extract_due(200)
   `.execute(deps.workerDb);
   let sent = 0;
   for (const row of rows) {
@@ -259,7 +259,7 @@ export async function sweepNoteAttachmentBlobs(deps: {
   let deleted = 0;
   for (let pass = 0; pass < 10; pass++) {
     const { rows } = await sql<{ blob_key: string }>`
-      SELECT blob_key FROM crove_notes.attachment_blob_claim(${BLOB_SWEEP_BATCH}::int)
+      SELECT blob_key FROM ludy_notes.attachment_blob_claim(${BLOB_SWEEP_BATCH}::int)
     `.execute(deps.workerDb);
     if (rows.length === 0) break;
     const done: string[] = [];
@@ -272,7 +272,7 @@ export async function sweepNoteAttachmentBlobs(deps: {
       }
     }
     if (done.length > 0) {
-      await sql`SELECT crove_notes.attachment_blob_done(${done}::text[])`.execute(deps.workerDb);
+      await sql`SELECT ludy_notes.attachment_blob_done(${done}::text[])`.execute(deps.workerDb);
     }
     deleted += done.length;
     if (done.length < rows.length) {

@@ -459,7 +459,7 @@ function sweepErrorLabel(error: unknown): string {
 export async function sweepSignExpire(deps: SignSweepDeps): Promise<number> {
   const log = deps.log ?? console;
   const { rows: orgs } = await sql<{ org_id: string }>`
-    SELECT org_id FROM crove_sign.expire_sweep_due_orgs(${SWEEP_ORG_BATCH}) ORDER BY org_id ASC
+    SELECT org_id FROM ludy_sign.expire_sweep_due_orgs(${SWEEP_ORG_BATCH}) ORDER BY org_id ASC
   `.execute(deps.workerDb);
   let total = 0;
   for (const row of orgs) {
@@ -491,7 +491,7 @@ export async function sweepSignPreExpiryReminders(deps: SignSweepDeps): Promise<
   const log = deps.log ?? console;
   const { rows: orgs } = await sql<{ org_id: string }>`
     SELECT org_id
-    FROM crove_sign.pre_expiry_remind_due_orgs(${SWEEP_ORG_BATCH}, ${deps.now ?? null}::timestamptz)
+    FROM ludy_sign.pre_expiry_remind_due_orgs(${SWEEP_ORG_BATCH}, ${deps.now ?? null}::timestamptz)
     ORDER BY org_id ASC
   `.execute(deps.workerDb);
   const totals: SignPreExpirySweepTotals = {
@@ -535,7 +535,7 @@ export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{
   const otpCutoff = new Date(nowMs - DEFAULT_OTP_RETENTION_HOURS * 3_600_000);
   const tokenCutoff = new Date(nowMs - DEFAULT_RETENTION_DAYS * 86_400_000);
   const { rows: orgs } = await sql<{ org_id: string }>`
-    SELECT org_id FROM crove_sign.cleanup_due_orgs_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz, ${SWEEP_ORG_BATCH}) ORDER BY org_id ASC
+    SELECT org_id FROM ludy_sign.cleanup_due_orgs_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz, ${SWEEP_ORG_BATCH}) ORDER BY org_id ASC
   `.execute(deps.workerDb);
   const totals = { orgs: 0, otps: 0, tokens: 0, drafts: 0, draftEvents: 0 };
   for (const row of orgs) {
@@ -1060,7 +1060,7 @@ async function fetchSignRecoveryPage(
     updated_at_cursor: string;
   }>`
     SELECT work_kind, org_id, envelope_id, updated_at::text AS updated_at_cursor
-    FROM crove_sign.work_recovery_candidates(
+    FROM ludy_sign.work_recovery_candidates(
       ${olderThan}::timestamptz,
       ${batchSize},
       ${orgId}::uuid,
@@ -1085,7 +1085,7 @@ async function fetchTemplateRecoveryPage(
     updated_at_cursor: string;
   }>`
     SELECT org_id, template_id, updated_at::text AS updated_at_cursor
-    FROM crove_sign.template_work_recovery_candidates(
+    FROM ludy_sign.template_work_recovery_candidates(
       ${olderThan}::timestamptz,
       ${batchSize},
       ${orgId}::uuid,
@@ -1110,7 +1110,7 @@ async function fetchCaRecoveryPage(
     due_at_cursor: string;
   }>`
     SELECT org_id, request_id, due_at::text AS due_at_cursor
-    FROM crove_sign.ca_work_recovery_candidates(
+    FROM ludy_sign.ca_work_recovery_candidates(
       ${olderThan}::timestamptz,
       ${batchSize},
       ${orgId}::uuid,

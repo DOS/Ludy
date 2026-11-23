@@ -56,18 +56,18 @@ suite('finance.signals.sales on PostgreSQL (#2967)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, $7, $8)`,
           [orgId, doc, partyId, number, date, total, direction, legalEntity],
         );
         const entry = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
           [orgId, entry, date, `HĐ ${number}`, doc, legalEntity],
         );
         const [debit, credit] = direction === 'sale' ? ['131', '511'] : ['156', '331'];
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
            VALUES ($1, $2, 1, $5, $3, 0, $4, $6), ($1, $2, 2, $7, 0, $3, $4, $6)`,
           [orgId, entry, total, partyId, debit, legalEntity, credit],
         );
@@ -79,7 +79,7 @@ suite('finance.signals.sales on PostgreSQL (#2967)', () => {
     const voidIt = (docId: string) =>
       admin(async (c) => {
         await c.query("SET session_replication_role = 'replica'");
-        await c.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai')", [orgId, docId, randomUUID()]);
+        await c.query("INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai')", [orgId, docId, randomUUID()]);
       });
     return { orgId, owner, member, viewer, branchMember, entity, branch, signals, party, invoice, voidIt };
   }

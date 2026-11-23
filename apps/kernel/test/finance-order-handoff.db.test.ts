@@ -167,11 +167,11 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
   };
   // A series the provider holds, as the sync would add it: the default of the entity.
   const addSeries = (o: Org, symbol = FIXTURE_SYMBOL) =>
-    rows("INSERT INTO crove_finance.einvoice_series (org_id, legal_entity_id, provider, template_no, symbol, is_default) VALUES ($1, $2, 'sandbox', '1', $3, true)", [o.orgId, o.entity, symbol]);
+    rows("INSERT INTO ludy_finance.einvoice_series (org_id, legal_entity_id, provider, template_no, symbol, is_default) VALUES ($1, $2, 'sandbox', '1', $3, true)", [o.orgId, o.entity, symbol]);
   const draftFrom = (o: Org, handoff: Handoff, lineNos?: number[], user = o.owner, key?: string) => execute<Draft>(o, 'finance.einvoice.draft_from_order', { handoff, ...(lineNos ? { lineNos } : {}) }, user, key);
   const drafts = (o: Org) => query<Array<{ id: string }>>(o, 'finance.einvoice_draft.list', {});
   const sources = (o: Org) =>
-    rows<{ source_id: string; source_line_no: number; line_no: number }>('SELECT source_id, source_line_no, line_no FROM crove_finance.einvoice_draft_line WHERE org_id = $1 AND source_kind = $2 ORDER BY source_id, source_line_no', [o.orgId, 'crm.sales_order']);
+    rows<{ source_id: string; source_line_no: number; line_no: number }>('SELECT source_id, source_line_no, line_no FROM ludy_finance.einvoice_draft_line WHERE org_id = $1 AND source_kind = $2 ORDER BY source_id, source_line_no', [o.orgId, 'crm.sales_order']);
   const makeItem = (o: Org, extra: Record<string, unknown> = {}) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code: 'QC', name: 'Gói quảng cáo', unit: 'gói', stockAccount: '156', trade: 'goods', ...extra }).then((r) => r.id);
   const teach = (o: Org, itemId: string, key: string) => execute(o, 'finance.stock_alias.teach', { itemId, source: 'text', key, factor: '1' });
@@ -179,7 +179,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     execute<{ status: string; moveId: string | null }>(o, 'finance.stock.move_from_order_line', { handoff, lineNo, date: today(), ...extra }, user, key);
   const moves = (o: Org, itemId: string) => query<Move[]>(o, 'finance.stock_move.list', { itemId });
   const onHand = async (o: Org, itemId: string) => (await query<Array<{ id: string; onHand: string }>>(o, 'finance.stock_item.list', {})).find((i) => i.id === itemId)?.onHand;
-  const orderMoves = (o: Org, orderId: string) => rows<{ id: string }>("SELECT id FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'crm_order_line' AND crm_order_id = $2", [o.orgId, orderId]);
+  const orderMoves = (o: Org, orderId: string) => rows<{ id: string }>("SELECT id FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'crm_order_line' AND crm_order_id = $2", [o.orgId, orderId]);
 
   // The issue job moves a draft to issued as a worker login in the org's system context (as finance-einvoice-drafts.db.test.ts does): `submitting` first, with the triggers off.
   async function toSubmitting(o: Org, draftId: string) {
@@ -187,7 +187,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       await c.query('BEGIN');
       try {
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query("UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
+        await c.query("UPDATE ludy_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
         await c.query('COMMIT');
       } catch (error) {
         await c.query('ROLLBACK').catch(() => undefined);
@@ -211,7 +211,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
   }
   async function issue(o: Org, draftId: string, number: string) {
     await toSubmitting(o, draftId);
-    await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, draftId, number]]]);
+    await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, draftId, number]]]);
   }
   const invoice = (number: string) => new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`));
   async function ingest(o: Org, bytes: Uint8Array) {
@@ -367,8 +367,8 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       const draft = await draftFrom(o, handoff);
       await toSubmitting(o, draft.id);
       await asJob(o, [
-        ["UPDATE crove_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
-        ["UPDATE crove_finance.einvoice_draft SET state = 'draft', idempotency_key = pg_catalog.gen_random_uuid(), provider_ref = NULL, submitted_at = NULL, next_check_at = NULL, check_attempts = 0, channel_connection_id = NULL WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
+        ["UPDATE ludy_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
+        ["UPDATE ludy_finance.einvoice_draft SET state = 'draft', idempotency_key = pg_catalog.gen_random_uuid(), provider_ref = NULL, submitted_at = NULL, next_check_at = NULL, check_attempts = 0, channel_connection_id = NULL WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
       ]);
       expect((await query<Draft>(o, 'finance.einvoice_draft.get', { draftId: draft.id })).state).toBe('draft');
       await refused(draftFrom(o, handoff, [1]), 'ORDER_LINE_ALREADY_INVOICED');
@@ -547,7 +547,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       await refused(move(o, handoff, 1, {}, o.viewer), 'FORBIDDEN');
       await move(o, handoff, 1, {}, o.member);
       const insert = (quantity: number, source: string, lineNo: number) =>
-        rows('INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, crm_order_id, crm_order_line_no) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, item, '2026-11-06', quantity, source, handoff.orderId, lineNo]);
+        rows('INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, crm_order_id, crm_order_line_no) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, item, '2026-11-06', quantity, source, handoff.orderId, lineNo]);
       await expect(insert(-1, 'crm_order_line', 1)).rejects.toMatchObject({ code: '23505' });
       // A move of that source takes stock out; another source names no order.
       await expect(insert(1, 'crm_order_line', 2)).rejects.toMatchObject({ code: '23514' });
@@ -563,8 +563,8 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
         { description: LINE_TWO, quantity: '2', unitPrice: '500000' },
       ]);
     const documentLines = (o: Org, documentId: string) =>
-      rows<{ line_no: number; source_kind: string | null; source_line_no: number | null; source_id: string | null }>('SELECT line_no, source_kind, source_line_no, source_id FROM crove_finance.purchase_line WHERE org_id = $1 AND document_id = $2 ORDER BY line_no', [o.orgId, documentId]);
-    const documentMoves = (o: Org) => rows("SELECT id FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line'", [o.orgId]);
+      rows<{ line_no: number; source_kind: string | null; source_line_no: number | null; source_id: string | null }>('SELECT line_no, source_kind, source_line_no, source_id FROM ludy_finance.purchase_line WHERE org_id = $1 AND document_id = $2 ORDER BY line_no', [o.orgId, documentId]);
+    const documentMoves = (o: Org) => rows("SELECT id FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line'", [o.orgId]);
 
     it('issues, records the invoice, then delivers: the document line moves nothing and is not unassigned, the delivery moves once', async () => {
       const o = await org({ sellerOf: true });
@@ -640,13 +640,13 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       const b = await draftFrom(o, handoff, [2]);
       const c = await draftFrom(o, handoff, [3]);
       await toSubmitting(o, a.id);
-      await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-p' WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
+      await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-p' WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
       await toSubmitting(o, b.id);
-      await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, b.id]]]);
+      await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, b.id]]]);
       expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft'], [3, 'draft']]);
       await execute(o, 'finance.einvoice_draft.delete', { draftId: c.id });
       expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
-      await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'issued', issued_number = '9102', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
+      await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'issued', issued_number = '9102', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
       expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'issued'], [2, 'draft']]);
     });
 

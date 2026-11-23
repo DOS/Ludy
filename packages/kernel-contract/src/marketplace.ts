@@ -222,11 +222,11 @@ export const zMarketplaceIncomeConfirmResult = z.object({ settlementId: zId, lin
 export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeConfirmResult>;
 
 // Days after a member's decision (import or skip) when the original file and the per-order amounts of a marketplace report are deleted (ADR-0045 point 8, #2516). The database
-// (crove_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
+// (ludy_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
 export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
 // Days after a marketplace connection is gone (disconnected, or its channel revoked) when what its poll brought in and no member ever imported (still waiting, skipped, or never read) is destroyed, the
 // original file and every read of it with it (#4284, ADR-0045 point 8; Lazada's terms ask for the platform's data to be destroyed within 14 days of revocation). The database
-// (crove_finance.marketplace_purge_*) accepts 7 to 14 only: that is the age at which a file BECOMES due, so the job can never purge early; it is not a deadline the job promises to meet (a due file goes at the
+// (ludy_finance.marketplace_purge_*) accepts 7 to 14 only: that is the age at which a file BECOMES due, so the job can never purge early; it is not a deadline the job promises to meet (a due file goes at the
 // next nightly run). What a member imported is never touched. Seven days leave the member a week to import what waited, and the nightly run lands well inside the 14.
 export const MARKETPLACE_PURGE_GRACE_DAYS = 7;
 // Days a channel may stay `expired` (a refused token refresh: the seller's revocation on the platform looks the same) with no new authorization before it counts as revoked and the grace above starts.

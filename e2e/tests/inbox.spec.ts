@@ -288,19 +288,19 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     );
     expect(vendors).toEqual([{ id: expect.any(String), name: SELLER, tax_code: SELLER_TAX_CODE }]);
     // The vendor default is the sub-account added in Settings, which is still active (#319).
-    expect(sql<{ debit_account: string }>(`SELECT debit_account FROM crove_finance.vendor_account_rule WHERE org_id = :'org'`, vars)).toEqual([
+    expect(sql<{ debit_account: string }>(`SELECT debit_account FROM ludy_finance.vendor_account_rule WHERE org_id = :'org'`, vars)).toEqual([
       { debit_account: '6422.VP' },
     ]);
     expect(
       sql<{ code: string; parent_code: string; root_code: string; active: boolean }>(
-        `SELECT code, parent_code, root_code, active FROM crove_finance.org_account WHERE org_id = :'org'`,
+        `SELECT code, parent_code, root_code, active FROM ludy_finance.org_account WHERE org_id = :'org'`,
         vars,
       ),
     ).toEqual([{ code: '6422.VP', parent_code: '6422', root_code: '6422', active: true }]);
 
     const documents = sql<{ id: string; party_id: string; invoice_series: string; invoice_number: string; subtotal: string; vat_amount: string; total: string; created_by: string }>(
       `SELECT id, party_id, invoice_series, invoice_number, subtotal::text, vat_amount::text, total::text, created_by
-         FROM crove_finance.purchase_document WHERE org_id = :'org'`,
+         FROM ludy_finance.purchase_document WHERE org_id = :'org'`,
       vars,
     );
     expect(documents).toHaveLength(1);
@@ -311,8 +311,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     const entries = sql<{ source_type: string; source_id: string; debit: string; credit: string; lines: number }>(
       `SELECT e.source_type, e.source_id, sum(l.debit)::text AS debit, sum(l.credit)::text AS credit, count(*)::int AS lines
-         FROM crove_finance.journal_entry e
-         JOIN crove_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
+         FROM ludy_finance.journal_entry e
+         JOIN ludy_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
         WHERE e.org_id = :'org'
         GROUP BY e.org_id, e.id`,
       vars,

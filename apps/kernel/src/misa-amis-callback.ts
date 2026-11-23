@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The callback MISA AMIS posts the result of a save to (#3903, S4 of #3854). The route is public: the only thing that tells a message from MISA is the HMAC of its `data` with the ClientID, one key for the whole
 // deployment, so a good signature proves the sender and not the organisation. The API holds no tenant context at this edge and cannot enter a system context (that is the worker's alone, gate T5), so it records
-// nothing about a voucher: after the signature is good it hands the signed results to a machinery table through one orgless definer (crove_finance.misa_amis_callback_enqueue, as a bank feed notice does,
+// nothing about a voucher: after the signature is good it hands the signed results to a machinery table through one orgless definer (ludy_finance.misa_amis_callback_enqueue, as a bank feed notice does,
 // ADR-0039), and the worker relay (misa-amis-callback-relay.ts) finds the organisation from our own stored push row and records through the one write path.
 //
 // Order of work, which is the point: the client address is limited and the body capped before the body is read (http.ts); readCallback parses only the signature and `data`, compares in constant time and only
@@ -37,7 +37,7 @@ export async function acceptMisaAmisCallback(runtime: Runtime, keys: readonly Am
         ${results.map((r) => r.errorCode)}::text[], ${results.map((r) => (r.success ? null : r.errorMessage))}::text[]`;
     // One definer per product, each writing its own product on the machinery row: a result signed under one product's ClientID is never taken for the other's. Where both products hold the same ClientID the
     // signature cannot tell them apart: the result is stored for each, and the claim finds the stored voucher only through a connection of that product, so only the real one's row is settled.
-    for (const product of read.products) await (product === 'asp' ? sql`SELECT crove_finance.misa_asp_callback_enqueue(${args})` : sql`SELECT crove_finance.misa_amis_callback_enqueue(${args})`).execute(db);
+    for (const product of read.products) await (product === 'asp' ? sql`SELECT ludy_finance.misa_asp_callback_enqueue(${args})` : sql`SELECT ludy_finance.misa_amis_callback_enqueue(${args})`).execute(db);
   });
   return { status: 200 };
 }

@@ -30,7 +30,7 @@ export interface CalendarFeed {
 export async function calendarFeed(runtime: Runtime, token: string): Promise<CalendarFeed | null> {
   if (!TOKEN.test(token)) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ feed: CalendarFeed | null }>`SELECT crove_social.calendar_feed_events(${token}) AS feed`.execute(db);
+    const { rows } = await sql<{ feed: CalendarFeed | null }>`SELECT ludy_social.calendar_feed_events(${token}) AS feed`.execute(db);
     return rows[0]?.feed ?? null;
   });
 }

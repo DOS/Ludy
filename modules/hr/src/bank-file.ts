@@ -13,7 +13,7 @@
 // any file is made; the file's own total is its bank's part, and the answer says how many people are in other banks' files (a count). A code not in the list is refused. More people in one file than the
 // cap is refused too.
 //
-// A saved template (#2893, `crove_hr.payroll_bank_template`, the screen "Mẫu file lương") of the run's legal entity may be chosen: the file then follows its columns in its order (`sequence` of a
+// A saved template (#2893, `ludy_hr.payroll_bank_template`, the screen "Mẫu file lương") of the run's legal entity may be chosen: the file then follows its columns in its order (`sequence` of a
 // template is the file's `seq`), its headers and its remark text (`{month}` becomes MM/YYYY). The bank cell stays the list's short name. The headers and the remark are text a person typed: they go
 // through the same control-character clean-up as a name and are written as string cells with the Text format (./bank-file-xlsx.ts), so a leading `=`, `+`, `-` or `@` stays inert. A template that is not
 // found, or belongs to another legal entity than the run, is refused as not found.
@@ -51,13 +51,13 @@ export const bankFileGet = defineQuery({
     // The bank is a bank of the list, never free text: a code that is not in it is refused before anything is read.
     const bank = bankByCode(input.bankName);
     if (!bank) throw new DomainError('HR_BANK_UNKNOWN', 422, 'Ngân hàng này không có trong danh sách ngân hàng của Ludy');
-    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
+    const run = await ctx.trx.selectFrom('ludy_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
     if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
     if (!(APPROVED as readonly string[]).includes(run.status)) throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới xuất được file chuyển lương');
     // The saved template, if one is chosen: of this run's legal entity, found by the caller's own row policies (another org's or another entity's is not found), and a valid layout.
     let template: { columns: HrBankFileColumn[]; headers: string[]; content: string } | null = null;
     if (input.templateId !== undefined) {
-      const row = await ctx.trx.selectFrom('crove_hr.payroll_bank_template').select(['legal_entity_id', 'layout']).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).executeTakeFirst();
+      const row = await ctx.trx.selectFrom('ludy_hr.payroll_bank_template').select(['legal_entity_id', 'layout']).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).executeTakeFirst();
       const layout = row && row.legal_entity_id === run.legal_entity_id ? zHrBankLayout.safeParse(row.layout) : null;
       if (!layout?.success) throw new DomainError('HR_BANK_TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu file này');
       template = {
@@ -68,7 +68,7 @@ export const bankFileGet = defineQuery({
       };
     }
     const lines = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select(['employee_id', 'net', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
@@ -85,7 +85,7 @@ export const bankFileGet = defineQuery({
     if (paid.length === 0) throw new DomainError('HR_BANK_FILE_EMPTY', 422, 'Bảng lương này không có khoản thực nhận nào để chuyển');
     const ids = paid.map((l) => l.employee_id);
     const employees = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'display_name', 'erased_at', 'bank_account_sealed', 'bank_code'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', ids)

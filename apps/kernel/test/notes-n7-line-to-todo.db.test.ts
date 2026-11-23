@@ -208,7 +208,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
       const readerPanel = await o.query<NoteRecordPanel>(reader, 'notes.record.panel', { targetType: 'kernel.party', targetId: o.partyId });
       expect(readerPanel.todos, reader).toEqual([]);
 
-      const rawCount = await inUserSql(o.orgId, reader, async (c) => (await c.query('SELECT id FROM crove_notes.todo WHERE id = $1', [created.todoId])).rowCount);
+      const rawCount = await inUserSql(o.orgId, reader, async (c) => (await c.query('SELECT id FROM ludy_notes.todo WHERE id = $1', [created.todoId])).rowCount);
       expect(rawCount, `SQL RLS for ${reader}`).toBe(0);
     }
 
@@ -349,7 +349,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
 
     // 3. Moving to trash and purging after 30 days triggers ON DELETE SET NULL: to-do stays intact with sourceNote = null.
     await o.exec(o.author, 'notes.note.delete', { noteId: note.noteId });
-    await withAdmin((c) => c.query(`UPDATE crove_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, note.noteId]));
+    await withAdmin((c) => c.query(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, note.noteId]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
 
     const afterPurge = await o.query<Todo>(o.maker, 'notes.todo.get', { todoId: makerTodo.todoId });
@@ -378,7 +378,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
       sourceNoteId: taintedNote.noteId,
     });
     const todoRow = await withAdmin((c) =>
-      c.query<{ tainted: boolean }>('SELECT tainted FROM crove_notes.todo WHERE org_id = $1 AND id = $2', [o.orgId, created.todoId]),
+      c.query<{ tainted: boolean }>('SELECT tainted FROM ludy_notes.todo WHERE org_id = $1 AND id = $2', [o.orgId, created.todoId]),
     );
     expect(todoRow.rows[0]?.tainted).toBe(true);
 

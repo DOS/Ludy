@@ -161,7 +161,7 @@ describe('hr-visibility helpers and @ludy/mod-sign HR contract guards (#3553)', 
 
     // Pure query builder filter for agent actor excludes hr_contract entirely.
     const agentQuery = applyEnvelopeVisibilityFilter(
-      trx.selectFrom('crove_sign.envelope').select('id'),
+      trx.selectFrom('ludy_sign.envelope').select('id'),
       { actor: { type: 'agent', agentId: MEMBER_ID } as QueryContext['actor'], role: null },
     ).compile();
     expect(agentQuery.sql).toContain('"source_kind" != $1');
@@ -170,7 +170,7 @@ describe('hr-visibility helpers and @ludy/mod-sign HR contract guards (#3553)', 
 
   it('returns identical 404 SIGN_ENVELOPE_NOT_FOUND on get/events/verify and blocks member creation or HR template cloning', async () => {
     const { trx } = createFakeTrx((compiled) => {
-      if (compiled.sql.includes('"crove_sign"."envelope"')) {
+      if (compiled.sql.includes('"ludy_sign"."envelope"')) {
         return {
           rows: [
             {

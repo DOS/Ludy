@@ -902,11 +902,11 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
     expect(purgeCode, purgeLogs.join('\n')).toBe(0);
 
     await adminQuery(async (c) => {
-      const ruleRem = await c.query('SELECT count(*)::int AS n FROM crove_sign.playbook_rule WHERE org_id = $1::uuid', [
+      const ruleRem = await c.query('SELECT count(*)::int AS n FROM ludy_sign.playbook_rule WHERE org_id = $1::uuid', [
         purgeOrg.orgId,
       ]);
       const checkRem = await c.query(
-        'SELECT count(*)::int AS n FROM crove_sign.playbook_check WHERE org_id = $1::uuid',
+        'SELECT count(*)::int AS n FROM ludy_sign.playbook_check WHERE org_id = $1::uuid',
         [purgeOrg.orgId],
       );
       expect(ruleRem.rows[0]?.n).toBe(0);

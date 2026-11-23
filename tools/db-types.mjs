@@ -39,7 +39,7 @@ const OUTPUT = 'packages/db/src/generated/database.ts';
 
 // Schemas whose tables the kernel and modules query through Kysely. ludy_meta (the migration ledger) is read with
 // raw SQL only; ludy_jobs belongs to pg-boss.
-const SCHEMAS = ['ludy_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'];
+const SCHEMAS = ['ludy_kernel', 'ludy_finance', 'ludy_social', 'ludy_crm', 'ludy_notes', 'ludy_ads', 'ludy_hr', 'ludy_meetings', 'ludy_projects', 'ludy_sign'];
 // The role tenant code runs as (packages/db/src/context); a table it cannot SELECT gets no type.
 const TENANT_ROLE = 'ludy_tenant';
 // The write type of a column TENANT_ROLE may not write; exported so schema.ts keeps it through a refinement.

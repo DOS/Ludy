@@ -33,9 +33,9 @@ suite('the Ads proposal twins (#3863)', () => {
     h = await startHarness('engage_ads');
     today = (await h.q<{ d: string }>("SELECT (now() AT TIME ZONE 'UTC')::date::text AS d")).rows[0]?.d as string;
     // Running ads on for the org: the table's guard asks a signed-in owner for that opening, so it is set aside for the statement, as the fixture of the invariants does for a launch.
-    await withoutGuard('crove_ads.ad_org_setting', 'switch_guard', async (c) => {
-      await c.query('INSERT INTO crove_ads.ad_org_setting (org_id, write_enabled, launches_blocked) VALUES ($1, true, false) ON CONFLICT DO NOTHING', [h.orgId]);
-      await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [h.orgId]);
+    await withoutGuard('ludy_ads.ad_org_setting', 'switch_guard', async (c) => {
+      await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id, write_enabled, launches_blocked) VALUES ($1, true, false) ON CONFLICT DO NOTHING', [h.orgId]);
+      await c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [h.orgId]);
     });
   }, 300_000);
   afterAll(async () => {
@@ -66,44 +66,44 @@ suite('the Ads proposal twins (#3863)', () => {
     const connection = randomUUID();
     const account = randomUUID();
     await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Thử', '{}', $4)`, [h.orgId, connection, `acct-${connection.slice(0, 8)}`, h.owner]);
-    await h.q(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Thử', '2025-10-01', 'VND', $5)`, [h.orgId, account, connection, `acct-${connection.slice(0, 8)}`, ZONE]);
+    await h.q(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Thử', '2025-10-01', 'VND', $5)`, [h.orgId, account, connection, `acct-${connection.slice(0, 8)}`, ZONE]);
     // The account's write connection (an active one of the write twin's provider) and its switch: each has a guard of its own that asks a signed-in owner, set aside for the one statement.
     const write = randomUUID();
     await h.q(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Thử ghi', '{}', $4)`, [h.orgId, write, `acct-${connection.slice(0, 8)}`, h.owner]);
-    await withoutGuard('crove_ads.ad_account', ['switch_guard', 'write_connection_guard'], async (c) => {
-      await c.query('UPDATE crove_ads.ad_account SET write_enabled = true, write_connection_id = $3 WHERE org_id = $1 AND id = $2', [h.orgId, account, write]);
+    await withoutGuard('ludy_ads.ad_account', ['switch_guard', 'write_connection_guard'], async (c) => {
+      await c.query('UPDATE ludy_ads.ad_account SET write_enabled = true, write_connection_id = $3 WHERE org_id = $1 AND id = $2', [h.orgId, account, write]);
     });
     const draft = randomUUID();
-    await h.q(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by) VALUES ($1, $2, $3, 'Thử', 'traffic', $4)`, [h.orgId, draft, account, h.owner]);
+    await h.q(`INSERT INTO ludy_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by) VALUES ($1, $2, $3, 'Thử', 'traffic', $4)`, [h.orgId, draft, account, h.owner]);
     const launch = randomUUID();
     const end = D(10);
     await h.q(
-      `INSERT INTO crove_ads.ad_launch (org_id, id, ad_account_id, draft_id, proposal_id, plan_hash, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, state)
+      `INSERT INTO ludy_ads.ad_launch (org_id, id, ad_account_id, draft_id, proposal_id, plan_hash, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, state)
        VALUES ($1, $2, $3, $4, $5, $6, 'VND', '100000', $7, $8, '1400000', $8, $9, 'queued')`,
       [h.orgId, launch, account, draft, randomUUID(), HASH, D(-3), end, h.owner],
     );
     // queued -> launching is the system's step (the launch guard asks for the worker's context), so the guard is set aside for it and for the move to live, as the invariants' fixture does for the latter.
-    await withoutGuard('crove_ads.ad_launch', 'launch_guard', async (c) => {
-      await c.query(`UPDATE crove_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [h.orgId, launch]);
+    await withoutGuard('ludy_ads.ad_launch', 'launch_guard', async (c) => {
+      await c.query(`UPDATE ludy_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [h.orgId, launch]);
     });
-    const tag = (await h.q<{ tag: string }>(`SELECT tag FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [h.orgId, launch])).rows[0]?.tag as string;
+    const tag = (await h.q<{ tag: string }>(`SELECT tag FROM ludy_ads.ad_launch WHERE org_id = $1 AND id = $2`, [h.orgId, launch])).rows[0]?.tag as string;
     const ids = { campaign: `cmp-${launch.slice(0, 8)}`, ad_set: `set-${launch.slice(0, 8)}`, ad_1: `ad1-${launch.slice(0, 8)}` };
     for (const [slot, level] of [['campaign', 'campaign'], ['ad_set', 'ad_set'], ['ad_1', 'ad']] as const) {
-      await h.q(`INSERT INTO crove_ads.ad_object (org_id, ad_account_id, launch_id, slot, level, external_id, name) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [h.orgId, account, launch, slot, level, ids[slot], `Thử ${tag} ${slot}`]);
+      await h.q(`INSERT INTO ludy_ads.ad_object (org_id, ad_account_id, launch_id, slot, level, external_id, name) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [h.orgId, account, launch, slot, level, ids[slot], `Thử ${tag} ${slot}`]);
     }
-    await withoutGuard('crove_ads.ad_launch', 'launch_guard', async (c) => {
-      expect((await c.query(`UPDATE crove_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [h.orgId, launch])).rowCount).toBe(1);
+    await withoutGuard('ludy_ads.ad_launch', 'launch_guard', async (c) => {
+      expect((await c.query(`UPDATE ludy_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [h.orgId, launch])).rowCount).toBe(1);
     });
     return { launch, account, end };
   }
 
-  const launchRow = async (launch: string) => (await h.q<{ state: string; commit_until: string | null; daily_budget: string }>(`SELECT state, commit_until::text AS commit_until, daily_budget::text AS daily_budget FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [h.orgId, launch])).rows[0] as { state: string; commit_until: string | null; daily_budget: string };
+  const launchRow = async (launch: string) => (await h.q<{ state: string; commit_until: string | null; daily_budget: string }>(`SELECT state, commit_until::text AS commit_until, daily_budget::text AS daily_budget FROM ludy_ads.ad_launch WHERE org_id = $1 AND id = $2`, [h.orgId, launch])).rows[0] as { state: string; commit_until: string | null; daily_budget: string };
   const changes = async (launch: string, kind?: string) =>
     (await h.q<{ kind: string; slot: string; state: string; from_budget: string | null; to_budget: string | null; to_end_on: string | null }>(
-      `SELECT kind, slot, state, from_budget::text AS from_budget, to_budget::text AS to_budget, to_end_on::text AS to_end_on FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND ($3::text IS NULL OR kind = $3) ORDER BY created_at, id`,
+      `SELECT kind, slot, state, from_budget::text AS from_budget, to_budget::text AS to_budget, to_end_on::text AS to_end_on FROM ludy_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND ($3::text IS NULL OR kind = $3) ORDER BY created_at, id`,
       [h.orgId, launch, kind ?? null],
     )).rows;
-  const blocked = async () => (await h.q<{ b: boolean }>('SELECT launches_blocked AS b FROM crove_ads.ad_org_setting WHERE org_id = $1', [h.orgId])).rows[0]?.b as boolean;
+  const blocked = async () => (await h.q<{ b: boolean }>('SELECT launches_blocked AS b FROM ludy_ads.ad_org_setting WHERE org_id = $1', [h.orgId])).rows[0]?.b as boolean;
   const proposalsOf = async (twin: string) => (await h.q<{ n: number }>('SELECT count(*)::int AS n FROM ludy_kernel.proposal WHERE org_id = $1 AND command = $2', [h.orgId, twin])).rows[0]?.n ?? 0;
   const asked = async (twin: string, payload: Record<string, unknown>) => {
     const { actor } = await h.grant();
@@ -230,16 +230,16 @@ suite('the Ads proposal twins (#3863)', () => {
       resume: { slot: 'ad_1', level: 'ad', columns: 'from_budget', values: [null] },
     };
     const { slot, level, columns, values } = shape[kind];
-    await withoutGuard('crove_ads.ad_manage_change', 'manage_change_guard', async (c) => {
+    await withoutGuard('ludy_ads.ad_manage_change', 'manage_change_guard', async (c) => {
       await c.query(
-        `INSERT INTO crove_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, kind, slot, level, object_id, proposal_id, requested_by, ${columns})
+        `INSERT INTO ludy_ads.ad_manage_change (org_id, id, ad_account_id, launch_id, kind, slot, level, object_id, proposal_id, requested_by, ${columns})
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ${values.map((_, i) => `$${i + 11}`).join(', ')})`,
         [h.orgId, id, r.account, r.launch, kind, slot, level, `obj-${id.slice(0, 8)}`, randomUUID(), h.owner, ...values],
       );
     });
     return id;
   }
-  const stateOf = async (id: string) => (await h.q<{ state: string }>('SELECT state FROM crove_ads.ad_manage_change WHERE org_id = $1 AND id = $2', [h.orgId, id])).rows[0]?.state;
+  const stateOf = async (id: string) => (await h.q<{ state: string }>('SELECT state FROM ludy_ads.ad_manage_change WHERE org_id = $1 AND id = $2', [h.orgId, id])).rows[0]?.state;
 
   it('ads.manage.cancel: waits, is never run by a rejection, and cancels a queued raise once when approved; a settled change and an unknown one are refused at the approval (#4181)', async () => {
     const c: Case = { twin: 'ads.manage.cancel_approved', original: 'ads.manage.cancel', kind: 'ads.manage_cancel' };
@@ -304,7 +304,7 @@ suite('the Ads proposal twins (#3863)', () => {
     await h.runtime.execute('ads.budget.lower', { launchId: r.launch, dailyBudget: '60000' }, { actor: h.person(h.owner), orgId: h.orgId });
     await h.runtime.execute('ads.schedule.shorten', { launchId: r.launch, endOn: D(5) }, { actor: h.person(h.owner), orgId: h.orgId });
     await h.runtime.execute('ads.object.archive', { launchId: r.launch, slot: 'campaign' }, { actor: h.person(h.owner), orgId: h.orgId });
-    const queued =(await h.q<{ id: string; kind: string }>(`SELECT id, kind FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND state = 'queued'`, [h.orgId, r.launch])).rows;
+    const queued =(await h.q<{ id: string; kind: string }>(`SELECT id, kind FROM ludy_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 AND state = 'queued'`, [h.orgId, r.launch])).rows;
     expect(queued.map((x) => x.kind).sort()).toEqual(['archive', 'budget_lower', 'pause', 'schedule_shorten']);
     for (const change of queued) {
       const made = await asked(c.twin, { changeId: change.id });

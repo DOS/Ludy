@@ -647,7 +647,7 @@ export const vaultSearch = defineQuery({
     }
 
     let q = ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'title',
@@ -701,7 +701,7 @@ export const vaultSearch = defineQuery({
 
     const [obligationRows, analysisRows] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_sign.envelope_obligation')
+        .selectFrom('ludy_sign.envelope_obligation')
         .select([
           'envelope_id',
           'counterparty_name',
@@ -718,7 +718,7 @@ export const vaultSearch = defineQuery({
         .where('status', '=', 'confirmed')
         .execute(),
       ctx.trx
-        .selectFrom('crove_sign.ai_analysis')
+        .selectFrom('ludy_sign.ai_analysis')
         .select(['envelope_id', 'source_sha256', 'summary_text', 'risk_clauses_json'])
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', 'in', accessibleIds)

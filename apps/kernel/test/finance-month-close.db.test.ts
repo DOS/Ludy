@@ -64,7 +64,7 @@ suite('the month-close checklist', () => {
   const bankLine = (value: string, entity: string | null = null) =>
     admin((c) =>
       c.query(
-        `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount${entity ? ', legal_entity_id' : ''})
+        `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount${entity ? ', legal_entity_id' : ''})
          VALUES ($1, '1121', $2, 1, $3, 'chuyển khoản', 500000${entity ? ', $4' : ''})`,
         entity ? [o.orgId, randomUUID(), value, entity] : [o.orgId, randomUUID(), value],
       ),
@@ -193,10 +193,10 @@ suite('the month-close checklist', () => {
   it('leaves out the stock close until the entity has a stock move, and asks for it once the month is over', async () => {
     await admin(async (c) => {
       const item = String(
-        (await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account) VALUES ($1, $2, 'SKU1', 'Hàng thử', 'cái', '156') RETURNING id`, [o.orgId, defaultEntity])).rows[0]?.id,
+        (await c.query<{ id: string }>(`INSERT INTO ludy_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account) VALUES ($1, $2, 'SKU1', 'Hàng thử', 'cái', '156') RETURNING id`, [o.orgId, defaultEntity])).rows[0]?.id,
       );
       await c.query(
-        `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, '2026-10-03', 5, 'manual')`,
+        `INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, '2026-10-03', 5, 'manual')`,
         [o.orgId, defaultEntity, item],
       );
     });
@@ -205,7 +205,7 @@ suite('the month-close checklist', () => {
     expect(item(await close('2026-09'), 'stock')).toBeUndefined();
     expect(item(await close('2099-01'), 'stock')).toBeUndefined();
     // Once a close covers the month it is done (count 0), whether it is the close of that month or of a later one; the branch has no stock and is not asked.
-    await admin((c) => c.query(`INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, DATE '2026-10-01', 0)`, [o.orgId, defaultEntity]));
+    await admin((c) => c.query(`INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, DATE '2026-10-01', 0)`, [o.orgId, defaultEntity]));
     expect(item(await close('2026-10'), 'stock')).toEqual({ key: 'stock', count: 0, period: null });
     expect(item(await close('2026-10', o.owner, o.orgId, branch), 'stock')).toBeUndefined();
   });
@@ -240,9 +240,9 @@ suite('the month-close checklist', () => {
       await a.query('BEGIN');
       const id = randomUUID();
       const order = randomUUID();
-      await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, defaultEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
-      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $5, $6, 9000)', [o.orgId, id, defaultEntity, platform, start, end]);
-      await a.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, 1000, 9000, false)', [o.orgId, randomUUID(), defaultEntity, id, order, 'L1']);
+      await a.query('INSERT INTO ludy_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, defaultEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $5, $6, 9000)', [o.orgId, id, defaultEntity, platform, start, end]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, 1000, 9000, false)', [o.orgId, randomUUID(), defaultEntity, id, order, 'L1']);
       await a.query('COMMIT');
       return id;
     });
@@ -253,25 +253,25 @@ suite('the month-close checklist', () => {
       const v = (
         await a.query<{ id: string }>(
           payout
-            ? `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Sàn trả tiền', $2, $3, $4, $5) RETURNING id`
-            : `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Ghi sổ kỳ đối soát', $2, $3, $4) RETURNING id`,
+            ? `INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Sàn trả tiền', $2, $3, $4, $5) RETURNING id`
+            : `INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Ghi sổ kỳ đối soát', $2, $3, $4) RETURNING id`,
           payout ? [o.orgId, randomUUID(), settlementId, payout.bankLineId, defaultEntity] : [o.orgId, randomUUID(), settlementId, defaultEntity],
         )
       ).rows[0]?.id;
       const e = (
         await a.query<{ id: string }>(
-          "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Sàn', 'finance.journal_voucher', $2, $3) RETURNING id",
+          "INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Sàn', 'finance.journal_voucher', $2, $3) RETURNING id",
           [o.orgId, v, defaultEntity],
         )
       ).rows[0]?.id;
-      await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 10000, 0), ($1, $2, 2, '511', 0, 10000)", [o.orgId, e]);
+      await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 10000, 0), ($1, $2, 2, '511', 0, 10000)", [o.orgId, e]);
       await a.query('COMMIT');
     });
   const bankLineId = async (value: string) =>
     String(
       (
         await admin((c) =>
-          c.query<{ id: string }>(`INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount) VALUES ($1, '1121', $2, 1, $3, 'Sàn trả tiền', 9000) RETURNING id`, [o.orgId, randomUUID(), value]),
+          c.query<{ id: string }>(`INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount) VALUES ($1, '1121', $2, 1, $3, 'Sàn trả tiền', 9000) RETURNING id`, [o.orgId, randomUUID(), value]),
         )
       ).rows[0]?.id,
     );
@@ -326,7 +326,7 @@ suite('the month-close checklist', () => {
       const sha = randomUUID().replaceAll('-', '').repeat(2);
       await a.query(`INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'ds.xlsx', 'application/octet-stream', 10, 'upload')`, [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`]);
       const id = String(
-        (await a.query<{ id: string }>(`INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, direction, legal_entity_id) VALUES ($1, $2, $3, 'ds.xlsx', $4, $5) RETURNING id`, [o.orgId, period, fileId, direction, defaultEntity])).rows[0]?.id,
+        (await a.query<{ id: string }>(`INSERT INTO ludy_finance.portal_invoice_list (org_id, period, file_id, filename, direction, legal_entity_id) VALUES ($1, $2, $3, 'ds.xlsx', $4, $5) RETURNING id`, [o.orgId, period, fileId, direction, defaultEntity])).rows[0]?.id,
       );
       // The invoices are dated on the 10th of the period's first month.
       const quarter = /^(\d{4})-Q(\d)$/.exec(period);
@@ -334,12 +334,12 @@ suite('the month-close checklist', () => {
       if (state === 'done') {
         for (const [i, number] of numbers.entries()) {
           await a.query(
-            `INSERT INTO crove_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, seller_name, buyer_tax_code, template, series, number, issue_date, subtotal, vat_amount, total, status)
+            `INSERT INTO ludy_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, seller_name, buyer_tax_code, template, series, number, issue_date, subtotal, vat_amount, total, status)
              VALUES ($1, $2, $3, '0101234564', 'Bên bán', $4, '1', 'C26TAA', $5, $6, 1000000, 100000, 1100000, 'original')`,
             [o.orgId, id, i + 1, direction === 'sale' ? '0301234567' : null, number, issued],
           );
         }
-        await a.query(`UPDATE crove_finance.portal_invoice_list SET status = 'done', row_count = $2 WHERE id = $1`, [id, numbers.length]);
+        await a.query(`UPDATE ludy_finance.portal_invoice_list SET status = 'done', row_count = $2 WHERE id = $1`, [id, numbers.length]);
       }
     });
 
@@ -375,10 +375,10 @@ suite('the month-close checklist', () => {
       await a.query('BEGIN');
       const id = randomUUID();
       let order: string = randomUUID();
-      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
+      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
       else {
-        await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, defaultEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
-        await a.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, order, start]);
+        await a.query('INSERT INTO ludy_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, defaultEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
+        await a.query("INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, order, start]);
       }
       // A reversal mirrors its original line for line, marked as an adjustment; only its report net is the negative. A line's net is its sales less its deductions plus its other amount.
       const refund = line.refund ?? 0;
@@ -387,9 +387,9 @@ suite('the month-close checklist', () => {
       const tax = line.tax ?? 0;
       const net = line.sales - commission - refund - tax + other;
       const sign = reversalOf ? -1 : 1;
-      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, defaultEntity, platform, start, end, sign * net, reversalOf]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, defaultEntity, platform, start, end, sign * net, reversalOf]);
       await a.query(
-        'INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, commission, other, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
+        'INSERT INTO ludy_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, refund, commission, other, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
         [o.orgId, randomUUID(), defaultEntity, id, order, 'L1', line.sales, refund, commission, other, tax, net, reversalOf !== null],
       );
       await a.query('COMMIT');
@@ -398,7 +398,7 @@ suite('the month-close checklist', () => {
   }
 
   it('does not count a settlement that posts nothing, a payout the payout command would refuse, or a settlement that was reversed', async () => {
-    await admin((c) => c.query(`INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none') ON CONFLICT DO NOTHING`, [o.orgId, defaultEntity]));
+    await admin((c) => c.query(`INSERT INTO ludy_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none') ON CONFLICT DO NOTHING`, [o.orgId, defaultEntity]));
     // A settlement whose sales equal its refund (and no other amount) nets to nothing: there is no entry to post, so there is nothing to ask for.
     await deliveredSettlement('shopee', '2026-09-01', '2026-09-10', { sales: 10000, refund: 10000 });
     expect(count(await close('2026-09'), 'marketplace')).toBe(0);

@@ -580,7 +580,7 @@ async function matchedMeetingsForSuggestions(
     ) AS rec(id, win_start, win_end)
     CROSS JOIN LATERAL (
       SELECT m.id AS meeting_id
-      FROM crove_meetings.meeting m
+      FROM ludy_meetings.meeting m
       WHERE m.org_id = ${ctx.orgId}::uuid
         AND m.started_at IS NOT NULL
         AND m.started_at < rec.win_end

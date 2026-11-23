@@ -115,7 +115,7 @@ suite('sales e-invoice drafts (#2500)', () => {
       await c.query('BEGIN');
       try {
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query("UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
+        await c.query("UPDATE ludy_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
         await c.query('COMMIT');
       } catch (error) {
         await c.query('ROLLBACK').catch(() => undefined);
@@ -125,14 +125,14 @@ suite('sales e-invoice drafts (#2500)', () => {
   // Moves a draft to a state as the job does, through the states the machine allows on the way (`draft` to `issued` is `submitting` first).
   const moveDraft = async (o: Org, draftId: string, ...to: Array<'submitting' | 'pending' | 'issued' | 'rejected' | 'failed'>) => {
     for (const state of to) {
-      const current = (await admin(async (c) => (await c.query<{ state: string }>('SELECT state FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draftId])).rows[0]))?.state;
+      const current = (await admin(async (c) => (await c.query<{ state: string }>('SELECT state FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draftId])).rows[0]))?.state;
       if (state === 'submitting' && current === 'draft') {
         await toSubmitting(o, draftId);
         continue;
       }
       await asJob(
         o,
-        `UPDATE crove_finance.einvoice_draft SET state = $3, provider_ref = CASE WHEN $3 IN ('pending', 'issued') THEN 'sbx-test' ELSE provider_ref END,
+        `UPDATE ludy_finance.einvoice_draft SET state = $3, provider_ref = CASE WHEN $3 IN ('pending', 'issued') THEN 'sbx-test' ELSE provider_ref END,
            issued_number = CASE WHEN $3 = 'issued' THEN 'C26TAA/1' ELSE issued_number END, issued_at = CASE WHEN $3 = 'issued' THEN pg_catalog.now() ELSE issued_at END WHERE org_id = $1 AND id = $2`,
         [o.orgId, draftId, state],
       );
@@ -207,7 +207,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     await expect(
       execute(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { lines: [{ description: 'Hàng', unit: null, quantity: '1', unitPrice: '1', vatRate: '10%', amount: '999' }] })),
     ).rejects.toBeDefined();
-    const row = await admin(async (c) => (await c.query('SELECT subtotal::text, vat_amount::text, total::text FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).rows[0]);
+    const row = await admin(async (c) => (await c.query('SELECT subtotal::text, vat_amount::text, total::text FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).rows[0]);
     expect(row).toEqual({ subtotal: '250000.0000', vat_amount: '24000.0000', total: '274000.0000' });
   });
 
@@ -257,7 +257,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(await execute(o, 'finance.einvoice_draft.delete', { draftId: saved.id }, o.member)).toEqual({ deleted: true });
     expect(await query<unknown[]>(o, 'finance.einvoice_draft.list', {})).toEqual([]);
     await expect(query(o, 'finance.einvoice_draft.get', { draftId: saved.id })).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
-    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_finance.einvoice_draft_line WHERE org_id = $1', [o.orgId])).rows[0])).toEqual({ n: 0 });
+    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_finance.einvoice_draft_line WHERE org_id = $1', [o.orgId])).rows[0])).toEqual({ n: 0 });
   });
 
   it('refuses a viewer every write, another org everything, and a draft that has left the draft state', async () => {
@@ -290,7 +290,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(ok.legalEntityId).toBe(branch);
     // The entity of a draft never changes, and its series stays in it.
     await expect(execute(o, 'finance.einvoice_draft.save', form(branchSeries[0]?.id ?? null, { draftId: ok.id, legalEntityId: main[0]?.legalEntityId }))).rejects.toMatchObject({ code: 'EINVOICE_ENTITY_FIXED' });
-    await expect(admin((c) => c.query('UPDATE crove_finance.einvoice_draft SET series_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, ok.id, mainSeriesId]))).rejects.toMatchObject({ code: '23503' });
+    await expect(admin((c) => c.query('UPDATE ludy_finance.einvoice_draft SET series_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, ok.id, mainSeriesId]))).rejects.toMatchObject({ code: '23503' });
   });
 
   it('holds the row policies, the grants and the state guard in SQL, as ludy_app in each role\'s context', async () => {
@@ -312,33 +312,33 @@ suite('sales e-invoice drafts (#2500)', () => {
       inContext(who, (c) => expect(c.query(sqlText, params)).rejects.toMatchObject({ code, message: expect.stringContaining(message) }));
     const changed = (who: string, sqlText: string, params: unknown[]) => inContext(who, async (c) => (await c.query(sqlText, params)).rowCount);
     // A viewer changes and removes nothing; a member edits a draft but cannot move its state, key or reference.
-    expect(await changed(o.viewer, 'UPDATE crove_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'x'])).toBe(0);
-    expect(await changed(o.viewer, 'DELETE FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).toBe(0);
-    expect(await changed(o.member, 'UPDATE crove_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'Tên mới'])).toBe(1);
-    await refused(o.member, "UPDATE crove_finance.einvoice_draft SET state = 'issued' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id], 'EINVOICE_FIELD_LOCKED');
-    await refused(o.member, 'UPDATE crove_finance.einvoice_draft SET idempotency_key = gen_random_uuid() WHERE org_id = $1 AND id = $2', [o.orgId, saved.id], 'EINVOICE_FIELD_LOCKED');
-    await refused(o.member, "UPDATE crove_finance.einvoice_draft SET provider_ref = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id], 'EINVOICE_FIELD_LOCKED');
-    await refused(o.member, "INSERT INTO crove_finance.einvoice_draft (org_id, state, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, 'issued', current_date, 'consumer', 0, 0, 0)", [o.orgId], 'EINVOICE_NOT_DRAFT');
+    expect(await changed(o.viewer, 'UPDATE ludy_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'x'])).toBe(0);
+    expect(await changed(o.viewer, 'DELETE FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).toBe(0);
+    expect(await changed(o.member, 'UPDATE ludy_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'Tên mới'])).toBe(1);
+    await refused(o.member, "UPDATE ludy_finance.einvoice_draft SET state = 'issued' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id], 'EINVOICE_FIELD_LOCKED');
+    await refused(o.member, 'UPDATE ludy_finance.einvoice_draft SET idempotency_key = gen_random_uuid() WHERE org_id = $1 AND id = $2', [o.orgId, saved.id], 'EINVOICE_FIELD_LOCKED');
+    await refused(o.member, "UPDATE ludy_finance.einvoice_draft SET provider_ref = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id], 'EINVOICE_FIELD_LOCKED');
+    await refused(o.member, "INSERT INTO ludy_finance.einvoice_draft (org_id, state, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, 'issued', current_date, 'consumer', 0, 0, 0)", [o.orgId], 'EINVOICE_NOT_DRAFT');
     // A series: owners and admins write, a member does not; the series' own columns are fixed.
-    expect(await changed(o.admin, 'UPDATE crove_finance.einvoice_series SET description = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'mô tả'])).toBe(1);
-    expect(await changed(o.member, 'UPDATE crove_finance.einvoice_series SET description = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'mô tả'])).toBe(0);
-    await refused(o.owner, 'UPDATE crove_finance.einvoice_series SET symbol = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'C26TXX'], 'permission denied');
+    expect(await changed(o.admin, 'UPDATE ludy_finance.einvoice_series SET description = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'mô tả'])).toBe(1);
+    expect(await changed(o.member, 'UPDATE ludy_finance.einvoice_series SET description = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'mô tả'])).toBe(0);
+    await refused(o.owner, 'UPDATE ludy_finance.einvoice_series SET symbol = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'C26TXX'], 'permission denied');
     // Once the job has moved the draft on, a member can neither edit it, nor its lines, nor delete either (the system context, the job, can).
     await moveDraft(o, saved.id, 'submitting', 'pending');
-    await refused(o.member, 'UPDATE crove_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'z'], 'EINVOICE_NOT_DRAFT');
-    await refused(o.member, 'DELETE FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
-    await refused(o.member, 'UPDATE crove_finance.einvoice_draft_line SET description = $3 WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id, 'z'], 'EINVOICE_NOT_DRAFT');
-    await refused(o.member, 'DELETE FROM crove_finance.einvoice_draft_line WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
-    await refused(o.member, "INSERT INTO crove_finance.einvoice_draft_line (org_id, draft_id, line_no, description, quantity, unit_price, amount, vat_rate, vat_amount) VALUES ($1, $2, 9, 'x', 1, 1, 1, '10%', 0)", [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
+    await refused(o.member, 'UPDATE ludy_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'z'], 'EINVOICE_NOT_DRAFT');
+    await refused(o.member, 'DELETE FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
+    await refused(o.member, 'UPDATE ludy_finance.einvoice_draft_line SET description = $3 WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id, 'z'], 'EINVOICE_NOT_DRAFT');
+    await refused(o.member, 'DELETE FROM ludy_finance.einvoice_draft_line WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
+    await refused(o.member, "INSERT INTO ludy_finance.einvoice_draft_line (org_id, draft_id, line_no, description, quantity, unit_price, amount, vat_rate, vat_amount) VALUES ($1, $2, 9, 'x', 1, 1, 1, '10%', 0)", [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
     // A line cannot be moved out of the sent draft into another draft of the entity (the guard looks at the draft it leaves as well as the one it goes to).
     const target = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null));
-    await refused(o.member, 'UPDATE crove_finance.einvoice_draft_line SET draft_id = $3, line_no = 50 WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id, target.id], 'EINVOICE_NOT_DRAFT');
+    await refused(o.member, 'UPDATE ludy_finance.einvoice_draft_line SET draft_id = $3, line_no = 50 WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id, target.id], 'EINVOICE_NOT_DRAFT');
     // A person cannot choose a draft's key, and nobody gets an issued or pending draft without the provider's reference.
     const chosen = randomUUID();
-    const made = await inContext(o.member, async (c) => (await c.query<{ idempotency_key: string }>("INSERT INTO crove_finance.einvoice_draft (org_id, idempotency_key, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, current_date, 'consumer', 0, 0, 0) RETURNING idempotency_key", [o.orgId, chosen])).rows[0]);
+    const made = await inContext(o.member, async (c) => (await c.query<{ idempotency_key: string }>("INSERT INTO ludy_finance.einvoice_draft (org_id, idempotency_key, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, current_date, 'consumer', 0, 0, 0) RETURNING idempotency_key", [o.orgId, chosen])).rows[0]);
     expect(made?.idempotency_key).not.toBe(chosen);
     await moveDraft(o, target.id, 'submitting');
-    await expect(asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = NULL WHERE org_id = $1 AND id = $2", [o.orgId, target.id])).rejects.toMatchObject({ code: '23514' });
+    await expect(asJob(o, "UPDATE ludy_finance.einvoice_draft SET state = 'issued', provider_ref = NULL WHERE org_id = $1 AND id = $2", [o.orgId, target.id])).rejects.toMatchObject({ code: '23514' });
   });
 
   // The issue job is a worker login in the org's system context. It moves a draft along the machine of the guard and no other way; every case below runs as that
@@ -348,10 +348,10 @@ suite('sales e-invoice drafts (#2500)', () => {
     const [series] = (await sync(o)).series;
     const fresh = () => execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null));
     const row = async (id: string) =>
-      admin(async (c) => (await c.query<{ state: string; provider_ref: string | null; idempotency_key: string; buyer_name: string | null; error_code: string | null }>('SELECT state, provider_ref, idempotency_key, buyer_name, error_code FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows[0]);
-    const update = (id: string, sets: string, params: unknown[] = [], mark: string | null = null) => asJob(o, `UPDATE crove_finance.einvoice_draft SET ${sets} WHERE org_id = $1 AND id = $2`, [o.orgId, id, ...params], mark);
+      admin(async (c) => (await c.query<{ state: string; provider_ref: string | null; idempotency_key: string; buyer_name: string | null; error_code: string | null }>('SELECT state, provider_ref, idempotency_key, buyer_name, error_code FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows[0]);
+    const update = (id: string, sets: string, params: unknown[] = [], mark: string | null = null) => asJob(o, `UPDATE ludy_finance.einvoice_draft SET ${sets} WHERE org_id = $1 AND id = $2`, [o.orgId, id, ...params], mark);
     const stuck = (what: Promise<unknown>, code = 'EINVOICE_STATE') => expect(what).rejects.toMatchObject({ code: '42501', message: expect.stringContaining(code) });
-    const del = (table: string, where: string, id: string, mark: string | null = null) => asJob(o, `DELETE FROM crove_finance.${table} WHERE org_id = $1 AND ${where} = $2`, [o.orgId, id], mark);
+    const del = (table: string, where: string, id: string, mark: string | null = null) => asJob(o, `DELETE FROM ludy_finance.${table} WHERE org_id = $1 AND ${where} = $2`, [o.orgId, id], mark);
 
     // From `draft` the only step is `submitting`; any other state is refused, with or without the provider's reference.
     const a = await fresh();
@@ -363,7 +363,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(await row(a.id)).toMatchObject({ state: 'draft', provider_ref: null, idempotency_key: keyA });
     // The job may not write a draft in a state of its own either: an insert is a `draft` with no reference.
     const insert = (state: string, ref: string | null) =>
-      asJob(o, "INSERT INTO crove_finance.einvoice_draft (org_id, state, provider_ref, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, $3, current_date, 'consumer', 0, 0, 0)", [o.orgId, state, ref]);
+      asJob(o, "INSERT INTO ludy_finance.einvoice_draft (org_id, state, provider_ref, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, $3, current_date, 'consumer', 0, 0, 0)", [o.orgId, state, ref]);
     await stuck(insert('submitting', null));
     await stuck(insert('draft', 'sbx-1'));
     expect((await insert('draft', null)).rowCount).toBe(1);
@@ -389,9 +389,9 @@ suite('sales e-invoice drafts (#2500)', () => {
     await stuck(del('einvoice_draft', 'id', a.id, o.orgId));
     await stuck(del('einvoice_draft_line', 'draft_id', a.id), 'EINVOICE_NOT_DRAFT');
     await stuck(del('einvoice_draft_line', 'draft_id', a.id, o.orgId), 'EINVOICE_NOT_DRAFT');
-    await stuck(asJob(o, "UPDATE crove_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1 AND draft_id = $2", [o.orgId, a.id]), 'EINVOICE_NOT_DRAFT');
+    await stuck(asJob(o, "UPDATE ludy_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1 AND draft_id = $2", [o.orgId, a.id]), 'EINVOICE_NOT_DRAFT');
     expect(await row(a.id)).toMatchObject({ state: 'issued', provider_ref: 'sbx-test', idempotency_key: keyA, buyer_name: 'Công ty Mua Thử' });
-    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_finance.einvoice_draft_line WHERE org_id = $1 AND draft_id = $2', [o.orgId, a.id])).rows[0])).toEqual({ n: 2 });
+    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_finance.einvoice_draft_line WHERE org_id = $1 AND draft_id = $2', [o.orgId, a.id])).rows[0])).toEqual({ n: 2 });
 
     // A rejected invoice's key is never reused: back to `draft` needs a new key and no reference, and a person edits the draft again.
     const b = await fresh();
@@ -453,7 +453,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null), o.member);
     await moveDraft(o, saved.id, 'submitting', 'pending');
     await execute(o, 'kernel.member.remove', { userId: o.member });
-    expect(await admin(async (c) => (await c.query('SELECT created_by, state FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).rows[0])).toEqual({ created_by: null, state: 'pending' });
+    expect(await admin(async (c) => (await c.query('SELECT created_by, state FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).rows[0])).toEqual({ created_by: null, state: 'pending' });
   });
 
   it('refuses amounts the database cannot hold, in words, and saves the same series reads from two syncs once', async () => {
@@ -519,7 +519,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(business.buyer.identity).toBeNull();
     const wrong = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'cccd', value: '12345' }) }));
     expect(wrong.issues.map((i) => `${i.field}:${i.code}`)).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
-    const stored = await admin(async (c) => (await c.query<{ buyer_identity_kind: string | null; buyer_identity: string | null }>('SELECT buyer_identity_kind, buyer_identity FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, business.id])).rows[0]);
+    const stored = await admin(async (c) => (await c.query<{ buyer_identity_kind: string | null; buyer_identity: string | null }>('SELECT buyer_identity_kind, buyer_identity FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, business.id])).rows[0]);
     expect(stored).toEqual({ buyer_identity_kind: null, buyer_identity: null });
   });
 
@@ -529,7 +529,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     const refusal = (promise: Promise<unknown>) => promise.then(() => 'accepted', (error: { code?: string }) => error.code);
     const individual = (identity: unknown) => ({ kind: 'individual', partyId: null, taxCode: null, name: 'John Smith', address: null, email: null, identity });
     type Saved = Draft & { buyer: { identity: { kind: string; value: string; nationality: string | null } | null } };
-    const stored = async (id: string) => (await admin(async (c) => (await c.query<{ buyer_nationality: string | null }>('SELECT buyer_nationality FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows))[0]?.buyer_nationality;
+    const stored = async (id: string) => (await admin(async (c) => (await c.query<{ buyer_nationality: string | null }>('SELECT buyer_nationality FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows))[0]?.buyer_nationality;
 
     // A passport with no nationality, or with one that is not two letters, cannot be saved.
     expect(await refusal(execute(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'passport', value: 'B1234567', nationality: null }) })))).toBe('EINVOICE_BUYER_NATIONALITY_REQUIRED');
@@ -557,9 +557,9 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(await stored(business.id)).toBeNull();
 
     // The database holds the other half: a nationality only with a passport, in two capital letters.
-    const direct = (set: string) => admin((c) => c.query(`UPDATE crove_finance.einvoice_draft SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, cccd.id]));
+    const direct = (set: string) => admin((c) => c.query(`UPDATE ludy_finance.einvoice_draft SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, cccd.id]));
     await expect(direct("buyer_nationality = 'US'")).rejects.toMatchObject({ code: '23514' });
-    await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET buyer_nationality = 'usa' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_finance.einvoice_draft SET buyer_nationality = 'usa' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id]))).rejects.toMatchObject({ code: '23514' });
 
     // A consumer gave nothing: the list says what the invoice will say.
     const consumer = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'consumer', partyId: null, taxCode: null, name: 'Left over', address: null, email: null, identity: null } }));

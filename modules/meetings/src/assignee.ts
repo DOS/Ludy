@@ -33,7 +33,7 @@ export const assigneeFacts = defineQuery({
     userOf(ctx.actor);
     // The item as the caller may read it (row security: the recorder reads drafts and published items, a reader published ones).
     const item = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(['meeting_id', 'status', 'who_drafted', 'who_parsed'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.itemId)

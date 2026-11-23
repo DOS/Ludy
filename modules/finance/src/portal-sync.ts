@@ -222,7 +222,7 @@ export const portalSyncList = defineCommand({
     if (legalEntityId === null) throw legalEntityNotAllowed();
     await portalPeriodLock(ctx.orgId, legalEntityId, input.period).execute(ctx.trx);
     const active = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(['id', 'file_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -235,7 +235,7 @@ export const portalSyncList = defineCommand({
     if (same) return { listId: same.id, unchanged: true };
     // The latest portal answer replaces the period's earlier synced lists (kept, never deleted); Excel imports stay.
     const synced = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list as l')
+      .selectFrom('ludy_finance.portal_invoice_list as l')
       .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
       .select('l.id')
       .where('l.org_id', '=', ctx.orgId)
@@ -246,7 +246,7 @@ export const portalSyncList = defineCommand({
       .execute();
     if (synced.length > 0) {
       await ctx.trx
-        .updateTable('crove_finance.portal_invoice_list')
+        .updateTable('ludy_finance.portal_invoice_list')
         .set({ removed_at: sql<Date>`pg_catalog.now()`, removed_by: ctx.actor.userId })
         .where('org_id', '=', ctx.orgId)
         .where(
@@ -261,7 +261,7 @@ export const portalSyncList = defineCommand({
       throw new DomainError('PORTAL_LIST_LIMIT', 409, `Mỗi kỳ nhập tối đa ${MAX_PORTAL_LISTS_PER_PERIOD} danh sách; hãy gỡ bớt danh sách cũ`);
     }
     const list = await ctx.trx
-      .insertInto('crove_finance.portal_invoice_list')
+      .insertInto('ludy_finance.portal_invoice_list')
       .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, period: input.period, file_id: file.id, filename: `Cổng thuế ${input.period}.json`, created_by: ctx.actor.userId })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -293,7 +293,7 @@ export const portalSyncXmlPlan = defineQuery({
   access: EDITORS,
   handler: async (ctx, input): Promise<PortalXmlPlan> => {
     const list = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list as l')
+      .selectFrom('ludy_finance.portal_invoice_list as l')
       .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
       .select(['l.id', 'l.period', 'l.status', 'l.legal_entity_id'])
       .where('l.org_id', '=', ctx.orgId)
@@ -309,7 +309,7 @@ export const portalSyncXmlPlan = defineQuery({
     const withXml = new Set(
       (
         await ctx.trx
-          .selectFrom('crove_finance.portal_invoice_row')
+          .selectFrom('ludy_finance.portal_invoice_row')
           .select('row_no')
           .where('org_id', '=', ctx.orgId)
           .where('list_id', '=', list.id)

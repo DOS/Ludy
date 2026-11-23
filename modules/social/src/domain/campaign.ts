@@ -5,7 +5,7 @@
 import { localTime } from './queue.ts';
 import { utmOf, utmTag } from './utm.ts';
 
-// The part of the UTM_TAG rule crove_social.label's CHECKs can say in PostgreSQL (20261029130000): letters (Unicode
+// The part of the UTM_TAG rule ludy_social.label's CHECKs can say in PostgreSQL (20261029130000): letters (Unicode
 // Alphabetic, as the pg_c_utf8 collation reads [[:alpha:]]), ASCII digits, the space separators and the same
 // punctuation. A label's tags pass both, so whatever the commands accept the table accepts.
 const LABEL_TAG = /^[\p{Alphabetic}0-9\p{Zs}_.,:;!?'()/+&%@#-]{1,100}$/u;

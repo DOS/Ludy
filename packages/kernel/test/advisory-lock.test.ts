@@ -6,12 +6,12 @@ import { acquireAdvisoryXactLock, advisoryLockKey } from '../src/advisory-lock.t
 
 describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
   it('builds canonical colon-delimited lock keys and rejects empty segments', () => {
-    expect(advisoryLockKey('crove_hr.interview', 'org-1', 'user-2')).toBe('crove_hr.interview:org-1:user-2');
-    expect(advisoryLockKey('  crove_hr.interview ', ' org-1 ')).toBe('crove_hr.interview:org-1');
+    expect(advisoryLockKey('ludy_hr.interview', 'org-1', 'user-2')).toBe('ludy_hr.interview:org-1:user-2');
+    expect(advisoryLockKey('  ludy_hr.interview ', ' org-1 ')).toBe('ludy_hr.interview:org-1');
     expect(() => advisoryLockKey('')).toThrow(/non-empty namespace/);
     expect(() => advisoryLockKey('   ')).toThrow(/non-empty namespace/);
-    expect(() => advisoryLockKey('crove_hr.interview', 'org-1', '')).toThrow(/non-empty key parts/);
-    expect(() => advisoryLockKey('crove_hr.interview', '   ')).toThrow(/non-empty key parts/);
+    expect(() => advisoryLockKey('ludy_hr.interview', 'org-1', '')).toThrow(/non-empty key parts/);
+    expect(() => advisoryLockKey('ludy_hr.interview', '   ')).toThrow(/non-empty key parts/);
   });
 
   it('executes parameterized pg_advisory_xact_lock(hashtextextended(key, 0)) on the given transaction', async () => {
@@ -46,7 +46,7 @@ describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
     await expect(acquireAdvisoryXactLock(db as unknown as CommandContext['trx'], '   ')).rejects.toThrow(/non-empty lock key/);
     expect(executed).toHaveLength(0);
 
-    const key = advisoryLockKey('crove_hr.interview', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002');
+    const key = advisoryLockKey('ludy_hr.interview', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002');
     await acquireAdvisoryXactLock(db as unknown as CommandContext['trx'], key);
     await db.destroy();
 

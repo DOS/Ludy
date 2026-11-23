@@ -28,7 +28,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
     await panel.getByRole('button', { name: 'Ghim ghi chú Giám đốc chỉ nghe máy sau 15h' }).click();
     await expect(panel.getByTestId('note-item').filter({ hasText: 'Giám đốc' }).getByText('Đã ghim')).toBeVisible();
     const rows = sql<{ visibility: string; pinned: boolean }>(
-      `SELECT n.visibility, n.pinned FROM crove_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug'`,
+      `SELECT n.visibility, n.pinned FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(rows).toEqual([{ visibility: 'org', pinned: true }]);
@@ -56,7 +56,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
     await expect(page.getByText('Ghi chú không phải nơi giữ mật khẩu')).toBeVisible();
     await expect(page.getByRole('status').filter({ hasText: 'Đã lưu' })).toBeVisible({ timeout: 10_000 });
     const rows = sql<{ title: string; visibility: string }>(
-      `SELECT n.title, n.visibility FROM crove_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' AND n.visibility = 'private'`,
+      `SELECT n.title, n.visibility FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' AND n.visibility = 'private'`,
       { slug },
     );
     expect(rows).toEqual([{ title: 'Mật khẩu cổng ngân hàng', visibility: 'private' }]);
@@ -69,7 +69,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
     await done.getByRole('button', { name: 'Hoàn tác' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã đưa ghi chú trở lại' })).toBeVisible();
     const trashed = sql<{ trashed: boolean }>(
-      `SELECT n.deleted_at IS NOT NULL AS trashed FROM crove_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
+      `SELECT n.deleted_at IS NOT NULL AS trashed FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
         WHERE t.slug = :'slug' AND n.title = 'Mật khẩu cổng ngân hàng'`,
       { slug },
     );

@@ -57,7 +57,7 @@ suite('the chapters of a meeting (#3844)', () => {
   }
   const rowsOf = (meetingId: string, stage?: string) =>
     sqlAdmin<{ position: number; title: string; start_seconds: number; stage: string; tainted: boolean }>(
-      `SELECT position, title, start_seconds, stage, tainted FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND ($3::text IS NULL OR stage = $3) ORDER BY stage, position`,
+      `SELECT position, title, start_seconds, stage, tainted FROM ludy_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND ($3::text IS NULL OR stage = $3) ORDER BY stage, position`,
       [orgId, meetingId, stage ?? null],
     ).then((r) => r.rows);
 
@@ -65,11 +65,11 @@ suite('the chapters of a meeting (#3844)', () => {
   async function seedMeeting(recorder: string, readers: string[] = ['reader']): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T04:00:00Z', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     await exec(recorder, 'meetings.transcript.draft_store', {
       meetingId,
       segments: [
@@ -170,12 +170,12 @@ suite('the chapters of a meeting (#3844)', () => {
     expect(await get('reader', meetingId)).toEqual({ meetingId, draft: [], published: [] });
     expect(await refuses(get('stranger', meetingId))).not.toBeNull();
     // The row policy itself, below the queries: raw SQL as each member counts the rows it can read, and cannot write.
-    const count = (c: pg.Client) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId]).then((r) => Number(r.rows[0]?.n));
+    const count = (c: pg.Client) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId]).then((r) => Number(r.rows[0]?.n));
     expect(await asMember('recorder', count)).toBe(2);
     for (const who of ['owner', 'reader', 'stranger']) expect(await asMember(who, count), `${who} reads no draft row`).toBe(0);
     for (const who of ['owner', 'reader', 'stranger']) {
       await expect(
-        asMember(who, (c) => c.query(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, 3, 'Lén', 20)`, [orgId, meetingId])),
+        asMember(who, (c) => c.query(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, 3, 'Lén', 20)`, [orgId, meetingId])),
         `${who} cannot insert`,
       ).rejects.toMatchObject({ code: '42501' });
     }
@@ -190,8 +190,8 @@ suite('the chapters of a meeting (#3844)', () => {
     expect(titles(asRecorder.published)).toEqual(['Mở đầu', 'Báo giá']);
     expect(asRecorder.draft).toEqual([]);
     // A published row is not edited or deleted by a reader, nor edited by the recorder in place.
-    await expect(asMember('reader', (c) => c.query(`DELETE FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET title = 'Sửa tại chỗ' WHERE meeting_id = $1 AND stage = 'published'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
+    await expect(asMember('reader', (c) => c.query(`DELETE FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
+    await expect(asMember('recorder', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET title = 'Sửa tại chỗ' WHERE meeting_id = $1 AND stage = 'published'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
     // Nothing is left to publish.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('NOTHING_TO_PUBLISH');
   });
@@ -236,19 +236,19 @@ suite('the chapters of a meeting (#3844)', () => {
     const run = randomUUID();
     // A row that comes from a run must be born tainted (the database refuses it otherwise), and a published row never tainted.
     await expect(
-      sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 1, 'Từ run', 0, false, $3)`, [orgId, meetingId, run]),
+      sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 1, 'Từ run', 0, false, $3)`, [orgId, meetingId, run]),
     ).rejects.toMatchObject({ code: '42501' });
     await expect(
-      sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds, tainted) VALUES ($1, $2, 'published', 1, 'Đã công bố', 0, true)`, [orgId, meetingId]),
+      sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds, tainted) VALUES ($1, $2, 'published', 1, 'Đã công bố', 0, true)`, [orgId, meetingId]),
     ).rejects.toMatchObject({ code: '42501' });
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 1, 'Từ run', 0, true, $3)`, [orgId, meetingId, run]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 1, 'Từ run', 0, true, $3)`, [orgId, meetingId, run]);
     // The recorder's publish refuses while it is unread, by the command and by the trigger.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
-    await expect(sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1`, [meetingId])).rejects.toMatchObject({ code: '42501' });
+    await expect(sqlAdmin(`UPDATE ludy_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1`, [meetingId])).rejects.toMatchObject({ code: '42501' });
     // The run never changes, and the taint is never set again nor cleared by anyone but the review.
-    await expect(sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET source_run_id = $2 WHERE meeting_id = $1`, [meetingId, randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    await expect(sqlAdmin(`UPDATE ludy_meetings.meeting_chapter SET source_run_id = $2 WHERE meeting_id = $1`, [meetingId, randomUUID()])).rejects.toMatchObject({ code: '42501' });
     // The taint is not a column the app's role may write (only the recorder's review, a definer, clears it).
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET tainted = false WHERE meeting_id = $1`, [meetingId]))).rejects.toMatchObject({ code: '42501' });
+    await expect(asMember('recorder', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET tainted = false WHERE meeting_id = $1`, [meetingId]))).rejects.toMatchObject({ code: '42501' });
     expect((await rowsOf(meetingId, 'draft'))[0]).toMatchObject({ tainted: true });
     // The recorder sees the flag in their own draft.
     expect((await get('recorder', meetingId)).draft[0]).toMatchObject({ tainted: true });
@@ -260,12 +260,12 @@ suite('the chapters of a meeting (#3844)', () => {
     await save('recorder', gone, [{ title: 'Mở đầu', startSeconds: 0 }]);
     await exec('recorder', 'meetings.result.publish', { meetingId: gone, confirmed: true });
     await save('recorder', gone, [{ title: 'Bản mới', startSeconds: 10 }]);
-    await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, gone]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, gone]);
     expect(await rowsOf(gone)).toEqual([]);
     // Past its text date a meeting is not found for anyone.
     const late = await seedMeeting('recorder');
     await save('recorder', late, [{ title: 'Mở đầu', startSeconds: 0 }]);
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = (timezone('Asia/Ho_Chi_Minh', now()))::date WHERE id = $1`, [late]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = (timezone('Asia/Ho_Chi_Minh', now()))::date WHERE id = $1`, [late]);
     expect(await refuses(get('recorder', late))).not.toBeNull();
     expect(await refuses(save('recorder', late, [{ title: 'Mở đầu', startSeconds: 0 }]))).not.toBeNull();
     // The 30 day draft expiry: only the old draft goes; the published set of the same meeting stays.
@@ -273,13 +273,13 @@ suite('the chapters of a meeting (#3844)', () => {
     await save('recorder', old, [{ title: 'Đã công bố', startSeconds: 0 }]);
     await exec('recorder', 'meetings.result.publish', { meetingId: old, confirmed: true });
     await save('recorder', old, [{ title: 'Nháp cũ', startSeconds: 10 }]);
-    await sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET created_at = now() - interval '31 days' WHERE meeting_id = $1`, [old]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting_chapter SET created_at = now() - interval '31 days' WHERE meeting_id = $1`, [old]);
     const fresh = await seedMeeting('recorder');
     await save('recorder', fresh, [{ title: 'Nháp mới', startSeconds: 0 }]);
     const w = new pg.Client({ connectionString: workerUrl });
     await w.connect();
     try {
-      const due = (await w.query<{ org_id: string; meeting_id: string }>(`SELECT org_id, meeting_id FROM crove_meetings.meeting_drafts_due(1000)`)).rows.map((r) => r.meeting_id);
+      const due = (await w.query<{ org_id: string; meeting_id: string }>(`SELECT org_id, meeting_id FROM ludy_meetings.meeting_drafts_due(1000)`)).rows.map((r) => r.meeting_id);
       expect(due).toContain(old);
       expect(due).not.toContain(fresh);
     } finally {
@@ -290,9 +290,9 @@ suite('the chapters of a meeting (#3844)', () => {
     try {
       await system.query('BEGIN');
       await system.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
-      const purged = (await system.query<{ n: number }>(`SELECT crove_meetings.meeting_draft_purge($1, $2) AS n`, [orgId, old])).rows[0]?.n;
+      const purged = (await system.query<{ n: number }>(`SELECT ludy_meetings.meeting_draft_purge($1, $2) AS n`, [orgId, old])).rows[0]?.n;
       expect(purged).toBe(1);
-      const kept = (await system.query<{ n: number }>(`SELECT crove_meetings.meeting_draft_purge($1, $2) AS n`, [orgId, fresh])).rows[0]?.n;
+      const kept = (await system.query<{ n: number }>(`SELECT ludy_meetings.meeting_draft_purge($1, $2) AS n`, [orgId, fresh])).rows[0]?.n;
       expect(kept).toBe(0);
       await system.query('COMMIT');
     } finally {
@@ -306,36 +306,36 @@ suite('the chapters of a meeting (#3844)', () => {
   it('finds a value in a chapter title where the owner reads it, counts it per recorder where they cannot, and an erasure redacts the readable one only', async () => {
     const email = 'chuong.rieng@congty.example';
     const chapter = (meetingId: string, stage: 'draft' | 'published', title: string) =>
-      sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds) VALUES ($1, $2, $3, 1, $4, 0)`, [orgId, meetingId, stage, title]);
+      sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds) VALUES ($1, $2, $3, 1, $4, 0)`, [orgId, meetingId, stage, title]);
     // Readable by the owner: a meeting shared with the org, with a published chapter.
     const shared = await seedMeeting('recorder', ['reader']);
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET visibility = 'org' WHERE org_id = $1 AND id = $2`, [orgId, shared]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET visibility = 'org' WHERE org_id = $1 AND id = $2`, [orgId, shared]);
     await chapter(shared, 'published', `Gửi hợp đồng cho ${email}`);
     // Not readable by the owner: an attendees-only meeting, with a draft chapter.
     const hidden = await seedMeeting('recorder', ['reader']);
     await chapter(hidden, 'draft', `Việc riêng ${email}`);
     const find = (who = 'owner') => runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser(who), orgId, idempotencyKey: randomUUID() });
     const found = await find();
-    expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.')).map((m) => m.column)).toEqual(['crove_meetings.meeting_chapter.title']);
+    expect(found.matches.filter((m) => m.column.startsWith('ludy_meetings.')).map((m) => m.column)).toEqual(['ludy_meetings.meeting_chapter.title']);
     // The hidden one is counted for its recorder, as a title of a meeting that holds the value; never its text or meeting.
     expect(found.meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 1, lines: 0, results: 0, items: 0, titles: 1 }]);
     expect(JSON.stringify(found)).not.toContain('Việc riêng');
     // The notice path reaches it too: a meeting whose only mention is in a chapter the owner cannot read is listed for a notice, and an edit of that chapter moves the stamp the notice names.
-    const notice = (c: pg.Client) => c.query<{ meeting_id: string; stamp: string }>(`SELECT meeting_id, stamp::text AS stamp FROM crove_meetings.personal_notice_items('email', $1)`, [email]).then((r) => r.rows);
+    const notice = (c: pg.Client) => c.query<{ meeting_id: string; stamp: string }>(`SELECT meeting_id, stamp::text AS stamp FROM ludy_meetings.personal_notice_items('email', $1)`, [email]).then((r) => r.rows);
     const before = await asMember('owner', notice);
     expect(before.map((r) => r.meeting_id)).toEqual([hidden]);
-    await sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [hidden, `Việc riêng đã sửa ${email}`]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [hidden, `Việc riêng đã sửa ${email}`]);
     const after = await asMember('owner', notice);
     expect(after.map((r) => r.meeting_id)).toEqual([hidden]);
     expect(after[0]?.stamp).not.toBe(before[0]?.stamp);
-    await sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [hidden, `Việc riêng ${email}`]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [hidden, `Việc riêng ${email}`]);
     const mfa = { type: 'user' as const, userId: users.owner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
     expect(JSON.stringify(erased)).not.toContain('Việc riêng');
     expect((await rowsOf(shared)).map((r) => r.title)).toEqual(['Gửi hợp đồng cho [đã xóa]']);
     // The draft of the meeting the owner cannot read stays as written, and is counted as what is kept.
     expect((await rowsOf(hidden)).map((r) => r.title)).toEqual([`Việc riêng ${email}`]);
-    expect(erased.kept.find((k) => k.column === 'crove_meetings.text')).toMatchObject({ rows: 1 });
+    expect(erased.kept.find((k) => k.column === 'ludy_meetings.text')).toMatchObject({ rows: 1 });
     expect((await find()).meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 1, lines: 0, results: 0, items: 0, titles: 1 }]);
   });
 
@@ -359,7 +359,7 @@ suite('the chapters of a meeting (#3844)', () => {
     // their reads, updates and deletes are decided by the policies, and so are every user context's and the system context's.
     type Probe = { read: number; insert: 'refused' | 'allowed'; update: number; delete: number };
     const probe = async (c: pg.Client): Promise<Probe> => {
-      const read = Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId])).rows[0]?.n);
+      const read = Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId])).rows[0]?.n);
       const attempt = async <T,>(sql: string, params: unknown[], done: (r: pg.QueryResult) => T, none: T): Promise<T> => {
         await c.query('SAVEPOINT p');
         try {
@@ -373,13 +373,13 @@ suite('the chapters of a meeting (#3844)', () => {
         }
       };
       const insert = await attempt(
-        `INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, 5, 'Lén', 100)`,
+        `INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, 5, 'Lén', 100)`,
         [orgId, meetingId],
         () => 'allowed' as const,
         'refused' as const,
       );
-      const update = await attempt(`UPDATE crove_meetings.meeting_chapter SET title = 'Sửa lén' WHERE meeting_id = $1`, [meetingId], (r) => r.rowCount ?? 0, 0);
-      const del = await attempt(`DELETE FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId], (r) => r.rowCount ?? 0, 0);
+      const update = await attempt(`UPDATE ludy_meetings.meeting_chapter SET title = 'Sửa lén' WHERE meeting_id = $1`, [meetingId], (r) => r.rowCount ?? 0, 0);
+      const del = await attempt(`DELETE FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId], (r) => r.rowCount ?? 0, 0);
       return { read, insert, update, delete: del };
     };
     const NOTHING: Probe = { read: 0, insert: 'refused', update: 0, delete: 0 };
@@ -442,17 +442,17 @@ suite('the chapters of a meeting (#3844)', () => {
     const meetingId = await seedMeeting('recorder');
     await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }]);
     // An untainted draft: the policy lets the recorder publish it (the one change of stage), by the command's own statement (rolled back here, so the draft stays for the cases below).
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1 AND stage = 'draft' RETURNING id`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(1);
+    await expect(asMember('recorder', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1 AND stage = 'draft' RETURNING id`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(1);
     // A tainted draft (born of a run) never flips: the trigger refuses it with the recorder's own login, so the unread text of a model cannot be published by a raw statement.
     const run = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 2, 'Từ run', 10, true, $3)`, [orgId, meetingId, run]);
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1 AND title = 'Từ run'`, [meetingId]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MEETINGS_DRAFT_NOT_REVIEWED') });
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 2, 'Từ run', 10, true, $3)`, [orgId, meetingId, run]);
+    await expect(asMember('recorder', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1 AND title = 'Từ run'`, [meetingId]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MEETINGS_DRAFT_NOT_REVIEWED') });
     // A published row cannot be turned back into a draft, nor edited, by the recorder in place (the update policy sees drafts only).
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds) VALUES ($1, $2, 'published', 9, 'Đã công bố', 20)`, [orgId, meetingId]);
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'draft' WHERE meeting_id = $1 AND title = 'Đã công bố'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET title = 'Sửa tại chỗ' WHERE meeting_id = $1 AND title = 'Đã công bố'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds) VALUES ($1, $2, 'published', 9, 'Đã công bố', 20)`, [orgId, meetingId]);
+    await expect(asMember('recorder', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET stage = 'draft' WHERE meeting_id = $1 AND title = 'Đã công bố'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
+    await expect(asMember('recorder', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET title = 'Sửa tại chỗ' WHERE meeting_id = $1 AND title = 'Đã công bố'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
     // A reader cannot flip anything either: a draft is not even visible to them, and a published row is not theirs.
-    await expect(asMember('reader', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
+    await expect(asMember('reader', (c) => c.query(`UPDATE ludy_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
     expect((await rowsOf(meetingId)).map((r) => `${r.stage}:${r.title}`).sort()).toEqual(['draft:Mở đầu', 'draft:Từ run', 'published:Đã công bố']);
   });
 });

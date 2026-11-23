@@ -177,7 +177,7 @@ suite('finding a person in the org (#923)', () => {
     const [shared, near] = [randomUUID(), randomUUID()];
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
+        `INSERT INTO ludy_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
            ($1, $2, $4, 'org', 'Khách hàng mới', 'Liên hệ giám đốc: Giam.Doc@khach.example.', '{}'),
            ($1, $3, $4, 'org', 'Địa chỉ khác', 'xgiam.doc@khach.example và giam.doc@khach.example.test', '{}'),
            ($1, ludy_kernel.uuid_v7(), $5, 'private', 'Riêng một', 'gọi giam.doc@khach.example sau 15h', '{}'),
@@ -186,7 +186,7 @@ suite('finding a person in the org (#923)', () => {
         [org.orgId, shared, near, org.owner, org.member],
       );
       await c.query(
-        `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, details, checklist, sort_key) VALUES
+        `INSERT INTO ludy_notes.todo (org_id, owner_user_id, title, details, checklist, sort_key) VALUES
            ($1, $2, 'Gọi giám đốc', 'Số (000) 777.66.55', '[]', 'a0'),
            ($1, $2, 'Gửi hồ sơ', NULL, '[{"text": "gửi tới giam.doc@khach.example", "done": false}]', 'a1')`,
         [org.orgId, org.member],
@@ -196,8 +196,8 @@ suite('finding a person in the org (#923)', () => {
     for (const user of [org.owner, org.admin]) {
       const result = await find('giam.doc@khach.example', user);
       // The shared note that holds the whole address, and not the one with longer addresses around it.
-      expect(result.matches.filter((m) => m.column.startsWith('crove_notes.'))).toEqual([
-        expect.objectContaining({ column: 'crove_notes.note.body', handling: 'erase', rowId: shared, row: expect.objectContaining({ visibility: 'org', title: 'Khách hàng mới' }) }),
+      expect(result.matches.filter((m) => m.column.startsWith('ludy_notes.'))).toEqual([
+        expect.objectContaining({ column: 'ludy_notes.note.body', handling: 'erase', rowId: shared, row: expect.objectContaining({ visibility: 'org', title: 'Khách hàng mới' }) }),
       ]);
       // The private counts are for owners only (#1678 review: a probe of a guessed value is an oracle).
       if (user === org.admin) expect(result.privateItems).toBeNull();
@@ -241,7 +241,7 @@ suite('finding a person in the org (#923)', () => {
     const [memberTodo, adminTodo] = [randomUUID(), randomUUID()];
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
+        `INSERT INTO ludy_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
            ($1, $2, $6, 'org', 'Gặp THU.KY@khach.example', 'Thư ký: thu.ky@khach.example, số cũ', '{thu.ky@khach.example,khach}'),
            ($1, $3, $7, 'private', 'Riêng A', 'gửi thu.ky@khach.example', '{}'),
            ($1, $4, $7, 'private', 'Riêng B: thu.ky@khach.example', '', '{}'),
@@ -249,7 +249,7 @@ suite('finding a person in the org (#923)', () => {
         [org.orgId, shared, memberNotes[0], memberNotes[1], unrelated, org.owner, org.member],
       );
       await c.query(
-        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, details, checklist, sort_key) VALUES
+        `INSERT INTO ludy_notes.todo (org_id, id, owner_user_id, title, details, checklist, sort_key) VALUES
            ($1, $2, $4, 'Gọi thư ký', 'thu.ky@khach.example', '[]', 'b0'),
            ($1, $3, $5, 'Hồ sơ', NULL, '[{"text": "gửi thu.ky@khach.example", "done": false}]', 'b1')`,
         [org.orgId, memberTodo, adminTodo, org.member, org.admin],
@@ -259,8 +259,8 @@ suite('finding a person in the org (#923)', () => {
       (
         await admin((c) =>
           c.query<{ id: string }>(
-            `SELECT id FROM crove_notes.note WHERE org_id = $1 AND visibility = 'private' AND author_user_id = ANY($2) AND id = ANY($4)
-             UNION ALL SELECT id FROM crove_notes.todo WHERE org_id = $1 AND id = ANY($3)`,
+            `SELECT id FROM ludy_notes.note WHERE org_id = $1 AND visibility = 'private' AND author_user_id = ANY($2) AND id = ANY($4)
+             UNION ALL SELECT id FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($3)`,
             [org.orgId, [org.member], [memberTodo, adminTodo], [...memberNotes, unrelated, later]],
           ),
         )
@@ -273,16 +273,16 @@ suite('finding a person in the org (#923)', () => {
 
     // Before any notice the erasure edits the shared note and deletes no private item: it says how many it kept.
     const first = await erase(value);
-    expect(Object.fromEntries(first.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]))).toEqual({
-      'crove_notes.note.title': 1,
-      'crove_notes.note.body': 1,
-      'crove_notes.note.tags': 1,
+    expect(Object.fromEntries(first.erased.filter((e) => e.column.startsWith('ludy_notes.')).map((e) => [e.column, e.rows]))).toEqual({
+      'ludy_notes.note.title': 1,
+      'ludy_notes.note.body': 1,
+      'ludy_notes.note.tags': 1,
     });
-    expect(first.kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
-      { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
-      { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+    expect(first.kept.filter((k) => k.column.startsWith('ludy_notes.'))).toEqual([
+      { column: 'ludy_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'ludy_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
     ]);
-    const note = (await admin((c) => c.query(`SELECT title, body, tags, revision, search @@ ludy_kernel.search_query('khach.example') AS searchable FROM crove_notes.note WHERE id = $1`, [shared]))).rows[0];
+    const note = (await admin((c) => c.query(`SELECT title, body, tags, revision, search @@ ludy_kernel.search_query('khach.example') AS searchable FROM ludy_notes.note WHERE id = $1`, [shared]))).rows[0];
     expect(note).toEqual({ title: 'Gặp [đã xóa]', body: 'Thư ký: [đã xóa], số cũ', tags: ['khach'], revision: 2, searchable: false });
     expect(await privateLeft()).toEqual([...memberNotes, unrelated, memberTodo, adminTodo].sort());
 
@@ -321,9 +321,9 @@ suite('finding a person in the org (#923)', () => {
     const keys = (
       await admin((c) =>
         c.query<{ same: boolean; other: boolean; org: boolean }>(
-          `SELECT crove_notes.private_notice_key_of($1, 'digits', '84912345678') = crove_notes.private_notice_key_of($1, 'digits', '0912345678') AS same,
-                  crove_notes.private_notice_key_of($1, 'email', 'thu.ky@khach.example') = crove_notes.private_notice_key_of($1, 'email', 'khac@khach.example') AS other,
-                  crove_notes.private_notice_key_of($1, 'email', 'thu.ky@khach.example') = crove_notes.private_notice_key_of($2, 'email', 'thu.ky@khach.example') AS org`,
+          `SELECT ludy_notes.private_notice_key_of($1, 'digits', '84912345678') = ludy_notes.private_notice_key_of($1, 'digits', '0912345678') AS same,
+                  ludy_notes.private_notice_key_of($1, 'email', 'thu.ky@khach.example') = ludy_notes.private_notice_key_of($1, 'email', 'khac@khach.example') AS other,
+                  ludy_notes.private_notice_key_of($1, 'email', 'thu.ky@khach.example') = ludy_notes.private_notice_key_of($2, 'email', 'thu.ky@khach.example') AS org`,
           [org.orgId, other.orgId],
         ),
       )
@@ -335,9 +335,9 @@ suite('finding a person in the org (#923)', () => {
     }
 
     // Until the worker has told the authors, the erasure deletes nothing.
-    expect((await erase(value)).kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
-      { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
-      { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+    expect((await erase(value)).kept.filter((k) => k.column.startsWith('ludy_notes.'))).toEqual([
+      { column: 'ludy_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'ludy_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
     ]);
     // The worker turns the event into one notification per author, with counts only.
     await workerRt.execute('kernel.notification.dispatch', { eventId: events[0]?.id }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
@@ -354,9 +354,9 @@ suite('finding a person in the org (#923)', () => {
       ].sort((a, b) => a.user_id.localeCompare(b.user_id)),
     );
     // Told just now: the erasure waits 24 hours, so the authors can read the notice and take their items first.
-    expect((await erase(value)).kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
-      { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
-      { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+    expect((await erase(value)).kept.filter((k) => k.column.startsWith('ludy_notes.'))).toEqual([
+      { column: 'ludy_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'ludy_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
     ]);
     expect(await privateLeft()).toEqual([...memberNotes, unrelated, memberTodo, adminTodo].sort());
     // A day later: the notice's audit row and its notifications moved 25 hours back (the audit trail is append-only,
@@ -371,22 +371,22 @@ suite('finding a person in the org (#923)', () => {
 
     // A private note written after the notice was not named, and a to-do changed since it was named at an older
     // revision: the erasure keeps both, and deletes the others.
-    await admin((c) => c.query('UPDATE crove_notes.todo SET revision = revision + 1 WHERE org_id = $1 AND id = $2', [org.orgId, memberTodo]));
+    await admin((c) => c.query('UPDATE ludy_notes.todo SET revision = revision + 1 WHERE org_id = $1 AND id = $2', [org.orgId, memberTodo]));
     await admin((c) =>
-      c.query(`INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Riêng D', 'thu.ky@khach.example', '{}')`, [
+      c.query(`INSERT INTO ludy_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Riêng D', 'thu.ky@khach.example', '{}')`, [
         org.orgId,
         later,
         org.member,
       ]),
     );
     const second = await erase(value);
-    expect(Object.fromEntries(second.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]))).toEqual({
-      'crove_notes.note': 2,
-      'crove_notes.todo': 1,
+    expect(Object.fromEntries(second.erased.filter((e) => e.column.startsWith('ludy_notes.')).map((e) => [e.column, e.rows]))).toEqual({
+      'ludy_notes.note': 2,
+      'ludy_notes.todo': 1,
     });
-    expect(second.kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
-      { column: 'crove_notes.note', rows: 1, reason: UNTOLD_PRIVATE_REASON },
-      { column: 'crove_notes.todo', rows: 1, reason: UNTOLD_PRIVATE_REASON },
+    expect(second.kept.filter((k) => k.column.startsWith('ludy_notes.'))).toEqual([
+      { column: 'ludy_notes.note', rows: 1, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'ludy_notes.todo', rows: 1, reason: UNTOLD_PRIVATE_REASON },
     ]);
     expect(await privateLeft()).toEqual([unrelated, later, memberTodo].sort());
     expect((await find(value)).privateItems).toEqual([{ authorUserId: org.member, notes: 1, todos: 1 }]);
@@ -398,8 +398,8 @@ suite('finding a person in the org (#923)', () => {
       )
     ).rows[0];
     expect(erasedAudit?.detail).toMatchObject({
-      erased: { 'crove_notes.note': 2, 'crove_notes.todo': 1 },
-      kept: { 'crove_notes.note': 1, 'crove_notes.todo': 1 },
+      erased: { 'ludy_notes.note': 2, 'ludy_notes.todo': 1 },
+      kept: { 'ludy_notes.note': 1, 'ludy_notes.todo': 1 },
       // The deleted items, by id only.
       private_deleted: { notes: [...memberNotes].sort(), todos: [adminTodo] },
     });
@@ -411,13 +411,13 @@ suite('finding a person in the org (#923)', () => {
     const [memberList, adminList, survivingTodo, taggedTodo] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
+        `INSERT INTO ludy_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
            ($1, $2, $4, 'Danh sách của list-pii@khach.example', '[{"id": "s1", "name": "Bình thường"}]'::jsonb, 'c0'),
            ($1, $3, $5, 'Riêng tư', '[{"id": "s2", "name": "Hỏi list-pii@khach.example"}]'::jsonb, 'c1')`,
         [org.orgId, memberList, adminList, org.member, org.admin],
       );
       await c.query(
-        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
+        `INSERT INTO ludy_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
            ($1, $2, $4, 'Việc không chứa PII', '{}'::text[], $5, 's1', 'c0'),
            ($1, $3, $4, 'Việc gắn nhãn PII', ARRAY['list-pii@khach.example'], NULL, NULL, 'c1')`,
         [org.orgId, survivingTodo, taggedTodo, org.member, memberList],
@@ -456,14 +456,14 @@ suite('finding a person in the org (#923)', () => {
     });
 
     const erased = await erase(value);
-    expect(Object.fromEntries(erased.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]))).toEqual({
-      'crove_notes.todo': 3,
+    expect(Object.fromEntries(erased.erased.filter((e) => e.column.startsWith('ludy_notes.')).map((e) => [e.column, e.rows]))).toEqual({
+      'ludy_notes.todo': 3,
     });
-    const remainingLists = await admin((c) => c.query(`SELECT id FROM crove_notes.todo_list WHERE id = ANY($1::uuid[])`, [[memberList, adminList]]));
+    const remainingLists = await admin((c) => c.query(`SELECT id FROM ludy_notes.todo_list WHERE id = ANY($1::uuid[])`, [[memberList, adminList]]));
     expect(remainingLists.rows).toEqual([]);
-    const survivingRow = await admin((c) => c.query<{ list_id: string | null; section_id: string | null }>(`SELECT list_id, section_id FROM crove_notes.todo WHERE id = $1`, [survivingTodo]));
+    const survivingRow = await admin((c) => c.query<{ list_id: string | null; section_id: string | null }>(`SELECT list_id, section_id FROM ludy_notes.todo WHERE id = $1`, [survivingTodo]));
     expect(survivingRow.rows).toEqual([{ list_id: null, section_id: null }]);
-    expect((await admin((c) => c.query(`SELECT id FROM crove_notes.todo WHERE id = $1`, [taggedTodo]))).rows).toEqual([]);
+    expect((await admin((c) => c.query(`SELECT id FROM ludy_notes.todo WHERE id = $1`, [taggedTodo]))).rows).toEqual([]);
 
     // Concurrent private_erase vs todo.update on a matched todo inside a matched todo_list locks todo_list -> todo
     // in the same order without Postgres 40P01 deadlock.
@@ -471,12 +471,12 @@ suite('finding a person in the org (#923)', () => {
     const [raceList, raceTodo] = [randomUUID(), randomUUID()];
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
+        `INSERT INTO ludy_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
            ($1, $2, $3, 'Danh sách race-pii@khach.example', '[{"id": "s1", "name": "Mục 1"}]'::jsonb, 'd0')`,
         [org.orgId, raceList, org.member],
       );
       await c.query(
-        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
+        `INSERT INTO ludy_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
            ($1, $2, $3, 'Việc race', ARRAY['race-pii@khach.example'], $4, 's1', 'd0')`,
         [org.orgId, raceTodo, org.member, raceList],
       );
@@ -585,7 +585,7 @@ suite('finding a person in the org (#923)', () => {
       await c.query('BEGIN');
       await c.query("SET LOCAL session_replication_role = 'replica'");
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+        `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
          VALUES ($1, $2, 'C26TAA', '1', '2026-09-01', 100, 10, 110)`,
         [org.orgId, booked],
       );
@@ -593,7 +593,7 @@ suite('finding a person in the org (#923)', () => {
     });
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_social.report_schedule (org_id, name, cadence, weekday, period, recipients, next_run_at, created_by)
+        `INSERT INTO ludy_social.report_schedule (org_id, name, cadence, weekday, period, recipients, next_run_at, created_by)
          VALUES ($1, 'Báo cáo tuần', 'weekly', 1, 'previous_week', ARRAY['so.tran@example.vn', 'ke.toan@example.vn'], now(), $2),
                 ($1, 'Chỉ một người', 'weekly', 1, 'previous_week', ARRAY['SO.TRAN@example.vn', 'so.tran@example.vn'], now(), $2)`,
         [org.orgId, org.owner],
@@ -613,11 +613,11 @@ suite('finding a person in the org (#923)', () => {
       'ludy_kernel.party.email': 1,
       'ludy_kernel.party.phone': 1,
       'ludy_kernel.party.address': 1,
-      'crove_social.report_schedule.recipients': 2,
+      'ludy_social.report_schedule.recipients': 2,
     });
     const party = (await admin((c) => c.query('SELECT name, tax_code, email, phone, address FROM ludy_kernel.party WHERE id = $1', [booked]))).rows[0];
     expect(party).toEqual({ name: 'Trần Thị Sổ', tax_code: '0309876546', email: null, phone: null, address: null });
-    const schedules = (await admin((c) => c.query('SELECT name, recipients FROM crove_social.report_schedule WHERE org_id = $1', [org.orgId]))).rows;
+    const schedules = (await admin((c) => c.query('SELECT name, recipients FROM ludy_social.report_schedule WHERE org_id = $1', [org.orgId]))).rows;
     expect(schedules).toEqual([{ name: 'Báo cáo tuần', recipients: ['ke.toan@example.vn'] }]);
     // Erasing by the tax code now keeps the party's name and code, as the books need them.
     const byCode = await erase('0309876546');
@@ -643,12 +643,12 @@ suite('finding a person in the org (#923)', () => {
         [org.orgId, fileId, sha256, `org/${org.orgId}/${sha256}`, until],
       );
       const doc = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id)
+        `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id)
          VALUES ($1, $2, 'C26TAA', '77', '2026-09-02', 100, 10, 110, $3) RETURNING id`,
         [org.orgId, party.rows[0]?.id, fileId],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-02', 'HĐ 77', 'finance.purchase_document', $2)`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-02', 'HĐ 77', 'finance.purchase_document', $2)`,
         [org.orgId, doc.rows[0]?.id],
       );
       await c.query('COMMIT');
@@ -663,7 +663,7 @@ suite('finding a person in the org (#923)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query("SET LOCAL session_replication_role = 'replica'");
-      const party = await c.query<{ id: string }>(`SELECT party_id AS id FROM crove_finance.purchase_document WHERE source_file_id = $1`, [fileId]);
+      const party = await c.query<{ id: string }>(`SELECT party_id AS id FROM ludy_finance.purchase_document WHERE source_file_id = $1`, [fileId]);
       const second = randomUUID();
       await c.query(
         `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
@@ -671,12 +671,12 @@ suite('finding a person in the org (#923)', () => {
         [org.orgId, second, sha2, `org/${org.orgId}/${sha2}`],
       );
       const doc = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id)
+        `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id)
          VALUES ($1, $2, 'C26TAA', '78', '2026-09-03', 100, 10, 110, $3) RETURNING id`,
         [org.orgId, party.rows[0]?.id, second],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-03', 'HĐ 78', 'finance.purchase_document', $2)`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-03', 'HĐ 78', 'finance.purchase_document', $2)`,
         [org.orgId, doc.rows[0]?.id],
       );
       await c.query('COMMIT');
@@ -763,37 +763,37 @@ suite('finding a person in the org (#923)', () => {
       const voucher = randomUUID();
       const lines = (entry: string, debit: string, credit: string) =>
         c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, $3, 100000, 0), ($1, $2, 2, $4, 0, 100000)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, $3, 100000, 0), ($1, $2, 2, $4, 0, 100000)`,
           [org.orgId, entry, debit, credit],
         );
       await c.query('BEGIN');
       const advance = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-04', $2, 'test.pdpl', $3) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-04', $2, 'test.pdpl', $3) RETURNING id`,
           [org.orgId, `Tạm ứng cho ${email}`, randomUUID()],
         )
       ).rows[0]?.id as string;
       await lines(advance, '141', '1111');
       const entry = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-05', 'PT', 'finance.cash_voucher', $2) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-05', 'PT', 'finance.cash_voucher', $2) RETURNING id`,
           [org.orgId, receipt],
         )
       ).rows[0]?.id as string;
       await lines(entry, '1111', '131');
       await c.query(
-        `INSERT INTO crove_finance.cash_voucher (org_id, id, voucher_type, number, voucher_date, cash_account, description, amount)
+        `INSERT INTO ludy_finance.cash_voucher (org_id, id, voucher_type, number, voucher_date, cash_account, description, amount)
          VALUES ($1, $2, 'cash_receipt', 1, '2026-09-05', '1111', $3, 100000)`,
         [org.orgId, receipt, `Thu tiền của ${email}`],
       );
       const adjustment = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-06', 'PKT', 'finance.journal_voucher', $2) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-06', 'PKT', 'finance.journal_voucher', $2) RETURNING id`,
           [org.orgId, voucher],
         )
       ).rows[0]?.id as string;
       await lines(adjustment, '6422', '331');
-      await c.query(`INSERT INTO crove_finance.journal_voucher (org_id, id, number, voucher_date, description) VALUES ($1, $2, 1, '2026-09-06', $3)`, [
+      await c.query(`INSERT INTO ludy_finance.journal_voucher (org_id, id, number, voucher_date, description) VALUES ($1, $2, 1, '2026-09-06', $3)`, [
         org.orgId,
         voucher,
         `Điều chỉnh theo thư của ${email}`,
@@ -804,22 +804,22 @@ suite('finding a person in the org (#923)', () => {
 
     const found = await find(email);
     expect(columns(found)).toEqual([
-      'crove_finance.cash_voucher.description',
-      'crove_finance.journal_entry.description',
-      'crove_finance.journal_voucher.description',
+      'ludy_finance.cash_voucher.description',
+      'ludy_finance.journal_entry.description',
+      'ludy_finance.journal_voucher.description',
       'ludy_kernel.activity.summary',
       'ludy_kernel.task_comment.body',
     ]);
     expect(found.matches.find((m) => m.column === 'ludy_kernel.activity.summary')).toMatchObject({ handling: 'erase', rowId: seeded.byEmail });
     expect(found.matches.find((m) => m.column === 'ludy_kernel.task_comment.body')?.handling).toBe('keep_record');
-    expect(found.matches.filter((m) => m.column.startsWith('crove_finance.')).map((m) => m.handling)).toEqual(['keep_legal', 'keep_legal', 'keep_legal']);
+    expect(found.matches.filter((m) => m.column.startsWith('ludy_finance.')).map((m) => m.handling)).toEqual(['keep_legal', 'keep_legal', 'keep_legal']);
     // A phone however it is spelled, never inside a longer number.
     const byPhone = await find('+84 987 654 321');
     expect(byPhone.matches.filter((m) => m.column === 'ludy_kernel.activity.summary').map((m) => m.rowId)).toEqual([seeded.byPhone]);
 
     const erased = await erase(email);
     expect(erased.erased).toContainEqual({ column: 'ludy_kernel.activity.summary', rows: 1 });
-    for (const column of ['ludy_kernel.task_comment.body', 'crove_finance.journal_entry.description', 'crove_finance.cash_voucher.description', 'crove_finance.journal_voucher.description']) {
+    for (const column of ['ludy_kernel.task_comment.body', 'ludy_finance.journal_entry.description', 'ludy_finance.cash_voucher.description', 'ludy_finance.journal_voucher.description']) {
       expect(erased.kept, column).toContainEqual({ column, rows: 1, reason: expect.any(String) });
     }
     await erase('0987654321');
@@ -832,9 +832,9 @@ suite('finding a person in the org (#923)', () => {
     expect(summary(seeded.longer)).toBe('Mã đơn 0987654321999 không phải số điện thoại');
     // The kept rows are still there to find, and nothing else is.
     expect(columns(await find(email))).toEqual([
-      'crove_finance.cash_voucher.description',
-      'crove_finance.journal_entry.description',
-      'crove_finance.journal_voucher.description',
+      'ludy_finance.cash_voucher.description',
+      'ludy_finance.journal_entry.description',
+      'ludy_finance.journal_voucher.description',
       'ludy_kernel.task_comment.body',
     ]);
     const audits = (
@@ -893,7 +893,7 @@ suite('finding a person in the org (#923)', () => {
       // A statement line as the bank wrote it, inserted without the import's checks, which this test is not about.
       await c.query("SET LOCAL session_replication_role = 'replica'");
       await c.query(
-        `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
+        `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
          VALUES ($1, '1121', $2, 1, '2026-09-07', $3, 250000, $4)`,
         [org.orgId, randomUUID(), `CK tu ${email} thanh toan`, entity],
       );
@@ -901,24 +901,24 @@ suite('finding a person in the org (#923)', () => {
       await c.query('BEGIN');
       const entry = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-08', 'Chi phí', 'test.pdpl', $2) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-08', 'Chi phí', 'test.pdpl', $2) RETURNING id`,
           [org.orgId, randomUUID()],
         )
       ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, memo) VALUES ($1, $2, 1, '6422', 50000, 0, $3), ($1, $2, 2, '1111', 0, 50000, NULL)`,
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, memo) VALUES ($1, $2, 1, '6422', 50000, 0, $3), ($1, $2, 2, '1111', 0, 50000, NULL)`,
         [org.orgId, entry, `Hoàn ứng cho ${email}`],
       );
       await c.query('COMMIT');
       return { byTitle, byDescription, short };
     });
 
-    expect(columns(await find(email))).toEqual(['crove_finance.bank_line.description', 'crove_finance.journal_line.memo', 'ludy_kernel.task.title']);
+    expect(columns(await find(email))).toEqual(['ludy_finance.bank_line.description', 'ludy_finance.journal_line.memo', 'ludy_kernel.task.title']);
     expect((await find('0976543210')).matches.filter((m) => m.column === 'ludy_kernel.task.description').map((m) => m.rowId)).toEqual([seeded.byDescription]);
 
     const byEmail = await erase(email);
     expect(byEmail.erased).toContainEqual({ column: 'ludy_kernel.task.title', rows: 1 });
-    for (const column of ['crove_finance.bank_line.description', 'crove_finance.journal_line.memo']) {
+    for (const column of ['ludy_finance.bank_line.description', 'ludy_finance.journal_line.memo']) {
       expect(byEmail.kept, column).toContainEqual({ column, rows: 1, reason: expect.any(String) });
     }
     const byPhone = await erase('+84 976 543 210');
@@ -992,13 +992,13 @@ suite('finding a person in the org (#923)', () => {
       const connection = randomUUID();
       await admin(async (c) => {
         await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
-        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
+        await c.query('INSERT INTO ludy_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
       });
       const row = async (state: string, reason: string | null, no: string) => {
         const id = randomUUID();
         await admin((c) =>
           c.query(
-            `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
+            `INSERT INTO ludy_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
              VALUES ($1, $2, $3, 'cash_voucher', $4, 4, $5, $6, $7, $8, $9)`,
             [orgId, entity, connection, randomUUID(), id, no, 'a'.repeat(64), state, reason],
           ),
@@ -1018,23 +1018,23 @@ suite('finding a person in the org (#923)', () => {
     const queuedQuoting = await mine.row('queued', `Texte ${email}`, 'PC8');
     const otherOrg = await theirs.row('refused', `Đối tượng ${email} chưa có trong danh mục`, 'PC6');
     const stored = async (id: string) =>
-      (await admin((c) => c.query<{ state: string; reason: string | null; attempts: number; updated_at: Date }>('SELECT state, reason, attempts, updated_at FROM crove_finance.misa_amis_push WHERE org_refid = $1', [id]))).rows[0];
+      (await admin((c) => c.query<{ state: string; reason: string | null; attempts: number; updated_at: Date }>('SELECT state, reason, attempts, updated_at FROM ludy_finance.misa_amis_push WHERE org_refid = $1', [id]))).rows[0];
     const before = await stored(quoted);
 
     // The finder reports the column, with what an erasure does to it.
     const found = await find(email);
     // The finder lists the text in every state: the two refused rows and the queued one (an erasure clears only the refused ones).
-    expect(found.matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(3);
-    expect(found.matches.find((m) => m.column === 'crove_finance.misa_amis_push.reason')).toMatchObject({ handling: 'erase' });
+    expect(found.matches.filter((m) => m.column === 'ludy_finance.misa_amis_push.reason')).toHaveLength(3);
+    expect(found.matches.find((m) => m.column === 'ludy_finance.misa_amis_push.reason')).toMatchObject({ handling: 'erase' });
 
     // A short number is listed, not cleared.
     await mine.row('refused', 'Số tiền 12345678 không hợp lệ', 'PC7');
     const shortNumber = await erase('12345678');
-    expect(shortNumber.erased.find((e) => e.column === 'crove_finance.misa_amis_push.reason')?.rows ?? 0).toBe(0);
-    expect(shortNumber.kept.find((k) => k.column === 'crove_finance.misa_amis_push.reason')?.reason).toMatch(/fewer than 10 digits/);
+    expect(shortNumber.erased.find((e) => e.column === 'ludy_finance.misa_amis_push.reason')?.rows ?? 0).toBe(0);
+    expect(shortNumber.kept.find((k) => k.column === 'ludy_finance.misa_amis_push.reason')?.reason).toMatch(/fewer than 10 digits/);
 
     const erased = await erase(email);
-    expect(erased.erased.find((e) => e.column === 'crove_finance.misa_amis_push.reason')?.rows).toBe(2);
+    expect(erased.erased.find((e) => e.column === 'ludy_finance.misa_amis_push.reason')?.rows).toBe(2);
     // The text goes, the row and its state stay (and nothing else about it moves).
     for (const id of [quoted, quotedLower]) expect(await stored(id)).toMatchObject({ state: 'refused', reason: null, attempts: 1 });
     expect((await stored(quoted))?.updated_at).toEqual(before?.updated_at);
@@ -1045,7 +1045,7 @@ suite('finding a person in the org (#923)', () => {
     expect(await stored(queuedQuoting)).toMatchObject({ state: 'queued', reason: `Texte ${email}` });
     expect(await stored(otherOrg)).toMatchObject({ state: 'refused', reason: `Đối tượng ${email} chưa có trong danh mục` });
     // Of the rows that quoted the person only the one that is not refused is left.
-    expect((await find(email)).matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(1);
+    expect((await find(email)).matches.filter((m) => m.column === 'ludy_finance.misa_amis_push.reason')).toHaveLength(1);
   });
 
   // The stored results of a MISA catalogue check (#4112): the finder lists a party's row by its tax code, an erasure deletes the party rows of that tax code in the org and leaves an item row, other tax codes and
@@ -1055,23 +1055,23 @@ suite('finding a person in the org (#923)', () => {
     const seed = async (orgId: string, owner: string) => {
       const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
       // The test before this one may have connected the org's default entity already (one connection per entity): that connection is reused.
-      let connection = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
+      let connection = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
       if (connection === undefined) {
         const channel = randomUUID();
         connection = randomUUID();
         await admin(async (c) => {
           await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
-          await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
+          await c.query('INSERT INTO ludy_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
         });
       }
       const connectionId = connection;
       // A check that waits (its job may have read the tax code before the erasure).
       await admin((c) =>
-        c.query("INSERT INTO crove_finance.misa_amis_match_check (org_id, legal_entity_id, connection_id, params, state, requested_at) VALUES ($1, $2, $3, '{}'::jsonb, 'requested', pg_catalog.now() - interval '5 minutes') ON CONFLICT (org_id, connection_id) DO NOTHING", [orgId, entity, connectionId]),
+        c.query("INSERT INTO ludy_finance.misa_amis_match_check (org_id, legal_entity_id, connection_id, params, state, requested_at) VALUES ($1, $2, $3, '{}'::jsonb, 'requested', pg_catalog.now() - interval '5 minutes') ON CONFLICT (org_id, connection_id) DO NOTHING", [orgId, entity, connectionId]),
       );
       return async (kind: string, key: string) => {
         await admin((c) =>
-          c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ($1, $2, $3, $4, $5, 'unknown')", [orgId, entity, connectionId, kind, key]),
+          c.query("INSERT INTO ludy_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ($1, $2, $3, $4, $5, 'unknown')", [orgId, entity, connectionId, kind, key]),
         );
       };
     };
@@ -1081,19 +1081,19 @@ suite('finding a person in the org (#923)', () => {
     await mine('party', '0312345678');
     await mine('item', 'DV_CHUNG');
     await theirs('party', taxCode);
-    const count = async (orgId: string) => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId]))).rows[0]?.n);
-    const askedAt = async (orgId: string) => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
+    const count = async (orgId: string) => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId]))).rows[0]?.n);
+    const askedAt = async (orgId: string) => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM ludy_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
     const mineBefore = await askedAt(org.orgId);
     const theirsBefore = await askedAt(other.orgId);
 
     const found = await find(taxCode);
-    expect(found.matches.filter((m) => m.column === 'crove_finance.misa_amis_match.match_key')).toHaveLength(1);
+    expect(found.matches.filter((m) => m.column === 'ludy_finance.misa_amis_match.match_key')).toHaveLength(1);
     const erased = await erase(taxCode);
-    expect(erased.erased.find((e) => e.column === 'crove_finance.misa_amis_match.match_key')?.rows).toBe(1);
+    expect(erased.erased.find((e) => e.column === 'ludy_finance.misa_amis_match.match_key')?.rows).toBe(1);
     // Of ours the other party and the item stay; the other org's row is untouched.
     expect(await count(org.orgId)).toBe(2);
     expect(await count(other.orgId)).toBe(1);
-    expect((await find(taxCode)).matches.filter((m) => m.column === 'crove_finance.misa_amis_match.match_key')).toHaveLength(0);
+    expect((await find(taxCode)).matches.filter((m) => m.column === 'ludy_finance.misa_amis_match.match_key')).toHaveLength(0);
     // The waiting check of the org is moved on (its job's record is then ignored and cannot put the code back); another org's check is not touched.
     expect(await askedAt(org.orgId)).toBeGreaterThan(mineBefore);
     expect(await askedAt(other.orgId)).toBe(theirsBefore);
@@ -1103,13 +1103,13 @@ suite('finding a person in the org (#923)', () => {
   it('deletes the name matches of an erased party, its proposal with the candidate name, and leaves another party\'s; it moves a waiting check on', async () => {
     const orgId = org.orgId;
     const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
-    let connectionId = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
+    let connectionId = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
     if (connectionId === undefined) {
       const channel = randomUUID();
       connectionId = randomUUID();
       await admin(async (c) => {
         await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, org.owner]);
-        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connectionId, entity, channel]);
+        await c.query('INSERT INTO ludy_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connectionId, entity, channel]);
       });
     }
     const email = `hoa-sen-${randomUUID().slice(0, 8)}@example.vn`;
@@ -1118,27 +1118,27 @@ suite('finding a person in the org (#923)', () => {
     const keptParty = await party('Hộ kinh doanh Hoa Mai', `hoa-mai-${randomUUID().slice(0, 8)}@example.vn`);
     await admin(async (c) => {
       await c.query(
-        "INSERT INTO crove_finance.misa_amis_match_check (org_id, legal_entity_id, connection_id, params, state, requested_at) VALUES ($1, $2, $3, '{}'::jsonb, 'requested', pg_catalog.now() - interval '5 minutes') ON CONFLICT (org_id, connection_id) DO UPDATE SET state = 'requested', failure = NULL, requested_at = pg_catalog.now() - interval '5 minutes'",
+        "INSERT INTO ludy_finance.misa_amis_match_check (org_id, legal_entity_id, connection_id, params, state, requested_at) VALUES ($1, $2, $3, '{}'::jsonb, 'requested', pg_catalog.now() - interval '5 minutes') ON CONFLICT (org_id, connection_id) DO UPDATE SET state = 'requested', failure = NULL, requested_at = pg_catalog.now() - interval '5 minutes'",
         [orgId, entity, connectionId],
       );
-      await c.query("DELETE FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]);
-      await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, 'party_name', $4, 'name_proposal', 'KH_HS', 'Hoa Sen (HKD)')", [orgId, entity, connectionId, erasedParty]);
-      await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, confirmed_at) VALUES ($1, $2, $3, 'party_name', $4, 'confirmed', 'KH_HM', pg_catalog.now())", [orgId, entity, connectionId, keptParty]);
+      await c.query("DELETE FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]);
+      await c.query("INSERT INTO ludy_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, 'party_name', $4, 'name_proposal', 'KH_HS', 'Hoa Sen (HKD)')", [orgId, entity, connectionId, erasedParty]);
+      await c.query("INSERT INTO ludy_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, confirmed_at) VALUES ($1, $2, $3, 'party_name', $4, 'confirmed', 'KH_HM', pg_catalog.now())", [orgId, entity, connectionId, keptParty]);
     });
-    const askedAt = async () => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
+    const askedAt = async () => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM ludy_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
     const before = await askedAt();
     const erased = await erase(email);
-    expect(erased.erased.find((e) => e.column === 'crove_finance.misa_amis_match.candidate_name')?.rows).toBe(1);
-    const left = (await admin((c) => c.query<{ match_key: string }>("SELECT match_key FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]))).rows;
+    expect(erased.erased.find((e) => e.column === 'ludy_finance.misa_amis_match.candidate_name')?.rows).toBe(1);
+    const left = (await admin((c) => c.query<{ match_key: string }>("SELECT match_key FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]))).rows;
     expect(left.map((r) => r.match_key)).toEqual([keptParty]);
     // No row of the org holds the candidate's name any more, and the waiting check is moved on so a job that read the name cannot put it back.
-    expect((await admin((c) => c.query("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId]))).rows).toEqual([]);
+    expect((await admin((c) => c.query("SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId]))).rows).toEqual([]);
     expect(await askedAt()).toBeGreaterThan(before);
 
     // A party with NO name match yet is erased while a check waits: the job may have read its name and not recorded a proposal for it, which is what must not land afterwards. The waiting check is moved on all the same.
     const racing = `hoa-cuc-${randomUUID().slice(0, 8)}@example.vn`;
     await party('Hộ kinh doanh Hoa Cúc', racing);
-    await admin((c) => c.query("UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.now() - interval '5 minutes' WHERE org_id = $1", [orgId]));
+    await admin((c) => c.query("UPDATE ludy_finance.misa_amis_match_check SET requested_at = pg_catalog.now() - interval '5 minutes' WHERE org_id = $1", [orgId]));
     const beforeRace = await askedAt();
     await erase(racing);
     expect(await askedAt()).toBeGreaterThan(beforeRace);
@@ -1155,7 +1155,7 @@ suite('finding a person in the org (#923)', () => {
       try {
         await c.query('BEGIN');
         await enterUser(c, user, org.orgId);
-        await c.query(`SELECT crove_finance.personal_data_clear_misa_amis_push_reason('email', 'nobody@example.vn')`);
+        await c.query(`SELECT ludy_finance.personal_data_clear_misa_amis_push_reason('email', 'nobody@example.vn')`);
         return 'answered';
       } catch (error) {
         return (error as Error).message;
@@ -1171,7 +1171,7 @@ suite('finding a person in the org (#923)', () => {
       async (c) =>
         (
           await c.query<{ role: string; allowed: boolean }>(
-            `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)', 'EXECUTE') AS allowed
+            `SELECT r AS role, pg_catalog.has_function_privilege(r, 'ludy_finance.personal_data_clear_misa_amis_push_reason(text, text)', 'EXECUTE') AS allowed
                FROM pg_catalog.unnest(ARRAY['ludy_app', 'ludy_tenant', 'ludy_worker']) AS r`,
           )
         ).rows,
@@ -1189,20 +1189,20 @@ suite('finding a person in the org (#923)', () => {
     const email = 'Shared.Db@Example.vn';
     const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
     // The org has one live MISA connection per entity (channel_connection_live_uq): reuse the one an earlier test made, or make it.
-    const existing = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [org.orgId, entity]))).rows[0]?.id;
+    const existing = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [org.orgId, entity]))).rows[0]?.id;
     const connection = existing ?? randomUUID();
     if (!existing) {
       const channel = randomUUID();
       await admin(async (c) => {
         await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
-        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
+        await c.query('INSERT INTO ludy_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
       });
     }
     const row = async (state: string, reason: string | null, no: string) => {
       const id = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
+          `INSERT INTO ludy_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
            VALUES ($1, $2, $3, 'cash_voucher', $4, 4, $5, $6, $7, $8, $9)`,
           [org.orgId, entity, connection, randomUUID(), id, no, 'a'.repeat(64), state, reason],
         ),
@@ -1220,26 +1220,26 @@ suite('finding a person in the org (#923)', () => {
       // The shared-database role set-up: a login that is no superuser, created the crove_* roles and so holds ADMIN OPTION on them, and owns what it creates.
       await c.query(`CREATE ROLE ${migrationLogin} NOLOGIN`);
       await c.query(`GRANT ludy_tenant TO ${migrationLogin} WITH ADMIN OPTION`);
-      await c.query(`GRANT CREATE ON SCHEMA crove_finance TO ${migrationLogin}`);
-      await c.query(`ALTER FUNCTION crove_finance.personal_data_clear_misa_amis_push_reason(text, text) OWNER TO ${migrationLogin}`);
+      await c.query(`GRANT CREATE ON SCHEMA ludy_finance TO ${migrationLogin}`);
+      await c.query(`ALTER FUNCTION ludy_finance.personal_data_clear_misa_amis_push_reason(text, text) OWNER TO ${migrationLogin}`);
       // ... and, as on that database, it owns the table too (what the migration login creates it owns).
-      await c.query(`ALTER TABLE crove_finance.misa_amis_push OWNER TO ${migrationLogin}`);
+      await c.query(`ALTER TABLE ludy_finance.misa_amis_push OWNER TO ${migrationLogin}`);
       const owner = (
         await c.query<{ owner: string; member: boolean; superuser: boolean }>(
           `SELECT pg_catalog.pg_get_userbyid(p.proowner) AS owner, pg_catalog.pg_has_role(p.proowner, 'ludy_tenant', 'MEMBER') AS member, r.rolsuper AS superuser
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
-            WHERE p.oid = 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)'::regprocedure`,
+            WHERE p.oid = 'ludy_finance.personal_data_clear_misa_amis_push_reason(text, text)'::regprocedure`,
         )
       ).rows[0];
       expect(owner).toEqual({ owner: migrationLogin, member: true, superuser: false });
       await c.query('SET LOCAL ROLE ludy_app');
       await enterUser(c, org.owner, org.orgId);
-      const cleared = await c.query<{ rows: number }>(`SELECT crove_finance.personal_data_clear_misa_amis_push_reason('email', $1) AS rows`, [email.toLowerCase()]);
+      const cleared = await c.query<{ rows: number }>(`SELECT ludy_finance.personal_data_clear_misa_amis_push_reason('email', $1) AS rows`, [email.toLowerCase()]);
       expect(cleared.rows[0]?.rows).toBe(1);
       await c.query('RESET ROLE');
       const states = (
         await c.query<{ org_refid: string; state: string; reason: string | null; attempts: number }>(
-          'SELECT org_refid, state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = ANY($1) ORDER BY org_refno',
+          'SELECT org_refid, state, reason, attempts FROM ludy_finance.misa_amis_push WHERE org_refid = ANY($1) ORDER BY org_refno',
           [[quoted, unrelated, queuedQuoting]],
         )
       ).rows;

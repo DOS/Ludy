@@ -277,7 +277,7 @@ suite('kernel invariants on PostgreSQL', () => {
     await expect(
       inOrgB((trx) =>
         trx
-          .insertInto('crove_finance.journal_entry')
+          .insertInto('ludy_finance.journal_entry')
           // @ts-expect-error crove_tenant has no INSERT here, so the write does not typecheck either (issue #266)
           .values({ org_id: orgB, entry_date: '2026-10-01', description: 'direct', source_type: 'test', source_id: randomUUID() })
           .execute(),
@@ -286,7 +286,7 @@ suite('kernel invariants on PostgreSQL', () => {
     await expect(
       inOrgB((trx) =>
         trx
-          .insertInto('crove_finance.journal_line')
+          .insertInto('ludy_finance.journal_line')
           // @ts-expect-error crove_tenant has no INSERT here, so the write does not typecheck either (issue #266)
           .values({ org_id: orgB, entry_id: randomUUID(), line_no: 1, account_code: '6422', debit: '100' })
           .execute(),

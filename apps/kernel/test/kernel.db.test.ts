@@ -411,7 +411,7 @@ suite('kernel on PostgreSQL', () => {
     expect(replay).toEqual(first);
     await withAdmin(async (admin) => {
       const { rows } = await admin.query(
-        'SELECT created_by, created_xact_id IS NOT NULL AS stamped FROM crove_finance.journal_entry WHERE id = $1',
+        'SELECT created_by, created_xact_id IS NOT NULL AS stamped FROM ludy_finance.journal_entry WHERE id = $1',
         [first.journalEntryId],
       );
       expect(rows).toEqual([{ created_by: users.owner, stamped: true }]);
@@ -490,9 +490,9 @@ suite('kernel on PostgreSQL', () => {
     });
     const roundedRecorded = await runtime.execute<{ journalEntryId: string }>('kernel.proposal.approve', rounded, asAdmin);
     const roundedBooks = await withAdmin(async (c) => ({
-      lines: (await c.query(`SELECT l.line_no, l.amount::text FROM crove_finance.purchase_line l JOIN crove_finance.purchase_document d ON d.org_id = l.org_id AND d.id = l.document_id WHERE d.org_id = $1 AND d.proposal_id = $2 ORDER BY l.line_no`, [orgA, rounded.id])).rows,
-      document: (await c.query(`SELECT subtotal::text, vat_amount::text, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, rounded.id])).rows[0],
-      entry: (await c.query(`SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code`, [orgA, roundedRecorded.journalEntryId])).rows,
+      lines: (await c.query(`SELECT l.line_no, l.amount::text FROM ludy_finance.purchase_line l JOIN ludy_finance.purchase_document d ON d.org_id = l.org_id AND d.id = l.document_id WHERE d.org_id = $1 AND d.proposal_id = $2 ORDER BY l.line_no`, [orgA, rounded.id])).rows,
+      document: (await c.query(`SELECT subtotal::text, vat_amount::text, total::text FROM ludy_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, rounded.id])).rows[0],
+      entry: (await c.query(`SELECT account_code, debit::text, credit::text FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code`, [orgA, roundedRecorded.journalEntryId])).rows,
     }));
     expect(roundedBooks.lines.map((l: { line_no: number; amount: string }) => [l.line_no, Number(l.amount)])).toEqual([[1, 10], [2, 20], [3, 31]]);
     expect(roundedBooks.document).toEqual({ subtotal: '61.0000', vat_amount: '6.0000', total: '67.0000' });
@@ -537,7 +537,7 @@ suite('kernel on PostgreSQL', () => {
     const documentOf = (proposalId: string | null) =>
       withAdmin(async (c) => (await c.query(
         `SELECT currency, subtotal::text, vat_amount::text, total::text, exchange_rate::text, exchange_rate_source, foreign_subtotal::text, foreign_vat_amount::text, foreign_total::text
-           FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`,
+           FROM ludy_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`,
         [orgA, proposalId],
       )).rows[0]);
 
@@ -592,8 +592,8 @@ suite('kernel on PostgreSQL', () => {
     expect(ownPayload.payload.checks.find((c) => c.id === 'currency')).toMatchObject({ status: 'warn', code: 'currency.converted' });
     const recorded = await runtime.execute<{ journalEntryId: string }>('kernel.proposal.approve', own, asAdmin);
     const entry = await withAdmin(async (c) => ({
-      description: (await c.query(`SELECT description FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2`, [orgA, recorded.journalEntryId])).rows[0].description,
-      lines: (await c.query(`SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`, [orgA, recorded.journalEntryId])).rows,
+      description: (await c.query(`SELECT description FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = $2`, [orgA, recorded.journalEntryId])).rows[0].description,
+      lines: (await c.query(`SELECT account_code, debit::text, credit::text FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`, [orgA, recorded.journalEntryId])).rows,
     }));
     expect(entry.description).toContain('(USD 1980000, tỷ giá 25450)');
     const debit = entry.lines.reduce((acc: number, l: { debit: string }) => acc + Number(l.debit), 0);
@@ -607,12 +607,12 @@ suite('kernel on PostgreSQL', () => {
     expect(await documentOf(lower.id)).toMatchObject({ currency: 'VND', exchange_rate: null });
 
     // The database refuses a foreign-currency document without its rate, and a VND one with a rate.
-    const party = (await withAdmin((c) => c.query(`SELECT party_id FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, own.id]))).rows[0].party_id;
+    const party = (await withAdmin((c) => c.query(`SELECT party_id FROM ludy_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, own.id]))).rows[0].party_id;
     for (const [currency, rate] of [['USD', null], ['VND', '25450']] as const) {
       await expect(
         withAdmin((c) =>
           c.query(
-            `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, currency, exchange_rate, subtotal, vat_amount, total)
+            `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, currency, exchange_rate, subtotal, vat_amount, total)
              VALUES ($1, $2, $3, '2026-10-01', $4, $5, 100, 10, 110)`,
             [orgA, party, `FX-${currency}`, currency, rate],
           ),

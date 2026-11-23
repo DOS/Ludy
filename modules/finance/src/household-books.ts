@@ -44,7 +44,7 @@ export async function householdBookWindow(ctx: QueryContext, legalEntityId: stri
   const ledger = await accountLedgerOf(ctx, period, entity, SALES_ACCOUNT);
   const { to } = ledger.period;
   const opened = await ctx.trx
-    .selectFrom('crove_finance.household_profile')
+    .selectFrom('ludy_finance.household_profile')
     .select('effective_from')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -54,7 +54,7 @@ export async function householdBookWindow(ctx: QueryContext, legalEntityId: stri
   if (!opened || opened.effective_from > to) throw notRequired(book);
   const from = ledger.period.from > opened.effective_from ? ledger.period.from : opened.effective_from;
   const changes = await ctx.trx
-    .selectFrom('crove_finance.household_profile')
+    .selectFrom('ludy_finance.household_profile')
     .select('effective_from')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)

@@ -158,7 +158,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     // The buyer is a snapshot: editing the contact later does not rewrite what the customer holds.
     await admin((c) => c.query("UPDATE ludy_kernel.party SET name = 'Tên mới', address = 'Nơi khác' WHERE org_id = $1 AND id = $2", [o.orgId, party]));
     expect((await o.query<Quote>(o.viewer, 'crm.quote.get', { quoteId: quote.id })).buyer).toMatchObject({ name: 'Công ty ABC', address: '12 Lê Lợi, Quận 1' });
-    const issuer = await admin((c) => c.query<{ name: string; issuer_entity_id: string }>('SELECT e.name, q.issuer_entity_id FROM crove_crm.quote q JOIN ludy_kernel.legal_entity e ON e.org_id = q.org_id AND e.id = q.issuer_entity_id WHERE q.org_id = $1 AND q.id = $2', [o.orgId, quote.id]));
+    const issuer = await admin((c) => c.query<{ name: string; issuer_entity_id: string }>('SELECT e.name, q.issuer_entity_id FROM ludy_crm.quote q JOIN ludy_kernel.legal_entity e ON e.org_id = q.org_id AND e.id = q.issuer_entity_id WHERE q.org_id = $1 AND q.id = $2', [o.orgId, quote.id]));
     expect(issuer.rows[0]!.issuer_entity_id).toBeTruthy();
 
     // A sent quote is not edited, deleted or sent again.
@@ -191,7 +191,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(after.links[0]).toMatchObject({ id: made.linkId, views: 2, live: true, revokedAt: null });
     expect(after.firstViewedAt).not.toBeNull();
     // The database keeps only the token's hash.
-    const stored = await admin((c) => c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_crm.quote_link WHERE org_id = $1 AND id = $2', [o.orgId, made.linkId]));
+    const stored = await admin((c) => c.query<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_crm.quote_link WHERE org_id = $1 AND id = $2', [o.orgId, made.linkId]));
     expect(stored.rows[0]!.token_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(stored.rows[0]!.token_sha256).not.toContain(made.token);
   });
@@ -213,7 +213,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(o.exec(o.member, 'crm.quote.revoke_link', { linkId: randomUUID() })).rejects.toMatchObject({ code: 'QUOTE_LINK_NOT_FOUND' });
     // Expired: a link past its time.
     const fresh = await o.link(o.member, quote.id);
-    await admin((c) => c.query("UPDATE crove_crm.quote_link SET created_at = now() - interval '3 days', expires_at = now() - interval '1 day' WHERE org_id = $1 AND id = $2", [o.orgId, fresh.linkId]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote_link SET created_at = now() - interval '3 days', expires_at = now() - interval '1 day' WHERE org_id = $1 AND id = $2", [o.orgId, fresh.linkId]));
     expect(await quoteView(rt, { token: fresh.token })).toBeNull();
     expect((await o.query<Quote>(o.owner, 'crm.quote.get', { quoteId: quote.id })).links.map((l) => [l.revokedAt !== null, l.live])).toEqual([[true, false], [false, false]]);
     // An inactive org's links do not open.
@@ -249,7 +249,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(o.send(o.member, free, 'link')).rejects.toMatchObject({ code: 'QUOTE_NOT_SENDABLE' });
     const ready = await o.exec<Quote>(o.member, 'crm.quote.save', { quoteId: empty.id, version: free.version, lines: [item()] });
     // A validity date that has passed.
-    await admin((c) => c.query("UPDATE crove_crm.quote SET valid_until = '2020-01-01' WHERE org_id = $1 AND id = $2", [o.orgId, ready.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote SET valid_until = '2020-01-01' WHERE org_id = $1 AND id = $2", [o.orgId, ready.id]));
     await expect(o.send(o.member, ready, 'link')).rejects.toMatchObject({ code: 'QUOTE_VALIDITY_PAST', status: 422 });
     await o.exec(o.member, 'crm.quote.save', { quoteId: ready.id, version: ready.version, validUntil: '2031-01-31', lines: [item()] });
     const current = await o.query<Quote>(o.member, 'crm.quote.get', { quoteId: ready.id });
@@ -305,7 +305,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const opened = (await quoteView(rt, { token })) as QuoteDocument;
     expect(opened.number).toBe(quote.number);
     expect(Number(opened.total)).toBe(Number(draft.total));
-    const links = await admin((c) => c.query<{ token_sha256: string; created_by: string }>('SELECT token_sha256, created_by FROM crove_crm.quote_link WHERE org_id = $1 AND quote_id = $2', [o.orgId, quote.id]));
+    const links = await admin((c) => c.query<{ token_sha256: string; created_by: string }>('SELECT token_sha256, created_by FROM ludy_crm.quote_link WHERE org_id = $1 AND quote_id = $2', [o.orgId, quote.id]));
     expect(links.rows).toHaveLength(1);
     expect(links.rows[0]).toMatchObject({ created_by: o.member });
     expect(links.rows[0]!.token_sha256).not.toContain(token);
@@ -341,7 +341,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const again = await mail();
     expect(Buffer.from(again!.attachments![0]!.content as Uint8Array).equals(Buffer.from(file.content as Uint8Array))).toBe(true);
     // A quote sent before the seller snapshot existed still renders, with the live letterhead as the page does.
-    await admin((c) => c.query('UPDATE crove_crm.quote SET seller_name = NULL, seller_tax_code = NULL, seller_address = NULL, seller_phone = NULL, seller_email = NULL, seller_bank_note = NULL WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET seller_name = NULL, seller_tax_code = NULL, seller_address = NULL, seller_phone = NULL, seller_email = NULL, seller_bank_note = NULL WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
     const old = await mail();
     expect(old?.attachments).toHaveLength(1);
     const oldDocument = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
@@ -398,7 +398,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const draft = await o.readyDraft(deal.id);
     const { quote: sent } = await o.send(o.member, await o.readyDraft(deal.id), 'link');
     const entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 LIMIT 1', [o.orgId]))).rows[0]!.id;
-    const forgedSend = (set: string) => `UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`;
+    const forgedSend = (set: string) => `UPDATE ludy_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`;
     const complete = "status = 'sent', number = 'BG-2026-0777', sent_at = now(), sent_via = 'link', issuer_entity_id = $3, buyer_name = 'Ai đó'";
     // A draft is sent with everything the send writes, or not at all.
     await expect(as(o.orgId, o.member, (c) => c.query(forgedSend("status = 'sent'"), [o.orgId, draft.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
@@ -413,35 +413,35 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(as(o.orgId, o.member, (c) => c.query(forgedSend("seller_bank_note = 'Tài khoản khác'"), [o.orgId, draft.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
     await expect(
       as(o.orgId, o.member, (c) =>
-        c.query(`INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_name) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, 'Bên bán')`, [o.orgId, o.member]),
+        c.query(`INSERT INTO ludy_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_name) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, 'Bên bán')`, [o.orgId, o.member]),
       ),
     ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
     // The logo's freeze marker and file id are the send's too (#2814): not written on a new row nor by an edit of a draft, allowed in the send (also when a sender leaves them out).
     await expect(
       as(o.orgId, o.member, (c) =>
-        c.query(`INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_logo_frozen) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, true)`, [o.orgId, o.member]),
+        c.query(`INSERT INTO ludy_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_logo_frozen) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, true)`, [o.orgId, o.member]),
       ),
     ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
-    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.quote SET seller_logo_frozen = true WHERE org_id = $1 AND id = $2', [o.orgId, spare.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
+    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.quote SET seller_logo_frozen = true WHERE org_id = $1 AND id = $2', [o.orgId, spare.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
     expect(await as(o.orgId, o.member, async (c) => (await c.query(forgedSend(`${complete}, seller_name = 'Bên bán', seller_logo_frozen = true`), [o.orgId, spare.id, entity])).rowCount)).toBe(1);
     // A sent quote does not change, whoever asks and whatever the column.
     for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1', "seller_bank_note = 'Tài khoản khác'", "seller_name = 'Giả mạo'", "seller_phone = '0123'", 'seller_logo_frozen = false', 'seller_logo_file_id = gen_random_uuid()']) {
       await expect(as(o.orgId, o.owner, (c) => c.query(forgedSend(set), [o.orgId, sent.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // A sent quote's lines do not change: the share lock and the status check (the line policies also hide the row).
-    const line = `INSERT INTO crove_crm.quote_line (org_id, quote_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 9, 'item', 'Thêm', 1, 100, '10%', 100, 10)`;
+    const line = `INSERT INTO ludy_crm.quote_line (org_id, quote_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 9, 'item', 'Thêm', 1, 100, '10%', 100, 10)`;
     await expect(as(o.orgId, o.member, (c) => c.query(line, [o.orgId, sent.id]))).rejects.toMatchObject({ code: '42501' });
     expect(await as(o.orgId, o.member, async (c) => (await c.query(line.replace(', 9,', ', 99,'), [o.orgId, draft.id])).rowCount)).toBe(1);
     // A revision names a sent or declined quote of the same deal and the next revision number, and nothing else.
     const revision = (revisesId: string, deal_id: string, revisionNo: number) =>
-      `INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, revises_id, revision) VALUES ($1, '${deal_id}', '${party}', '2031-01-31', $2, '${revisesId}', ${revisionNo}) RETURNING id`;
+      `INSERT INTO ludy_crm.quote (org_id, deal_id, party_id, valid_until, created_by, revises_id, revision) VALUES ($1, '${deal_id}', '${party}', '2031-01-31', $2, '${revisesId}', ${revisionNo}) RETURNING id`;
     await expect(as(o.orgId, o.member, (c) => c.query(revision(sent.id, otherDeal.id, 2), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(revision(sent.id, deal.id, 5), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(revision(draft.id, deal.id, 2), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
     expect(await as(o.orgId, o.member, async (c) => (await c.query(revision(sent.id, deal.id, 2), [o.orgId, o.member])).rowCount)).toBe(1);
     // Links: not for a draft, not with a view already counted, never by a viewer; revoked once in the revoker's own name, nothing else changes.
     const insertLink = (quoteId: string, extra = '', value = '') =>
-      `INSERT INTO crove_crm.quote_link (org_id, quote_id, token_sha256, expires_at, created_by${extra}) VALUES ($1, '${quoteId}', '${'a'.repeat(63)}${randomUUID().slice(0, 1).replace(/[^0-9a-f]/g, '1')}', now() + interval '10 days', $2${value}) RETURNING id`;
+      `INSERT INTO ludy_crm.quote_link (org_id, quote_id, token_sha256, expires_at, created_by${extra}) VALUES ($1, '${quoteId}', '${'a'.repeat(63)}${randomUUID().slice(0, 1).replace(/[^0-9a-f]/g, '1')}', now() + interval '10 days', $2${value}) RETURNING id`;
     await expect(as(o.orgId, o.member, (c) => c.query(insertLink(draft.id), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.viewer, (c) => c.query(insertLink(sent.id), [o.orgId, o.viewer]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(insertLink(sent.id, ', views', ', 5'), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
@@ -449,15 +449,15 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(as(o.orgId, o.member, (c) => c.query(insertLink(sent.id), [o.orgId, o.owner]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(insertLink(sent.id, ', created_at', ", now() + interval '5 days'"), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
     // A line does not move to a sent quote.
-    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.quote_line SET quote_id = $3 WHERE org_id = $1 AND quote_id = $2', [o.orgId, draft.id, sent.id]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.quote_line SET quote_id = $3 WHERE org_id = $1 AND quote_id = $2', [o.orgId, draft.id, sent.id]))).rejects.toMatchObject({ code: '42501' });
     const made = await o.link(o.member, sent.id);
     for (const set of ['views = 7', 'first_viewed_at = now()', "token_sha256 = '" + 'b'.repeat(64) + "'", 'expires_at = expires_at + interval \'1 day\'']) {
-      await expect(as(o.orgId, o.member, (c) => c.query(`UPDATE crove_crm.quote_link SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, made.linkId])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+      await expect(as(o.orgId, o.member, (c) => c.query(`UPDATE ludy_crm.quote_link SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, made.linkId])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     }
-    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.quote_link SET revoked_at = now(), revoked_by = $3 WHERE org_id = $1 AND id = $2', [o.orgId, made.linkId, o.owner]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_LINK_FORBIDDEN') });
-    expect(await as(o.orgId, o.member, async (c) => (await c.query('UPDATE crove_crm.quote_link SET revoked_at = now(), revoked_by = $3 WHERE org_id = $1 AND id = $2', [o.orgId, made.linkId, o.member])).rowCount)).toBe(1);
+    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.quote_link SET revoked_at = now(), revoked_by = $3 WHERE org_id = $1 AND id = $2', [o.orgId, made.linkId, o.owner]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_LINK_FORBIDDEN') });
+    expect(await as(o.orgId, o.member, async (c) => (await c.query('UPDATE ludy_crm.quote_link SET revoked_at = now(), revoked_by = $3 WHERE org_id = $1 AND id = $2', [o.orgId, made.linkId, o.member])).rowCount)).toBe(1);
     // No role deletes a link: it goes with its quote or the org.
-    await expect(as(o.orgId, o.owner, (c) => c.query('DELETE FROM crove_crm.quote_link WHERE org_id = $1', [o.orgId]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.owner, (c) => c.query('DELETE FROM ludy_crm.quote_link WHERE org_id = $1', [o.orgId]))).rejects.toMatchObject({ code: '42501' });
   });
 
   it('prints the letterhead the owner set, and only that', async () => {
@@ -487,7 +487,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await admin((c) => c.query("UPDATE ludy_kernel.tenant SET address = 'Địa chỉ mới' WHERE org_id = $1", [o.orgId]));
     expect(((await quoteView(rt, { token: made.token })) as QuoteDocument).seller).toEqual(before);
     // A quote sent before the snapshot existed (no seller_name) shows the live letterhead.
-    await admin((c) => c.query('UPDATE crove_crm.quote SET seller_name = NULL, seller_tax_code = NULL, seller_address = NULL, seller_phone = NULL, seller_email = NULL, seller_bank_note = NULL WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET seller_name = NULL, seller_tax_code = NULL, seller_address = NULL, seller_phone = NULL, seller_email = NULL, seller_bank_note = NULL WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
     expect(((await quoteView(rt, { token: made.token })) as QuoteDocument).seller).toMatchObject({ name: 'Tên pháp nhân mới', address: 'Địa chỉ mới', phone: '028 3829 0007', email: 'moi@congty.test', bankNote: 'Tài khoản MỚI 999' });
     // A revision takes a fresh snapshot when it is sent.
     const revision = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: quote.id });
@@ -561,11 +561,11 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const shown = await quoteLogo(rt, store, { token: linkB.token });
     expect(shown?.contentType).toBe('image/png');
     expect([...(shown?.bytes ?? [])]).toEqual([...PNG_BYTES]);
-    expect(await admin((c) => c.query('SELECT seller_logo_file_id, seller_logo_frozen FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, sentB.id]).then((r) => r.rows[0]))).toEqual({ seller_logo_file_id: png, seller_logo_frozen: true });
+    expect(await admin((c) => c.query('SELECT seller_logo_file_id, seller_logo_frozen FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, sentB.id]).then((r) => r.rows[0]))).toEqual({ seller_logo_file_id: png, seller_logo_frozen: true });
     // The bytes have to be the type the row says, and the row has to be a logo type: otherwise nothing is served. (A file row never changes, so the quote is pointed at other rows.)
     const liar = await makeFile(o.orgId, new Uint8Array([...PNG_BYTES, 9]), { contentType: 'image/jpeg' });
     const webp = await makeFile(o.orgId, new Uint8Array([...PNG_BYTES, 8]), { contentType: 'image/webp' });
-    const point = (fileId: string) => admin((c) => c.query('UPDATE crove_crm.quote SET seller_logo_file_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, sentB.id, fileId]));
+    const point = (fileId: string) => admin((c) => c.query('UPDATE ludy_crm.quote SET seller_logo_file_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, sentB.id, fileId]));
     await point(liar);
     expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
     await point(webp);
@@ -590,11 +590,11 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const linkR = await o.link(o.member, resent.id);
     expect((await quoteLogo(rt, store, { token: linkR.token }))?.contentType).toBe('image/jpeg');
     // A quote sent before the freeze existed (no marker) shows the org's logo as it is.
-    await admin((c) => c.query('UPDATE crove_crm.quote SET seller_logo_frozen = false, seller_logo_file_id = NULL WHERE org_id = $1 AND id = $2', [o.orgId, resent.id]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET seller_logo_frozen = false, seller_logo_file_id = NULL WHERE org_id = $1 AND id = $2', [o.orgId, resent.id]));
     expect((await documentOf(o.viewer, resent.id)).logoFile?.id).toBe(jpeg);
     expect(((await quoteView(rt, { token: linkR.token })) as QuoteDocument).hasLogo).toBe(true);
     // A file id without the marker is not a snapshot: the table refuses it.
-    await expect(admin((c) => c.query('UPDATE crove_crm.quote SET seller_logo_file_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, resent.id, jpeg]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query('UPDATE ludy_crm.quote SET seller_logo_file_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, resent.id, jpeg]))).rejects.toMatchObject({ code: '23514' });
 
     // One answer for every bad token and for a quote that is not open: the same as the page's.
     for (const bad of ['', 'abc', 'x'.repeat(43), 'x'.repeat(44), `${linkR.token}!`, null, 5]) expect(await quoteLogo(rt, store, { token: bad }), String(bad)).toBeNull();
@@ -647,7 +647,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(before.quote.number).toBe(quote.number);
     expect(before.issuedOn).toBe(vietnamToday(new Date(quote.sentAt!)));
     expect(before.buyer).toEqual({ name: 'Công ty ABC', taxCode: '0312345678', address: '12 Lê Lợi, Quận 1', phone: null, email: 'khac@khach.test' });
-    const entity = await admin((c) => c.query<{ name: string; tax_code: string | null }>('SELECT e.name, e.tax_code FROM crove_crm.quote q JOIN ludy_kernel.legal_entity e ON e.org_id = q.org_id AND e.id = q.issuer_entity_id WHERE q.org_id = $1 AND q.id = $2', [o.orgId, quote.id]));
+    const entity = await admin((c) => c.query<{ name: string; tax_code: string | null }>('SELECT e.name, e.tax_code FROM ludy_crm.quote q JOIN ludy_kernel.legal_entity e ON e.org_id = q.org_id AND e.id = q.issuer_entity_id WHERE q.org_id = $1 AND q.id = $2', [o.orgId, quote.id]));
     expect(before.seller).toMatchObject({ name: entity.rows[0]!.name, taxCode: entity.rows[0]!.tax_code, phone: '028 3829 1234', email: 'ban-hang@congty.test', bankNote: 'Vietcombank 0071000123456' });
     // It is the seller the customer's page shows.
     const made = await o.link(o.member, quote.id);

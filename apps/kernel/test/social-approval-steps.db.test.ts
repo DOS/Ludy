@@ -192,7 +192,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     await exec(o, o.owner, 'social.channel.set_policy', { connectionId: conn, approvalsRequired: 2 });
 
     // The kept time went by while the variant waited for its second approval.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 minute' WHERE post_id = $1", [late]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 minute' WHERE post_id = $1", [late]));
     await decide(o, o.admin, late, 'approved');
     expect((await get(o, late)).variants[0]).toMatchObject({ status: 'approved', error: null });
 
@@ -207,7 +207,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     const postId = await inReview(o, conn);
     await decide(o, o.owner, postId, 'approved');
     // The policy rose without set_policy re-checking (an approval that raced it).
-    await admin((c) => c.query('INSERT INTO crove_social.channel_policy (org_id, channel_connection_id, approvals_required, updated_by) VALUES ($1, $2, 2, $3)', [o.orgId, conn, o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_social.channel_policy (org_id, channel_connection_id, approvals_required, updated_by) VALUES ($1, $2, 2, $3)', [o.orgId, conn, o.owner]));
     await expect(schedule(o, postId)).rejects.toMatchObject({ code: 'APPROVALS_MISSING' });
   });
 
@@ -216,7 +216,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     const [a, b] = [await connection(o), await connection(o)];
     const [p1, p2] = [await inReview(o, a), await inReview(o, a)];
     await inReview(o, b);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'paused' WHERE post_id = ANY($1)", [[p1, p2]]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'paused' WHERE post_id = ANY($1)", [[p1, p2]]));
     expect(await rt.query('social.channel.waiting', {}, { actor: asUser(o.member), orgId: o.orgId })).toEqual([{ connectionId: a, paused: 2 }]);
   });
 

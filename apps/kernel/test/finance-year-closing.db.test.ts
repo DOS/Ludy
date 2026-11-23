@@ -63,7 +63,7 @@ suite('year-end closing (#889)', () => {
     const { rows } = await admin((c) =>
       c.query<{ account_code: string; net: string }>(
         `SELECT l.account_code, (sum(l.debit) - sum(l.credit))::text AS net
-           FROM crove_finance.journal_line l JOIN crove_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
+           FROM ludy_finance.journal_line l JOIN ludy_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
           WHERE l.org_id = $1 AND e.entry_date <= $2 GROUP BY l.account_code`,
         [o.orgId, to],
       ),
@@ -154,7 +154,7 @@ suite('year-end closing (#889)', () => {
     const after = await balances('2025-12-31');
     for (const code of ['511', '632', '6422', '911']) expect(after[code]).toBe(0);
     expect(after['4212']).toBe(-5000000);
-    const { rows } = await admin((c) => c.query<{ closing_year: number }>('SELECT closing_year FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, closed.voucherId]));
+    const { rows } = await admin((c) => c.query<{ closing_year: number }>('SELECT closing_year FROM ludy_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, closed.voucherId]));
     expect(rows).toEqual([{ closing_year: 2025 }]);
     // B02 leaves the closing entry out and B01 counts 4212 with the unclosed result: neither moves.
     expect(await statements('2025')).toEqual(before);
@@ -170,7 +170,7 @@ suite('year-end closing (#889)', () => {
     (
       await admin((c) =>
         c.query<{ id: string }>(
-          `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id
+          `SELECT e.id FROM ludy_finance.journal_entry e JOIN ludy_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id
             WHERE e.org_id = $1 AND e.source_type = 'finance.journal_voucher' AND e.reverses_entry_id IS NULL AND v.closing_year = $2`,
           [o.orgId, year],
         ),

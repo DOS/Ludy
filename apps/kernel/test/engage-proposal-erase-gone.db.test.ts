@@ -46,7 +46,7 @@ const eraseOld = defineCommand({
 });
 const dropLines = async (ctx: { trx: never; orgId: string }, quoteId: string) => {
   const { sql } = await import('kysely');
-  await sql`DELETE FROM crove_crm.quote_line WHERE org_id = ${ctx.orgId}::uuid AND quote_id = ${quoteId}::uuid`.execute(ctx.trx);
+  await sql`DELETE FROM ludy_crm.quote_line WHERE org_id = ${ctx.orgId}::uuid AND quote_id = ${quoteId}::uuid`.execute(ctx.trx);
   const { rows } = await sql<{ k: string }>`SELECT COALESCE(pg_catalog.current_setting('ludy.tainted_line_keys', true), '') AS k`.execute(ctx.trx);
   return { keys: rows[0]?.k ?? '' };
 };

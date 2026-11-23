@@ -75,17 +75,17 @@ suite('finance search (#673)', () => {
           [orgId, r.party.name, r.party.taxCode],
         );
         const doc = await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
+          `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
            VALUES ($1, $2, $3, $4, $5, $6, 0, $6, $7) RETURNING id`,
           [orgId, party.rows[0]?.id, r.series, r.number, r.date, r.total, r.direction ?? 'purchase'],
         );
         const entry = await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id)
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id)
            VALUES ($1, $2, $3, 'finance.purchase_document', $4) RETURNING id`,
           [orgId, r.date, r.description, doc.rows[0]?.id],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', $3, 0), ($1, $2, 2, '331', 0, $3)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', $3, 0), ($1, $2, 2, '331', 0, $3)`,
           [orgId, entry.rows[0]?.id, r.total],
         );
       }
@@ -275,23 +275,23 @@ suite('finance search (#673)', () => {
           [big.orgId, DOCUMENTS, PARTIES],
         );
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
            SELECT $1, doc_id, party_id, '1C26TAA', pg_catalog.lpad(g::text, 8, '0'), day, total, 0, total FROM seeded`,
           [big.orgId],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id)
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id)
            SELECT $1, entry_id, day, 'Mua hàng hóa đơn số ' || g, 'finance.purchase_document', doc_id FROM seeded`,
           [big.orgId],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
            SELECT $1::uuid, entry_id, 1, '6422', total, 0 FROM seeded UNION ALL SELECT $1::uuid, entry_id, 2, '331', 0, total FROM seeded`,
           [big.orgId],
         );
         await c.query('COMMIT');
         // VACUUM as autovacuum would: it also moves the GIN indexes' pending lists (rows inserted since) into the indexes.
-        await c.query('VACUUM ANALYZE ludy_kernel.party, crove_finance.purchase_document, crove_finance.journal_entry, crove_finance.journal_line');
+        await c.query('VACUUM ANALYZE ludy_kernel.party, ludy_finance.purchase_document, ludy_finance.journal_entry, ludy_finance.journal_line');
       });
     }, 300_000);
 
@@ -341,9 +341,9 @@ suite('finance search (#673)', () => {
             q,
           ]);
         const rows = [
-          ...(await vector('crove_finance.purchase_document', '00012345')).rows,
-          ...(await vector('crove_finance.journal_entry', 'so 12345')).rows,
-          ...(await c.query(`EXPLAIN SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = $1 AND (l.debit + l.credit) = 100700`, [big.orgId])).rows,
+          ...(await vector('ludy_finance.purchase_document', '00012345')).rows,
+          ...(await vector('ludy_finance.journal_entry', 'so 12345')).rows,
+          ...(await c.query(`EXPLAIN SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = $1 AND (l.debit + l.credit) = 100700`, [big.orgId])).rows,
         ];
         return rows.map((r) => r['QUERY PLAN']).join('\n');
       });

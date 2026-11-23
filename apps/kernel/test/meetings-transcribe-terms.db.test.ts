@@ -123,11 +123,11 @@ suite('the term list of a transcription run (#3499)', () => {
     const subkey = (broker.deriveKey as (k: string, p: string) => Buffer)(keyId, 'crove.meetings.v1|wrap');
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, 'Họp khách hàng', 'vi', now(), now() + interval '20 minutes', 1200, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
         [orgId, meetingId, users[who]],
       );
-      await c.query(`INSERT INTO crove_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key) VALUES ($1, $2, $3, $4, 'audio', $5)`, [orgId, randomUUID(), meetingId, keyId, wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, subkey)]);
+      await c.query(`INSERT INTO ludy_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key) VALUES ($1, $2, $3, $4, 'audio', $5)`, [orgId, randomUUID(), meetingId, keyId, wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, subkey)]);
       for (let order = 0; order < 2; order += 1) {
         const ciphertext = encryptBlobBuffer(randomBytes(2000), dataKey, binding);
         const sha = sha256Hex(ciphertext);
@@ -138,13 +138,13 @@ suite('the term list of a transcription run (#3499)', () => {
           `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'meeting.opus', 'audio/ogg', $5, 'meeting_audio')`,
           [orgId, fileId, sha, storageKey, ciphertext.length],
         );
-        await c.query(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 600)`, [orgId, randomUUID(), meetingId, fileId, order, order * 600]);
+        await c.query(`INSERT INTO ludy_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, $5, $6, 600)`, [orgId, randomUUID(), meetingId, fileId, order, order * 600]);
       }
       for (const attendee of opts.attendees ?? []) {
-        await c.query('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[attendee]]);
+        await c.query('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[attendee]]);
       }
       for (const partyId of opts.parties ?? []) {
-        await c.query('INSERT INTO crove_meetings.meeting_link (org_id, id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4, $5)', [orgId, randomUUID(), meetingId, partyId, users[who]]);
+        await c.query('INSERT INTO ludy_meetings.meeting_link (org_id, id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4, $5)', [orgId, randomUUID(), meetingId, partyId, users[who]]);
       }
     });
     return meetingId;
@@ -305,7 +305,7 @@ suite('the term list of a transcription run (#3499)', () => {
       const c = new pg.Client({ connectionString: url.toString() });
       return c
         .connect()
-        .then(() => c.query('SELECT term FROM crove_meetings.terms_for_member_vy($1::uuid, $2::uuid)', [orgId, id]))
+        .then(() => c.query('SELECT term FROM ludy_meetings.terms_for_member_vy($1::uuid, $2::uuid)', [orgId, id]))
         .then(
           (r) => ({ ok: true as const, rows: r.rows }),
           (error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) }),

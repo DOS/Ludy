@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // HR employee self-service onboarding checklist and HR approval workflow (#4448, Stage 5B).
 // Employees submit confirmation flags and optional profile/bank updates as pending submissions on /hr/my;
-// HR owners/admins review and approve before updating crove_hr.payroll_employee (no unreviewed PII overwrite).
+// HR owners/admins review and approve before updating ludy_hr.payroll_employee (no unreviewed PII overwrite).
 import {
   auditValue,
   tableWrite,
@@ -34,8 +34,8 @@ import { assertNotSelfApprover, resolveSelfEmployee, selfNotLinked, STAFF_ROLES 
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 
-const ONBOARDING = hrManifest.tables.crove_hr.onboarding_submission;
-const EMPLOYEE = hrManifest.tables.crove_hr.payroll_employee;
+const ONBOARDING = hrManifest.tables.ludy_hr.onboarding_submission;
+const EMPLOYEE = hrManifest.tables.ludy_hr.payroll_employee;
 
 const submissionNotFound = () =>
   new DomainError('HR_ONBOARDING_NOT_FOUND', 404, 'Không tìm thấy phiếu xác nhận thông tin nhân viên này');
@@ -48,7 +48,7 @@ async function preReadAndLockEmployeeErasure(
   submissionId: string,
 ): Promise<{ id: string; employee_id: string }> {
   const preRead = await trx
-    .selectFrom('crove_hr.onboarding_submission')
+    .selectFrom('ludy_hr.onboarding_submission')
     .select(['id', 'employee_id'])
     .where('org_id', '=', orgId)
     .where('id', '=', submissionId)
@@ -116,11 +116,11 @@ async function querySubmissionViews(
   filters: { employeeId?: string; status?: HrOnboardingStatus; limit: number },
 ): Promise<HrOnboardingSubmissionView[]> {
   let q = trx
-    .selectFrom('crove_hr.onboarding_submission as s')
-    .innerJoin('crove_hr.payroll_employee as e', (j) =>
+    .selectFrom('ludy_hr.onboarding_submission as s')
+    .innerJoin('ludy_hr.payroll_employee as e', (j) =>
       j.onRef('e.org_id', '=', 's.org_id').onRef('e.id', '=', 's.employee_id'),
     )
-    .leftJoin('crove_hr.department as d', (j) =>
+    .leftJoin('ludy_hr.department as d', (j) =>
       j.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'),
     )
     .select([
@@ -173,7 +173,7 @@ export const selfOnboardingGet = defineQuery({
     if (!emp) throw selfNotLinked();
 
     const record = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select([
         'address',
         'birth_date',
@@ -223,7 +223,7 @@ export const selfOnboardingSubmit = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'onboarding_submission', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'onboarding_submission', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -252,7 +252,7 @@ export const selfOnboardingSubmit = defineCommand({
 
     await lockEmployeeErasure(ctx.trx, ctx.orgId, emp.id);
     const record = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['status', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', emp.id)
@@ -277,7 +277,7 @@ export const selfOnboardingSubmit = defineCommand({
     const insuranceSealed = input.insuranceNumber !== undefined ? await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber) : null;
 
     const inserted = await ctx.trx
-      .insertInto('crove_hr.onboarding_submission')
+      .insertInto('ludy_hr.onboarding_submission')
       .values({
         org_id: ctx.orgId,
         employee_id: emp.id,
@@ -330,7 +330,7 @@ export const selfOnboardingCancel = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   target: (input: { submissionId: string }) => ({ type: 'hr.onboarding_submission', id: input.submissionId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'onboarding_submission', ['status', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'onboarding_submission', ['status', 'updated_at'])],
   handler: async (ctx, input): Promise<HrOnboardingCancelResult> => {
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
@@ -339,7 +339,7 @@ export const selfOnboardingCancel = defineCommand({
     await preReadAndLockEmployeeErasure(ctx.trx, ctx.orgId, input.submissionId);
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.onboarding_submission')
+      .selectFrom('ludy_hr.onboarding_submission')
       .select(['id', 'employee_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.submissionId)
@@ -354,7 +354,7 @@ export const selfOnboardingCancel = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_hr.onboarding_submission')
+      .updateTable('ludy_hr.onboarding_submission')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
@@ -389,14 +389,14 @@ export const onboardingApprove = defineCommand({
   permission: 'hr.payroll.run',
   target: (input: { submissionId: string }) => ({ type: 'hr.onboarding_submission', id: input.submissionId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'onboarding_submission', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'onboarding_submission', [
       'status',
       'decision_note',
       'reviewed_by',
       'reviewed_at',
       'updated_at',
     ]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', [
       'address',
       'birth_date',
       'national_id_sealed',
@@ -416,7 +416,7 @@ export const onboardingApprove = defineCommand({
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
 
     const emp = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'status', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', preRead.employee_id)
@@ -430,7 +430,7 @@ export const onboardingApprove = defineCommand({
     }
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.onboarding_submission')
+      .selectFrom('ludy_hr.onboarding_submission')
       .select([
         'id',
         'employee_id',
@@ -501,7 +501,7 @@ export const onboardingApprove = defineCommand({
 
     if (updatedFields.length > 0) {
       await ctx.trx
-        .updateTable('crove_hr.payroll_employee')
+        .updateTable('ludy_hr.payroll_employee')
         .set(empPatch)
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.employee_id)
@@ -509,7 +509,7 @@ export const onboardingApprove = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_hr.onboarding_submission')
+      .updateTable('ludy_hr.onboarding_submission')
       .set({
         status: 'approved',
         reviewed_by: callerUserId,
@@ -550,7 +550,7 @@ export const onboardingReject = defineCommand({
   access: MANAGERS,
   target: (input: { submissionId: string }) => ({ type: 'hr.onboarding_submission', id: input.submissionId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'onboarding_submission', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'onboarding_submission', [
       'status',
       'decision_note',
       'reviewed_by',
@@ -566,7 +566,7 @@ export const onboardingReject = defineCommand({
     await preReadAndLockEmployeeErasure(ctx.trx, ctx.orgId, input.submissionId);
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.onboarding_submission')
+      .selectFrom('ludy_hr.onboarding_submission')
       .select(['id', 'employee_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.submissionId)
@@ -580,7 +580,7 @@ export const onboardingReject = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_hr.onboarding_submission')
+      .updateTable('ludy_hr.onboarding_submission')
       .set({
         status: 'rejected',
         reviewed_by: callerUserId,

@@ -4,7 +4,7 @@
 // chapters' title) are built from it, so a widening is made here and nowhere else in the contract.
 // Two copies stay outside this package, because the agent package does not depend on the contract: cleanChapterTitle (meeting-chapters.ts in the agent package, in its member-vy folder) and orgText
 // (meeting-summary.ts in the same folder). apps/kernel/test/chapter-title-class.test.ts, glossary-term-class.test.ts and meetings-template-clean.test.ts hold them to this class. The database
-// spells the same class in crove_meetings.minutes_sections_ok, crove_meetings.glossary_term_ok and the CHECKs of minutes_template.name and meeting_chapter.title (the latest forward migrations that
+// spells the same class in ludy_meetings.minutes_sections_ok, ludy_meetings.glossary_term_ok and the CHECKs of minutes_template.name and meeting_chapter.title (the latest forward migrations that
 // restate them are named in those tests).
 //
 // The class: C0 and C1 controls (a newline and a tab included), the soft hyphen, the Arabic letter mark, the Hangul fillers (U+115F, U+1160, U+3164 and the halfwidth U+FFA0), the Mongolian free

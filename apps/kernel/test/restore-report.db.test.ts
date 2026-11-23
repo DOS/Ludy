@@ -91,7 +91,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
   const journalVoucher = (name: string) =>
     asOwner(name, async (c) => {
       const { rows } = await c.query<{ id: string; number: string; allocation: string }>(
-        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description) VALUES ($1, '2026-10-01', 'restore check')
+        `INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description) VALUES ($1, '2026-10-01', 'restore check')
          RETURNING id, number::text AS number, number_allocation_id AS allocation`,
         [orgId],
       );
@@ -101,7 +101,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
         { line_no: 2, account_code: '331', debit: '0', credit: '100000' },
       ];
       const entry = await c.query<{ id: string }>(
-        `SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'restore check', 'finance.journal_voucher', $1::uuid, $2::jsonb) AS id`,
+        `SELECT ludy_finance.post_journal_entry('2026-10-01'::date, 'restore check', 'finance.journal_voucher', $1::uuid, $2::jsonb) AS id`,
         [v.id, JSON.stringify(lines)],
       );
       return { ...v, entryId: entry.rows[0]!.id };
@@ -112,7 +112,7 @@ suite('restore report and series reseed on PostgreSQL (#2007)', () => {
       await c.query(`SET session_replication_role = replica`);
       const recent = `> now() - interval '10 minutes'`;
       await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - make_interval(mins => $1) WHERE occurred_at ${recent}`, [minutes]);
-      for (const table of ['crove_finance.journal_entry', 'crove_finance.journal_voucher', 'ludy_kernel.number_series']) {
+      for (const table of ['ludy_finance.journal_entry', 'ludy_finance.journal_voucher', 'ludy_kernel.number_series']) {
         await c.query(`UPDATE ${table} SET created_at = created_at - make_interval(mins => $1) WHERE created_at ${recent}`, [minutes]);
       }
       await c.query(`UPDATE ludy_kernel.number_allocation SET allocated_at = allocated_at - make_interval(mins => $1) WHERE allocated_at ${recent}`, [minutes]);

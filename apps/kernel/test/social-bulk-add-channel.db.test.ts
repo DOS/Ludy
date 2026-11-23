@@ -67,8 +67,8 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
     admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
   const setStatus = (o: Org, postId: string, status: string) =>
     admin(async (c) => {
-      await c.query('UPDATE crove_social.post_variant SET status = $3 WHERE org_id = $1 AND post_id = $2', [o.orgId, postId, status]);
-      if (status === 'published') await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
+      await c.query('UPDATE ludy_social.post_variant SET status = $3 WHERE org_id = $1 AND post_id = $2', [o.orgId, postId, status]);
+      if (status === 'published') await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
     });
   const sorted = (ids: readonly string[]) => [...ids].sort();
 
@@ -239,7 +239,7 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
     await prober.connect();
     try {
       await holder.query('BEGIN');
-      await holder.query('SELECT id FROM crove_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, high]);
+      await holder.query('SELECT id FROM ludy_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, high]);
       const running = add(o, o.member, [high, low, mid], o.b);
       // Bounded, so a run that never waits fails here rather than hanging the suite.
       let waiting = 0;
@@ -251,9 +251,9 @@ suite('social bulk add channel on PostgreSQL (#1178)', () => {
       expect(waiting).toBeGreaterThan(0);
       // While it waits, the lower posts are already its own, and none has the channel yet.
       for (const id of [low, mid]) {
-        await expect(prober.query('SELECT id FROM crove_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [o.orgId, id])).rejects.toMatchObject({ code: '55P03' });
+        await expect(prober.query('SELECT id FROM ludy_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [o.orgId, id])).rejects.toMatchObject({ code: '55P03' });
       }
-      const { rows: early } = await prober.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.post_variant WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, o.b]);
+      const { rows: early } = await prober.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.post_variant WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, o.b]);
       expect(early[0]?.n).toBe(0);
       await holder.query('COMMIT');
       const result = await running;

@@ -116,7 +116,7 @@ function requireGrant(ctx: Pick<QueryContext, 'actor'>): void {
 async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: ChannelScope, ids: readonly string[]): Promise<McpPostRow[]> {
   if (ids.length === 0) return [];
   const posts = await ctx.trx
-    .selectFrom('crove_social.post as p')
+    .selectFrom('ludy_social.post as p')
     .select(['p.id', 'p.title', 'p.body', 'p.link_url', 'p.status', 'p.origin', 'p.actor_origin', 'p.tainted', 'p.time_zone', 'p.scheduled_at', 'p.revision', 'p.created_at', 'p.updated_at'])
     .where('p.org_id', '=', ctx.orgId)
     .where('p.id', 'in', ids as string[])
@@ -124,7 +124,7 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
     .where(postInScope(scope))
     .execute();
   const variants = await ctx.trx
-    .selectFrom('crove_social.post_variant as v')
+    .selectFrom('ludy_social.post_variant as v')
     .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
     .select([
       'v.id',
@@ -256,7 +256,7 @@ export const mcpReviewQueue = defineQuery({
     const waiting = await postFilterQuery(ctx, scope, { stage: 'review' })
       .select((eb) =>
         eb
-          .selectFrom('crove_social.post_variant as v')
+          .selectFrom('ludy_social.post_variant as v')
           .select((e) => e.fn.min('v.review_since').as('since'))
           .whereRef('v.org_id', '=', 'p.org_id')
           .whereRef('v.post_id', '=', 'p.id')
@@ -272,7 +272,7 @@ export const mcpReviewQueue = defineQuery({
       postFilterQuery(ctx, scope, { stage: 'drafts' })
         .where('p.origin', '=', 'ai')
         .where(
-          sql<boolean>`EXISTS (SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft' AND ${connectionInScope(scope, 'v.channel_connection_id')})`,
+          sql<boolean>`EXISTS (SELECT 1 FROM ludy_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft' AND ${connectionInScope(scope, 'v.channel_connection_id')})`,
         );
     const aiIds = await aiFilter()
       .orderBy('p.updated_at', 'desc')

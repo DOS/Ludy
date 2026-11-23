@@ -2,7 +2,7 @@
 // The confirmed mapping of a marketplace report's columns (#4037, slice 2 of #3850; plan stock-and-marketplaces.md section 8.6 "Columns": "A person confirms; the mapping is stored per org and platform
 // and applied by code afterwards").
 // - finance.marketplace.columns_confirm (owners and admins, a person only, never an agent; R1): saves the mapping a person confirmed for a platform, as a new row of
-//   crove_finance.marketplace_column_profile (append-only; the latest row of an org and platform wins). Since #4037 it is the full-check receipt: it takes the FILE whose check the person looked at and the
+//   ludy_finance.marketplace_column_profile (append-only; the latest row of an org and platform wins). Since #4037 it is the full-check receipt: it takes the FILE whose check the person looked at and the
 //   platform and mapping they saw, and refuses unless that file's check (finance.marketplace.columns_check, run by the worker in the extract sandbox) is done, has parsed lines, has the header digest and
 //   is for the same platform and mapping. The profile's header texts, header row and digest come from what the worker recorded for that file, never from the caller. It stores the header text of each
 //   mapped column and the standard field it is, the row the header was read from and the digest of the whole header row, and nothing else: no cell value, no sample, no buyer column. In the same
@@ -88,7 +88,7 @@ export const marketplaceColumnProfileConfirm = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xác nhận được cách đọc các cột của báo cáo');
     // The receipt: the file's last check, locked so a new request of it cannot slip in between the look and the save. `preview` is only asked whether it is there (it is personal data, never read here).
     const check = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_check')
+      .selectFrom('ludy_finance.marketplace_column_check')
       .select(['id', 'state', 'refusal', 'platform', 'assignments', 'sheet', sql<boolean>`preview IS NOT NULL`.as('has_preview')])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
@@ -125,7 +125,7 @@ export const marketplaceColumnProfileConfirm = defineCommand({
     // Two confirmations at once: one lock per org and platform, so the second sees the first's row and the "same mapping again" check below holds.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.marketplace_columns:${ctx.orgId}:${input.platform}`}, 0))`.execute(ctx.trx);
     const latest = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_profile')
+      .selectFrom('ludy_finance.marketplace_column_profile')
       .select(['id', 'header_row', 'columns', 'header_digest'])
       .where('org_id', '=', ctx.orgId)
       .where('platform', '=', input.platform)
@@ -140,14 +140,14 @@ export const marketplaceColumnProfileConfirm = defineCommand({
       result = { id: latest.id, added: false };
     } else {
       const row = await ctx.trx
-        .insertInto('crove_finance.marketplace_column_profile')
+        .insertInto('ludy_finance.marketplace_column_profile')
         .values({ org_id: ctx.orgId, platform: input.platform, header_row: headerRow, columns: JSON.stringify(columns), header_digest: headerDigest, confirmed_by: ctx.actor.userId })
         .returning('id')
         .executeTakeFirstOrThrow();
       result = { id: row.id, added: true };
     }
     // The decision is made: the file's check row (its sheet and the preview lines, personal data) is no longer needed, whether or not a profile was added.
-    await ctx.trx.deleteFrom('crove_finance.marketplace_column_check').where('org_id', '=', ctx.orgId).where('id', '=', check.id).execute();
+    await ctx.trx.deleteFrom('ludy_finance.marketplace_column_check').where('org_id', '=', ctx.orgId).where('id', '=', check.id).execute();
     // Ids, the platform, the row and the standard fields only; the header texts stay in the profile row, the lines in nothing.
     ctx.audit({ platform: input.platform, added: result.added, fileId: input.fileId, headerRow, fields: columns.map((c) => c.field) });
     return result;
@@ -160,7 +160,7 @@ export const marketplaceColumnProfileRead = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<MarketplaceColumnProfile | null> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_profile')
+      .selectFrom('ludy_finance.marketplace_column_profile')
       .select(['id', 'platform', 'header_row', 'columns', 'header_digest', 'confirmed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('platform', '=', input.platform)

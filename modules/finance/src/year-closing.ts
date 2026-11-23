@@ -34,8 +34,8 @@ const yearEnd = (year: number) => `${year}-12-31`;
 // what an earlier closing moved is already netted out. Of one legal entity (#1280: each entity closes its own books).
 async function resultBalances(ctx: QueryContext, year: number, legalEntityId: string): Promise<AccountBalance[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select('l.account_code')
     .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])
     .where('l.org_id', '=', ctx.orgId)
@@ -51,8 +51,8 @@ async function resultBalances(ctx: QueryContext, year: number, legalEntityId: st
 // dated later leaves the year's balances closed, so the year stays closed. Of one legal entity (#1280).
 export async function isClosed(ctx: QueryContext, year: number, legalEntityId: string): Promise<boolean> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as v')
-    .innerJoin('crove_finance.journal_entry as e', (join) =>
+    .selectFrom('ludy_finance.journal_voucher as v')
+    .innerJoin('ludy_finance.journal_entry as e', (join) =>
       join.onRef('e.org_id', '=', 'v.org_id').onRef('e.source_id', '=', 'v.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null).on(latestRevision('e')),
     )
     .select('v.id')
@@ -60,7 +60,7 @@ export async function isClosed(ctx: QueryContext, year: number, legalEntityId: s
     .where('v.legal_entity_id', '=', legalEntityId)
     .where('v.closing_year', '=', year)
     .where(({ not, exists, selectFrom }) =>
-      not(exists(selectFrom('crove_finance.journal_entry as r').select(sql<number>`1`.as('one')).whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id').where('r.entry_date', '<=', yearEnd(year)))),
+      not(exists(selectFrom('ludy_finance.journal_entry as r').select(sql<number>`1`.as('one')).whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id').where('r.entry_date', '<=', yearEnd(year)))),
     )
     .executeTakeFirst();
   return row !== undefined;
@@ -133,7 +133,7 @@ export const recordYearClosing = defineCommand({
     const year = payload.closingYear;
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
     // One closing of the org and entity at a time: a second approval waits here, then finds the year closed.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.year_closing:${ctx.orgId}:${legalEntityId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_finance.year_closing:${ctx.orgId}:${legalEntityId}`}, 0))`.execute(ctx.trx);
     await assertClosable(ctx, year, legalEntityId);
     if (payload.date !== yearEnd(year) || payload.description !== closingDescription(year)) {
       throw new DomainError('CLOSING_STALE', 409, `Đề xuất kết chuyển năm ${year} không còn khớp sổ; hãy lập lại`);

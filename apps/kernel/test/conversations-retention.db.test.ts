@@ -517,19 +517,19 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const accepted = await acceptMetaDeletion(rt, { ads: SECRET, conversations: SECRET }, form(signed('8001')));
       expect(accepted.status).toBe(200);
       const code = (accepted as { code: string }).code;
-      expect(await rows('SELECT 1 FROM crove_ads.deletion_request WHERE code = $1', [code])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_ads.deletion_request WHERE code = $1', [code])).toHaveLength(1);
       expect(await rows('SELECT 1 FROM ludy_kernel.conversation_deletion_request WHERE code = $1', [code])).toHaveLength(1);
       // Complete only when both sides are: the conversation side finishes first, the page still says it is being handled.
       await runConversationDeletions({ runtime: worker, workerDb });
       expect(await metaDeletionStatus(rt, code)).toMatchObject({ completedAt: null });
-      await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [code]);
+      await workerPool.query('SELECT ludy_ads.deletion_request_complete($1, 0)', [code]);
       expect(await metaDeletionStatus(rt, code)).toMatchObject({ connections: 1, accounts: 0 });
       expect((await metaDeletionStatus(rt, code))?.completedAt).not.toBeNull();
       expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code))).toContain('đã được xóa');
       // A different app on each side: a request signed by one secret reaches only that side.
       const second = await acceptMetaDeletion(rt, { ads: 'the-ads-app-secret', conversations: SECRET }, form(signed('8002')));
       const code2 = (second as { code: string }).code;
-      expect(await rows('SELECT 1 FROM crove_ads.deletion_request WHERE code = $1', [code2])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_ads.deletion_request WHERE code = $1', [code2])).toHaveLength(0);
       expect(await rows('SELECT 1 FROM ludy_kernel.conversation_deletion_request WHERE code = $1', [code2])).toHaveLength(1);
     });
 
@@ -539,7 +539,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await thread(o, 'link-1', 'Bình luận', 'u-link');
       // The Ads side already holds an open request of this person, under its own code.
       const adsCode = randomBytes(16).toString('hex');
-      await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [adsCode, platformUserHash(SECRET, '8101')]);
+      await pool.query('SELECT ludy_ads.deletion_request_enqueue($1, $2)', [adsCode, platformUserHash(SECRET, '8101')]);
       const accepted = await acceptMetaDeletion(rt, { ads: SECRET, conversations: SECRET }, form(signed('8101')));
       expect(accepted).toEqual({ status: 200, code: adsCode });
       const [conv] = await rows<{ code: string }>('SELECT code FROM ludy_kernel.conversation_deletion_request WHERE $1 = ANY (sibling_codes)', [adsCode]);
@@ -548,7 +548,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await runConversationDeletions({ runtime: worker, workerDb });
       expect(await metaDeletionStatus(rt, adsCode)).toMatchObject({ completedAt: null });
       expect(await metaDeletionStatus(rt, conv?.code as string)).toMatchObject({ completedAt: null });
-      await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [adsCode]);
+      await workerPool.query('SELECT ludy_ads.deletion_request_complete($1, 0)', [adsCode]);
       expect((await metaDeletionStatus(rt, adsCode))?.completedAt).not.toBeNull();
       expect((await metaDeletionStatus(rt, conv?.code as string))?.completedAt).not.toBeNull();
     });

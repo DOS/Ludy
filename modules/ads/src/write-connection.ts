@@ -10,7 +10,7 @@
 // - closeWriteConnections: what the switch-off commands (ads.write.disable, ads.account.disable_write) and the removal of an account
 //   run: it closes the write connections and drops their sealed tokens, with the kernel's own commands. The permission at the platform is
 //   removed by the revoke sweep (W2-1, apps/kernel/src/ads-revoke.ts): the database copies the sealed token into a holding of its own, for
-//   seven days at most, in the transaction that drops the credential (the trigger crove_ads.token_hold, so whatever path drops it is
+//   seven days at most, in the transaction that drops the credential (the trigger ludy_ads.token_hold, so whatever path drops it is
 //   covered, this file's closers included); where the sweep cannot remove it, the Ads screen tells the owner to remove the app by hand.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -35,7 +35,7 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
   let query = ctx.trx.selectFrom('ludy_kernel.channel_connection as c').select('c.id').where('c.org_id', '=', ctx.orgId).where('c.status', '<>', 'revoked').orderBy('c.id');
   if (scope.adAccountId) {
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['provider', 'external_account_id', 'write_connection_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', scope.adAccountId)
@@ -115,7 +115,7 @@ export const adsAccountLinkWrite = defineCommand({
     // Only while the org's switch is on: a write token is not made, or kept, for an org that has not turned running ads on. The setting
     // is read FOR SHARE: a switch-off running at the same moment (it locks the setting FOR UPDATE and then closes what is linked) either
     // commits first, and this refuses, or waits for this command and then closes the connection it attached.
-    const setting = await ctx.trx.selectFrom('crove_ads.ad_org_setting').select('write_enabled').where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forShare().executeTakeFirst();
+    const setting = await ctx.trx.selectFrom('ludy_ads.ad_org_setting').select('write_enabled').where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forShare().executeTakeFirst();
     if (!setting?.write_enabled) throw new DomainError('ADS_WRITE_OFF', 409, 'Chủ sở hữu chưa bật việc chạy quảng cáo cho tổ chức này');
     const connection = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
@@ -126,7 +126,7 @@ export const adsAccountLinkWrite = defineCommand({
     if (!connection || !isAdWriteProviderId(connection.provider)) throw new DomainError('ADS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối tài khoản quảng cáo');
     if (connection.status !== 'active') throw new DomainError('ADS_CONNECTION_INACTIVE', 422, 'Kết nối tài khoản quảng cáo không còn hoạt động; hãy kết nối lại');
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
+      .selectFrom('ludy_ads.ad_account as a')
       .innerJoin('ludy_kernel.channel_connection as rc', (j) => j.onRef('rc.org_id', '=', 'a.org_id').onRef('rc.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.write_connection_id', 'rc.status as read_status'])
       .where('a.org_id', '=', ctx.orgId)
@@ -140,7 +140,7 @@ export const adsAccountLinkWrite = defineCommand({
     // A write connection made again replaces the one before it, which is closed so no spend-capable token is left behind.
     if (account.write_connection_id && account.write_connection_id !== connection.id) await closeWriteConnections(ctx, { adAccountId: account.id, except: connection.id });
     await ctx.trx
-      .updateTable('crove_ads.ad_account')
+      .updateTable('ludy_ads.ad_account')
       .set({ write_connection_id: connection.id, write_granted_by_hash: input.grantedByHash ?? null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', account.id)
@@ -162,7 +162,7 @@ export const adsAccountDisconnect = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string; closed: number }> => {
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
+      .selectFrom('ludy_ads.ad_account as a')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.channel_connection_id', 'a.write_enabled', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
@@ -177,7 +177,7 @@ export const adsAccountDisconnect = defineCommand({
     }
     // Nothing is left to run ads with: its flag goes off with the connections.
     if (account.write_enabled) {
-      await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_account').set({ write_enabled: false, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
     }
     // The launches of the account that have not started are cancelled with it (W2-2), so a plan approved before cannot start after a reconnect.
     const launchesCancelled = await cancelQueuedLaunches(ctx, 'account_off', account.id);
@@ -205,11 +205,11 @@ export const adsAccountForgetWrite = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string; closed: number }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
-    const account = await ctx.trx.selectFrom('crove_ads.ad_account').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.adAccountId).forUpdate().executeTakeFirst();
+    const account = await ctx.trx.selectFrom('ludy_ads.ad_account').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.adAccountId).forUpdate().executeTakeFirst();
     if (!account) return { adAccountId: input.adAccountId, closed: 0 };
     const closed = await closeWriteConnections(ctx, { adAccountId: account.id });
     await ctx.trx
-      .updateTable('crove_ads.ad_account')
+      .updateTable('ludy_ads.ad_account')
       .set({ write_connection_id: null, write_granted_by_hash: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', account.id)
@@ -229,7 +229,7 @@ export const adsAccountWriteReady = defineQuery({
   handler: async (ctx, input): Promise<string[]> => {
     if (input.externalAccountIds.length === 0) return [];
     const rows = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
+      .selectFrom('ludy_ads.ad_account as a')
       .innerJoin('ludy_kernel.channel_connection as rc', (j) => j.onRef('rc.org_id', '=', 'a.org_id').onRef('rc.id', '=', 'a.channel_connection_id'))
       .select('a.external_account_id')
       .where('a.org_id', '=', ctx.orgId)
@@ -249,7 +249,7 @@ export const adsAccountWriteTarget = defineQuery({
   access: OWNERS,
   handler: async (ctx, input): Promise<{ provider: string; externalAccountId: string; currency: string | null; name: string }> => {
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['provider', 'external_account_id', 'currency', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.adAccountId)

@@ -32,8 +32,8 @@ function requireUser(ctx: CommandContext): string {
 }
 
 async function lockVoice(ctx: CommandContext, connectionId: string | null) {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.brand_voice:${ctx.orgId}:${connectionId ?? 'org'}`}))`.execute(ctx.trx);
-  let q = ctx.trx.selectFrom('crove_social.brand_voice').select('id').where('org_id', '=', ctx.orgId);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.brand_voice:${ctx.orgId}:${connectionId ?? 'org'}`}))`.execute(ctx.trx);
+  let q = ctx.trx.selectFrom('ludy_social.brand_voice').select('id').where('org_id', '=', ctx.orgId);
   q = connectionId ? q.where('channel_connection_id', '=', connectionId) : q.where('channel_connection_id', 'is', null);
   return q.orderBy('created_at').orderBy('id').execute();
 }
@@ -62,10 +62,10 @@ export const brandVoiceSave = defineCommand({
     const existing = await lockVoice(ctx, connectionId);
     const first = existing[0];
     if (first) {
-      await ctx.trx.updateTable('crove_social.brand_voice').set(values).where('org_id', '=', ctx.orgId).where('id', '=', first.id).execute();
+      await ctx.trx.updateTable('ludy_social.brand_voice').set(values).where('org_id', '=', ctx.orgId).where('id', '=', first.id).execute();
     } else {
       await ctx.trx
-        .insertInto('crove_social.brand_voice')
+        .insertInto('ludy_social.brand_voice')
         .values({ org_id: ctx.orgId, channel_connection_id: connectionId, ...values, created_at: ctx.now })
         .execute();
     }
@@ -86,7 +86,7 @@ export const brandVoiceRemove = defineCommand({
     const rows = await lockVoice(ctx, connectionId);
     if (rows.length > 0)
       await ctx.trx
-        .deleteFrom('crove_social.brand_voice')
+        .deleteFrom('ludy_social.brand_voice')
         .where('org_id', '=', ctx.orgId)
         .where(
           'id',
@@ -115,7 +115,7 @@ export const brandVoiceList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<BrandVoice[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_social.brand_voice')
+      .selectFrom('ludy_social.brand_voice')
       .select(['channel_connection_id', 'description', 'use_words', 'avoid_words', 'emoji', 'updated_at', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at')

@@ -127,14 +127,14 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     const { postId } = await exec<{ postId: string }>(orgId, owner.userId, 'social.post.create', { body, channels: [{ connectionId: conn }] });
     await admin(async (c) => {
       const when = typeof at === 'number' ? new Date(Date.now() - at * 86_400_000).toISOString() : at;
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, when]);
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [orgId, rows[0]?.id, JSON.stringify(metrics)]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, when]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [orgId, rows[0]?.id, JSON.stringify(metrics)]);
     });
     return postId;
   }
   const outside = (orgId: string, conn: string, id: string, at: string | number, metrics: Record<string, number>) =>
     admin((c) =>
-      c.query('INSERT INTO crove_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, published_at, metrics) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, published_at, metrics) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         conn,
         id,
@@ -227,7 +227,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     await outside(org.orgId, channels.fb, 'ext-noreach', 1, { reactions: 100 });
     const withOutside = await query<WindowTotals>(org.orgId, owner.userId, 'social.metrics.totals', { days: 30, includeExternal: true });
     expect(withOutside.channels.find((c) => c.connectionId === channels.fb)).toMatchObject({ metrics: { reactions: 160 }, rateBases: { reach: { engagement: 40, denominator: 2000 } } });
-    await admin((c) => c.query("DELETE FROM crove_social.external_post WHERE external_post_id = 'ext-noreach'"));
+    await admin((c) => c.query("DELETE FROM ludy_social.external_post WHERE external_post_id = 'ext-noreach'"));
   });
 
   it("gives the client report the same rate sums, and counts its goals as the app's goals, without outside posts (#1164, #1075)", async () => {
@@ -276,7 +276,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     const strip = (value: unknown): unknown =>
       Array.isArray(value) ? value.map(strip) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'rateBases').map(([k, v]) => [k, strip(v)])) : value;
     const pages = await admin(async (c) => {
-      const read = async () => (await c.query<{ page: unknown }>('SELECT crove_social.report_link_view($1) AS page', [link.token])).rows[0]?.page;
+      const read = async () => (await c.query<{ page: unknown }>('SELECT ludy_social.report_link_view($1) AS page', [link.token])).rows[0]?.page;
       const now = await read();
       await c.query('BEGIN');
       try {
@@ -296,7 +296,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
   });
 
   it("writes the summary from the tab's own figures and saves nothing", async () => {
-    const links = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.report_link WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
+    const links = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.report_link WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
     const before = await links();
     const answer = await rpc('social/metrics/writeSummary', await tokenFor(owner), { days: 30, language: 'vi', timeZone: HCM });
     expect(answer).toMatchObject({ status: 200, body: { text: 'Kỳ này chúng tôi đã đăng 4 bài.' } });
@@ -316,7 +316,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     expect((await rpc('social/metrics/writeSummary', await tokenFor(owner), { days: 30, includeExternal: true })).status).toBe(200);
     expect(asked.at(-1)?.prompt).toContain('- Posts published, this period: 5');
     expect(asked.at(-1)?.prompt).toContain('- Best post: engagement: 60');
-    await admin((c) => c.query("DELETE FROM crove_social.external_post WHERE external_post_id = 'ext-summary'"));
+    await admin((c) => c.query("DELETE FROM ludy_social.external_post WHERE external_post_id = 'ext-summary'"));
     // In English, the English forms.
     expect((await rpc('social/metrics/writeSummary', await tokenFor(owner), { days: 30, language: 'en' })).status).toBe(200);
     expect(asked.at(-1)?.prompt).toContain('- Reach (people reached), this period: 2,000');

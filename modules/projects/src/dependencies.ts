@@ -69,7 +69,7 @@ export const projectDependencyAdd = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'task_dependency', [
+    tableWrite(TABLES, 'ludy_projects', 'task_dependency', [
       'org_id',
       'id',
       'project_id',
@@ -96,7 +96,7 @@ export const projectDependencyAdd = defineCommand({
 
     const { rows: projectTaskRows } = await sql<{ task_id: string }>`
       SELECT pt.task_id
-        FROM crove_projects.project_task pt
+        FROM ludy_projects.project_task pt
         JOIN ludy_kernel.task t
           ON t.org_id = pt.org_id
          AND t.id = pt.task_id
@@ -114,7 +114,7 @@ export const projectDependencyAdd = defineCommand({
     }
 
     const existingEdges = await ctx.trx
-      .selectFrom('crove_projects.task_dependency')
+      .selectFrom('ludy_projects.task_dependency')
       .select(['id', 'blocker_task_id', 'blocked_task_id'])
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', project.id)
@@ -164,7 +164,7 @@ export const projectDependencyAdd = defineCommand({
 
     const dependencyId = randomUUID();
     await ctx.trx
-      .insertInto('crove_projects.task_dependency')
+      .insertInto('ludy_projects.task_dependency')
       .values({
         org_id: ctx.orgId,
         id: dependencyId,
@@ -214,7 +214,7 @@ export const projectDependencyRemove = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'task_dependency', [
+    tableWrite(TABLES, 'ludy_projects', 'task_dependency', [
       'org_id',
       'id',
       'project_id',
@@ -246,7 +246,7 @@ export const projectDependencyRemove = defineCommand({
         d.blocker_task_id,
         d.blocked_task_id,
         (bt.id IS NOT NULL AND dt.id IS NOT NULL) AS visible
-      FROM crove_projects.task_dependency d
+      FROM ludy_projects.task_dependency d
       LEFT JOIN ludy_kernel.task bt
         ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
       LEFT JOIN ludy_kernel.task dt
@@ -265,7 +265,7 @@ export const projectDependencyRemove = defineCommand({
     let dependencyId: string | null = null;
     if (existing) {
       await ctx.trx
-        .deleteFrom('crove_projects.task_dependency')
+        .deleteFrom('ludy_projects.task_dependency')
         .where('org_id', '=', ctx.orgId)
         .where('project_id', '=', project.id)
         .where('id', '=', existing.id)
@@ -332,7 +332,7 @@ export const projectDependencyList = defineQuery({
         dt.title AS blocked_title,
         dt.status AS blocked_status,
         dt.due AS blocked_due
-      FROM crove_projects.task_dependency d
+      FROM ludy_projects.task_dependency d
       JOIN ludy_kernel.task bt
         ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
       JOIN ludy_kernel.task dt

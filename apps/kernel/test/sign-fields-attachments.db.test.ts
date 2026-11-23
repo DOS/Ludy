@@ -6,7 +6,7 @@
 //    rate/concurrency limits, isolated source = 'sign_attachment' never sent to Finance OCR, attachment_uploaded hash chain).
 // 3) PDF sealing (dropdown + radio + Audit Certificate SHA-256), attachment download CSP/Content-Disposition headers,
 //    hr_contract confidentiality (owner/admin/creator only; 404 for ordinary members/viewers even when MODULE_OFF),
-//    and crove_sign.field_guard() tamper protection.
+//    and ludy_sign.field_guard() tamper protection.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -994,7 +994,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     // Mark OTP verified for this token and upload confidential HR ID attachment!
     await withAdmin(async (c) => {
       await c.query(
-        `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, attempts, verified_at)
+        `INSERT INTO ludy_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, attempts, verified_at)
          VALUES ($1, $2, $3, 'candidate@example.com', $4, now() + interval '15 minutes', 0, now())`,
         [org.orgId, otpSigner.signerId, mintedHrLink.tokenId, 'a'.repeat(64)],
       );
@@ -1034,7 +1034,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
         org.orgId,
       ]);
       await expect(
-        tenantClient.query('UPDATE crove_sign.field SET attachment_sha256 = $1 WHERE org_id = $2 AND id = $3', [
+        tenantClient.query('UPDATE ludy_sign.field SET attachment_sha256 = $1 WHERE org_id = $2 AND id = $3', [
           'f'.repeat(64),
           org.orgId,
           hrAttFieldId,

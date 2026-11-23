@@ -27,7 +27,7 @@ export interface ReversedEntry {
 export async function marketplaceReversalNotes(ctx: Ctx, entry: ReversedEntry, entryDate: string): Promise<string[]> {
   if (entry.source_type !== JOURNAL_VOUCHER_SOURCE) return [];
   const voucher = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher')
+    .selectFrom('ludy_finance.journal_voucher')
     .select(['id', 'settlement_id', 'payout_settlement_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', entry.source_id)
@@ -44,12 +44,12 @@ export async function marketplaceReversalNotes(ctx: Ctx, entry: ReversedEntry, e
   }
   // A settlement's own voucher (one month): its payout must be reversed first, and the other months, when they stand, are to be reversed too. The platform's lock (the one the payout's approval takes,
   // marketplace-payout-record.ts) is held first, so a payout approved at the same moment is either seen here or sees this reversal: the two cannot both pass their checks and both commit.
-  const settlement = await ctx.trx.selectFrom('crove_finance.channel_settlement').select(['legal_entity_id', 'platform']).where('org_id', '=', ctx.orgId).where('id', '=', settlementId).executeTakeFirst();
+  const settlement = await ctx.trx.selectFrom('ludy_finance.channel_settlement').select(['legal_entity_id', 'platform']).where('org_id', '=', ctx.orgId).where('id', '=', settlementId).executeTakeFirst();
   if (settlement) {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${settlement.legal_entity_id}:${settlement.platform}`}, 0))`.execute(ctx.trx);
   }
   const payout = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as p')
+    .selectFrom('ludy_finance.journal_voucher as p')
     .select('p.id')
     .where('p.org_id', '=', ctx.orgId)
     .where('p.payout_settlement_id', '=', settlementId)
@@ -59,7 +59,7 @@ export async function marketplaceReversalNotes(ctx: Ctx, entry: ReversedEntry, e
     throw new DomainError('MARKETPLACE_SETTLEMENT_PAYOUT_STANDS', 409, 'Khoản sàn trả của kỳ đối soát này còn hiệu lực: hãy đảo khoản sàn trả trước, rồi mới đảo ghi sổ kỳ đối soát', { settlementId });
   }
   const standing = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
+    .selectFrom('ludy_finance.journal_voucher as j')
     .select('j.id')
     .where('j.org_id', '=', ctx.orgId)
     .where('j.settlement_id', '=', settlementId)

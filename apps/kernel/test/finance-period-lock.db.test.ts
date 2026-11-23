@@ -71,7 +71,7 @@ const rawCall = (name: string, fn: 'lock_period' | 'unlock_period') =>
     risk: 'R1',
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: async (ctx, input) => {
-      await sql`SELECT crove_finance.${sql.raw(fn)}(${`${input.month}-01`}::date)`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.${sql.raw(fn)}(${`${input.month}-01`}::date)`.execute(ctx.trx);
       return { ok: true as const };
     },
   });
@@ -169,7 +169,7 @@ suite('period lock (#329)', () => {
   }
 
   const entriesOn = (date: string, orgId = org.orgId) =>
-    admin(async (c) => (await c.query('SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND entry_date = $2', [orgId, date])).rows.length);
+    admin(async (c) => (await c.query('SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND entry_date = $2', [orgId, date])).rows.length);
 
   const auditsOf = (command: string) =>
     admin(
@@ -189,11 +189,11 @@ suite('period lock (#329)', () => {
     const id = randomUUID();
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, $3, 'held', 'test.held', $4)`,
+      `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, $3, 'held', 'test.held', $4)`,
       [org.orgId, id, date, randomUUID()],
     );
     await client.query(
-      `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)`,
+      `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)`,
       [org.orgId, id],
     );
     return {
@@ -351,7 +351,7 @@ suite('period lock (#329)', () => {
     await expect(
       admin((c) =>
         c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-08-15', 'direct', 'test.direct', $2)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-08-15', 'direct', 'test.direct', $2)`,
           [org.orgId, randomUUID()],
         ),
       ),
@@ -362,7 +362,7 @@ suite('period lock (#329)', () => {
         await c.query('BEGIN');
         try {
           await c.query('SET LOCAL ROLE ludy_app');
-          await c.query(`UPDATE crove_finance.period_lock SET locked_through = NULL WHERE org_id = $1`, [org.orgId]);
+          await c.query(`UPDATE ludy_finance.period_lock SET locked_through = NULL WHERE org_id = $1`, [org.orgId]);
         } finally {
           await c.query('ROLLBACK');
         }
@@ -422,8 +422,8 @@ suite('period lock (#329)', () => {
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 FOR UPDATE`, [org.orgId]);
-      await client.query(`UPDATE crove_finance.period_lock SET locked_through = '2025-11-30' WHERE org_id = $1`, [org.orgId]);
+      await client.query(`SELECT 1 FROM ludy_finance.period_lock WHERE org_id = $1 FOR UPDATE`, [org.orgId]);
+      await client.query(`UPDATE ludy_finance.period_lock SET locked_through = '2025-11-30' WHERE org_id = $1`, [org.orgId]);
       const approving = approve(proposal);
       expect(await settledWithin(approving, 500)).toBe('pending');
       await client.query('COMMIT');
@@ -494,7 +494,7 @@ suite('period lock (#329)', () => {
       clients.push(revoking);
       const unlocker = await asAdmin();
       clients.push(unlocker);
-      const unlocking = refusal(unlocker.query(`SELECT crove_finance.unlock_period('2025-11-01'::date, NULL::uuid)`));
+      const unlocking = refusal(unlocker.query(`SELECT ludy_finance.unlock_period('2025-11-01'::date, NULL::uuid)`));
       expect(await settledWithin(unlocking, 500)).toBe('pending');
       await revoking.query('COMMIT');
       expect(await unlocking).toBe('PERIOD_LOCK_FORBIDDEN');
@@ -504,7 +504,7 @@ suite('period lock (#329)', () => {
       await grant();
       const second = await asAdmin();
       clients.push(second);
-      await expect(second.query(`SELECT crove_finance.unlock_period('2025-11-01'::date, NULL::uuid)`)).resolves.toBeDefined();
+      await expect(second.query(`SELECT ludy_finance.unlock_period('2025-11-01'::date, NULL::uuid)`)).resolves.toBeDefined();
       const later = new pg.Client({ connectionString: adminUrl });
       await later.connect();
       clients.push(later);
@@ -520,7 +520,7 @@ suite('period lock (#329)', () => {
       clients.push(demoting);
       const locker = await asAdmin();
       clients.push(locker);
-      const lockingMonth = refusal(locker.query(`SELECT crove_finance.lock_period('2025-12-01'::date, NULL::uuid)`));
+      const lockingMonth = refusal(locker.query(`SELECT ludy_finance.lock_period('2025-12-01'::date, NULL::uuid)`));
       expect(await settledWithin(lockingMonth, 500)).toBe('pending');
       await demoting.query('COMMIT');
       expect(await lockingMonth).toBe('PERIOD_LOCK_FORBIDDEN');
@@ -612,7 +612,7 @@ suite('period lock (#329)', () => {
             await new Promise((resolve) => setTimeout(resolve, 25));
           }
           const unlocking = unlocker
-            .query<{ through: string | null }>(`SELECT crove_finance.unlock_period('2025-11-01'::date, NULL::uuid)::text AS through`)
+            .query<{ through: string | null }>(`SELECT ludy_finance.unlock_period('2025-11-01'::date, NULL::uuid)::text AS through`)
             .then(
               (r) => r.rows[0]?.through,
               (error: Error) => error.message,

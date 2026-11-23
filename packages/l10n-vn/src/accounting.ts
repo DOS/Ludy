@@ -13,7 +13,7 @@ export function isFixedAssetAccount(code: string): boolean {
 }
 export const FIXED_ASSET_THRESHOLD = '30000000';
 
-// What chose a line's account (#1399), shown on the line: a learned rule (crove_finance.categorization_rule), the
+// What chose a line's account (#1399), shown on the line: a learned rule (ludy_finance.categorization_rule), the
 // vendor's default account, the built-in keyword list, or a user who picked it on a revision. A line no rule matched
 // has none of these and is 'unclassified' (#2091).
 // 'unclassified' (#2091) is no source of an account: it marks a line that no rule matched, which a reviewer must classify.
@@ -46,7 +46,7 @@ export interface LearnedRule {
   account: string;
 }
 
-// The longest text a rule matches (the database CHECK on crove_finance.categorization_rule.match_text says the same).
+// The longest text a rule matches (the database CHECK on ludy_finance.categorization_rule.match_text says the same).
 export const RULE_TEXT_MAX = 200;
 
 // The form rules are matched in: lower case, Vietnamese marks stripped and đ read as d, every character other than an

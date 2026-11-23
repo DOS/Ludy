@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // eSign AI analysis storage, deterministic persistence guards, and read/write Runtime definitions (#3351):
-// runs strictly inside Runtime.execute() / Runtime.query() with zero network calls and writes ONLY crove_sign.ai_analysis.
-// Proposed fields remain tainted (proposedByAi: true) and never auto-apply to crove_sign.field, alter signers, or send envelopes.
+// runs strictly inside Runtime.execute() / Runtime.query() with zero network calls and writes ONLY ludy_sign.ai_analysis.
+// Proposed fields remain tainted (proposedByAi: true) and never auto-apply to ludy_sign.field, alter signers, or send envelopes.
 import {
   SIGN_AI_ANALYSIS_STATUSES,
   SIGN_FIELD_TYPES,
@@ -167,7 +167,7 @@ const zAiAnalysisRecordInput = z.strictObject({
 
 const target = (input: { envelopeId: string }) => ({ type: 'sign.envelope', id: input.envelopeId });
 
-const AI_ANALYSIS_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'ai_analysis', [
+const AI_ANALYSIS_WRITE = tableWrite(signManifest.tables, 'ludy_sign', 'ai_analysis', [
   'org_id',
   'envelope_id',
   'source_sha256',
@@ -1318,7 +1318,7 @@ async function recordAiAnalysisRow(
   options: { requireDraft: boolean },
 ): Promise<SignAiAnalysisRecord> {
   const env = await ctx.trx
-    .selectFrom('crove_sign.envelope')
+    .selectFrom('ludy_sign.envelope')
     .select([
       'id',
       'org_id',
@@ -1377,7 +1377,7 @@ async function recordAiAnalysisRow(
   }
 
   const signers = await ctx.trx
-    .selectFrom('crove_sign.signer')
+    .selectFrom('ludy_sign.signer')
     .select(['id', 'role_label', 'signer_role', 'routing_order'])
     .where('org_id', '=', ctx.orgId)
     .where('envelope_id', '=', env.id)
@@ -1412,7 +1412,7 @@ async function recordAiAnalysisRow(
   const promptVersion = cleanLine(input.promptVersion, 32) || 'v1';
 
   const inserted = await ctx.trx
-    .insertInto('crove_sign.ai_analysis')
+    .insertInto('ludy_sign.ai_analysis')
     .values({
       org_id: ctx.orgId,
       envelope_id: env.id,
@@ -1473,7 +1473,7 @@ export const aiAnalysisSource = defineQuery({
   access: WRITERS,
   handler: async (ctx, input): Promise<SignAiSource> => {
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'version',
@@ -1497,7 +1497,7 @@ export const aiAnalysisSource = defineQuery({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const signers = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'role_label', 'signer_role', 'routing_order'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -1551,7 +1551,7 @@ export const aiAnalysisGet = defineQuery({
   access: READERS,
   handler: async (ctx, input): Promise<SignAiAnalysisRecord | null> => {
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -1563,7 +1563,7 @@ export const aiAnalysisGet = defineQuery({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const activeSigners = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -1572,7 +1572,7 @@ export const aiAnalysisGet = defineQuery({
     const activeSignerIds = new Set(activeSigners.map((s) => s.id));
 
     const completed = await ctx.trx
-      .selectFrom('crove_sign.ai_analysis')
+      .selectFrom('ludy_sign.ai_analysis')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -1586,7 +1586,7 @@ export const aiAnalysisGet = defineQuery({
     }
 
     const latest = await ctx.trx
-      .selectFrom('crove_sign.ai_analysis')
+      .selectFrom('ludy_sign.ai_analysis')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)

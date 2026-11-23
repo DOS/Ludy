@@ -26,7 +26,7 @@ import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 import { lockOvertimeRun, syncEmployeeDraftPayrollOvertime } from './payroll-run.ts';
 
-const OVERTIME = hrManifest.tables.crove_hr.overtime_request;
+const OVERTIME = hrManifest.tables.ludy_hr.overtime_request;
 const HR_OVERTIME_PHYSICAL_MONTH_MAX_HOURS = 744;
 
 async function lockOvertimeEmployeeMonth(
@@ -114,15 +114,15 @@ async function queryOvertimeViews(
   },
 ): Promise<HrOvertimeRequestView[]> {
   let q = trx
-    .selectFrom('crove_hr.overtime_request as ot')
-    .leftJoin('crove_hr.department as d', (j) =>
+    .selectFrom('ludy_hr.overtime_request as ot')
+    .leftJoin('ludy_hr.department as d', (j) =>
       j.onRef('d.org_id', '=', 'ot.org_id').onRef('d.id', '=', 'ot.department_id'),
     )
     .select([
       'ot.id',
       'ot.legal_entity_id',
       'ot.employee_id',
-      sql<string | null>`crove_hr.overtime_request_employee_name(ot.org_id, ot.id)`.as('employee_name'),
+      sql<string | null>`ludy_hr.overtime_request_employee_name(ot.org_id, ot.id)`.as('employee_name'),
       'ot.department_id',
       'd.name as department_name',
       'ot.month',
@@ -164,7 +164,7 @@ async function assertEmployeeNotErasedForRequest(
   requestId: string,
 ): Promise<void> {
   const { rows } = await sql<{ name: string | null }>`
-    SELECT crove_hr.overtime_request_employee_name(${orgId}::uuid, ${requestId}::uuid) AS name
+    SELECT ludy_hr.overtime_request_employee_name(${orgId}::uuid, ${requestId}::uuid) AS name
   `.execute(trx);
   if (!rows[0]?.name) {
     throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã được xóa theo yêu cầu');
@@ -173,7 +173,7 @@ async function assertEmployeeNotErasedForRequest(
 
 async function assertEmployeeNotErasedForOvertime(trx: QueryContext['trx'], orgId: string, employeeId: string) {
   const emp = await trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'erased_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', employeeId)
@@ -190,7 +190,7 @@ export const selfOvertimeSubmit = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -219,7 +219,7 @@ export const selfOvertimeSubmit = defineCommand({
     const month = input.workDate.slice(0, 7);
     await lockOvertimeEmployeeMonth(ctx.trx, ctx.orgId, emp.id, month);
     const existingRows = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select('hours')
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -238,7 +238,7 @@ export const selfOvertimeSubmit = defineCommand({
     let initialStatus: 'pending_l1' | 'pending_final' = 'pending_final';
     if (emp.department_id !== null) {
       const dept = await ctx.trx
-        .selectFrom('crove_hr.department')
+        .selectFrom('ludy_hr.department')
         .select(['manager_user_id', 'archived_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', emp.department_id)
@@ -262,7 +262,7 @@ export const selfOvertimeSubmit = defineCommand({
     }
 
     const inserted = await ctx.trx
-      .insertInto('crove_hr.overtime_request')
+      .insertInto('ludy_hr.overtime_request')
       .values({
         org_id: ctx.orgId,
         employee_id: emp.id,
@@ -314,14 +314,14 @@ export const selfOvertimeCancel = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   target: (input: { requestId: string }) => ({ type: 'hr.overtime_request', id: input.requestId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', ['status', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', ['status', 'updated_at'])],
   handler: async (ctx, input): Promise<HrOvertimeActionResult> => {
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     if (!emp) throw selfNotLinked();
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select(['id', 'employee_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -336,7 +336,7 @@ export const selfOvertimeCancel = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_hr.overtime_request')
+      .updateTable('ludy_hr.overtime_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
@@ -356,7 +356,7 @@ export const selfOvertimeList = defineQuery({
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     const managedRows = await ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('manager_user_id', '=', callerUserId)
@@ -428,7 +428,7 @@ async function updatePendingL1WithGuard(
   next: { status: 'pending_final' | 'rejected'; note: string | undefined; now: Date },
 ): Promise<void> {
   let updateQ = trx
-    .updateTable('crove_hr.overtime_request')
+    .updateTable('ludy_hr.overtime_request')
     .set({
       status: next.status,
       l1_approver_user_id: callerUserId,
@@ -446,7 +446,7 @@ async function updatePendingL1WithGuard(
     updateQ = updateQ.where((eb) =>
       eb.exists(
         eb
-          .selectFrom('crove_hr.department')
+          .selectFrom('ludy_hr.department')
           .select('id')
           .where('org_id', '=', orgId)
           .where('id', '=', departmentId)
@@ -469,7 +469,7 @@ export const overtimeApproveL1 = defineCommand({
   access: STAFF_ROLES,
   target: (input: { requestId: string }) => ({ type: 'hr.overtime_request', id: input.requestId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', [
       'status',
       'l1_approver_user_id',
       'l1_acted_at',
@@ -483,7 +483,7 @@ export const overtimeApproveL1 = defineCommand({
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select(['id', 'employee_id', 'department_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -528,14 +528,14 @@ export const overtimeApproveFinal = defineCommand({
   permission: 'hr.payroll.run',
   target: (input: { requestId: string }) => ({ type: 'hr.overtime_request', id: input.requestId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', [
       'status',
       'final_acted_by',
       'final_acted_at',
       'decision_note',
       'updated_at',
     ]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [
       'employment_id',
       'inputs',
       'status',
@@ -553,7 +553,7 @@ export const overtimeApproveFinal = defineCommand({
       'refusal',
       'updated_at',
     ]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['updated_at']),
   ],
   handler: async (ctx, input): Promise<HrOvertimeActionResult> => {
     const callerUserId = userOf(ctx.actor);
@@ -561,7 +561,7 @@ export const overtimeApproveFinal = defineCommand({
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
 
     const preRead = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select(['id', 'legal_entity_id', 'employee_id', 'month', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -577,7 +577,7 @@ export const overtimeApproveFinal = defineCommand({
     }
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select(['id', 'legal_entity_id', 'employee_id', 'month', 'hours', 'day_type', 'is_night', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -589,7 +589,7 @@ export const overtimeApproveFinal = defineCommand({
     }
 
     const approvedRows = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select('hours')
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', existing.employee_id)
@@ -605,7 +605,7 @@ export const overtimeApproveFinal = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_hr.overtime_request')
+      .updateTable('ludy_hr.overtime_request')
       .set({
         status: 'approved',
         final_acted_by: callerUserId,
@@ -649,7 +649,7 @@ export const overtimeReject = defineCommand({
   access: STAFF_ROLES,
   target: (input: { requestId: string }) => ({ type: 'hr.overtime_request', id: input.requestId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', [
       'status',
       'l1_approver_user_id',
       'l1_acted_at',
@@ -665,7 +665,7 @@ export const overtimeReject = defineCommand({
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
 
     const existing = await ctx.trx
-      .selectFrom('crove_hr.overtime_request')
+      .selectFrom('ludy_hr.overtime_request')
       .select(['id', 'employee_id', 'department_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -708,7 +708,7 @@ export const overtimeReject = defineCommand({
       );
     } else {
       await ctx.trx
-        .updateTable('crove_hr.overtime_request')
+        .updateTable('ludy_hr.overtime_request')
         .set({
           status: 'rejected' as const,
           final_acted_by: callerUserId,

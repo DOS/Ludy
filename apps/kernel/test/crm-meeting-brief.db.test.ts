@@ -85,7 +85,7 @@ suite('the meeting brief of a booking linked to a deal on PostgreSQL (#3115)', (
     const book = async (day: string, minute: number): Promise<string> => {
       const request = await bookingRequest(app, slug, 'tu-van', { startsAt: at(day, minute), name: 'Nguyễn Văn Khách', email: 'khach@example.test', phone: '0901234567', note: null, timeZone: VN });
       if (!request) throw new Error('no request');
-      const id = (await rows<{ id: string }>("SELECT id FROM crove_crm.booking WHERE org_id = $1 AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1", [orgId]))[0]!.id;
+      const id = (await rows<{ id: string }>("SELECT id FROM ludy_crm.booking WHERE org_id = $1 AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1", [orgId]))[0]!.id;
       expect(await worker.execute<{ status: string }>('crm.booking.confirm', { bookingId: id }, { actor: SYSTEM, orgId })).toMatchObject({ status: 'confirmed' });
       return id;
     };
@@ -94,13 +94,13 @@ suite('the meeting brief of a booking linked to a deal on PostgreSQL (#3115)', (
     const sentQuote = async (dealId: string, sentDaysAgo: number, validIn: number, number: string) => {
       const draft = await exec<{ id: string }>(owner, 'crm.quote.save', { dealId, lines: [{ kind: 'item', description: 'Phần mềm', unit: 'gói', quantity: '3', unitPrice: '1234567', vatRate: '8%' }, { kind: 'item', description: 'Hỗ trợ', unit: 'tháng', quantity: '2', unitPrice: '55000', vatRate: '10%' }] });
       await rows(
-        "UPDATE crove_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
         [orgId, draft.id, number, sentDaysAgo, validIn],
       );
-      const total = (await rows<{ total: string }>('SELECT total::text AS total FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [orgId, draft.id]))[0]?.total as string;
+      const total = (await rows<{ total: string }>('SELECT total::text AS total FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, draft.id]))[0]?.total as string;
       return { id: draft.id, number, total };
     };
-    const age = (dealId: string, days: number) => rows('UPDATE crove_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
+    const age = (dealId: string, days: number) => rows('UPDATE ludy_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
     // The customer's private mail (linked to the party as a person links it), and a comment on a page that every member reads.
     const mail = async (partyId: string, text: string) => {
       const id = randomUUID();
@@ -234,7 +234,7 @@ suite('the meeting brief of a booking linked to a deal on PostgreSQL (#3115)', (
       audits: (await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.booking.meeting_brief_source'", [o.orgId]))[0]?.n,
       mail: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1', [o.orgId]))[0]?.n,
       messages: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.conversation_message WHERE org_id = $1', [o.orgId]))[0]?.n,
-      deal: (await rows<{ updated_at: string }>('SELECT updated_at::text FROM crove_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id]))[0]?.updated_at,
+      deal: (await rows<{ updated_at: string }>('SELECT updated_at::text FROM ludy_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id]))[0]?.updated_at,
     });
     const before = await count();
     await o.source(o.host, booking);

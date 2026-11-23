@@ -724,7 +724,7 @@ export async function sweepSocialPublishing(
   failLate: (orgId: string) => Promise<readonly string[]> = async () => [],
 ): Promise<number> {
   const { rows } = await sql<{ org_id: string; variant_id: string; provider: string }>`
-    SELECT org_id, variant_id, provider FROM crove_social.publish_due(${SOCIAL_SWEEP_LIMIT}::int, ${PUBLISH_STALE_SECONDS}::int, ${[...providers]}::text[])`.execute(workerDb);
+    SELECT org_id, variant_id, provider FROM ludy_social.publish_due(${SOCIAL_SWEEP_LIMIT}::int, ${PUBLISH_STALE_SECONDS}::int, ${[...providers]}::text[])`.execute(workerDb);
   // An org whose Social is off (ADR-0053) gets no job: its overdue variants would be queued every 15 seconds, refused at the first gated call, retried and
   // dead-lettered. They stay as they are until the app is back on. One answer per org, not per variant.
   const answers = new Map<string, Promise<boolean>>();
@@ -2019,7 +2019,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }
 
   // The launch of an approved campaign at the ad platform (#2296, W2-3): ids only in the job (the org and the launch), queued by the relay below when the approval
-  // wrote ads.launch.queued, and again by a sweep every ten minutes for a launch whose event or job was lost (crove_ads.launch_requeue writes the same event for
+  // wrote ads.launch.queued, and again by a sweep every ten minutes for a launch whose event or job was lost (ludy_ads.launch_requeue writes the same event for
   // the providers this worker has a writer for; the job's begin decides what is due). The writers are the deployment's: the sandbox's offline one, and Meta's
   // only where ADS_LIVE_LAUNCH is on; a provider without one has its launches left queued, untouched. Every object the job creates is paused.
   const adWriters = deps.channels?.adWriters;
@@ -2027,7 +2027,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<AdsLaunchJob | { sweep: true }>(QUEUES.adsLaunch, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
-        const { rows } = await sql<{ n: number }>`SELECT crove_ads.launch_requeue(${Object.keys(adWriters)}::text[], 200) AS n`.execute(deps.workerDb);
+        const { rows } = await sql<{ n: number }>`SELECT ludy_ads.launch_requeue(${Object.keys(adWriters)}::text[], 200) AS n`.execute(deps.workerDb);
         if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-launch] ${rows[0]?.n} waiting launch(es) queued again`);
         return;
       }
@@ -2040,7 +2040,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }
 
   // The pause of what a stopped launch made at the platform (#2296, W2-4a): ids only in the job (the org and the launch), queued by the relay below when a stop wrote
-  // ads.pause.queued, and again by a sweep every five minutes for a stopped launch whose event or job was lost or whose next run is due (crove_ads.wind_down_requeue writes
+  // ads.pause.queued, and again by a sweep every five minutes for a stopped launch whose event or job was lost or whose next run is due (ludy_ads.wind_down_requeue writes
   // the same event; the job's begin decides what is due). The job finds the objects that carry the launch's tag and sets them PAUSED with the credential of the write
   // connection, and nothing else; a connection that a switch-off closed is paused by the revoke sweep with the sealed copy of its token, before it revokes.
   const adPausers = deps.channels?.adPausers;
@@ -2048,7 +2048,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<AdsPauseJob | { sweep: true }>(QUEUES.adsPause, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
-        const { rows } = await sql<{ n: number }>`SELECT crove_ads.wind_down_requeue(200) AS n`.execute(deps.workerDb);
+        const { rows } = await sql<{ n: number }>`SELECT ludy_ads.wind_down_requeue(200) AS n`.execute(deps.workerDb);
         if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-pause] ${rows[0]?.n} stopped launch(es) queued again`);
         return;
       }
@@ -2062,14 +2062,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // The activation of an approved launch at the ad platform (#2296, W2-4b): ids only in the job (the org and the launch), queued by the relay below when the launch job left a
   // launch's objects created and paused (ads.activate.queued), and again by a sweep every ten minutes for a launch whose flight has begun and whose event or job was lost
-  // (crove_ads.activate_requeue writes the same event for the providers this worker has an activator for; the job's begin decides what is due, and re-checks the stop
+  // (ludy_ads.activate_requeue writes the same event for the providers this worker has an activator for; the job's begin decides what is due, and re-checks the stop
   // conditions, the plan and the caps before every call). The job switches the launch's own objects on with the credential of the write connection, and nothing else.
   const adActivators = deps.channels?.adActivators;
   if (ads && adActivators && adsBroker && Object.keys(adActivators).length > 0) {
     await boss.work<AdsActivateJob | { sweep: true }>(QUEUES.adsActivate, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
-        const { rows } = await sql<{ n: number }>`SELECT crove_ads.activate_requeue(${Object.keys(adActivators)}::text[], 200) AS n`.execute(deps.workerDb);
+        const { rows } = await sql<{ n: number }>`SELECT ludy_ads.activate_requeue(${Object.keys(adActivators)}::text[], 200) AS n`.execute(deps.workerDb);
         if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-activate] ${rows[0]?.n} waiting launch(es) queued again`);
         return;
       }
@@ -2082,7 +2082,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }
 
   // The management of a live launch at the ad platform (#3835, W4): ids only in the job (the org and the change), queued by the relay below when a person's change is written
-  // (ads.manage.queued), and again by a sweep every ten minutes for a change whose event or job was lost (crove_ads.manage_requeue writes the same event for the providers this
+  // (ads.manage.queued), and again by a sweep every ten minutes for a change whose event or job was lost (ludy_ads.manage_requeue writes the same event for the providers this
   // worker has a manager for; the job's begin decides what is due, and re-checks the stop conditions and the caps before the call). The job makes the one platform call the
   // change stands for with the credential of the write connection, and nothing else.
   const adManagers = deps.channels?.adManagers;
@@ -2090,11 +2090,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<AdsManageJob | { sweep: true }>(QUEUES.adsManage, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
-        const { rows } = await sql<{ n: number }>`SELECT crove_ads.manage_requeue(${Object.keys(adManagers)}::text[], 200) AS n`.execute(deps.workerDb);
+        const { rows } = await sql<{ n: number }>`SELECT ludy_ads.manage_requeue(${Object.keys(adManagers)}::text[], 200) AS n`.execute(deps.workerDb);
         if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-manage] ${rows[0]?.n} waiting change(s) queued again`);
         // A change that ended unclear is settled by reading its object (#3898): the pick names the ones due (a call old enough, nothing newer of the family, an active write connection
         // of a provider this worker has a manager for), ids only, and each is its own job that reads and calls nothing. A read that cannot be made leaves it unclear and it comes round again.
-        const due = await sql<{ org_id: string; change_id: string }>`SELECT org_id, change_id FROM crove_ads.manage_unclear_pick(${Object.keys(adManagers)}::text[], 50)`.execute(deps.workerDb);
+        const due = await sql<{ org_id: string; change_id: string }>`SELECT org_id, change_id FROM ludy_ads.manage_unclear_pick(${Object.keys(adManagers)}::text[], 50)`.execute(deps.workerDb);
         for (const pick of due.rows) {
           await boss.send(QUEUES.adsManage, { orgId: pick.org_id, changeId: pick.change_id, settle: true } satisfies AdsManageJob, {
             singletonKey: jobKey(pick.org_id, QUEUES.adsManage, `settle:${pick.change_id}`),
@@ -2292,7 +2292,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // egress, so the age limit does not depend on the revoke job running (ads-revoke does the same first thing). By count only.
     // Whether or not the ads module is installed: the hold is a trigger of the database, so a copy can be made with the module switched off, and it must not
     // outlive its seven days for that reason.
-    const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
+    const { rows: wiped } = await sql<{ n: number }>`SELECT ludy_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
       console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
       return { rows: [] as Array<{ n: number }> };
     });

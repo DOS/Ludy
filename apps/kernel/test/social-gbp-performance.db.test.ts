@@ -81,7 +81,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
   }
 
   const snapshot = (orgId: string, conn: string, capturedOn: string, performance: Record<string, Figures> | null) =>
-    admin((c) => c.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, performance) VALUES ($1, $2, $3, $4::jsonb)', [orgId, conn, capturedOn, performance === null ? null : JSON.stringify(performance)]));
+    admin((c) => c.query('INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, performance) VALUES ($1, $2, $3, $4::jsonb)', [orgId, conn, capturedOn, performance === null ? null : JSON.stringify(performance)]));
   const trends = (o: { orgId: string; owner: string }, days: number) => api.query<AccountTrend[]>('social.account.trends', { days }, { actor: asUser(o.owner), orgId: o.orgId });
   const status = (conn: string) => admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [conn])).rows[0]?.status);
 
@@ -140,7 +140,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
     // One read per location per day.
     expect(gbp.asked.map((a) => a.externalAccountId).sort()).toEqual(['accounts/1/locations/11', 'accounts/1/locations/12', 'accounts/1/locations/13', 'accounts/1/locations/14']);
     const today = async (conn: string) =>
-      (await admin(async (c) => (await c.query<{ followers: string | null; performance: unknown; error: string | null }>('SELECT followers, performance, error FROM crove_social.account_snapshot WHERE channel_connection_id = $1 AND captured_on = $2', [conn, day(0)])).rows))[0];
+      (await admin(async (c) => (await c.query<{ followers: string | null; performance: unknown; error: string | null }>('SELECT followers, performance, error FROM ludy_social.account_snapshot WHERE channel_connection_id = $1 AND captured_on = $2', [conn, day(0)])).rows))[0];
     expect(await today(shop)).toEqual({ followers: null, performance: figures, error: null });
     expect(await today(refused)).toEqual({ followers: null, performance: null, error: 'token_expired' });
     expect(await today(quota)).toEqual({ followers: null, performance: null, error: 'no_answer' });
@@ -212,7 +212,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
     const insert = async (performance: unknown) => {
       n += 1;
       try {
-        await admin((c) => c.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, performance) VALUES ($1, $2, $3, $4::jsonb)', [o.orgId, conn, day(100 + n), JSON.stringify(performance)]));
+        await admin((c) => c.query('INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, performance) VALUES ($1, $2, $3, $4::jsonb)', [o.orgId, conn, day(100 + n), JSON.stringify(performance)]));
         return 'ok';
       } catch (error) {
         return (error as { constraint?: string }).constraint ?? String(error);
@@ -239,7 +239,7 @@ suite('Google Business performance on PostgreSQL (#1477)', () => {
     for (const p of bad) expect([JSON.stringify(p).slice(0, 60), await insert(p)]).toEqual([JSON.stringify(p).slice(0, 60), 'account_snapshot_performance_shape']);
     // The table stays append-only for tenant roles, the new column with it.
     const grants = await admin(async (c) =>
-      (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
     );
     expect(grants).toEqual(['INSERT', 'SELECT']);
   });

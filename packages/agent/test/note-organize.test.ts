@@ -159,7 +159,7 @@ describe('notes.organize deterministic checks & prompt-injection defense (#3563)
     await expect(
       organizeUnfiledNotes(
         { notes: NOTES, notebooks: NOTEBOOKS, language: 'vi' },
-        fakePorts('{"command":"DELETE FROM crove_notes.note"}'),
+        fakePorts('{"command":"DELETE FROM ludy_notes.note"}'),
       ),
     ).rejects.toMatchObject({ name: 'NoteOrganizeError', code: 'NOTE_ORGANIZE_UNPARSABLE' });
 

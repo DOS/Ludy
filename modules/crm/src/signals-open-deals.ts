@@ -28,8 +28,8 @@ export const crmOpenDealsSignals = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows } = await sql<{ deal_id: string; party_id: string }>`
       SELECT d.id AS deal_id, d.party_id
-      FROM crove_crm.deal d
-      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      FROM ludy_crm.deal d
+      JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND s.kind = 'open' AND d.closed_at IS NULL
       ORDER BY d.created_at DESC, d.id
       LIMIT ${LIMIT}`.execute(ctx.trx);

@@ -144,7 +144,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     await expect(column('Báo giá')).toContainText('13.500.000');
     await expect(column('Thắng')).toContainText('15.000.000');
     const stored = sql<{ title: string; kind: string; closed: boolean }>(
-      `SELECT d.title, s.kind, d.closed_at IS NOT NULL AS closed FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' ORDER BY d.title`,
+      `SELECT d.title, s.kind, d.closed_at IS NOT NULL AS closed FROM ludy_crm.deal d JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' ORDER BY d.title`,
       { slug },
     );
     expect(stored).toEqual([
@@ -157,7 +157,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await test.step('a card moved elsewhere in the meantime is refused, and the board shows the real place', async () => {
     // Someone else moves the deal while this page missed the stream's hint (#3293: a write now sends one, so the trigger is off for this statement); this page still holds the old version.
     exec(`SET session_replication_role = replica;
-       UPDATE crove_crm.deal SET version = version + 1 WHERE title = 'Tư vấn thuế'`);
+       UPDATE ludy_crm.deal SET version = version + 1 WHERE title = 'Tư vấn thuế'`);
     await page.getByRole('combobox', { name: 'Giai đoạn của cơ hội Tư vấn thuế' }).selectOption({ label: 'Thương lượng' });
     await expect(page.getByText('vừa được người khác sửa')).toBeVisible();
     await expect.poll(() => titles('Báo giá')).toContain('Tư vấn thuế');
@@ -166,7 +166,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await test.step('a card moved by someone else shows in its new column with no reload (the stream hint, #3293)', async () => {
     // A write by another member: the deal trigger sends the hint, the board reads again through its normal query, and the hint holds no title.
     exec(
-      `UPDATE crove_crm.deal d SET stage_id = (SELECT s.id FROM crove_crm.pipeline_stage s WHERE s.org_id = d.org_id AND s.name = 'Thương lượng'), version = version + 1, updated_at = now()
+      `UPDATE ludy_crm.deal d SET stage_id = (SELECT s.id FROM ludy_crm.pipeline_stage s WHERE s.org_id = d.org_id AND s.name = 'Thương lượng'), version = version + 1, updated_at = now()
        WHERE d.title = 'Báo cáo tài chính'`,
     );
     await expect.poll(() => titles('Thương lượng'), { timeout: 15_000 }).toEqual(['Báo cáo tài chính']);
@@ -176,7 +176,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await test.step('a deal won more than 30 days ago is off the board, and "Xem tất cả" in Thắng lists it (crm.md section 6)', async () => {
     exec(
       `SET session_replication_role = replica;
-       UPDATE crove_crm.deal SET closed_at = now() - interval '45 days' WHERE title = 'Gói kế toán năm' AND org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`,
+       UPDATE ludy_crm.deal SET closed_at = now() - interval '45 days' WHERE title = 'Gói kế toán năm' AND org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`,
       { slug },
     );
     await page.reload();
