@@ -9,6 +9,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
+import { FOLLOWUP_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -64,8 +65,9 @@ export const EXPORT_TABLES = {
   'kernel.saved_reply': { from: 'ludy_kernel.saved_reply', omit: [] },
   'kernel.conversation_note': { from: 'ludy_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
-  // are keyed by the deployment.
-  'kernel.mail_message': { from: 'ludy_kernel.mail_message', omit: [] },
+  // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
+  // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out; the mail log keeps them 30 days after the send.
+  'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source <> '${FOLLOWUP_MAIL_SOURCE}')`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
   'kernel.mail_event': { from: 'ludy_kernel.mail_event', omit: [] },
   // What the org's people decided and set up in the kernel (#3367): budgets and kill switches, how long a proposal waits, the tax profile and the filings marked done,
