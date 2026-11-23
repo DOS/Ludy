@@ -23,6 +23,7 @@ import type {
   MeetingPlatformListed,
   MeetingPlatformOAuth,
 } from './meeting-platform.ts';
+import { zoomAccountKey } from './meeting-platform-zoom-webhook.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
 
 export const ZOOM_API_HOST = 'api.zoom.us';
@@ -262,7 +263,7 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
     }
     const email = text(me.email).trim().toLowerCase();
     // No address or id means the app lacks the permission to read the profile: nothing identifies the account, so nothing is stored.
-    const id = text(me.id).trim().toLowerCase();
+    const id = zoomAccountKey(text(me.id));
     if (email === '' || email.length > 200 || id === '' || id.length > 200) throw new MeetingPlatformError('platform_refused', 'Zoom did not return the account address or id');
     const name = [text(me.display_name), `${text(me.first_name)} ${text(me.last_name)}`.trim(), email].find((n) => n.trim() !== '') ?? email;
     const scopes = text(grant.scope)

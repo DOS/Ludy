@@ -197,6 +197,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.position': KernelPositionTable;
   'ludy_kernel.proposal': KernelProposalTable;
   'ludy_kernel.proposal_policy': KernelProposalPolicyTable;
+  'ludy_kernel.push_subscription': KernelPushSubscriptionTable;
   'ludy_kernel.record_le': KernelRecordLeTable;
   'ludy_kernel.role': KernelRoleTable;
   'ludy_kernel.role_assignment': KernelRoleAssignmentTable;
@@ -3259,6 +3260,20 @@ export interface KernelProposalTable {
   mcp_client_name: string | null;
   mcp_client_host: string | null;
   approvers_told_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** ludy_kernel.push_subscription */
+export interface KernelPushSubscriptionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  endpoint: ColumnType<string, string, NotGranted>;
+  p256dh: string;
+  auth: string;
+  user_agent: string | null;
+  failure_count: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  last_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_kernel.record_le */

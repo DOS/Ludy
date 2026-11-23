@@ -223,6 +223,7 @@ describe('projects custom board columns helpers & UI (#2605)', () => {
       ),
     );
     expect(boardHtml).toContain(`data-column-id="${cDev.id}"`);
+    expect(boardHtml).not.toMatch(/<h2[^>]*\buppercase\b/);
     expect(boardHtml).toContain('bg-primary');
     expect(boardHtml).toContain('bg-success');
     expect(boardHtml).toContain('column-wip-exceeded');

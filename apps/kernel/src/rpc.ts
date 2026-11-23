@@ -2440,24 +2440,6 @@ export function createRpcHandler(
         read: os.social.notifications.read.handler(socialCommand('social.notification.read')),
         mute: os.social.notifications.mute.handler(socialCommand('social.notification.mute')),
         mail: os.social.notifications.mail.handler(socialCommand('social.notification.mail')),
-        push: {
-          status: os.social.notifications.push.status.handler(({ context, input }) =>
-            inSocial(context, async (orgId, actor) => {
-              const push = channels?.push;
-              const own = await runtime.query<{ devices: { id: string; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[]; subscribed: boolean }>('social.push.devices', input, { actor, orgId });
-              return { enabled: Boolean(push), publicKey: push?.publicKey ?? null, ...own };
-            }),
-          ),
-          // Without VAPID keys nothing could ever be sent: refused before a row is written.
-          subscribe: os.social.notifications.push.subscribe.handler(({ context, input }) =>
-            inSocial(context, (orgId, actor) => {
-              if (!channels?.push) throw new DomainError('PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy');
-              return runtime.execute<{ id: string }>('social.push.subscribe', input, { actor, orgId });
-            }),
-          ),
-          // Turning a device off works whatever the keys, so a member can always clean up.
-          unsubscribe: os.social.notifications.push.unsubscribe.handler(socialCommand('social.push.unsubscribe')),
-        },
       },
       accounts: {
         trends: os.social.accounts.trends.handler(socialQuery('social.account.trends')),
@@ -3267,6 +3249,25 @@ export function createRpcHandler(
       list: os.notifications.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.notification.list', {}, { actor, orgId }))),
       read: os.notifications.read.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.read', input, { actor, orgId }))),
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
+      // Browser push (#1238, #3736): one subscription per browser serves every app's notices; each member reaches only their own devices.
+      push: {
+        status: os.notifications.push.status.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const push = channels?.push;
+            const own = await runtime.query<{ devices: { id: string; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[]; subscribed: boolean }>('kernel.push.devices', input, { actor, orgId });
+            return { enabled: Boolean(push), publicKey: push?.publicKey ?? null, ...own };
+          }),
+        ),
+        // Without VAPID keys nothing could ever be sent: refused before a row is written.
+        subscribe: os.notifications.push.subscribe.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => {
+            if (!channels?.push) throw new DomainError('PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy');
+            return runtime.execute<{ id: string }>('kernel.push.subscribe', input, { actor, orgId });
+          }),
+        ),
+        // Turning a device off works whatever the keys, so a member can always clean up.
+        unsubscribe: os.notifications.push.unsubscribe.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.push.unsubscribe', input, { actor, orgId }))),
+      },
     },
     conversations: {
       list: os.conversations.list.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableListed((await runtime.query('kernel.conversation.list', input, { actor, orgId })) as ConversationListed, channels?.emailSenderCheck === true))),

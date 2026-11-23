@@ -141,6 +141,36 @@ describe('checkFollowupPersonalNote', () => {
   });
 });
 
+describe('the contact and link shapes of #4553', () => {
+  // The source facts hold what the body repeats, so the figures are grounded and only the contact and link checks can refuse it; the same shapes as the contract's guard (#4553).
+  it('refuses a phone typed with other dashes, line breaks, other separators or no leading 0 and a domain behind other punctuation or spaced dots, and lets dates and ranges through', () => {
+    const en = String.fromCharCode(0x2013);
+    const facts = (summary: string): FollowupNoteFacts => ({ summary, decisions: [], items: [] });
+    for (const shape of [
+      `090 ${en} 123 ${en} 4567`,
+      '090\n123\n4567',
+      '090 -\n123 -\n4567',
+      '90 - 123 - 4567',
+      '415 - 555 - 2671',
+      '090/123/4567',
+      '090_123_4567',
+      '090,123,4567',
+      'a|x.com',
+      'a/x.com',
+      'a_x.com',
+      'abc . com',
+      '05/12/2026, 090_123_4567',
+      'Mục 1\n090_123_4567',
+      'Phòng 5 - 090/123/4567',
+    ]) {
+      expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body: `Liên hệ ${shape} nhé.` }), facts(`Liên hệ ${shape}.`))), shape).toBe('FOLLOWUP_NOTE_REFUSED');
+    }
+    for (const fine of ['Hạn 28/11/2026 12 người', 'Từ 05 - 10 - 2026 đến 07 - 10 - 2026', 'Doanh thu 10000 - 20000', 'Ca 07.00 - 11.30', 'Lô 01, 02, 03, 04, 05', 'Giao các ngày 05/12, 12/12, 19/12', 'Gói 100 - 200 - 300 nghìn', 'Xong . Ai làm tiếp?']) {
+      expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body: `${fine} nhé.` }), facts(`${fine}.`))), fine).toBeNull();
+    }
+  });
+});
+
 describe('draftFollowupPersonalNote', () => {
   it('fences all untrusted fields with the run nonce and meters under meetings.followup_note', async () => {
     const fake = fakeModel(

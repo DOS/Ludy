@@ -25,7 +25,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { inboxCountsInput, inboxListInput, type InboxSearch } from '../lib/conversation-inbox.ts';
 import { sortByIntent } from '../lib/conversation-intent.ts';
 import { INBOX_SPLIT_UP, useMediaQuery } from '../lib/media.ts';
-import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
+import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 import { withSearch } from '../lib/search.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationListItem, ConversationThread, LoadOlderConversations, POLL_MS, STATUSES, useConversationPages, useMe } from './conversation-inbox.tsx';
@@ -199,7 +199,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </div>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.kind')}</span>
-          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.kind ?? ''} onChange={(e) => change({ kind: e.target.value === '' ? undefined : (e.target.value as InboxSearch['kind']) })} data-testid="inbox-kind">
+          <NativeSelect className="w-full" value={search.kind ?? ''} onChange={(e) => change({ kind: e.target.value === '' ? undefined : (e.target.value as InboxSearch['kind']) })} data-testid="inbox-kind">
             <option value="">{ti('filters.kindAll')}</option>
             <option value="comment_thread">{t('kind.comment_thread')}</option>
             <option value="direct">{t('kind.direct')}</option>
@@ -208,7 +208,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.channel')}</span>
-          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.channel ?? ''} onChange={(e) => change({ channel: e.target.value === '' ? undefined : e.target.value })} data-testid="inbox-channel">
+          <NativeSelect className="w-full" value={search.channel ?? ''} onChange={(e) => change({ channel: e.target.value === '' ? undefined : e.target.value })} data-testid="inbox-channel">
             <option value="">{ti('filters.channelAll')}</option>
             {channelList.map((c) => (
               <option key={c.id} value={c.id}>
@@ -219,7 +219,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.assignee')}</span>
-          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.assignee ?? ''} onChange={(e) => change({ assignee: e.target.value === '' ? undefined : (e.target.value as InboxSearch['assignee']) })} data-testid="inbox-assignee">
+          <NativeSelect className="w-full" value={search.assignee ?? ''} onChange={(e) => change({ assignee: e.target.value === '' ? undefined : (e.target.value as InboxSearch['assignee']) })} data-testid="inbox-assignee">
             <option value="">{ti('filters.assigneeAll')}</option>
             <option value="me">{ti('filters.assigneeMe')}</option>
             <option value="none">{ti('filters.assigneeNone')}</option>
@@ -227,7 +227,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.intent')}</span>
-          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.intent ?? ''} onChange={(e) => change({ intent: e.target.value === '' ? undefined : (e.target.value as InboxSearch['intent']) })} data-testid="inbox-intent">
+          <NativeSelect className="w-full" value={search.intent ?? ''} onChange={(e) => change({ intent: e.target.value === '' ? undefined : (e.target.value as InboxSearch['intent']) })} data-testid="inbox-intent">
             <option value="">{ti('filters.intentAll')}</option>
             {CONVERSATION_INTENTS.map((intent) => (
               <option key={intent} value={intent}>

@@ -121,8 +121,8 @@ export function OnboardingPage() {
                   placeholder="0101234567"
                 />
                 {getConfig().taxCodeLookup && (
-                  <Button type="button" variant="outline" className="shrink-0" disabled={lookup.isPending || !taxCode.trim()} onClick={lookUp}>
-                    {lookup.isPending ? t('lookingUp') : t('lookUp')}
+                  <Button type="button" variant="outline" className="shrink-0" loading={lookup.isPending} disabled={!taxCode.trim()} onClick={lookUp}>
+                    {t('lookUp')}
                   </Button>
                 )}
               </div>
@@ -169,8 +169,8 @@ export function OnboardingPage() {
             )}
           </Field>
           {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-          <Button type="submit" size="lg" className="w-full" disabled={create.isPending}>
-            {create.isPending ? t('creating') : t('create')}
+          <Button type="submit" size="lg" className="w-full" loading={create.isPending}>
+            {t('create')}
           </Button>
         </form>
         <div className="mt-4 flex items-center justify-between text-sm">
