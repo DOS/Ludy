@@ -28,11 +28,12 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   await signUp(page, newEmail('layout'));
   const slug = await createOrg(page, 'Công ty Màn hình nhỏ');
   const sidebar = page.getByRole('complementary');
+  const desktopSidebar = page.getByTestId('desktop-sidebar');
   const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
   await expect(account).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
   // A new org opens on the overview, which belongs to no app: the 64px rail shows with no 224px secondary panel (#3588, #4519).
-  const sidebarWidth = () => sidebar.boundingBox().then((box) => Math.round(box?.width ?? 0));
+  const sidebarWidth = () => desktopSidebar.boundingBox().then((box) => Math.round(box?.width ?? 0));
   await expect.poll(sidebarWidth).toBe(64);
   await expect(sidebar.getByTestId('rail-search-btn')).toBeInViewport();
   await expect(sidebar.getByTestId('sidebar-toggle-btn')).toHaveCount(0);
@@ -67,7 +68,7 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   await expect.poll(sidebarWidth).toBe(64);
   await quickInput.evaluate((el) => (el as HTMLElement).blur());
   await page.keyboard.press('[');
-  await expect(sidebar.getByRole('link', { name: 'Việc của tôi' })).toBeVisible();
+  await expect(desktopSidebar.getByRole('link', { name: 'Việc của tôi' })).toBeVisible();
   await expect.poll(sidebarWidth).toBe(288);
   await page.goto(`/o/${slug}/journal`);
 
