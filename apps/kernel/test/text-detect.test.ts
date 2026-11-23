@@ -61,3 +61,29 @@ describe('ludy_kernel.text_detect migration contract (#4001 Slice 1)', () => {
     }
   });
 });
+
+describe('ludy_kernel.text_detect recall follow-up migration contract (#4375)', () => {
+  const recallSql = readMigration('20270316030000_ludy_kernel_text_detect_recall.sql');
+  const patternSql = readMigration('20261122040000_crove_kernel_text_mention_long_digits.sql');
+
+  it('keeps pure SECURITY INVOKER IMMUTABLE PARALLEL SAFE metadata, pinned search_path, and ludy_tenant-only EXECUTE', () => {
+    expect(recallSql).not.toMatch(/SECURITY\s+DEFINER/i);
+    expect(recallSql).not.toMatch(/CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+/i);
+
+    const invokerHeaders = recallSql.match(/LANGUAGE\s+plpgsql\s+IMMUTABLE\s+PARALLEL\s+SAFE\s+SECURITY\s+INVOKER\s+SET\s+search_path\s*=\s*pg_catalog,\s*pg_temp/gi) ?? [];
+    expect(invokerHeaders).toHaveLength(1);
+
+    expect(recallSql).toContain('REVOKE ALL ON FUNCTION ludy_kernel.text_detect(text) FROM PUBLIC;');
+    expect(recallSql).toContain('GRANT EXECUTE ON FUNCTION ludy_kernel.text_detect(text) TO ludy_tenant;');
+  });
+
+  it('keeps inline space and non-ASCII Latin letter constants identical to text_mention_pattern and preserves all 5 kinds', () => {
+    const inlineLine = /v_inline constant text := ([^;]+);/;
+    const lettersLine = /v_letters constant text := ([^;]+);/s;
+    expect(recallSql.match(inlineLine)?.[1]).toBe(patternSql.match(inlineLine)?.[1]);
+    expect(recallSql.match(lettersLine)?.[1]?.replace(/\s+/g, ' ')).toBe(patternSql.match(lettersLine)?.[1]?.replace(/\s+/g, ' '));
+    for (const kind of REDACTION_KINDS) {
+      expect(recallSql).toContain(`'${kind}'`);
+    }
+  });
+});
