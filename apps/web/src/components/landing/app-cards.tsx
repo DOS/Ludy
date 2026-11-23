@@ -15,15 +15,15 @@ export function AppCards({ dict }: { dict: Dictionary }) {
     <Section id="module" labelledBy="apps-title" tinted>
       <SectionHead id="apps-title" title={appCards.title} lead={appCards.lead} />
       <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {appCards.items.map((item, i) => {
+        {appCards.items.map((item) => {
           const Icon = ICONS[item.key] ?? Sparkles;
           return (
             <li key={item.key} className="flex flex-col rounded-xl border border-line bg-surface p-5">
-              <span className={`flex size-11 items-center justify-center rounded-xl ${i % 2 === 0 ? 'bg-accent-soft text-accent-ink' : 'bg-ok-soft text-ok'}`}>
-                <Icon className="size-6" aria-hidden="true" />
-              </span>
-              <h3 className="mt-4 font-display text-lg leading-snug font-semibold">{item.name}</h3>
-              <p className="mt-2 text-sm text-muted">{item.body}</p>
+              <h3 className="flex items-center gap-2.5 font-display text-lg leading-snug font-semibold">
+                <Icon className="size-5 shrink-0 text-accent-ink" aria-hidden="true" />
+                <span>{item.name}</span>
+              </h3>
+              <p className="mt-2.5 text-sm text-muted">{item.body}</p>
               <div className="mt-auto flex flex-col gap-2 pt-4">
                 {item.agent ? (
                   <span className="text-xs text-subtle">

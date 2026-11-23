@@ -299,7 +299,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
         {/* Command palette */}
         {paletteOpen ? (
           <div className="absolute inset-0 flex justify-center bg-scrim px-3 pt-16 md:pt-[12%]" aria-hidden="true">
-            <div className="h-fit w-full max-w-[540px] overflow-hidden rounded-lg border border-line bg-surface shadow-2xl">
+            <div className="h-fit w-full max-w-[540px] overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
               {phase === 'open' ? (
                 <>
                   <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm">

@@ -178,6 +178,8 @@ async function lockChapters(trx: Trx, orgId: string, meetingId: string, ids: rea
 const staleError = () => new DomainError('REDACTION_STALE', 409, 'This draft changed since you reviewed it; reload and review again');
 const publishedError = () => new DomainError('REDACTION_PUBLISHED_IMMUTABLE', 409, 'Published meeting text cannot be redacted');
 const mismatchError = () => new DomainError('REDACTION_SPAN_MISMATCH', 422, 'Selected item no longer matches detected personal data');
+// The marks are longer than most of what they replace (#4540): a field close to its cap can grow past it. The command refuses it, whole (nothing is written), instead of cutting the end of the user's text.
+const tooLongError = () => new DomainError('REDACTION_TOO_LONG', 422, 'The text would be longer than this field allows once the marks are in; shorten the text first');
 
 interface FieldRedactionTask {
   key: string;
@@ -196,7 +198,7 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     kinds: task.selections.map((s) => s.kind),
     marks: task.selections.map((s) => REDACTION_MARK_BY_KIND[s.kind]),
   }));
-  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null }>`
+  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null; too_long: boolean }>`
     WITH req AS (
       SELECT
         r.idx,
@@ -240,15 +242,24 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
           )
         ) AS has_mismatch
       FROM req
+    ),
+    done AS (
+      SELECT
+        idx,
+        has_mismatch,
+        max_len,
+        CASE
+          WHEN has_mismatch THEN NULL::text
+          ELSE ludy_kernel.text_redact_spans(text, starts, kinds, marks)
+        END AS redacted
+      FROM checked
     )
     SELECT
       idx,
       has_mismatch,
-      CASE
-        WHEN has_mismatch THEN NULL::text
-        ELSE pg_catalog.left(ludy_kernel.text_redact_spans(text, starts, kinds, marks), max_len)
-      END AS redacted
-    FROM checked
+      redacted,
+      COALESCE(pg_catalog.length(redacted) > max_len, false) AS too_long
+    FROM done
     ORDER BY idx`.execute(trx);
 
   if (rows.length !== tasks.length) throw mismatchError();
@@ -257,7 +268,10 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     const task = tasks[i]!;
     const row = rows[i]!;
     const redacted = row.redacted;
-    if (row.idx !== i || row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
+    if (row.idx !== i) throw mismatchError();
+    // A selection the server does not detect any more is a mismatch whatever the length; only a matching one that would not fit is "too long".
+    if (!row.has_mismatch && row.too_long) throw tooLongError();
+    if (row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
       throw mismatchError();
     }
     redactedByKey.set(task.key, redacted);

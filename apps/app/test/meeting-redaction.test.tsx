@@ -234,6 +234,7 @@ describe('meeting redaction helpers (#4001 Slice 3)', () => {
       ['REDACTION_PUBLISHED_IMMUTABLE', 'Published meeting text cannot be redacted', true],
       ['REDACTION_SPAN_MISMATCH', 'Selected item no longer matches detected personal data', true],
       ['REDACTION_STALE', 'This draft changed since you reviewed it; reload and review again', true],
+      ['REDACTION_TOO_LONG', 'The text would be longer than this field allows once the marks are in; shorten the text first', false],
       ['VY_RUN_BUSY', 'A private Vy run for this item just started; try again', false],
     ] as const;
 

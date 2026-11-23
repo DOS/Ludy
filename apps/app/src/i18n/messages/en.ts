@@ -15722,6 +15722,7 @@ export const en = {
       REDACTION_PUBLISHED_IMMUTABLE: 'Published meeting text cannot be redacted as a draft.',
       REDACTION_SPAN_MISMATCH: 'The selected item no longer matches the current personal data. Reload and check again.',
       REDACTION_STALE: 'This draft changed since you reviewed it. Reload and review before redacting.',
+      REDACTION_TOO_LONG: 'With the hiding marks in, a text would be longer than its field allows. Shorten that text first, then hide again. Nothing was changed.',
       INVALID_READER: 'A reader must be an active owner, admin or member of this organization.',
       INVALID_MEDIA_CONTAINER: 'This file is not a supported audio or video format.',
       VIDEO_NOT_ENABLED: 'This meeting was not set up to keep video.',
