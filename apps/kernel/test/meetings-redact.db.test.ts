@@ -596,6 +596,33 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(unchanged.map((r) => r.text)).toEqual([`Số một ${PHONE_PII}`, `Email mới ${EMAIL_PII}`]);
   });
 
+  // #4540: a mark is longer than the value it replaces, so a field close to its cap can grow past it. The command refuses the whole redaction instead of cutting the end of the user's text.
+  it('refuses a redaction whose marks would push a field past its cap, whole, and cuts nothing', async () => {
+    const meetingId = await seedMeeting({ readers: ['attendee'] });
+    // 72 characters (the cap of a speaker label is 80) holding five phone numbers: each mark is 10 characters longer than its number.
+    const label = [PHONE_PII, '0912 345 679', '0912 345 680', '0912 345 681', '0912 345 682'].join(' / ');
+    expect(label.length).toBeLessThanOrEqual(80);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId,
+      segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: label, text: 'Xin chào mọi người.' }],
+    });
+    const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId });
+    const onLabel = scan.candidates.filter((c) => c.surface === 'transcript_segment.speaker_label');
+    expect(onLabel.length).toBeGreaterThanOrEqual(2);
+    expect(
+      await refuses(
+        exec('recorder', 'meetings.transcript.redact', {
+          meetingId,
+          confirmed: true,
+          items: onLabel.map((c) => ({ surface: c.surface, targetId: c.targetId, decisionIndex: null, kind: c.kind, startPos: c.startPos, version: c.version })),
+        }),
+      ),
+    ).toBe('REDACTION_TOO_LONG');
+    const after = await sqlAdmin<{ speaker_label: string; text: string }>('SELECT speaker_label, text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]);
+    expect(after.map((r) => r.speaker_label)).toEqual([label]);
+    expect(after.map((r) => r.text)).toEqual(['Xin chào mọi người.']);
+  });
+
   it('keeps published rows immutable (D3) and refuses meeting.title redaction once any surface is published', async () => {
     const meetingId = await seedMeeting({
       readers: ['attendee'],
