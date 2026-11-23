@@ -423,6 +423,12 @@ import {
   zHrTripRef,
   zHrTripRequestView,
 } from './hr-stage6b.ts';
+import {
+  zHrSelfPolicyQaAsk,
+  zHrSelfPolicyQaResult,
+  zHrSelfRequestDraftAsk,
+  zHrSelfRequestDraftResult,
+} from './hr-self-coworker.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1450,6 +1456,8 @@ export const contract = {
         submit: oc.input(zHrSelfTripSubmit).output(zHrSelfTripSubmitResult),
         cancel: oc.input(zHrTripRef).output(zHrTripActionResult),
       },
+      requestDraft: oc.input(zHrSelfRequestDraftAsk).output(zHrSelfRequestDraftResult),
+      policyQa: oc.input(zHrSelfPolicyQaAsk).output(zHrSelfPolicyQaResult),
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),

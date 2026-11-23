@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Employee self-service portal & L1 department leave approvals (issue #4300).
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useParams } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
@@ -23,12 +24,13 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { normalizeLeaveDaysInput } from '../components/hr-leave-panel.tsx';
-import { HrSelfOnboardingCard, HrSelfOvertimeCard } from '../components/hr-onboarding-ot-card.tsx';
+import { HrSelfOnboardingCard, HrSelfOvertimeCard, type HrOvertimeCardPrefill } from '../components/hr-onboarding-ot-card.tsx';
 import { HrSelfAdvanceTripCards } from '../components/hr-stage6b-cards.tsx';
+import { HrSelfCoworkerCard, type HrSelfLeavePrefill, type HrSelfOvertimePrefill } from '../components/hr-self-coworker-card.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
@@ -196,9 +198,17 @@ export function HrSelfServicePage() {
   const [kind, setKind] = useState<HrLeaveRequestKind>('annual_leave');
   const [days, setDays] = useState('1');
   const [reason, setReason] = useState('');
+  const [leaveAiDrafted, setLeaveAiDrafted] = useState(false);
+  const [otPrefill, setOtPrefill] = useState<HrOvertimeCardPrefill | null>(null);
   const [lastSubmit, setLastSubmit] = useState<HrSelfLeaveSubmitResult | null>(null);
   const [teamNotes, setTeamNotes] = useState<Record<string, string>>({});
   const [openLineId, setOpenLineId] = useState<string | null>(null);
+
+  const params = useParams({ strict: false }) as { slug?: string } | undefined;
+  const slug = params?.slug || getCurrentOrg() || '';
+  const meQ = useQuery({ ...orpc.me.get.queryOptions(), ...ONCE });
+  const orgRole = meQ.data?.orgs.find((o) => o.slug === slug)?.role;
+  const isOrgManagerRole = orgRole === 'owner' || orgRole === 'admin';
 
   const profileQ = useQuery({ ...orpc.hr.self.profile.get.queryOptions({ input: {} }), ...ONCE });
   const profile = profileQ.data;
@@ -241,6 +251,7 @@ export function HrSelfServicePage() {
     onSuccess: async (res) => {
       setLastSubmit(res);
       setReason('');
+      setLeaveAiDrafted(false);
       await refreshSelf();
     },
   });
@@ -270,6 +281,28 @@ export function HrSelfServicePage() {
     submitMut.mutate();
   };
 
+  const handleApplyLeaveDraft = (draft: HrSelfLeavePrefill) => {
+    setStartOn(draft.startOn);
+    setEndOn(draft.endOn);
+    setKind(draft.kind);
+    setDays(draft.days);
+    setReason(draft.reason);
+    setLeaveAiDrafted(true);
+    if (typeof document !== 'undefined') {
+      document.getElementById('hr-my-leave-form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+
+  const handleApplyOvertimeDraft = (draft: HrSelfOvertimePrefill) => {
+    setOtPrefill((prev) => ({
+      version: (prev?.version ?? 0) + 1,
+      ...draft,
+    }));
+    if (typeof document !== 'undefined') {
+      document.getElementById('hr-my-ot-form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+
   const allRequests: readonly HrLeaveRequestView[] = requestsQ.data ?? [];
   const managedDeptIds = new Set((profile?.managedDepartments ?? []).map((d) => d.id));
   const myRequests = profile?.employeeId ? allRequests.filter((r) => r.employeeId === profile.employeeId) : [];
@@ -292,6 +325,14 @@ export function HrSelfServicePage() {
           <h2 className="text-base font-medium text-foreground">{t('unlinkedTitle')}</h2>
           <p className="mt-1 text-sm text-subtle-foreground">{t('unlinkedHint')}</p>
         </Card>
+      )}
+
+      {profile && (linked || isOrgManagerRole) && (
+        <HrSelfCoworkerCard
+          linked={linked}
+          onApplyLeave={handleApplyLeaveDraft}
+          onApplyOvertime={handleApplyOvertimeDraft}
+        />
       )}
 
       {profile && linked && (
@@ -377,8 +418,15 @@ export function HrSelfServicePage() {
               </dl>
             )}
 
-            <form className="space-y-3 border-t pt-3" onSubmit={handleSubmit} data-testid="hr-my-leave-form">
-              <h3 className="text-sm font-medium text-foreground">{t('leave.formTitle')}</h3>
+            <form id="hr-my-leave-form" className="space-y-3 border-t pt-3" onSubmit={handleSubmit} data-testid="hr-my-leave-form">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-medium text-foreground">{t('leave.formTitle')}</h3>
+                {leaveAiDrafted && (
+                  <Badge variant="proposal" data-testid="hr-my-leave-ai-draft-badge">
+                    {t('leave.aiDraftBadge')}
+                  </Badge>
+                )}
+              </div>
               <div className="grid gap-3 sm:grid-cols-4">
                 <div className="space-y-1">
                   <Label htmlFor="hr-my-start-on">{t('leave.startOn')}</Label>
@@ -621,7 +669,7 @@ export function HrSelfServicePage() {
       )}
 
       {profile && linked && <HrSelfOnboardingCard />}
-      {profile && (linked || managesTeam) && <HrSelfOvertimeCard linked={linked} />}
+      {profile && (linked || managesTeam) && <HrSelfOvertimeCard linked={linked} prefill={otPrefill} />}
       {profile && (linked || managesTeam) && <HrSelfAdvanceTripCards linked={linked} />}
     </>
   );

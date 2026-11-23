@@ -349,7 +349,22 @@ export function HrSelfOnboardingCard() {
   );
 }
 
-export function HrSelfOvertimeCard({ linked = true }: { linked?: boolean } = {}) {
+export interface HrOvertimeCardPrefill {
+  version: number;
+  workDate: string;
+  hours: string;
+  dayType: HrOvertimeDayType;
+  isNight: boolean;
+  reason: string;
+}
+
+export function HrSelfOvertimeCard({
+  linked = true,
+  prefill = null,
+}: {
+  linked?: boolean;
+  prefill?: HrOvertimeCardPrefill | null;
+} = {}) {
   const t = useTranslations('hrMy.overtime');
   const f = useFormat();
   const today = vietnamToday();
@@ -358,8 +373,20 @@ export function HrSelfOvertimeCard({ linked = true }: { linked?: boolean } = {})
   const [dayType, setDayType] = useState<HrOvertimeDayType>('weekday');
   const [isNight, setIsNight] = useState(false);
   const [reason, setReason] = useState('');
+  const [aiDrafted, setAiDrafted] = useState(false);
+  const [appliedPrefillVersion, setAppliedPrefillVersion] = useState(0);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [lastSubmit, setLastSubmit] = useState<HrSelfOvertimeSubmitResult | null>(null);
+
+  if (prefill && prefill.version !== appliedPrefillVersion) {
+    setAppliedPrefillVersion(prefill.version);
+    setWorkDate(prefill.workDate);
+    setHours(prefill.hours);
+    setDayType(prefill.dayType);
+    setIsNight(prefill.isNight);
+    setReason(prefill.reason);
+    setAiDrafted(true);
+  }
 
   const q = useQuery({
     ...orpc.hr.self.overtime.list.queryOptions({ input: { month: workDate.slice(0, 7), limit: 100 } }),
@@ -381,6 +408,7 @@ export function HrSelfOvertimeCard({ linked = true }: { linked?: boolean } = {})
     onSuccess: async (res) => {
       setLastSubmit(res);
       setReason('');
+      setAiDrafted(false);
       await refresh();
     },
   });
@@ -433,8 +461,15 @@ export function HrSelfOvertimeCard({ linked = true }: { linked?: boolean } = {})
 
         {q.error && <ErrorText>{errorMessage(q.error)}</ErrorText>}
 
-        <form noValidate onSubmit={onSubmit} className="mt-4 space-y-3 border-t pt-4">
-          <h3 className="text-sm font-medium text-foreground">{t('formTitle')}</h3>
+        <form id="hr-my-ot-form" noValidate onSubmit={onSubmit} className="mt-4 space-y-3 border-t pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-medium text-foreground">{t('formTitle')}</h3>
+            {aiDrafted && (
+              <Badge variant="proposal" data-testid="hr-my-ot-ai-draft-badge">
+                {t('aiDraftBadge')}
+              </Badge>
+            )}
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label htmlFor="hr-my-ot-date">{t('workDate')}</Label>
