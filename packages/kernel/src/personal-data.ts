@@ -32,9 +32,12 @@ import {
   PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX,
   PROJECT_TIME_NOTE_MAX,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+  ROADMAP_ANNOUNCEMENT_BODY_MAX,
+  ROADMAP_ANNOUNCEMENT_TITLE_MAX,
   ROADMAP_DESCRIPTION_MAX,
   ROADMAP_ITEM_SUMMARY_MAX,
   ROADMAP_ITEM_TITLE_MAX,
+  ROADMAP_SHIPPED_MAIL_SOURCE,
   ROADMAP_TITLE_MAX,
   zPersonalDataQuery,
   type PersonalDataErasure,
@@ -546,6 +549,19 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
   'ludy_hr.leave_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text leave reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'ludy_hr.leave_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's leave request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.attendance_log.note': { kind: 'other', handling: 'erase', reason: "An employee's or HR admin's free-text note on a daily attendance log; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.attendance_qr_config.qr_secret_hash': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Org/entity-scoped SHA-256 hash of the office attendance QR check-in token; identifies an office entity only, never an individual' },
+  'ludy_hr.onboarding_submission.address': { kind: 'address', handling: 'erase', reason: "An employee's submitted onboarding address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's submitted onboarding birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.bank_code': { kind: 'other', handling: 'erase', reason: "An employee's submitted bank code; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.note': { kind: 'other', handling: 'erase', reason: "An employee's onboarding checklist note; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an onboarding submission; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.overtime_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text overtime reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.overtime_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's overtime request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.completed_tasks_snapshot': { kind: 'other', handling: 'erase', reason: "Task evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.attendance_snapshot': { kind: 'other', handling: 'erase', reason: "Attendance evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.review_note': { kind: 'other', handling: 'erase', reason: "Human reviewer note on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.ai_draft_note': { kind: 'other', handling: 'erase', reason: "Optional AI summary draft saved on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'ludy_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'ludy_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'ludy_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
@@ -597,6 +613,16 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Optional public submitter display name on a roadmap item; erased on personal-data match',
   },
+  'ludy_projects.roadmap_announcement.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap changelog announcement title, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.roadmap_announcement.body_md': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Public roadmap changelog announcement Markdown body, which may name a person: mentions are replaced with a redaction marker',
+  },
   'ludy_projects.roadmap_vote.voter_email_hash': {
     kind: 'other',
     handling: 'hashed',
@@ -625,6 +651,12 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     machinery: true,
     reason: 'Sealed subscriber email for opt-in shipped notifications; erased by ludy_projects.personal_erase_roadmap_machinery',
+  },
+  'ludy_projects.roadmap_subscriber.mail_hash': {
+    kind: 'other',
+    handling: 'hashed',
+    machinery: true,
+    reason: 'Keyed mail hash on roadmap_subscriber used to enforce org mail suppressions; row is deleted on erasure',
   },
   'ludy_projects.time_entry.note': {
     kind: 'free_text',
@@ -732,6 +764,22 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
   'ludy_hr.payroll_employee.work_permit_number_sealed': {
     handling: 'shred',
     reason: "A foreign employee's work permit number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'ludy_hr.onboarding_submission.national_id_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
+  },
+  'ludy_hr.onboarding_submission.tax_code_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted personal tax code, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
+  },
+  'ludy_hr.onboarding_submission.insurance_number_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted social insurance number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
+  },
+  'ludy_hr.onboarding_submission.bank_account_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
   },
   'ludy_finance.supplier_bank_account.account_holder_sealed': {
     handling: 'shred',
@@ -989,7 +1037,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
       FROM ludy_kernel.mail_message m
      WHERE m.org_id = ${orgId}::uuid
-       AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+       AND m.source IN (${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}, ${ROADMAP_SHIPPED_MAIL_SOURCE})
        AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
        AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
      ORDER BY m.created_at DESC, m.id
@@ -1131,6 +1179,13 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.project_column.name',
   'ludy_projects.project_cycle.name',
   'ludy_projects.project_cycle.goal',
+  'ludy_projects.roadmap_board.title',
+  'ludy_projects.roadmap_board.description',
+  'ludy_projects.roadmap_item.public_title',
+  'ludy_projects.roadmap_item.public_summary',
+  'ludy_projects.roadmap_item.submitter_display_name',
+  'ludy_projects.roadmap_announcement.title',
+  'ludy_projects.roadmap_announcement.body_md',
   'ludy_projects.time_entry.note',
   'ludy_hr.candidate.notes',
 ]);
@@ -1842,7 +1897,7 @@ export const personalDataErase = defineCommand({
         UPDATE ludy_kernel.mail_message m
            SET payload = NULL, subject = NULL
          WHERE m.org_id = ${ctx.orgId}::uuid
-           AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+           AND m.source IN (${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}, ${ROADMAP_SHIPPED_MAIL_SOURCE})
            AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
            AND (
              ${freeTextMatch(probe, sql.ref('m.subject'))}
@@ -1853,6 +1908,13 @@ export const personalDataErase = defineCommand({
                 WHERE p.org_id = m.org_id
                   AND p.id = m.source_id
                   AND (${freeTextMatch(probe, sql.ref('p.name'))} OR ${freeTextMatch(probe, sql.ref('p.description'))})
+             )
+             OR EXISTS (
+               SELECT 1
+                 FROM ludy_projects.roadmap_announcement a
+                WHERE a.org_id = m.org_id
+                  AND a.id = m.source_id
+                  AND (${freeTextMatch(probe, sql.ref('a.title'))} OR ${freeTextMatch(probe, sql.ref('a.body_md'))})
              )
            )
          RETURNING m.status`.execute(ctx.trx);
@@ -1968,6 +2030,34 @@ export const personalDataErase = defineCommand({
       add('ludy_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
       add('ludy_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
       add('ludy_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
+
+      const annTitleMatch = freeTextMatch(probe, sql.ref('a.title'));
+      const annBodyMatch = freeTextMatch(probe, sql.ref('a.body_md'));
+      const { rows: roadmapAnnouncements } = await sql<{ title: boolean; body_md: boolean }>`
+        UPDATE ludy_projects.roadmap_announcement a
+           SET title = CASE
+                         WHEN ${annTitleMatch}
+                           THEN COALESCE(
+                             NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('a.title'), REDACTED_MARK)}, ${ROADMAP_ANNOUNCEMENT_TITLE_MAX}::int)), ''),
+                             ${REDACTED_MARK}
+                           )
+                         ELSE a.title
+                       END,
+               body_md = CASE
+                           WHEN ${annBodyMatch}
+                             THEN COALESCE(
+                               NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('a.body_md'), REDACTED_MARK)}, ${ROADMAP_ANNOUNCEMENT_BODY_MAX}::int)), ''),
+                               ${REDACTED_MARK}
+                             )
+                           ELSE a.body_md
+                         END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_announcement o
+         WHERE o.org_id = a.org_id AND o.id = a.id AND a.org_id = ${ctx.orgId}::uuid
+           AND (${annTitleMatch} OR ${annBodyMatch})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, ${freeTextMatch(probe, sql.ref('o.body_md'))} AS body_md`.execute(ctx.trx);
+      add('ludy_projects.roadmap_announcement.title', roadmapAnnouncements.filter((r) => r.title).length);
+      add('ludy_projects.roadmap_announcement.body_md', roadmapAnnouncements.filter((r) => r.body_md).length);
 
       // Project time entry notes that quote the person (#2600): replace mentions in note, bounded to 500 chars.
       const timeEntryNote = freeTextMatch(probe, sql.ref('te.note'));

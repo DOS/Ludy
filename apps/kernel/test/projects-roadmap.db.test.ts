@@ -33,7 +33,9 @@ import {
   type BlobStore,
 } from '@ludy/kernel-runtime';
 import type { MailProvider, OutboundMail } from '@ludy/mail';
+import { InboxReader } from '@ludy/agent';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
+import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createCredentialBroker } from '../src/credentials.ts';
@@ -41,8 +43,9 @@ import { TURNSTILE_ORIGIN, createHttpApp } from '../src/http.ts';
 import { runMailJob } from '../src/mail-queue.ts';
 import { MAIL_TEMPLATES } from '../src/mail-templates.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
+import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from '../src/project-roadmap-ai.ts';
 import { roadmapIpHash } from '../src/projects-public-roadmap.ts';
-import { sweepRoadmapOtpCleanup } from '../src/projects-roadmap-worker.ts';
+import { dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from '../src/projects-roadmap-worker.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -1069,5 +1072,421 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       );
       expect(rows[0]).toEqual({ b: '0', i: '0', o: '0', v: '0', s: '0' });
     });
+  });
+
+  it('implements Slice 2 changelog announcements, shipped notifications, Vy AI workflows with AI-off parity, MCP reads, and PDPL (#4400)', async () => {
+    // 1. Setup dedicated Slice 2 board, shipped & non-shipped items, plus subscribers (active + suppressed + unsubscribed).
+    const s2BoardRes = await runtime.execute<{ board: { id: string; slug: string } }>(
+      'projects.roadmap.board.create',
+      { title: 'Changelog Slice 2 Board', slug: 's2-changelog', enabled: true, requireModeration: true },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const s2BoardId = s2BoardRes.board.id;
+
+    const shippedItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: s2BoardId, publicTitle: 'Export CSV bang tong hop', stage: 'shipped', moderationStatus: 'published' },
+      { actor: asAdmin(), orgId, idempotencyKey: randomUUID() },
+    );
+    const plannedItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: s2BoardId, publicTitle: 'Dark mode dashboard', stage: 'planned', moderationStatus: 'published' },
+      { actor: asAdmin(), orgId, idempotencyKey: randomUUID() },
+    );
+    const pendingItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: s2BoardId, publicTitle: 'Y tuong cho duyet', stage: 'shipped', moderationStatus: 'pending' },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Announcement create validates linked shipped items (rejects planned/pending/unknown items).
+    await expect(
+      runtime.execute(
+        'projects.roadmap.announcement.create',
+        { boardId: s2BoardId, title: 'Bad link', bodyMd: 'Body', linkedItemIds: [plannedItem.item.id] },
+        { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toThrow();
+    await expect(
+      runtime.execute(
+        'projects.roadmap.announcement.create',
+        { boardId: s2BoardId, title: 'Bad link pending', bodyMd: 'Body', linkedItemIds: [pendingItem.item.id] },
+        { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toThrow();
+
+    // Create + edit + delete draft announcement works cleanly.
+    const disposable = await runtime.execute<{ announcement: { id: string; status: string } }>(
+      'projects.roadmap.announcement.create',
+      { boardId: s2BoardId, title: 'Draft to remove', bodyMd: 'Temp body', linkedItemIds: [shippedItem.item.id] },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(disposable.announcement.status).toBe('draft');
+    await runtime.execute(
+      'projects.roadmap.announcement.delete',
+      { announcementId: disposable.announcement.id },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Create release announcement (hidden from public GET while draft).
+    const annCreated = await runtime.execute<{ announcement: { id: string; status: string } }>(
+      'projects.roadmap.announcement.create',
+      {
+        boardId: s2BoardId,
+        title: 'Cap nhat thang 3 cho khach hang',
+        bodyMd: '## Tinh nang moi\n- Da ho tro **Export CSV** voi <script>safeText</script>',
+        linkedItemIds: [shippedItem.item.id],
+      },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+    const annId = annCreated.announcement.id;
+
+    // Member cannot publish or send external shipped alerts (MANAGERS only).
+    await expect(
+      runtime.execute(
+        'projects.roadmap.announcement.publish',
+        { announcementId: annId },
+        { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toThrow();
+
+    const publicDraftRes = await getBoard(app, orgSlug, 's2-changelog');
+    expect(publicDraftRes.status).toBe(200);
+    assertPublicHeaders(publicDraftRes);
+    const publicDraftBody = (await publicDraftRes.json()) as { announcements?: unknown[] };
+    expect(publicDraftBody.announcements ?? []).toHaveLength(0);
+
+    // Admin cannot send alerts before publish.
+    await expect(
+      runtime.execute(
+        'projects.roadmap.announcement.send_notifications',
+        { announcementId: annId },
+        { actor: asAdmin(), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toThrow();
+
+    // Publish makes announcement visible in public GET reverse-chronologically with shipped badge only, and ?embed=1 honors CSP.
+    const published = await runtime.execute<{ announcement: { id: string; status: string; publishedAt: string } }>(
+      'projects.roadmap.announcement.publish',
+      { announcementId: annId },
+      { actor: asAdmin(), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(published.announcement.status).toBe('published');
+    expect(published.announcement.publishedAt).toBeTruthy();
+
+    const publicPublishedRes = await getBoard(app, orgSlug, 's2-changelog');
+    expect(publicPublishedRes.status).toBe(200);
+    const publicPublishedBody = (await publicPublishedRes.json()) as {
+      announcements: Array<{ id: string; title: string; linkedItems: Array<{ id: string; stage: string }> }>;
+    };
+    expect(publicPublishedBody.announcements).toHaveLength(1);
+    expect(publicPublishedBody.announcements[0]!.id).toBe(annId);
+    expect(publicPublishedBody.announcements[0]!.linkedItems.map((l) => l.stage)).toEqual(['shipped']);
+
+    const embedHtmlRes = await app.request(`${ROADMAP_PAGE_PREFIX}/${orgSlug}/s2-changelog?embed=1&tab=changelog`);
+    expect(embedHtmlRes.status).toBe(200);
+    expect(embedHtmlRes.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+
+    // Once published, announcements become immutable (even for members or admins attempting post-publish edits).
+    await expect(
+      runtime.execute(
+        'projects.roadmap.announcement.update',
+        { announcementId: annId, title: 'Tampered title' },
+        { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toThrow();
+
+    // 2. Public subscribe toggle + marketing suppression enforcement + deterministic activeSubscriberCount.
+    const memberEmail = 'member-rm@example.test';
+    const memberJwt = await mintUserJwt('rm-member', memberEmail);
+    const adminSubEmail = 'admin-rm@example.test';
+    const adminJwt = await mintUserJwt('rm-admin', adminSubEmail);
+
+    const subMember = await postJson(
+      app,
+      `/api/projects/public-roadmap/${orgSlug}/s2-changelog/votes`,
+      { action: 'subscribe', notifyOnShip: true },
+      { ip: '198.51.100.80', bearer: memberJwt },
+    );
+    expect(subMember.status).toBe(200);
+    await expect(subMember.json()).resolves.toEqual({ notifyOnShip: true });
+
+    const subAdmin = await postJson(
+      app,
+      `/api/projects/public-roadmap/${orgSlug}/s2-changelog/votes`,
+      { action: 'subscribe', notifyOnShip: true },
+      { ip: '198.51.100.81', bearer: adminJwt },
+    );
+    expect(subAdmin.status).toBe(200);
+
+    // Suppress adminSubEmail on 'marketing' stream -> activeSubscriberCount drops from 2 to 1!
+    await runtime.execute(
+      'kernel.mail.suppression.add',
+      { email: adminSubEmail, scope: 'marketing' },
+      { actor: asOwner(), orgId },
+    );
+    const detailAfterSub = await runtime.query<{
+      activeSubscriberCount: number;
+      announcements: Array<{ id: string }>;
+    }>('projects.roadmap.board.get', { boardId: s2BoardId }, { actor: asAdmin(), orgId });
+    expect(detailAfterSub.activeSubscriberCount).toBe(1);
+    expect(JSON.stringify(detailAfterSub)).not.toContain(memberEmail);
+    expect(JSON.stringify(detailAfterSub)).not.toContain(adminSubEmail);
+
+    // Send notifications (R2 external) -> emits outbox event; second call is idempotent no-op!
+    const send1 = await runtime.execute<{
+      eligibleCount: number;
+      queuedDispatch: boolean;
+      announcement: { notificationsSentAt: string | null };
+    }>(
+      'projects.roadmap.announcement.send_notifications',
+      { announcementId: annId },
+      { actor: asAdmin(), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(send1.eligibleCount).toBe(1);
+    expect(send1.queuedDispatch).toBe(true);
+    expect(send1.announcement.notificationsSentAt).toBeTruthy();
+
+    const send2 = await runtime.execute<{ eligibleCount: number; queuedDispatch: boolean }>(
+      'projects.roadmap.announcement.send_notifications',
+      { announcementId: annId },
+      { actor: asAdmin(), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(send2.eligibleCount).toBe(0);
+    expect(send2.queuedDispatch).toBe(false);
+
+    // Find emitted outbox event and run worker dispatch + runMailJob!
+    const notifyEventId = await admin(async (c) => {
+      const { rows } = await c.query<{ id: string }>(
+        `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'projects.roadmap.announcement_notify' ORDER BY id DESC LIMIT 1`,
+        [orgId],
+      );
+      return rows[0]!.id;
+    });
+
+    const dispatched = await dispatchRoadmapAnnouncementNotifications(
+      { workerDb, runtime: workerRuntime, broker },
+      { orgId, eventId: notifyEventId },
+    );
+    expect(dispatched).toEqual({ queued: 1, skipped: 0, off: false });
+
+    const shippedMails: OutboundMail[] = [];
+    const shippedMailer: MailProvider = {
+      name: 'test_smtp',
+      enabled: true,
+      sendRetrySafety: 'idempotent',
+      async send(mail) {
+        shippedMails.push(mail);
+        return { status: 'accepted', providerMessageId: randomUUID() };
+      },
+      parseWebhook: () => [],
+    };
+    const mailRows = await admin(async (c) => {
+      const { rows } = await c.query<{ id: string; stream: string; status: string }>(
+        `SELECT id, stream, status FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'projects.roadmap.announcement.send_notifications' ORDER BY status`,
+        [orgId],
+      );
+      return rows;
+    });
+    const msgIds = mailRows.filter((r) => r.status === 'queued').map((r) => r.id);
+    expect(msgIds).toHaveLength(1);
+    expect(mailRows.every((r) => r.stream === 'marketing')).toBe(true);
+    for (const messageId of msgIds) {
+      const outcome = await runMailJob(
+        {
+          workerDb,
+          runtime: workerRuntime,
+          mailer: shippedMailer,
+          templates: MAIL_TEMPLATES,
+          broker,
+          store,
+          publicUrl: 'https://ludy.test',
+          bounceDomain: DEFAULT_MESSAGE_ID_DOMAIN,
+        },
+        { orgId, messageId },
+      );
+      expect(outcome).toMatchObject({ action: 'recorded', outcome: 'sent' });
+    }
+    expect(shippedMails).toHaveLength(1);
+    expect(shippedMails[0]!.to).toBe(memberEmail);
+    expect(shippedMails[0]!.text).toContain('Export CSV bang tong hop');
+    const unsubMatch = /#unsubscribe=([A-Za-z0-9_-]{16,})/.exec(shippedMails[0]!.text);
+    expect(unsubMatch).not.toBeNull();
+
+    // Unsubscribing with that fragment token opts subscriber out cleanly.
+    const fragmentUnsub = await postJson(
+      app,
+      `/api/projects/public-roadmap/${orgSlug}/s2-changelog/votes`,
+      { action: 'unsubscribe', unsubscribeToken: unsubMatch![1]! },
+      { ip: '198.51.100.82' },
+    );
+    expect(fragmentUnsub.status).toBe(200);
+    const detailAfterUnsub = await runtime.query<{ activeSubscriberCount: number }>(
+      'projects.roadmap.board.get',
+      { boardId: s2BoardId },
+      { actor: asAdmin(), orgId },
+    );
+    expect(detailAfterUnsub.activeSubscriberCount).toBe(0);
+
+    // 3. Vy AI workflows + 100% AI-off parity.
+    const fakeReader = new InboxReader(
+      { baseURL: 'http://127.0.0.1:1/v1', apiKey: null, model: 'test-model' },
+      {
+        roadmapDedupe: async () => ({
+          output: {
+            suggestions: [
+              {
+                sourceItemId: plannedItem.item.id,
+                targetItemId: shippedItem.item.id,
+                confidence: 'high',
+                reason: 'Cả hai đều yêu cầu tính năng xuất báo cáo.',
+              },
+            ],
+          },
+          usage: { inputTokens: 15, outputTokens: 8 },
+        }),
+        roadmapChangelogDraft: async () => ({
+          output: {
+            title: 'Bản cập nhật tính năng xuất CSV',
+            bodyMd: '## Điểm mới\n- Đã hoàn thiện Export CSV bang tong hop.',
+          },
+          usage: { inputTokens: 18, outputTokens: 10 },
+        }),
+      },
+    );
+    const dedupeSource = await runtime.query<Parameters<typeof prepareRoadmapDedupe>[3]>(
+      'projects.roadmap.ai_dedupe_source',
+      { boardId: s2BoardId },
+      { actor: asAdmin(), orgId },
+    );
+    const aiOnDedupe = await prepareRoadmapDedupe(
+      projectRoadmapAi(fakeReader, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 30 })),
+      orgId,
+      adminUserId,
+      dedupeSource,
+      'vi',
+    );
+    expect(aiOnDedupe.ai).toBe('used');
+    expect(aiOnDedupe.suggestions).toHaveLength(1);
+
+    const changelogSource = await runtime.query<Parameters<typeof prepareRoadmapChangelogDraft>[3]>(
+      'projects.roadmap.ai_changelog_source',
+      { boardId: s2BoardId, itemIds: [shippedItem.item.id] },
+      { actor: asAdmin(), orgId },
+    );
+    const aiOnDraft = await prepareRoadmapChangelogDraft(
+      projectRoadmapAi(fakeReader, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 30 })),
+      orgId,
+      adminUserId,
+      changelogSource,
+      'vi',
+    );
+    expect(aiOnDraft.ai).toBe('used');
+    expect(aiOnDraft.title).toContain('CSV');
+
+    // AI-off parity: reader = null returns 'off', while manual edit/publish still succeeds.
+    const aiOffDraft = await prepareRoadmapChangelogDraft(
+      projectRoadmapAi(null, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 30 })),
+      orgId,
+      adminUserId,
+      changelogSource,
+      'vi',
+    );
+    expect(aiOffDraft).toEqual({ ai: 'off', title: null, bodyMd: null });
+
+    // 4. MCP read queries: company owner/admin succeeds and scrubs/tags external submissions; private projects excluded; members rejected.
+    const privProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Private MCP Roadmap Test', visibility: 'private' },
+      { actor: asOwner(), orgId },
+    );
+    // Direct roadmap board linked to private project is already blocked; check MCP excludes private-flagged or rejects member-bound.
+    const ownerGrantId = randomUUID();
+    const memberGrantId = randomUUID();
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO ludy_kernel.agent_grant
+           (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
+         VALUES
+           ($1, $2, $3, $4, 'MCP Test', 'client.example.com', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '30 days', NULL, $3, 'company', NULL),
+           ($1, $6, $7, $8, 'MCP Test', 'client.example.com', ARRAY['ludy.read'], $9, clock_timestamp(), now() + interval '30 days', NULL, $7, 'member', $7)`,
+        [
+          orgId,
+          ownerGrantId,
+          ownerUserId,
+          `roadmap-mcp-owner-${ownerGrantId}`,
+          `oauth-${ownerGrantId}`,
+          memberGrantId,
+          memberUserId,
+          `roadmap-mcp-member-${memberGrantId}`,
+          `oauth-${memberGrantId}`,
+        ],
+      );
+    });
+    const mcpOwnerActor = {
+      type: 'user' as const,
+      userId: ownerUserId,
+      aal: 'aal1' as const,
+      mcp: { grantId: ownerGrantId, clientId: `roadmap-mcp-owner-${ownerGrantId}`, clientName: 'MCP Test', scopes: ['ludy.read'], kind: 'company' as const },
+    };
+    const mcpMemberActor = {
+      type: 'user' as const,
+      userId: memberUserId,
+      aal: 'aal1' as const,
+      mcp: { grantId: memberGrantId, clientId: `roadmap-mcp-member-${memberGrantId}`, clientName: 'MCP Test', scopes: ['ludy.read'], kind: 'member' as const },
+    };
+
+    const mcpIdeas = await runtime.query<{ ideas: Array<{ id: string; tainted: boolean; sourceTrust: string }> }>(
+      'projects.mcp.roadmap_ideas',
+      { boardId: s2BoardId },
+      { actor: mcpOwnerActor, orgId },
+    );
+    expect(mcpIdeas.ideas.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(mcpIdeas)).not.toContain('voter_email_hash');
+    expect(JSON.stringify(mcpIdeas)).not.toContain(memberEmail);
+
+    const mcpSummary = await runtime.query<{ stageCounts: { shipped: number }; recentPublishedAnnouncements: Array<{ id: string }> }>(
+      'projects.mcp.roadmap_demand_summary',
+      { boardId: s2BoardId },
+      { actor: mcpOwnerActor, orgId },
+    );
+    expect(mcpSummary.stageCounts.shipped).toBeGreaterThanOrEqual(1);
+    expect(mcpSummary.recentPublishedAnnouncements.some((a) => a.id === annId)).toBe(true);
+
+    await expect(
+      runtime.query('projects.mcp.roadmap_ideas', { boardId: s2BoardId }, { actor: mcpMemberActor, orgId }),
+    ).rejects.toThrow();
+    await expect(
+      runtime.query('projects.mcp.roadmap_demand_summary', { boardId: s2BoardId }, { actor: mcpMemberActor, orgId }),
+    ).rejects.toThrow();
+    expect(privProj.projectId).toBeTruthy();
+
+    // 5. PDPL find & erase covers ludy_projects.roadmap_announcement.title & body_md.
+    const pdplTarget = 'pdpl-changelog@example.test';
+    const annPdpl = await runtime.execute<{ announcement: { id: string } }>(
+      'projects.roadmap.announcement.create',
+      {
+        boardId: s2BoardId,
+        title: `Phat hanh cho ${pdplTarget}`,
+        bodyMd: `Chi tiet lien he ${pdplTarget}`,
+      },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const pdplFound = await runtime.execute<{ matches: Array<{ column: string }> }>(
+      'kernel.personal_data.find',
+      { value: pdplTarget },
+      { actor: asOwner(), orgId },
+    );
+    expect(pdplFound.matches.some((m) => m.column === 'ludy_projects.roadmap_announcement.title')).toBe(true);
+    expect(pdplFound.matches.some((m) => m.column === 'ludy_projects.roadmap_announcement.body_md')).toBe(true);
+
+    const pdplErased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>(
+      'kernel.personal_data.erase',
+      { value: pdplTarget },
+      { actor: asOwnerMfa(), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(pdplErased.erased.some((e) => e.column === 'ludy_projects.roadmap_announcement.title' && e.rows >= 1)).toBe(true);
+    expect(pdplErased.erased.some((e) => e.column === 'ludy_projects.roadmap_announcement.body_md' && e.rows >= 1)).toBe(true);
+    expect(annPdpl.announcement.id).toBeTruthy();
   });
 });

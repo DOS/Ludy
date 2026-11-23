@@ -1,8 +1,9 @@
 // Whose a dead letter is (#1720): the org its key or group was built for and the orgId of its data, or none.
 // dead-letter.db.test.ts runs the whole path on PostgreSQL.
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
-import { DEAD_LETTER_WORK, deadLetterOrg, type DeadLetter } from '../src/dead-letter.ts';
+import { describe, expect, it, vi } from 'vitest';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
+import { DEAD_LETTER_WORK, deadLetterOrg, takeDeadLetter, type DeadLetter } from '../src/dead-letter.ts';
 import { jobGroup, jobKey, keyOrg, systemJobKey } from '../src/job-keys.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
 
@@ -64,5 +65,41 @@ describe('deadLetterOrg (#1720)', () => {
     expect(deadLetterOrg(letter({ sourceName: null, data: { orgId: orgA } }))).toEqual({ orgId: null, reason: 'no_source' });
     expect(deadLetterOrg(letter({ sourceId: null, data: { orgId: orgA } }))).toEqual({ orgId: null, reason: 'no_source' });
     expect(deadLetterOrg(letter({ sourceName: 'Not A Queue', data: { orgId: orgA } }))).toEqual({ orgId: null, reason: 'no_source' });
+  });
+});
+
+describe('takeDeadLetter for hr-cv-extract (#4446)', () => {
+  const cvJobId = randomUUID();
+  const cvLetter = (): DeadLetter =>
+    letter({
+      sourceName: QUEUES.hrCvExtract,
+      singletonKey: jobKey(orgA, QUEUES.hrCvExtract, cvJobId),
+      data: { orgId: orgA, jobId: cvJobId },
+    });
+
+  it('rethrows transient hr.recruiting.cv_extract.complete failures so DEAD_LETTER_WORK retries idempotently', async () => {
+    const execute = vi.fn(async (command: string, _input?: unknown, _opts?: unknown) => {
+      if (command === 'kernel.job.dead_letter') return { raised: true, failures: 1 };
+      throw new Error('db connection reset');
+    });
+    const fakeRuntime = { execute } as unknown as Runtime;
+    await expect(takeDeadLetter(fakeRuntime, cvLetter())).rejects.toThrow('db connection reset');
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0]?.[2]).toMatchObject({ idempotencyKey: expect.stringMatching(/^dead-letter:/) });
+  });
+
+  it('warns and swallows only MODULE_OFF, FORBIDDEN, or 404 when completing dead-lettered CV job', async () => {
+    for (const err of [
+      new DomainError('MODULE_OFF', 404, 'Module off'),
+      new DomainError('FORBIDDEN', 403, 'Org closed'),
+      new DomainError('NOT_FOUND', 404, 'Missing'),
+    ]) {
+      const execute = vi.fn(async (command: string) => {
+        if (command === 'kernel.job.dead_letter') return { raised: false, failures: 2 };
+        throw err;
+      });
+      const fakeRuntime = { execute } as unknown as Runtime;
+      await expect(takeDeadLetter(fakeRuntime, cvLetter())).resolves.toBe('counted');
+    }
   });
 });

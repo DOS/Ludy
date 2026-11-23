@@ -1,0 +1,505 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { QueryClientProvider } from '@tanstack/react-query';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  vietnamMonth,
+  type HrAttendanceListResult,
+  type HrEmployeeSummary,
+  type HrRunSummary,
+  type HrSelfAttendanceListResult,
+} from '@ludy/kernel-contract';
+import { HrAttendanceCheckinCard } from '../src/components/hr-attendance-checkin-card.tsx';
+import { en as enMessages } from '../src/i18n/messages/en.ts';
+import { I18nProvider } from '../src/i18n/provider.tsx';
+import { setActiveLocale } from '../src/i18n/runtime.ts';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
+import {
+  HrAttendancePage,
+  buildAttendanceAdjustInput,
+  entitySwitchResetState,
+  resolveAdjustmentTimestamps,
+  shouldApplyRotatedQr,
+  shouldShowRotatedQr,
+} from '../src/routes/hr-attendance.tsx';
+
+const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
+
+vi.mock('@tanstack/react-router', () => ({
+  useParams: () => ({ slug: 'demo-org' }),
+  Link: ({ children, ...rest }: Record<string, unknown>) => <a {...rest}>{children as never}</a>,
+}));
+
+vi.mock('../src/lib/api.ts', async () => {
+  const { QueryClient: QC } = await import('@tanstack/react-query');
+  cache.current = new QC();
+  const node = (path: string[]): unknown =>
+    new Proxy(() => undefined, {
+      get: (_t, prop: string) => {
+        if (prop === 'queryOptions') {
+          return (opts?: { input?: unknown }) => ({
+            queryKey: [...path, opts?.input ?? {}],
+            queryFn: () => Promise.reject(new Error('not fetched')),
+          });
+        }
+        if (prop === 'mutationOptions') {
+          return () => ({ mutationFn: vi.fn() });
+        }
+        if (prop === 'key') return () => path;
+        return node([...path, prop]);
+      },
+    });
+  return {
+    orpc: node([]),
+    client: {},
+    queryClient: cache.current,
+    errorMessage: (e: unknown) => String(e),
+    isStepUpRequired: () => false,
+  };
+});
+
+function wrap(ui: React.ReactNode, locale: 'vi' | 'en' = 'vi'): string {
+  setActiveLocale(locale);
+  return renderToStaticMarkup(
+    <QueryClientProvider client={cache.current}>
+      <I18nProvider>{ui}</I18nProvider>
+    </QueryClientProvider>,
+  );
+}
+
+function collectLeafKeys(obj: Record<string, unknown>, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const next = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...collectLeafKeys(v as Record<string, unknown>, next));
+    } else {
+      out.push(next);
+    }
+  }
+  return out.sort();
+}
+
+describe('HR Stage 5C Attendance UI (#4447)', () => {
+  const month = vietnamMonth(new Date());
+
+  beforeEach(() => {
+    cache.current.clear();
+  });
+
+  it('keeps bilingual vi/en keys in lockstep across hrMy.attendance and hrAttendance without em dashes', () => {
+    expect(collectLeafKeys(viMessages.hrMy.attendance)).toEqual(collectLeafKeys(enMessages.hrMy.attendance));
+    expect(collectLeafKeys(viMessages.hrAttendance)).toEqual(collectLeafKeys(enMessages.hrAttendance));
+    const dump = JSON.stringify({
+      viSelf: viMessages.hrMy.attendance,
+      enSelf: enMessages.hrMy.attendance,
+      viAdmin: viMessages.hrAttendance,
+      enAdmin: enMessages.hrAttendance,
+    });
+    expect(dump).not.toContain('\u2014');
+  });
+
+  it('renders self-service check-in state, open check-out state, and completed shift summary', () => {
+    const notCheckedIn: HrSelfAttendanceListResult = {
+      employeeId: '00000000-0000-7000-8000-000000000010',
+      legalEntityId: '00000000-0000-7000-8000-000000000001',
+      month,
+      today: `${month}-18`,
+      todayLog: null,
+      openLog: null,
+      logs: [],
+      summary: { presentDays: 0, halfDays: 0, missingCheckoutDays: 0, adjustedDays: 0, totalWorkedMinutes: 0 },
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], notCheckedIn);
+
+    const html1 = wrap(<HrAttendanceCheckinCard enabled />, 'vi');
+    expect(html1).toContain('data-testid="hr-my-checkin-btn"');
+    expect(html1).toContain('data-testid="hr-my-checkin-qr-toggle"');
+    expect(html1).toContain('data-testid="hr-my-attendance-empty"');
+
+    const checkedInOpen: HrSelfAttendanceListResult = {
+      ...notCheckedIn,
+      todayLog: {
+        id: '00000000-0000-7000-8000-000000000020',
+        legalEntityId: notCheckedIn.legalEntityId,
+        employeeId: notCheckedIn.employeeId,
+        workDate: `${month}-18`,
+        checkedInAt: `${month}-18T01:30:00.000Z`,
+        checkedOutAt: null,
+        checkInMethod: 'qr',
+        workedMinutes: null,
+        status: 'missing_checkout',
+        note: null,
+        anomalies: [],
+        updatedAt: `${month}-18T01:30:00.000Z`,
+      },
+      openLog: {
+        id: '00000000-0000-7000-8000-000000000020',
+        legalEntityId: notCheckedIn.legalEntityId,
+        employeeId: notCheckedIn.employeeId,
+        workDate: `${month}-18`,
+        checkedInAt: `${month}-18T01:30:00.000Z`,
+        checkedOutAt: null,
+        checkInMethod: 'qr',
+        workedMinutes: null,
+        status: 'missing_checkout',
+        note: null,
+        anomalies: [],
+        updatedAt: `${month}-18T01:30:00.000Z`,
+      },
+      logs: [],
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], checkedInOpen);
+    const html2 = wrap(<HrAttendanceCheckinCard enabled />, 'vi');
+    expect(html2).toContain('data-testid="hr-my-checkout-btn"');
+    expect(html2).toContain('08:30');
+    expect(html2).toContain(viMessages.hrMy.attendance.methods.qr);
+
+    // Overnight open shift (yesterday open while todayLog is null) surfaces Checkout cleanly
+    const overnightOpen: HrSelfAttendanceListResult = {
+      ...notCheckedIn,
+      todayLog: null,
+      openLog: {
+        ...checkedInOpen.todayLog!,
+        workDate: `${month}-17`,
+        checkedInAt: `${month}-17T15:00:00.000Z`,
+      },
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], overnightOpen);
+    const htmlOvernight = wrap(<HrAttendanceCheckinCard enabled />, 'vi');
+    expect(htmlOvernight).toContain('data-testid="hr-my-attendance-overnight"');
+    expect(htmlOvernight).toContain('data-testid="hr-my-checkout-btn"');
+    expect(htmlOvernight).not.toContain('data-testid="hr-my-checkin-btn"');
+
+    const completed: HrSelfAttendanceListResult = {
+      ...notCheckedIn,
+      todayLog: {
+        ...checkedInOpen.todayLog!,
+        checkedOutAt: `${month}-18T10:30:00.000Z`,
+        workedMinutes: 540,
+        status: 'present',
+      },
+      openLog: null,
+      logs: [
+        {
+          ...checkedInOpen.todayLog!,
+          checkedOutAt: `${month}-18T10:30:00.000Z`,
+          workedMinutes: 540,
+          status: 'present',
+        },
+        {
+          id: '00000000-0000-7000-8000-000000000021',
+          legalEntityId: notCheckedIn.legalEntityId,
+          employeeId: notCheckedIn.employeeId,
+          workDate: `${month}-17`,
+          checkedInAt: `${month}-17T01:30:00.000Z`,
+          checkedOutAt: null,
+          checkInMethod: 'web',
+          workedMinutes: null,
+          status: 'missing_checkout',
+          note: null,
+          anomalies: ['missing_checkout'],
+          updatedAt: `${month}-17T01:30:00.000Z`,
+        },
+      ],
+      summary: { presentDays: 1, halfDays: 0, missingCheckoutDays: 1, adjustedDays: 0, totalWorkedMinutes: 540 },
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], completed);
+    const html3 = wrap(<HrAttendanceCheckinCard enabled />, 'en');
+    expect(html3).toContain('9h');
+    expect(html3).toContain('08:30');
+    expect(html3).toContain('17:30');
+    expect(html3).toContain(enMessages.hrMy.attendance.anomalies.missing_checkout);
+  });
+
+  it('renders admin attendance management sheet, anomalies, QR card, and payroll rollup trigger', () => {
+    const empId = '00000000-0000-7000-8000-000000000010';
+    const leId = '00000000-0000-7000-8000-000000000001';
+    const logId = '00000000-0000-7000-8000-000000000030';
+    const runId = '00000000-0000-7000-8000-000000000040';
+
+    const adminList: HrAttendanceListResult = {
+      month,
+      today: `${month}-18`,
+      legalEntityId: leId,
+      logs: [
+        {
+          id: logId,
+          legalEntityId: leId,
+          employeeId: empId,
+          employeeName: 'Nguyễn Thị Lan',
+          payBasis: 'monthly',
+          workDate: `${month}-16`,
+          checkedInAt: `${month}-16T01:30:00.000Z`,
+          checkedOutAt: `${month}-16T13:30:00.000Z`,
+          checkInMethod: 'qr',
+          workedMinutes: 720,
+          status: 'present',
+          note: 'Làm thêm dự án',
+          anomalies: ['long_day'],
+          updatedAt: `${month}-16T13:30:00.000Z`,
+        },
+      ],
+      anomalies: [
+        {
+          logId,
+          employeeId: empId,
+          employeeName: 'Nguyễn Thị Lan',
+          workDate: `${month}-16`,
+          kind: 'long_day',
+          workedMinutes: 720,
+          status: 'present',
+        },
+      ],
+      qrConfig: {
+        configured: true,
+        activeConfigId: '00000000-0000-7000-8000-000000000050',
+        legalEntityId: leId,
+        rotatedAt: '2026-11-01T00:00:00.000Z',
+      },
+    };
+
+    const employees: HrEmployeeSummary[] = [
+      {
+        id: empId,
+        legalEntityId: leId,
+        displayName: 'Nguyễn Thị Lan',
+        departmentId: null,
+        departmentName: null,
+        jobTitle: 'Kế toán',
+        linkedUserId: null,
+        linkedMemberName: null,
+        status: 'active',
+        endedOn: null,
+        isForeign: false,
+        workPermitExempt: true,
+        workPermitExpiresOn: null,
+        hasWorkPermitNumber: false,
+        current: null,
+        hasIdentityNumber: false,
+        hasAccountNumber: false,
+        contractAlerts: [],
+      },
+    ];
+
+    const runs: HrRunSummary[] = [
+      {
+        id: runId,
+        legalEntityId: leId,
+        month,
+        status: 'draft',
+        workingDays: '26',
+        lines: 1,
+        refused: 0,
+        totals: {
+          gross: '15000000',
+          employeeInsurance: '1575000',
+          employerInsurance: '3225000',
+          unionFee: '300000',
+          taxableIncome: '15000000',
+          pit: '0',
+          net: '13425000',
+          employerCost: '18525000',
+        },
+        approvedAt: null,
+      },
+    ];
+
+    cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role: 'admin' }] });
+    cache.current.setQueryData(['legalEntities', 'list', {}], [{ id: leId, name: 'Công ty TNHH Crove', isDefault: true }]);
+    cache.current.setQueryData(['hr', 'attendance', 'list', { month, anomaliesOnly: false }], adminList);
+    cache.current.setQueryData(['hr', 'payroll', 'employees', 'list', {}], employees);
+    cache.current.setQueryData(['hr', 'payroll', 'runs', 'list', { limit: 60 }], runs);
+
+    const html = wrap(<HrAttendancePage />, 'vi');
+    expect(html).toContain('data-testid="hr-attendance-qr-card"');
+    expect(html).toContain('data-testid="hr-attendance-qr-rotate"');
+    expect(html).toContain('data-testid="hr-attendance-anomalies-ask"');
+    expect(html).toContain('data-testid="hr-attendance-rollup-btn"');
+    expect(html).toContain('Nguyễn Thị Lan');
+    expect(html).toContain('12h');
+    expect(html).toContain('Ca dài (&gt; 10h)');
+    expect(html).toContain(`aria-label="Điều chỉnh chấm công của Nguyễn Thị Lan ngày ${month}-16"`);
+  });
+
+  it('blocks viewers and non-admin members from rendering the attendance admin screen', () => {
+    for (const role of ['viewer', 'member'] as const) {
+      cache.current.clear();
+      cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role }] });
+      const html = wrap(<HrAttendancePage />, 'vi');
+      expect(html).toContain('data-testid="hr-attendance-forbidden"');
+      expect(html).not.toContain('data-testid="hr-attendance-qr-card"');
+      expect(html).not.toContain('data-testid="hr-attendance-qr-rotate"');
+      expect(html).not.toContain('data-testid="hr-attendance-rollup-btn"');
+    }
+  });
+
+  it('guards stale async QR rotation across entity switches, resets open adjustment drafts on entity change, and respects explicit null openLog', () => {
+    expect(shouldApplyRotatedQr('le-1', 'le-1')).toBe(true);
+    expect(shouldApplyRotatedQr('', 'le-1')).toBe(true);
+    expect(shouldApplyRotatedQr('le-2', 'le-1')).toBe(false);
+
+    expect(entitySwitchResetState('le-2')).toEqual({
+      selectedEntityId: 'le-2',
+      rotatedQr: null,
+      copiedUrl: false,
+      lyBrief: null,
+      rollupResult: null,
+      adjustOpen: false,
+      editingRow: null,
+      adjNote: '',
+      adjEmpId: '',
+    });
+
+    // Explicit openLog: null (ended employee) must not fall back to todayLog checkout button
+    const endedRes: HrSelfAttendanceListResult = {
+      employeeId: '00000000-0000-7000-8000-000000000010',
+      legalEntityId: '00000000-0000-7000-8000-000000000001',
+      month,
+      today: `${month}-22`,
+      todayLog: {
+        id: '00000000-0000-7000-8000-000000000099',
+        legalEntityId: '00000000-0000-7000-8000-000000000001',
+        employeeId: '00000000-0000-7000-8000-000000000010',
+        workDate: `${month}-22`,
+        checkedInAt: `${month}-22T01:30:00.000Z`,
+        checkedOutAt: null,
+        checkInMethod: 'web',
+        workedMinutes: null,
+        status: 'missing_checkout',
+        note: null,
+        anomalies: [],
+        updatedAt: `${month}-22T01:30:00.000Z`,
+      },
+      openLog: null,
+      logs: [],
+      summary: {
+        presentDays: 0,
+        halfDays: 0,
+        missingCheckoutDays: 1,
+        adjustedDays: 0,
+        totalWorkedMinutes: 0,
+      },
+    };
+    cache.current.setQueryData(['hr', 'self', 'attendance', 'list', { month }], endedRes);
+    const endedHtml = wrap(<HrAttendanceCheckinCard enabled />, 'vi');
+    expect(endedHtml).not.toContain('data-testid="hr-my-checkout-btn"');
+
+    // Multi-entity admin view renders legal entity switcher
+    cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role: 'owner' }] });
+    cache.current.setQueryData(['legalEntities', 'list', {}], [
+      { id: '00000000-0000-7000-8000-000000000010', name: 'Chi nhánh HCM', isDefault: true },
+      { id: '00000000-0000-7000-8000-000000000011', name: 'Chi nhánh HN', isDefault: false },
+    ]);
+    const multiEntityHtml = wrap(<HrAttendancePage />, 'vi');
+    expect(multiEntityHtml).toContain('data-testid="hr-attendance-entity"');
+    expect(multiEntityHtml).toContain('Chi nhánh HCM');
+    expect(multiEntityHtml).toContain('Chi nhánh HN');
+
+    // Note-only edit preserves exact instants while changing check-in recalculates overnight checkout
+    const row0830 = {
+      employeeId: 'emp-1',
+      workDate: '2026-09-10',
+      checkedInAt: '2026-09-10T01:30:45.000Z',
+      checkedOutAt: '2026-09-10T10:30:20.000Z',
+    };
+    expect(
+      resolveAdjustmentTimestamps({
+        editingRow: row0830,
+        employeeId: 'emp-1',
+        workDate: '2026-09-10',
+        checkedInTime: '08:30',
+        checkedOutTime: '17:30',
+      }),
+    ).toEqual({
+      checkedInAt: '2026-09-10T01:30:45.000Z',
+      checkedOutAt: '2026-09-10T10:30:20.000Z',
+    });
+    expect(
+      resolveAdjustmentTimestamps({
+        editingRow: row0830,
+        employeeId: 'emp-1',
+        workDate: '2026-09-10',
+        checkedInTime: '22:00',
+        checkedOutTime: '17:30',
+      }),
+    ).toEqual({
+      checkedInAt: '2026-09-10T15:00:00.000Z',
+      checkedOutAt: '2026-09-11T10:30:00.000Z',
+    });
+
+    // Rotated QR visibility keeps poster during its own refresh, hides immediately when another manager supersedes it
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-2', legalEntityId: 'le-1', previousConfigId: 'cfg-1' },
+        qrConfig: { configured: true, activeConfigId: 'cfg-1', legalEntityId: 'le-1' },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-2', legalEntityId: 'le-1', previousConfigId: 'cfg-1' },
+        qrConfig: { configured: true, activeConfigId: 'cfg-2', legalEntityId: 'le-1' },
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-2', legalEntityId: 'le-1', previousConfigId: 'cfg-1' },
+        qrConfig: { configured: true, activeConfigId: 'cfg-3', legalEntityId: 'le-1' },
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-1', legalEntityId: 'le-1', previousConfigId: null },
+        qrConfig: { configured: false, activeConfigId: null, legalEntityId: 'le-1' },
+        isRefreshing: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRotatedQr({
+        currentEntityId: 'le-1',
+        rotatedQr: { configId: 'cfg-1', legalEntityId: 'le-1', previousConfigId: null },
+        qrConfig: { configured: false, activeConfigId: null, legalEntityId: 'le-1' },
+        isRefreshing: false,
+      }),
+    ).toBe(false);
+
+    // Adjust payload forwards expectedUpdatedAt for matching edit row and omits it for new/other targets
+    expect(
+      buildAttendanceAdjustInput({
+        editingRow: { ...row0830, updatedAt: '2026-09-10T10:30:20.000Z' },
+        employeeId: 'emp-1',
+        workDate: '2026-09-10',
+        checkedInTime: '08:30',
+        checkedOutTime: '17:30',
+        checkInMethod: 'manual',
+        status: 'adjusted',
+        note: '  Ghi chú điều chỉnh  ',
+      }),
+    ).toEqual({
+      employeeId: 'emp-1',
+      workDate: '2026-09-10',
+      checkedInAt: '2026-09-10T01:30:45.000Z',
+      checkedOutAt: '2026-09-10T10:30:20.000Z',
+      checkInMethod: 'manual',
+      status: 'adjusted',
+      note: 'Ghi chú điều chỉnh',
+      expectedUpdatedAt: '2026-09-10T10:30:20.000Z',
+    });
+    expect(
+      buildAttendanceAdjustInput({
+        editingRow: { ...row0830, updatedAt: '2026-09-10T10:30:20.000Z' },
+        employeeId: 'emp-2',
+        workDate: '2026-09-10',
+        checkedInTime: '08:30',
+        checkedOutTime: '17:30',
+        checkInMethod: 'manual',
+        status: 'adjusted',
+        note: '',
+      }).expectedUpdatedAt,
+    ).toBeUndefined();
+  });
+});

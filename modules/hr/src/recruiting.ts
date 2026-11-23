@@ -36,6 +36,7 @@ import {
   type HrCandidateHireResult,
   type HrCandidateInterviewCancelled,
   type HrCandidateInterviewScheduled,
+  type HrCandidateSource,
   type HrCandidateStage,
   type HrCandidateView,
   type HrCandidateWritten,
@@ -109,6 +110,7 @@ const CANDIDATE_INSERT_COLUMNS = [
   'id',
   'legal_entity_id',
   'opening_id',
+  'source',
   'display_name',
   'email',
   'phone',
@@ -126,6 +128,7 @@ const CANDIDATE_INSERT_COLUMNS = [
 
 const CANDIDATE_EDIT_COLUMNS = [
   'opening_id',
+  'source',
   'display_name',
   'email',
   'phone',
@@ -191,15 +194,15 @@ function assertBudgetOrder(minWage: string | null, maxWage: string | null): void
   }
 }
 
-const openingNotFound = () => new DomainError('HR_OPENING_NOT_FOUND', 404, 'Không tìm thấy vị trí tuyển dụng này');
-const candidateNotFound = () => new DomainError('HR_CANDIDATE_NOT_FOUND', 404, 'Không tìm thấy ứng viên này');
-const candidateErased = () => new DomainError('HR_CANDIDATE_ERASED', 409, 'Hồ sơ ứng viên này đã được xóa theo yêu cầu');
+export const openingNotFound = () => new DomainError('HR_OPENING_NOT_FOUND', 404, 'Không tìm thấy vị trí tuyển dụng này');
+export const candidateNotFound = () => new DomainError('HR_CANDIDATE_NOT_FOUND', 404, 'Không tìm thấy ứng viên này');
+export const candidateErased = () => new DomainError('HR_CANDIDATE_ERASED', 409, 'Hồ sơ ứng viên này đã được xóa theo yêu cầu');
 
 const INTERVIEWER_ROLES = ['owner', 'admin', 'member'] as const;
 type InterviewerRole = (typeof INTERVIEWER_ROLES)[number];
 const INTERVIEWER_ROLE_ORDER: Record<InterviewerRole, number> = { owner: 0, admin: 1, member: 2 };
 
-async function resolveInterviewerUserId(
+export async function resolveInterviewerUserId(
   ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor'>,
   requestedUserId?: string,
 ): Promise<string> {
@@ -221,7 +224,7 @@ async function resolveInterviewerUserId(
   return member.user_id;
 }
 
-async function loadInterviewerNames(
+export async function loadInterviewerNames(
   ctx: Pick<QueryContext, 'trx'>,
   userIds: readonly (string | null | undefined)[],
 ): Promise<Map<string, string>> {
@@ -463,6 +466,7 @@ function toCandidateView(
     email: string | null;
     phone: string | null;
     stage: HrCandidateStage;
+    source: HrCandidateSource;
     years_experience: number | null;
     matched_skills: string[];
     expected_wage: string | null;
@@ -474,6 +478,7 @@ function toCandidateView(
     interview_starts_at: Date | string | null;
     interview_ends_at: Date | string | null;
     hired_employee_id: string | null;
+    hired_at: Date | string | null;
     erased_at: Date | string | null;
     created_at: Date | string;
     updated_at: Date | string;
@@ -494,6 +499,7 @@ function toCandidateView(
     email: erased ? null : r.email,
     phone: erased ? null : r.phone,
     stage: r.stage,
+    source: r.source,
     yearsExperience: r.years_experience,
     matchedSkills: r.matched_skills,
     expectedWage: r.expected_wage,
@@ -506,6 +512,7 @@ function toCandidateView(
     interviewerUserId,
     interviewerName: interviewerUserId ? (interviewerNames.get(interviewerUserId) ?? null) : null,
     hiredEmployeeId: r.hired_employee_id,
+    hiredAt: isoInstantNullable(r.hired_at),
     erasedAt: isoInstantNullable(r.erased_at),
     createdAt: isoInstant(r.created_at),
     updatedAt: isoInstant(r.updated_at),
@@ -535,6 +542,7 @@ export const candidateList = defineQuery({
         'c.email',
         'c.phone',
         'c.stage',
+        'c.source',
         'c.years_experience',
         'c.matched_skills',
         'c.expected_wage',
@@ -546,6 +554,7 @@ export const candidateList = defineQuery({
         'c.interview_starts_at',
         'c.interview_ends_at',
         'c.hired_employee_id',
+        'c.hired_at',
         'c.erased_at',
         'c.created_at',
         'c.updated_at',
@@ -553,6 +562,7 @@ export const candidateList = defineQuery({
       .where('c.org_id', '=', ctx.orgId);
     if (input.openingId !== undefined) q = q.where('c.opening_id', '=', input.openingId);
     if (input.stage !== undefined) q = q.where('c.stage', '=', input.stage);
+    if (input.source !== undefined) q = q.where('c.source', '=', input.source);
     if (input.cursor !== undefined) {
       // Compare against the cursor row's stored microsecond timestamptz in PostgreSQL rather than an ISO millisecond
       // copy so candidates created or updated within the same millisecond paginate deterministically without gaps or duplicates.
@@ -593,6 +603,7 @@ export const candidateGet = defineQuery({
         'c.email',
         'c.phone',
         'c.stage',
+        'c.source',
         'c.years_experience',
         'c.matched_skills',
         'c.expected_wage',
@@ -604,6 +615,7 @@ export const candidateGet = defineQuery({
         'c.interview_starts_at',
         'c.interview_ends_at',
         'c.hired_employee_id',
+        'c.hired_at',
         'c.erased_at',
         'c.created_at',
         'c.updated_at',
@@ -652,40 +664,54 @@ export const interviewersList = defineQuery({
   },
 });
 
+export async function computeInterviewSlots(
+  ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor'>,
+  input: {
+    interviewerUserId?: string | undefined;
+    from?: string | undefined;
+    to?: string | undefined;
+    durationMinutes?: number | undefined;
+    maxSlots?: number | undefined;
+    minGapMinutes?: number | undefined;
+    stepMinutes?: number | undefined;
+    exceptEventId?: string | undefined;
+  },
+): Promise<HrInterviewSlotsResult> {
+  const targetUserId = await resolveInterviewerUserId(ctx, input.interviewerUserId);
+  const nowMs = Date.now();
+  const fromMs = input.from ? Date.parse(input.from) : nowMs;
+  const toMs = input.to ? Date.parse(input.to) : fromMs + 14 * DAY_MS;
+  if (toMs <= fromMs || toMs - fromMs > 31 * DAY_MS) {
+    throw new DomainError('VALIDATION', 422, 'Khoảng tìm lịch phỏng vấn tối đa 31 ngày');
+  }
+  const { hours, saved } = await workingHoursOf(ctx, targetUserId);
+  const busy = await busyOf(ctx, targetUserId, new Date(fromMs - DAY_MS), new Date(toMs + DAY_MS), input.exceptEventId);
+  const workingWindows = workingWindowsInRange(hours, fromMs, toMs);
+  const busyIntervals: InterviewInterval[] = busy.map((b) => ({
+    startIso: new Date(b.start).toISOString(),
+    endIso: new Date(b.end).toISOString(),
+  }));
+  const slots = rankInterviewSlots({
+    workingWindows,
+    busyIntervals,
+    durationMinutes: input.durationMinutes ?? 60,
+    maxSlots: input.maxSlots ?? 10,
+    minGapMinutes: input.minGapMinutes ?? 0,
+    ...(input.stepMinutes === undefined ? {} : { stepMinutes: input.stepMinutes }),
+    afterIso: new Date(Math.max(fromMs, nowMs)).toISOString(),
+  });
+  return {
+    timeZone: hours.timeZone,
+    hoursSaved: saved,
+    slots,
+  };
+}
+
 export const interviewSlotsQuery = defineQuery({
   name: 'hr.recruiting.interview_slots',
   input: zHrInterviewSlotsAsk,
   access: MANAGERS,
-  handler: async (ctx, input): Promise<HrInterviewSlotsResult> => {
-    const targetUserId = await resolveInterviewerUserId(ctx, input.interviewerUserId);
-    const nowMs = Date.now();
-    const fromMs = input.from ? Date.parse(input.from) : nowMs;
-    const toMs = input.to ? Date.parse(input.to) : fromMs + 14 * DAY_MS;
-    if (toMs <= fromMs || toMs - fromMs > 31 * DAY_MS) {
-      throw new DomainError('VALIDATION', 422, 'Khoảng tìm lịch phỏng vấn tối đa 31 ngày');
-    }
-    const { hours, saved } = await workingHoursOf(ctx, targetUserId);
-    const busy = await busyOf(ctx, targetUserId, new Date(fromMs - DAY_MS), new Date(toMs + DAY_MS), input.exceptEventId);
-    const workingWindows = workingWindowsInRange(hours, fromMs, toMs);
-    const busyIntervals: InterviewInterval[] = busy.map((b) => ({
-      startIso: new Date(b.start).toISOString(),
-      endIso: new Date(b.end).toISOString(),
-    }));
-    const slots = rankInterviewSlots({
-      workingWindows,
-      busyIntervals,
-      durationMinutes: input.durationMinutes,
-      maxSlots: input.maxSlots,
-      minGapMinutes: input.minGapMinutes,
-      ...(input.stepMinutes === undefined ? {} : { stepMinutes: input.stepMinutes }),
-      afterIso: new Date(Math.max(fromMs, nowMs)).toISOString(),
-    });
-    return {
-      timeZone: hours.timeZone,
-      hoursSaved: saved,
-      slots,
-    };
-  },
+  handler: async (ctx, input): Promise<HrInterviewSlotsResult> => computeInterviewSlots(ctx, input),
 });
 
 // Audited sensitive read for recruiting coworker Ly: loads pseudonymized inputs + forbidden candidate PII.
@@ -973,6 +999,7 @@ export const candidateAdd = defineCommand({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
         opening_id: input.openingId ?? null,
+        source: input.source,
         display_name: input.displayName,
         email: input.email ?? null,
         phone: input.phone ?? null,
@@ -993,6 +1020,7 @@ export const candidateAdd = defineCommand({
       candidateId: row.id,
       legalEntityId: row.legal_entity_id,
       openingId: input.openingId ?? null,
+      source: input.source,
       email: auditValue(CANDIDATE, 'email', input.email ?? null),
       phone: auditValue(CANDIDATE, 'phone', input.phone ?? null),
       skillsCount: skills.length,
@@ -1018,6 +1046,7 @@ export const candidateEdit = defineCommand({
 
     const set: Partial<{
       opening_id: string | null;
+      source: HrCandidateSource;
       display_name: string;
       email: string | null;
       phone: string | null;
@@ -1037,6 +1066,10 @@ export const candidateEdit = defineCommand({
       }
       set.opening_id = input.openingId;
       changed.push('openingId');
+    }
+    if (input.source !== undefined) {
+      set.source = input.source;
+      changed.push('source');
     }
     if (input.displayName !== undefined) {
       set.display_name = input.displayName;
@@ -1341,7 +1374,7 @@ export const candidateHire = defineCommand({
   writes: [
     tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', CANDIDATE_HIRE_EMPLOYEE_COLUMNS),
     tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
-    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', ['stage', 'agreed_wage', 'planned_start_on', 'hired_employee_id', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', ['stage', 'agreed_wage', 'planned_start_on', 'hired_employee_id', 'hired_at', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrCandidateHireResult> => {
     const userId = userOf(ctx.actor);
@@ -1448,6 +1481,7 @@ export const candidateHire = defineCommand({
         agreed_wage: prepared.base_wage,
         planned_start_on: prepared.effective_from,
         hired_employee_id: employee.id,
+        hired_at: ctx.now,
         updated_at: ctx.now,
       })
       .where('org_id', '=', ctx.orgId)
@@ -1475,6 +1509,7 @@ export const candidateHire = defineCommand({
       employmentId: employment.id,
       legalEntityId: existing.legal_entity_id,
       stage: 'hired',
+      hiredAt: ctx.now.toISOString(),
     };
   },
 });

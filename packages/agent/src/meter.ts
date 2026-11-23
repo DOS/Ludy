@@ -129,16 +129,28 @@ export const AI_FEATURES = {
   'meetings.title': 'meetings',
   // The recorder's Vy listing what each speaker committed to or decided (#3954): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.commitments': 'meetings',
+  // The recorder's Vy drafting a personal-note follow-up email from the meeting's facts (#4292): one call, the member waiting for it, through their own meter.
+  'meetings.followup_note': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
   // Vy's cycle summary for one project sprint/cycle (#4361): transient 3 to 5 plain sentences from deterministic cycle metrics and task titles/comments only, never reading notes.
   'projects.cycle_summary': 'projects',
+  // Vy's duplicate-idea suggestions on a public roadmap board (#4400): reads bounded item titles/summaries only, never auto-merges.
+  'projects.roadmap_dedupe': 'projects',
+  // Vy's release-note draft for shipped roadmap items (#4400): reads shipped item titles/summaries only, checked by summaryNumbersOutside, human edits & publishes.
+  'projects.roadmap_changelog_draft': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_source': 'projects',
   // Ly's pseudonymized recruiting screening brief and interview focus questions (#3403 Stage 3 slice 3b-1 / #3413): reads alias C1, role facts, readiness flags, and scrubbed untrusted notes only; never decides hire or reject.
   'hr.recruiting_brief': 'hr',
+  // Ly's pseudonymized monthly attendance anomaly narration (#4447 Stage 5C): reads E1..En aliases and deterministic anomaly counts/flags only; detection and payroll rollup stay 100% deterministic.
+  'hr.attendance_anomaly': 'hr',
+  // Ly's structured CV field extraction into a tainted editable proposal draft (#4446 Stage 5D): reads sandboxed PDF/DOCX text via crove-extract only; never auto-creates or auto-rejects candidates.
+  'hr.cv_extract': 'hr',
+  // Ly's pseudonymized end-of-probation evidence summary draft (#4448 Stage 5B): reads alias P1, factual project task titles and leave/OT counts only; never scores or decides pass/extend/terminate.
+  'hr.probation_summary': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.

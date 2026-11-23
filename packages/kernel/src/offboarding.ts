@@ -286,6 +286,7 @@ export const EXPORT_TABLES = {
   'projects.project_task': { from: 'ludy_projects.project_task', omit: [] },
   'projects.roadmap_board': { from: 'ludy_projects.roadmap_board', omit: [] },
   'projects.roadmap_item': { from: 'ludy_projects.roadmap_item', omit: [] },
+  'projects.roadmap_announcement': { from: 'ludy_projects.roadmap_announcement', omit: [] },
   'projects.roadmap_vote': { from: 'ludy_projects.roadmap_vote', omit: ['voter_email_hash'] },
   'projects.task_dependency': { from: 'ludy_projects.task_dependency', omit: [] },
   'projects.time_entry': { from: 'ludy_projects.time_entry', omit: [] },
@@ -519,6 +520,13 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.payroll_leave_entry': { from: 'ludy_hr.payroll_leave_entry', omit: [] },
   // Employee leave requests with L1 -> final approval trail (#4300).
   'hr.leave_request': { from: 'ludy_hr.leave_request', omit: [] },
+  'hr.attendance_log': { from: 'ludy_hr.attendance_log', omit: [] },
+  'hr.onboarding_submission': {
+    from: 'ludy_hr.onboarding_submission',
+    omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed'],
+  },
+  'hr.overtime_request': { from: 'ludy_hr.overtime_request', omit: [] },
+  'hr.probation_review': { from: 'ludy_hr.probation_review', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },

@@ -7,7 +7,7 @@
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
 import type { QueuedMailBegin } from '@ludy/kernel';
-import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
+import type { BlobStore, CredentialBroker, Runtime } from '@ludy/kernel-runtime';
 import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@ludy/mail';
 import { bounceAddress } from './invite-mail.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
@@ -37,6 +37,8 @@ export interface MailJob {
 // whose link must carry a secret (a report link's token) gets it here, at send time, through a command of the mail's
 // org (`execute`, as the worker): the secret is then only in the mail, never in the queue.
 export interface MailTemplateInput {
+  orgId?: string;
+  broker?: CredentialBroker;
   messageId: string;
   subject: string | null;
   payload: Readonly<Record<string, unknown>>;
@@ -50,6 +52,7 @@ export interface MailTemplateInput {
   brand: string;
   store?: BlobStore;
   execute<T>(command: string, input: unknown): Promise<T>;
+  query?<T>(name: string, input: unknown): Promise<T>;
 }
 export interface MailTemplate {
   render(input: MailTemplateInput): Promise<{ subject: string; text: string; html: string; replyTo?: string; inReplyTo?: string; references?: readonly string[]; fromName?: string; attachments?: readonly MailAttachment[] } | null>;
@@ -60,6 +63,7 @@ export interface MailQueueDeps {
   runtime: Runtime;
   mailer: MailProvider;
   templates: MailTemplates;
+  broker?: CredentialBroker;
   publicUrl: string;
   // INBOUND_DOMAIN when mail reaches this deployment (INBOUND_SECRET set): the Return-Path of each mail, and the domain
   // of the org's inbound address a template may name as the Reply-To.
@@ -142,6 +146,8 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
   let content: Awaited<ReturnType<MailTemplate['render']>>;
   try {
     content = await template.render({
+      orgId: job.orgId,
+      ...(deps.broker ? { broker: deps.broker } : {}),
       messageId: job.messageId,
       subject: mail.subject,
       payload: mail.payload,
@@ -151,6 +157,7 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
       conversationAddress: deps.bounceDomain && mail.conversationToken ? `${mail.conversationToken}@${deps.bounceDomain.toLowerCase()}` : null,
       ...(deps.store ? { store: deps.store } : {}),
       execute: <T>(command: string, input: unknown) => deps.runtime.execute<T>(command, input, { actor: ACTOR, orgId: job.orgId }),
+      query: <T>(name: string, input: unknown) => deps.runtime.query<T>(name, input, { actor: ACTOR, orgId: job.orgId }),
     });
   } catch {
     content = null;

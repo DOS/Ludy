@@ -11,9 +11,16 @@ export const hrManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     ludy_hr: {
+      // Daily attendance check-in/out logs (#4447 Stage 5C): note is optional free-text cleared on employee erasure.
+      attendance_log: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'work_date', 'checked_in_at', 'checked_out_at', 'check_in_method', 'worked_minutes', 'status', 'created_by', 'created_at', 'updated_at'],
+        { note: 'pii' },
+      ),
+      // Office attendance QR secret hashes per legal entity (#4447 Stage 5C): SHA-256 secret hashes, owner/admin only.
+      attendance_qr_config: columns(['org_id', 'id', 'legal_entity_id', 'active', 'created_by', 'created_at', 'updated_at'], { qr_secret_hash: 'sensitive' }),
       // Lightweight recruiting candidates (#3425): readable by owners and admins only, with applicant PII and wage notes classified.
       candidate: columns(
-        ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'erased_at', 'created_by', 'created_at', 'updated_at'],
+        ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'source', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'hired_at', 'erased_at', 'created_by', 'created_at', 'updated_at'],
         { display_name: 'pii', email: 'contact', phone: 'contact', notes: 'pii', expected_wage: 'sensitive', agreed_wage: 'sensitive' },
       ),
       // Departments per legal entity (#3412, #4300): optional team structure with default pay_function and optional L1 leave manager. Org master data: internal.
@@ -23,6 +30,26 @@ export const hrManifest = defineModule({
       // Employee leave requests with L1 -> final approval state machine (#4300): reason and decision_note hold user-written PII/text.
       leave_request: columns(
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'start_on', 'end_on', 'kind', 'days', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'payroll_leave_entry_id', 'created_by', 'created_at', 'updated_at'],
+        { reason: 'pii', decision_note: 'pii' },
+      ),
+      // Employee self-service onboarding checklist and HR-reviewed PII updates (#4448 Stage 5B).
+      onboarding_submission: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'status', 'contact_confirmed', 'id_confirmed', 'bank_confirmed', 'handbook_confirmed', 'reviewed_by', 'reviewed_at', 'created_by', 'created_at', 'updated_at'],
+        {
+          address: 'contact',
+          birth_date: 'pii',
+          national_id_sealed: 'national_id',
+          bank_code: 'payment',
+          bank_account_sealed: 'payment',
+          tax_code_sealed: 'national_id',
+          insurance_number_sealed: 'national_id',
+          note: 'pii',
+          decision_note: 'pii',
+        },
+      ),
+      // 2-level overtime requests feeding draft payroll runs (#4448 Stage 5B).
+      overtime_request: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'work_date', 'hours', 'day_type', 'is_night', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'created_by', 'created_at', 'updated_at'],
         { reason: 'pii', decision_note: 'pii' },
       ),
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
@@ -70,6 +97,11 @@ export const hrManifest = defineModule({
         note: 'sensitive',
       }),
       payroll_run: columns(['org_id', 'id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_by', 'approved_at', 'created_by', 'created_at', 'updated_at'], { approval: 'sensitive' }),
+      // End-of-probation reviews with Projects/attendance evidence snapshot and optional editable Ly draft (#4448 Stage 5B).
+      probation_review: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'reviewer_user_id', 'probation_end_on', 'period_start', 'period_end', 'completed_tasks_count', 'projects_available', 'decision', 'extended_until', 'decided_at', 'created_by', 'created_at', 'updated_at'],
+        { completed_tasks_snapshot: 'pii', attendance_snapshot: 'pii', review_note: 'pii', ai_draft_note: 'pii' },
+      ),
     },
   },
   // The one permission a command can name. Its risk is that of the highest command that names it: approving a month is R3. Declared with no default role: owners and admins pass by their base role, and the database's owner_admin policy enforces the same, so
@@ -79,12 +111,17 @@ export const hrManifest = defineModule({
   // Its entities (#1656): the records its commands name as their audit target. The employment rows are written by the commands of their employee and are never a target; their
   // table is append-only with the purge-aware guard (a closing org's purge deletes them), not reject_mutation, which is what audit: append_only stands for.
   entities: [
+    // Daily attendance logs and office QR config (#4447 Stage 5C).
+    { type: 'hr.attendance_log', table: 'attendance_log', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.attendance_qr_config', table: 'attendance_qr_config', legalEntityScoped: true, audit: 'command' },
     // Lightweight recruiting candidates and job openings (#3425): edited by owners and admins, audited as commands.
     { type: 'hr.candidate', table: 'candidate', legalEntityScoped: true, audit: 'command' },
     // Departments per legal entity (#3412): edited and archived by commands, so it is their audit target.
     { type: 'hr.department', table: 'department', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.job_opening', table: 'job_opening', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.leave_request', table: 'leave_request', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.onboarding_submission', table: 'onboarding_submission', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.overtime_request', table: 'overtime_request', legalEntityScoped: true, audit: 'command' },
     // The saved layout of a bank's bulk-salary file (#2893): edited and deleted by commands, so it is their audit target.
     { type: 'hr.payroll_bank_template', table: 'payroll_bank_template', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_dependent', table: 'payroll_dependent', legalEntityScoped: true, audit: 'command' },
@@ -92,6 +129,7 @@ export const hrManifest = defineModule({
     { type: 'hr.payroll_leave_entry', table: 'payroll_leave_entry', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.probation_review', table: 'probation_review', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.hr,

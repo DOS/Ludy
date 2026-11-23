@@ -14,6 +14,7 @@ import { DomainError, type CommandContext, type QueryContext } from '@ludy/kerne
 
 export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 export const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+export const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 export type Trx = QueryContext['trx'];
 

@@ -11,6 +11,7 @@ import {
   AGENDA_LIST_MAX,
   AGENDA_NEXT_MAX,
   AGENDA_NEXT_MINUTES,
+  AGENDA_UPCOMING_DAYS,
   meetingOverlapWindow,
   zAgendaClear,
   zAgendaCleared,
@@ -72,16 +73,7 @@ function agendaOf(trx: Trx, orgId: string, userId: string) {
     .where('c.read_events', '=', true);
 }
 
-// Today's meetings (Vietnam time) of the member's own calendar, the earliest first, with the ones already recorded marked by their meeting.
-export const agendaList = defineQuery({
-  name: 'meetings.agenda.list',
-  input: zAgendaListInput,
-  access: ROLES,
-  handler: async (ctx): Promise<AgendaList> => todaysAgenda(ctx.trx, ctx.orgId, userOf(ctx.actor)),
-});
-
-// The body of `meetings.agenda.list`, for the Today view (#3955) to read the same events under the same rules: an empty, disabled answer when no calendar of the member reads events.
-export async function todaysAgenda(trx: Trx, orgId: string, userId: string): Promise<AgendaList> {
+async function hasReadableCalendar(trx: Trx, orgId: string, userId: string): Promise<boolean> {
   const enabled = await trx
     .selectFrom('ludy_kernel.calendar_connection')
     .select('id')
@@ -91,11 +83,41 @@ export async function todaysAgenda(trx: Trx, orgId: string, userId: string): Pro
     .where('read_events', '=', true)
     .limit(1)
     .executeTakeFirst();
-  if (!enabled) return zAgendaList.parse({ enabled: false, events: [] });
+  return enabled !== undefined;
+}
+
+// Today's (Vietnam time) or rolling next 7 days' meetings of the member's own calendar, earliest first, with the ones already recorded marked by their meeting.
+export const agendaList = defineQuery({
+  name: 'meetings.agenda.list',
+  input: zAgendaListInput,
+  access: ROLES,
+  handler: async (ctx, input): Promise<AgendaList> =>
+    input.range === 'upcoming'
+      ? upcomingAgenda(ctx.trx, ctx.orgId, userOf(ctx.actor))
+      : todaysAgenda(ctx.trx, ctx.orgId, userOf(ctx.actor)),
+});
+
+// The body of `meetings.agenda.list`, for the Today view (#3955) to read the same events under the same rules: an empty, disabled answer when no calendar of the member reads events.
+export async function todaysAgenda(trx: Trx, orgId: string, userId: string): Promise<AgendaList> {
+  if (!(await hasReadableCalendar(trx, orgId, userId))) return zAgendaList.parse({ enabled: false, events: [] });
   const start = new Date(vnDayStart(vnDay(new Date())));
   const rows = await agendaOf(trx, orgId, userId)
     .where('a.starts_at', '>=', start)
     .where('a.starts_at', '<', new Date(start.getTime() + DAY_MS))
+    .orderBy('a.starts_at')
+    .orderBy('a.id')
+    .limit(AGENDA_LIST_MAX)
+    .execute();
+  return zAgendaList.parse({ enabled: true, events: rows.map(toEvent) });
+}
+
+// In-progress and upcoming meetings over the next AGENDA_UPCOMING_DAYS rolling 24h window (#4477).
+export async function upcomingAgenda(trx: Trx, orgId: string, userId: string): Promise<AgendaList> {
+  if (!(await hasReadableCalendar(trx, orgId, userId))) return zAgendaList.parse({ enabled: false, events: [] });
+  const now = new Date();
+  const rows = await agendaOf(trx, orgId, userId)
+    .where('a.starts_at', '<', new Date(now.getTime() + AGENDA_UPCOMING_DAYS * DAY_MS))
+    .where('a.ends_at', '>', now)
     .orderBy('a.starts_at')
     .orderBy('a.id')
     .limit(AGENDA_LIST_MAX)
@@ -124,16 +146,7 @@ export const agendaNext = defineQuery({
   sensitive: true,
   handler: async (ctx): Promise<AgendaNext> => {
     const userId = userOf(ctx.actor);
-    const enabled = await ctx.trx
-      .selectFrom('ludy_kernel.calendar_connection')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('user_id', '=', userId)
-      .where('status', '=', 'active')
-      .where('read_events', '=', true)
-      .limit(1)
-      .executeTakeFirst();
-    if (!enabled) return zAgendaNext.parse({ enabled: false, events: [] });
+    if (!(await hasReadableCalendar(ctx.trx, ctx.orgId, userId))) return zAgendaNext.parse({ enabled: false, events: [] });
     const now = new Date();
     const rows = await agendaOf(ctx.trx, ctx.orgId, userId)
       .where('a.meeting_id', 'is', null)

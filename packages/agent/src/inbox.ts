@@ -33,13 +33,35 @@ import {
   type ReviewLaborComplianceOptions,
 } from './labor-coworker.ts';
 import {
+  createCvExtractGenerator,
   createRecruitingBriefGenerator,
+  proposeCvCandidateDraft,
   reviewCandidateProfile,
+  type CvExtractGenerator,
+  type CvExtractPromptInput,
+  type CvExtractProposal,
+  type ProposeCvCandidateDraftOptions,
   type RecruitingBriefGenerator,
   type RecruitingBriefInput,
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
+import {
+  createAttendanceAnomalyGenerator,
+  reviewAttendanceAnomalies,
+  type AttendanceAnomalyGenerator,
+  type AttendanceAnomalyNarrateInput,
+  type AttendanceAnomalyNarrateResult,
+  type ReviewAttendanceAnomaliesOptions,
+} from './attendance-coworker.ts';
+import {
+  createHrProbationSummaryGenerator,
+  summarizeProbationEvidence,
+  type HrProbationSummaryGenerator,
+  type HrProbationSummaryInput,
+  type HrProbationSummaryOutcome,
+  type SummarizeProbationOptions,
+} from './hr-probation.ts';
 import { ORDER_FIELDS } from '@ludy/l10n-vn';
 import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
 import { checkMarketplaceProposalNote, marketplaceProposalNoteInstructions, marketplaceProposalNotePrompt, type MarketplaceProposalNoteFacts, type MarketplaceProposalNoteResult } from './marketplace-proposal-note.ts';
@@ -103,6 +125,22 @@ import {
   projectCycleSummaryPrompt,
   type ProjectCycleSummaryFacts,
 } from './project-cycle-summary.ts';
+import {
+  checkRoadmapChangelogDraft,
+  checkRoadmapDedupe,
+  roadmapChangelogDraftInstructions,
+  roadmapChangelogDraftPrompt,
+  roadmapDedupeInstructions,
+  roadmapDedupePrompt,
+  zRoadmapChangelogDraftOut,
+  zRoadmapDedupeOut,
+  type RoadmapChangelogDraftCheckResult,
+  type RoadmapChangelogDraftFacts,
+  type RoadmapChangelogDraftModelOutput,
+  type RoadmapDedupeCheckResult,
+  type RoadmapDedupeFacts,
+  type RoadmapDedupeModelOutput,
+} from './project-roadmap.ts';
 import {
   createSignAcceptanceDraftGenerator,
   draftSignAcceptanceSummary,
@@ -170,6 +208,8 @@ const zProjectWeeklyStatusOut = z.object({
 });
 export type ProjectWeeklyStatusGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zProjectWeeklyStatusOut> | null; usage?: AiUsage }>;
 export type ProjectCycleSummaryGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zProjectWeeklyStatusOut> | null; usage?: AiUsage }>;
+export type RoadmapDedupeGenerator = (args: { system: string; prompt: string }) => Promise<{ output: RoadmapDedupeModelOutput | null; usage?: AiUsage }>;
+export type RoadmapChangelogDraftGenerator = (args: { system: string; prompt: string }) => Promise<{ output: RoadmapChangelogDraftModelOutput | null; usage?: AiUsage }>;
 export type CrmFollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
@@ -358,18 +398,26 @@ export class InboxReader {
   private readonly generateQuoteLines: QuoteLinesGenerator;
   private readonly generateProjectWeeklyStatus: ProjectWeeklyStatusGenerator;
   private readonly generateProjectCycleSummary: ProjectCycleSummaryGenerator;
+  private readonly generateRoadmapDedupe: RoadmapDedupeGenerator;
+  private readonly generateRoadmapChangelogDraft: RoadmapChangelogDraftGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
+  private readonly generateAttendanceAnomalies: AttendanceAnomalyGenerator;
+  private readonly generateCvExtract: CvExtractGenerator;
+  private readonly generateHrProbationSummary: HrProbationSummaryGenerator;
   private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
   private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
+    this.generateAttendanceAnomalies = generators.attendanceAnomalies ?? createAttendanceAnomalyGenerator(config);
+    this.generateCvExtract = generators.cvExtract ?? createCvExtractGenerator(config);
+    this.generateHrProbationSummary = generators.hrProbationSummary ?? createHrProbationSummaryGenerator(config);
     this.generateSignAcceptanceDraft = generators.signAcceptanceDraft ?? createSignAcceptanceDraftGenerator(config);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -604,6 +652,22 @@ export class InboxReader {
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
+    this.generateRoadmapDedupe =
+      generators.roadmapDedupe ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.roadmap_dedupe', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zRoadmapDedupeOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateRoadmapChangelogDraft =
+      generators.roadmapChangelogDraft ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.roadmap_changelog_draft', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zRoadmapChangelogDraftOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
   }
 
   /** The suggested intent of each conversation, in the order given (null: no suggestion). At most INTENT_BATCH_MAX conversations are read. onUsage gets the
@@ -710,6 +774,18 @@ export class InboxReader {
   }
   recruitingBrief(input: RecruitingBriefInput, options?: Omit<ReviewCandidateProfileOptions, 'generate'>): Promise<RecruitingBriefResult> {
     return reviewCandidateProfile(input, { ...options, generate: this.generateRecruitingBrief });
+  }
+  attendanceAnomalies(input: AttendanceAnomalyNarrateInput, options?: Omit<ReviewAttendanceAnomaliesOptions, 'generate'>): Promise<AttendanceAnomalyNarrateResult> {
+    return reviewAttendanceAnomalies(input, { ...options, generate: this.generateAttendanceAnomalies });
+  }
+  cvExtract(input: CvExtractPromptInput, options?: Omit<ProposeCvCandidateDraftOptions, 'generate'>): Promise<CvExtractProposal> {
+    return proposeCvCandidateDraft(input, { ...options, generate: this.generateCvExtract });
+  }
+  hrProbationSummary(
+    input: HrProbationSummaryInput,
+    options?: Omit<SummarizeProbationOptions, 'generate'>,
+  ): Promise<HrProbationSummaryOutcome> {
+    return summarizeProbationEvidence(input, { ...options, generate: this.generateHrProbationSummary });
   }
   signAcceptanceDraft(request: SignAcceptanceDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<SignAcceptanceDraftOutcome> {
     return draftSignAcceptanceSummary(request, { generate: this.generateSignAcceptanceDraft, onUsage });
@@ -938,5 +1014,27 @@ export class InboxReader {
     });
     if (usage) onUsage?.(usage);
     return checkProjectCycleSummary(facts, output);
+  }
+
+  /** Vy's duplicate-idea suggestions on one public roadmap board (#4400): proposals only for human Confirm Merge. */
+  async roadmapDedupe(facts: RoadmapDedupeFacts, onUsage?: (usage: AiUsage) => void): Promise<RoadmapDedupeCheckResult> {
+    if (facts.items.length < 2) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateRoadmapDedupe({
+      system: roadmapDedupeInstructions(facts.language),
+      prompt: roadmapDedupePrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkRoadmapDedupe(facts, output);
+  }
+
+  /** Vy's release-note draft for shipped roadmap items (#4400): checked by summaryNumbersOutside, human edits & publishes. */
+  async roadmapChangelogDraft(facts: RoadmapChangelogDraftFacts, onUsage?: (usage: AiUsage) => void): Promise<RoadmapChangelogDraftCheckResult> {
+    if (facts.items.length === 0) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateRoadmapChangelogDraft({
+      system: roadmapChangelogDraftInstructions(facts.language),
+      prompt: roadmapChangelogDraftPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkRoadmapChangelogDraft(facts, output);
   }
 }

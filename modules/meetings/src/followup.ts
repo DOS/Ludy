@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The follow-up email after a meeting (L3, issue #2590, plan docs/plan/meetings.md section 11 and 15, ADR-0047). The recorder of a meeting with a published summary opens a
-// draft, edits the words around the facts and the recipients, and sends it:
-// - meetings.followup.draft (the recorder): the facts as the published result holds them, the fixed words in the meeting's language, the suggested recipients (the meeting's
-//   readers that are members and the contacts linked to it, each with an email address) and the sends left today. Nothing is stored: the dialog holds the draft until the
-//   recorder sends it. Vy's own words for the lead-in and the closing are asked apart (meetings.followup.wording in apps/kernel), as a read, so the draft works with AI off.
-// - meetings.followup.send (the recorder; R2, it sends mail): queues one mail per address through the kernel's mail queue, audited. Nothing is sent without this command,
-//   and a person runs it.
-// The facts (summary, decisions, action items) are rebuilt here from the PUBLISHED result at the moment of the send, so only what the readers of the meeting read goes into a
-// mail; the caller supplies the words around them and the key of the facts they reviewed, and the send is refused (STALE_FOLLOWUP) when the result was unpublished or
-// published again since. The audit names counts and ids, never an address or a word.
+// The follow-up email after a meeting (L3, issue #2590, plan docs/plan/meetings.md section 11 and 15, ADR-0047; personal note & unpublished draft #4292). The recorder of a meeting with a
+// published summary (or, for the recorder alone, a reviewed/manual unpublished draft) opens a follow-up draft, picks either the structured minutes layout or a personal note prose style,
+// edits the text and recipients, and sends it:
+// - meetings.followup.draft (the recorder): the facts of the chosen stage (published by default when available, else draft), fixed words in the meeting's language, suggested recipients
+//   (on published: meeting readers + linked contacts; on unpublished draft: linked external contacts only, never internal members by default) and sends left today.
+// - meetings.followup.note_status / meetings.followup.note_start (the recorder): gating and member-scoped Vy run start for drafting a personal note under meetings.followup_note.
+// - meetings.followup.send (the recorder; R2, it sends mail): queues one mail per address through the kernel's mail queue, audited with counts and ids only.
+// The facts are rebuilt from the chosen stage at send time (refusing STALE_FOLLOWUP if edited or published since), and every text is cleaned and checked in code.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
@@ -22,26 +20,36 @@ import {
   FOLLOWUP_SENDS_PER_MEETING_PER_DAY,
   followupAddress,
   followupClean,
+  followupNoteProblem,
   followupSubjectProblem,
   followupWordsProblem,
   zFollowupDraft,
+  zFollowupDraftAsk,
   zFollowupMail,
+  zFollowupNoteStart,
+  zFollowupNoteStarted,
+  zFollowupNoteStatus,
   zFollowupSend,
   zMeetingRef,
-  type FollowupFacts,
   type FollowupDraft,
+  type FollowupFacts,
   type FollowupMail,
   type FollowupRecipient,
   type FollowupSent,
+  type FollowupStage,
   type FollowupTextProblem,
   type FollowupWords,
 } from '@ludy/kernel-contract';
 import { createMailMessage, mailAddressHash } from '@ludy/kernel';
 import { DomainError, defineCommand, defineQuery, sha256Hex, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { vyReason } from './ask.ts';
 import { lockFollowup } from './followup-erase.ts';
 import { recorderMeeting } from './results.ts';
 import { vnDay } from './retention.ts';
+import { isSummaryEnabled } from './summary-run.ts';
 import { openMeeting, userOf } from './transcript.ts';
+
+export const FOLLOWUP_NOTE_FEATURE = 'meetings.followup_note';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 // A mail in these states went (or is going) to the person; a suppressed or failed one did not.
@@ -74,40 +82,96 @@ export function followupFixedWords(lang: Lang, day: string): FollowupWords {
 }
 
 const noSummary = () => new DomainError('NO_PUBLISHED_SUMMARY', 409, 'Chia sẻ tóm tắt của cuộc họp trước khi soạn thư cảm ơn');
+const noDraft = () => new DomainError('NO_DRAFT_SUMMARY', 409, 'Cuộc họp chưa có bản nháp tóm tắt hoặc việc cần làm để soạn thư cảm ơn');
+const staleFollowup = () =>
+  new DomainError('STALE_FOLLOWUP', 409, 'Tóm tắt của cuộc họp đã thay đổi từ lúc bạn mở bản nháp; hãy mở lại bản nháp để xem nội dung mới');
+const draftNotReviewed = () =>
+  new DomainError('DRAFT_NOT_REVIEWED', 409, 'Hãy đọc và xác nhận bản nháp Vy viết trước khi soạn thư cảm ơn');
 
 export interface Published {
   facts: FollowupFacts;
   key: string;
 }
 
-// The facts of the mail, from what the readers of the meeting read: the published summary, its decisions and the published action items. The key digests them with the
-// published result's id and time, so a result shared again (a new row) or unpublished is a different key.
-export async function publishedFacts(trx: Trx, orgId: string, meetingId: string): Promise<Published> {
+export interface StageFacts extends Published {
+  stage: FollowupStage;
+}
+
+async function stageFacts(trx: Trx, orgId: string, meetingId: string, stage: FollowupStage): Promise<StageFacts | null> {
   const result = await trx
     .selectFrom('ludy_meetings.meeting_result')
-    .select(['id', 'summary', 'decisions', 'updated_at'])
+    .select(['id', 'summary', 'decisions', 'updated_at', 'tainted'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
-    .where('stage', '=', 'published')
+    .where('stage', '=', stage)
     .executeTakeFirst();
   const items = await trx
     .selectFrom('ludy_meetings.action_item')
-    .select(['id', 'title', 'who_drafted', 'when_drafted'])
+    .select(['id', 'title', 'who_drafted', 'when_drafted', 'updated_at', 'tainted', 'status'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
-    .where('stage', '=', 'published')
+    .where('stage', '=', stage)
     .orderBy('transcript_seconds')
     .orderBy('created_at')
     .orderBy('id')
     .execute();
-  if (!result && items.length === 0) throw noSummary();
+  if (!result && items.length === 0) return null;
+  if (stage === 'draft' && (result?.tainted === true || items.some((i) => i.status === 'suggested' && i.tainted === true))) {
+    throw draftNotReviewed();
+  }
   const facts: FollowupFacts = {
     summary: result?.summary ?? '',
     decisions: Array.isArray(result?.decisions) ? (result.decisions as unknown[]).filter((d): d is string => typeof d === 'string') : [],
     items: items.map((i) => ({ title: i.title, who: i.who_drafted ?? '', when: i.when_drafted ?? '' })),
   };
   const stamp = result ? `${result.id}:${new Date(result.updated_at).toISOString()}` : 'items-only';
-  return { facts, key: sha256Hex(JSON.stringify([stamp, facts, items.map((i) => i.id)])) };
+  const itemStamps = items.map((i) => `${i.id}:${new Date(i.updated_at).toISOString()}`);
+  return { stage, facts, key: sha256Hex(JSON.stringify([stage, stamp, facts, itemStamps])) };
+}
+
+async function stageAvailable(trx: Trx, orgId: string, meetingId: string, stage: FollowupStage): Promise<boolean> {
+  const result = await trx
+    .selectFrom('ludy_meetings.meeting_result')
+    .select(['id', 'tainted'])
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('stage', '=', stage)
+    .executeTakeFirst();
+  const items = await trx
+    .selectFrom('ludy_meetings.action_item')
+    .select(['id', 'tainted', 'status'])
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('stage', '=', stage)
+    .execute();
+  if (!result && items.length === 0) return false;
+  if (stage === 'draft' && (result?.tainted === true || items.some((i) => i.status === 'suggested' && i.tainted === true))) return false;
+  return true;
+}
+
+async function resolveStageFacts(trx: Trx, orgId: string, meetingId: string, requested?: FollowupStage): Promise<StageFacts> {
+  if (requested === 'published') {
+    const pub = await stageFacts(trx, orgId, meetingId, 'published');
+    if (!pub) throw noSummary();
+    return pub;
+  }
+  if (requested === 'draft') {
+    const draft = await stageFacts(trx, orgId, meetingId, 'draft');
+    if (!draft) throw noDraft();
+    return draft;
+  }
+  const pub = await stageFacts(trx, orgId, meetingId, 'published');
+  if (pub) return pub;
+  const draft = await stageFacts(trx, orgId, meetingId, 'draft');
+  if (draft) return draft;
+  throw noSummary();
+}
+
+// The facts of the mail from the published result (used by channel posting and tests).
+export async function publishedFacts(trx: Trx, orgId: string, meetingId: string): Promise<Published> {
+  const pub = await stageFacts(trx, orgId, meetingId, 'published');
+  if (!pub) throw noSummary();
+  return { facts: pub.facts, key: pub.key };
 }
 
 async function memberProfiles(trx: Trx, userIds: readonly string[]): Promise<Array<{ userId: string; email: string; name: string }>> {
@@ -123,14 +187,42 @@ interface Candidate {
   email: string;
 }
 
-// The people the draft suggests, and the addresses the mail may go to without a tick: the readers of the meeting that are members, then the contacts linked to it (L1). The
-// recorder is the sender, so they are not suggested. A contact is read under the caller's own policies.
-async function candidates(trx: Trx, orgId: string, meetingId: string, recorder: string): Promise<Candidate[]> {
-  const readers = await trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).orderBy('created_at').orderBy('id').execute();
-  const people = await memberProfiles(trx, readers.map((r) => r.user_id).filter((id) => id !== recorder));
-  const links = await trx.selectFrom('ludy_meetings.meeting_link').select('party_id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('party_id', 'is not', null).orderBy('created_at').orderBy('id').execute();
+// The people the draft suggests, and the addresses the mail may go to without a tick:
+// - for published minutes: the meeting's readers that are members, then the contacts linked to it (L1);
+// - for an unpublished draft: ONLY linked external party contacts with emails (internal org member attendees are not auto-suggested).
+// The recorder is the sender, so they are not suggested. A contact is read under the caller's own policies.
+async function candidates(trx: Trx, orgId: string, meetingId: string, recorder: string, stage: FollowupStage = 'published'): Promise<Candidate[]> {
+  const people =
+    stage === 'published'
+      ? await (async () => {
+          const readers = await trx
+            .selectFrom('ludy_meetings.meeting_reader')
+            .select('user_id')
+            .where('org_id', '=', orgId)
+            .where('meeting_id', '=', meetingId)
+            .orderBy('created_at')
+            .orderBy('id')
+            .execute();
+          return memberProfiles(
+            trx,
+            readers.map((r) => r.user_id).filter((id) => id !== recorder),
+          );
+        })()
+      : [];
+  const links = await trx
+    .selectFrom('ludy_meetings.meeting_link')
+    .select('party_id')
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('party_id', 'is not', null)
+    .orderBy('created_at')
+    .orderBy('id')
+    .execute();
   const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
-  const parties = partyIds.length === 0 ? [] : await trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', orgId).where('id', 'in', partyIds).execute();
+  const parties =
+    partyIds.length === 0
+      ? []
+      : await trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'email']).where('org_id', '=', orgId).where('id', 'in', partyIds).execute();
   const out: Candidate[] = [];
   const seen = new Set<string>();
   const add = (candidate: Candidate) => {
@@ -191,7 +283,7 @@ async function orgName(trx: Trx, orgId: string): Promise<string> {
 
 export const followupDraft = defineQuery({
   name: 'meetings.followup.draft',
-  input: zMeetingRef,
+  input: zFollowupDraftAsk,
   access: EDITORS,
   // The facts are the meeting's text, so a read of them leaves an audit row naming the meeting.
   sensitive: true,
@@ -200,21 +292,64 @@ export const followupDraft = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can write its follow-up');
-    const published = await publishedFacts(ctx.trx, ctx.orgId, input.meetingId);
+    const resolved = await resolveStageFacts(ctx.trx, ctx.orgId, input.meetingId, input.stage);
+    const hasPublished = resolved.stage === 'published' ? true : await stageAvailable(ctx.trx, ctx.orgId, input.meetingId, 'published');
+    const hasDraft = resolved.stage === 'draft' ? true : await stageAvailable(ctx.trx, ctx.orgId, input.meetingId, 'draft');
     const { lang, day } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
-    const suggested = (await candidates(ctx.trx, ctx.orgId, input.meetingId, userId)).slice(0, FOLLOWUP_RECIPIENTS_MAX);
+    const suggested = (await candidates(ctx.trx, ctx.orgId, input.meetingId, userId, resolved.stage)).slice(0, FOLLOWUP_RECIPIENTS_MAX);
     const sent = await alreadySentTo(ctx, input.meetingId, suggested.map((c) => c.email));
     const recipients: FollowupRecipient[] = suggested.map((c) => ({ kind: c.kind, id: c.id, name: c.name, email: c.email, alreadySent: sent.has(c.email) }));
     return zFollowupDraft.parse({
       meetingId: input.meetingId,
       lang,
       org: await orgName(ctx.trx, ctx.orgId),
-      factsKey: published.key,
-      facts: published.facts,
+      stage: resolved.stage,
+      hasPublished,
+      hasDraft,
+      factsKey: resolved.key,
+      facts: resolved.facts,
       words: followupFixedWords(lang, day),
       recipients,
       sendsLeft: Math.max(0, FOLLOWUP_SENDS_PER_MEETING_PER_DAY - (await sendsToday(ctx, input.meetingId))),
     });
+  },
+});
+
+// Whether this deployment lets the recorder's Vy draft a personal-note follow-up email.
+export const followupNoteStatus = defineQuery({
+  name: 'meetings.followup.note_status',
+  input: zMeetingRef,
+  access: EDITORS,
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    const reason = meeting.recorder_user_id !== userId ? ('not_recorder' as const) : await vyReason(ctx);
+    return zFollowupNoteStatus.parse({ meetingId: input.meetingId, enabled: reason === null, reason });
+  },
+});
+
+// Starts the recorder's own Vy run for drafting a personal-note follow-up email (#4292): recorder only, deployment switch on,
+// and facts available (and reviewed if draft stage). The kernel's run.start enforces vy.use, kill switches and budget.
+export const followupNoteStart = defineCommand({
+  name: 'meetings.followup.note_start',
+  input: zFollowupNoteStart,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here');
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy for a follow-up note');
+    const resolved = await resolveStageFacts(ctx.trx, ctx.orgId, input.meetingId, input.stage);
+    const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', {
+      feature: FOLLOWUP_NOTE_FEATURE,
+      subjectType: 'meeting',
+      subjectId: input.meetingId,
+    });
+    ctx.audit({ meetingId: input.meetingId, runId: started.runId, stage: resolved.stage });
+    return zFollowupNoteStarted.parse({ meetingId: input.meetingId, runId: started.runId, stage: resolved.stage });
   },
 });
 
@@ -234,29 +369,53 @@ export const followupSend = defineCommand({
     // One send per meeting at a time: a double click waits here and then meets the first one's mails.
     await lockFollowup(ctx, input.meetingId);
 
-    // The facts are the published result's, rebuilt now; the recorder reviewed another version when the key differs.
-    const published = await publishedFacts(ctx.trx, ctx.orgId, input.meetingId);
-    if (published.key !== input.factsKey) {
-      throw new DomainError('STALE_FOLLOWUP', 409, 'Tóm tắt của cuộc họp đã thay đổi từ lúc bạn mở bản nháp; hãy mở lại bản nháp để xem nội dung mới');
+    // The facts are rebuilt from the chosen stage now; the recorder reviewed another version when the key differs (or when a draft was published since).
+    let loaded: StageFacts | null;
+    if (input.stage === 'published') {
+      loaded = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'published');
+      if (!loaded) throw noSummary();
+    } else {
+      loaded = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'draft');
+      if (!loaded) {
+        const pub = await stageFacts(ctx.trx, ctx.orgId, input.meetingId, 'published');
+        if (pub) throw staleFollowup();
+        throw noDraft();
+      }
+    }
+    if (loaded.key !== input.factsKey) throw staleFollowup();
+    if (input.stage === 'draft' && !input.confirmUnpublished) {
+      throw new DomainError('UNPUBLISHED_NOT_CONFIRMED', 409, 'Bản tóm tắt này chưa chia sẻ với người dự họp; hãy đánh dấu xác nhận gửi từ bản nháp trước khi gửi');
     }
 
-    // The words are checked here, every time, whatever their origin. The server cannot know where a text came from (a client can claim anything, or nothing), so "this is
-    // Vy's" is not a gate: the same refusals as for the model's own output apply to every text (empty, too long, a figure, a link or address), and the facts the mail states
-    // are the summary's alone. `fromVy` + `reviewed` is the recorder's statement that they read Vy's words; it adds a requirement and never removes a check.
+    // The text is checked here, every time, whatever its origin. `fromVy` + `reviewed` is the recorder's statement that they read Vy's words;
+    // it adds a requirement and never removes a check.
     if (input.fromVy && !input.reviewed) throw new DomainError('FOLLOWUP_NOT_REVIEWED', 409, 'Đọc lại phần Vy viết và chọn "Tôi đã đọc" trước khi gửi');
     const subject = followupClean(input.subject, true);
-    const greeting = followupClean(input.greeting, true);
-    const lead = followupClean(input.lead, false);
-    const closing = followupClean(input.closing, false);
     const subjectProblem = followupSubjectProblem(subject);
     if (subjectProblem) throw invalidText('subject', subjectProblem);
-    for (const [field, text, max] of [
-      ['greeting', greeting, FOLLOWUP_GREETING_MAX],
-      ['lead', lead, FOLLOWUP_LEAD_MAX],
-      ['closing', closing, FOLLOWUP_CLOSING_MAX],
-    ] as const) {
-      const problem = followupWordsProblem(text, max);
-      if (problem) throw invalidText(field, problem);
+
+    const { lang } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
+    const org = await orgName(ctx.trx, ctx.orgId);
+    const batchId = randomUUID();
+    let payload: FollowupMail;
+    if (input.style === 'personal_note') {
+      const body = followupClean(input.body ?? '', false);
+      const bodyProblem = followupNoteProblem(body);
+      if (bodyProblem) throw invalidText('body', bodyProblem);
+      payload = { style: 'personal_note', lang, org, batch: batchId, body };
+    } else {
+      const greeting = followupClean(input.greeting, true);
+      const lead = followupClean(input.lead, false);
+      const closing = followupClean(input.closing, false);
+      for (const [field, text, max] of [
+        ['greeting', greeting, FOLLOWUP_GREETING_MAX],
+        ['lead', lead, FOLLOWUP_LEAD_MAX],
+        ['closing', closing, FOLLOWUP_CLOSING_MAX],
+      ] as const) {
+        const problem = followupWordsProblem(text, max);
+        if (problem) throw invalidText(field, problem);
+      }
+      payload = { lang, org, batch: batchId, greeting, lead, closing, facts: loaded.facts };
     }
 
     // The recipients: valid mailboxes, each once.
@@ -267,8 +426,8 @@ export const followupSend = defineCommand({
       if (!addresses.includes(address)) addresses.push(address);
     }
     if (addresses.length > FOLLOWUP_RECIPIENTS_MAX) throw new DomainError('TOO_MANY_RECIPIENTS', 422, `Một thư cảm ơn gửi tối đa cho ${FOLLOWUP_RECIPIENTS_MAX} người`);
-    // Anyone who is neither a reader of the meeting nor a contact linked to it (and not the recorder) is flagged: the recorder ticks each such address before the send.
-    const known = new Set((await candidates(ctx.trx, ctx.orgId, input.meetingId, userId)).map((c) => c.email));
+    // Anyone who is not a suggested recipient for this stage (and not the recorder) is flagged: the recorder ticks each such address before the send.
+    const known = new Set((await candidates(ctx.trx, ctx.orgId, input.meetingId, userId, input.stage)).map((c) => c.email));
     const confirmed = new Set(input.confirmedOutsiders.map((a) => followupAddress(a)).filter((a): a is string => a !== null));
     const own = (await memberProfiles(ctx.trx, [userId])).map((p) => followupAddress(p.email));
     const outsiders = addresses.filter((a) => !known.has(a) && !own.includes(a));
@@ -286,9 +445,6 @@ export const followupSend = defineCommand({
       throw new DomainError('ALREADY_SENT', 409, 'Đã gửi thư cảm ơn của cuộc họp này cho một số người nhận; gửi lại cần xác nhận', { audit: { repeated: repeats.size } });
     }
 
-    const { lang } = await meetingFacts(ctx.trx, ctx.orgId, input.meetingId);
-    const batchId = randomUUID();
-    const payload: FollowupMail = { lang, org: await orgName(ctx.trx, ctx.orgId), batch: batchId, greeting, lead, closing, facts: published.facts };
     // The worker validates this at render; a mail it would refuse is refused here, before anything is queued or audited as sent.
     if (!zFollowupMail.safeParse(payload).success || Buffer.byteLength(JSON.stringify(payload), 'utf8') > PAYLOAD_MAX_BYTES) {
       throw new DomainError('FOLLOWUP_TOO_LARGE', 422, 'Nội dung thư quá dài để gửi; hãy rút gọn tóm tắt của cuộc họp rồi chia sẻ lại');
@@ -309,11 +465,22 @@ export const followupSend = defineCommand({
       if (mail.status === 'suppressed') suppressed += 1;
       else queued += 1;
     }
-    // Counts and ids only: no address, no word of the mail.
-    ctx.audit({ meetingId: input.meetingId, batchId, recipientCount: addresses.length, outsiders: outsiders.length, repeated: repeats.size, queued, suppressed, fromVy: input.fromVy });
+    // Counts, ids and enum metadata only: no address, no word of the mail.
+    ctx.audit({
+      meetingId: input.meetingId,
+      batchId,
+      recipientCount: addresses.length,
+      outsiders: outsiders.length,
+      repeated: repeats.size,
+      queued,
+      suppressed,
+      fromVy: input.fromVy,
+      style: input.style,
+      stage: input.stage,
+    });
     return { meetingId: input.meetingId, batchId, queued, suppressed };
   },
 });
 
-export const followupQueries = [followupDraft];
-export const followupCommands = [followupSend];
+export const followupQueries = [followupDraft, followupNoteStatus];
+export const followupCommands = [followupSend, followupNoteStart];

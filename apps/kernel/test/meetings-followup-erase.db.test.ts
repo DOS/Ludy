@@ -500,6 +500,50 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         await erase(value);
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
       });
+
+      it('drops payload and subject of personal_note mails sent from unpublished draft meetings on delete and personal_data.erase (#4292)', async () => {
+        const seedDraftPersonal = async (recorder: string, summary: string) => {
+          const meetingId = randomUUID();
+          await sqlAdmin(
+            `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+             VALUES ($1, $2, 'Họp nháp xóa', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+            [orgId, meetingId, users[recorder]],
+          );
+          await exec(recorder, 'meetings.summary.save', { meetingId, summary, decisions: [] });
+          const draft = await query<FollowupDraft>(recorder, 'meetings.followup.draft', { meetingId, stage: 'draft' });
+          await exec(
+            recorder,
+            'meetings.followup.send',
+            {
+              meetingId,
+              factsKey: draft.factsKey,
+              stage: 'draft',
+              style: 'personal_note',
+              confirmUnpublished: true,
+              subject: 'Ghi chú sau họp',
+              body: 'Chào An,\n\nCảm ơn bạn đã trao đổi hôm nay.\n\nNhắn lại giúp mình nhé.',
+              recipients: ['attendee@erase.test'],
+              confirmedOutsiders: ['attendee@erase.test'],
+              confirmRepeat: false,
+              fromVy: true,
+              reviewed: true,
+            },
+            randomUUID(),
+          );
+          return meetingId;
+        };
+
+        const deletedDraft = await seedDraftPersonal('recorder', 'Trao đổi bản nháp trước khi chốt.');
+        expect((await mail(deletedDraft))[0]?.payload).not.toBeNull();
+        await exec('recorder', 'meetings.meeting.delete', { meetingId: deletedDraft });
+        expect((await mail(deletedDraft))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
+
+        const PERSONAL_NOTE_MENTION = 'khach.note.draft@erase.test';
+        const erasedDraft = await seedDraftPersonal('owner', `Gửi lại ghi chú nháp cho ${PERSONAL_NOTE_MENTION} tuần này.`);
+        expect((await mail(erasedDraft))[0]?.payload).toMatchObject({ style: 'personal_note' });
+        await erase(PERSONAL_NOTE_MENTION);
+        expect((await mail(erasedDraft))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
+      });
     });
   });
 });

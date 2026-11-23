@@ -347,6 +347,56 @@ import {
   zHrSelfProfile,
   zHrSelfProfileAsk,
 } from './hr-leave.ts';
+import {
+  zHrAdminAttendanceRow,
+  zHrAttendanceAdjust,
+  zHrAttendanceAnomaliesAsk,
+  zHrAttendanceAnomaliesBrief,
+  zHrAttendanceList,
+  zHrAttendanceListResult,
+  zHrAttendanceLogView,
+  zHrAttendanceQrRotate,
+  zHrAttendanceQrRotateResult,
+  zHrAttendanceRollupResult,
+  zHrAttendanceRollupToPayroll,
+  zHrSelfAttendanceCheckIn,
+  zHrSelfAttendanceCheckOut,
+  zHrSelfAttendanceList,
+  zHrSelfAttendanceListResult,
+} from './hr-attendance.ts';
+import {
+  zHrOnboardingApproveResult,
+  zHrOnboardingCancelResult,
+  zHrOnboardingDecide,
+  zHrOnboardingList,
+  zHrOnboardingRejectResult,
+  zHrOnboardingSubmissionRef,
+  zHrOnboardingSubmissionView,
+  zHrSelfOnboardingState,
+  zHrSelfOnboardingSubmit,
+  zHrSelfOnboardingSubmitResult,
+} from './hr-onboarding.ts';
+import {
+  zHrOvertimeActionResult,
+  zHrOvertimeDecide,
+  zHrOvertimeList,
+  zHrOvertimeRef,
+  zHrOvertimeRequestView,
+  zHrSelfOvertimeList,
+  zHrSelfOvertimeListResult,
+  zHrSelfOvertimeSubmit,
+  zHrSelfOvertimeSubmitResult,
+} from './hr-overtime.ts';
+import {
+  zHrProbationDecide,
+  zHrProbationDecideResult,
+  zHrProbationDraftAsk,
+  zHrProbationDraftResult,
+  zHrProbationList,
+  zHrProbationPreviewAsk,
+  zHrProbationPreviewResult,
+  zHrProbationReviewView,
+} from './hr-probation.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -365,12 +415,16 @@ import {
   zHrInterviewerOption,
   zHrInterviewSlotsAsk,
   zHrInterviewSlotsResult,
+  zHrInviteDraftAsk,
+  zHrInviteDraftResult,
   zHrOpeningAdd,
   zHrOpeningClose,
   zHrOpeningEdit,
   zHrOpeningList,
   zHrOpeningView,
   zHrOpeningWritten,
+  zHrRecruitingAnalyticsQuery,
+  zHrRecruitingAnalyticsResult,
   zHrRecruitingBriefAsk,
   zHrRecruitingBriefResult,
 } from './hr-recruiting.ts';
@@ -707,19 +761,30 @@ import {
 } from './projects.ts';
 import {
   zRoadmapAdminItem,
+  zRoadmapAnnouncement,
+  zRoadmapAnnouncementCreateInput,
+  zRoadmapAnnouncementDeleteInput,
+  zRoadmapAnnouncementPublishInput,
+  zRoadmapAnnouncementSendNotificationsInput,
+  zRoadmapAnnouncementSendNotificationsResult,
+  zRoadmapAnnouncementUpdateInput,
   zRoadmapBoardCreateInput,
   zRoadmapBoardDetailInput,
   zRoadmapBoardDetailResult,
   zRoadmapBoardListResult,
   zRoadmapBoardSummary,
   zRoadmapBoardUpdateInput,
+  zRoadmapChangelogDraftInput,
+  zRoadmapChangelogDraftResult,
+  zRoadmapDedupeInput,
+  zRoadmapDedupeResult,
   zRoadmapItemConvertToTaskInput,
   zRoadmapItemCreateInput,
   zRoadmapItemMergeInput,
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
 } from './projects-roadmap.ts';
-import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
+import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -1287,6 +1352,47 @@ export const contract = {
         list: oc.input(zHrSelfPayslipsList).output(z.array(zHrSelfPayslipSummary)),
         get: oc.input(zHrPayslipRef).output(zHrPayslip),
       },
+      attendance: {
+        checkIn: oc.input(zHrSelfAttendanceCheckIn).output(zHrAttendanceLogView),
+        checkOut: oc.input(zHrSelfAttendanceCheckOut).output(zHrAttendanceLogView),
+        list: oc.input(zHrSelfAttendanceList).output(zHrSelfAttendanceListResult),
+      },
+      onboarding: {
+        get: oc.input(z.strictObject({})).output(zHrSelfOnboardingState),
+        submit: oc.input(zHrSelfOnboardingSubmit).output(zHrSelfOnboardingSubmitResult),
+        cancel: oc.input(zHrOnboardingSubmissionRef).output(zHrOnboardingCancelResult),
+      },
+      overtime: {
+        list: oc.input(zHrSelfOvertimeList).output(zHrSelfOvertimeListResult),
+        submit: oc.input(zHrSelfOvertimeSubmit).output(zHrSelfOvertimeSubmitResult),
+        cancel: oc.input(zHrOvertimeRef).output(zHrOvertimeActionResult),
+      },
+    },
+    attendance: {
+      list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
+      adjust: oc.input(zHrAttendanceAdjust).output(zHrAdminAttendanceRow),
+      qr: {
+        rotate: oc.input(zHrAttendanceQrRotate).output(zHrAttendanceQrRotateResult),
+      },
+      anomaliesBrief: oc.input(zHrAttendanceAnomaliesAsk).output(zHrAttendanceAnomaliesBrief),
+      rollupToPayroll: oc.input(zHrAttendanceRollupToPayroll).output(zHrAttendanceRollupResult),
+    },
+    onboarding: {
+      list: oc.input(zHrOnboardingList).output(z.array(zHrOnboardingSubmissionView)),
+      approve: oc.input(zHrOnboardingDecide).output(zHrOnboardingApproveResult),
+      reject: oc.input(zHrOnboardingDecide).output(zHrOnboardingRejectResult),
+    },
+    overtimeRequests: {
+      list: oc.input(zHrOvertimeList).output(z.array(zHrOvertimeRequestView)),
+      approveL1: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+    },
+    probation: {
+      preview: oc.input(zHrProbationPreviewAsk).output(zHrProbationPreviewResult),
+      draftSummary: oc.input(zHrProbationDraftAsk).output(zHrProbationDraftResult),
+      decide: oc.input(zHrProbationDecide).output(zHrProbationDecideResult),
+      list: oc.input(zHrProbationList).output(z.array(zHrProbationReviewView)),
     },
     leaveRequests: {
       list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),
@@ -1330,6 +1436,7 @@ export const contract = {
         thirteenthMonthPreview: oc.input(zHrRunThirteenthMonthPreview).output(zHrThirteenthMonthPreviewResult),
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       // Annual leave ledger and statutory leave balance (#3394, #2540 slice 1c-2): owners and admins only, sensitive query for balance.
@@ -1380,6 +1487,8 @@ export const contract = {
       },
       interviewSlots: oc.input(zHrInterviewSlotsAsk).output(zHrInterviewSlotsResult),
       brief: oc.input(zHrRecruitingBriefAsk).output(zHrRecruitingBriefResult),
+      analytics: oc.input(zHrRecruitingAnalyticsQuery).output(zHrRecruitingAnalyticsResult),
+      inviteDraft: oc.input(zHrInviteDraftAsk).output(zHrInviteDraftResult),
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
@@ -1508,11 +1617,13 @@ export const contract = {
       // Vy's tainted suggestion for the recorder (L1, #2587): contacts and deals the transcript names. Nothing is linked by it.
       suggest: oc.input(zMeetingRef).output(zMeetingLinkSuggested),
     },
-    // The follow-up email after a meeting (L3, #2590): the recorder drafts it from the published summary, words it (Vy words the lead-in and the closing only, told no fact; fixed words with
-    // AI off) and sends it, one mail per address, checked recipients. Nothing is sent without `send`, a person's own command.
+    // The follow-up email after a meeting (L3, #2590, #4292): the recorder drafts it from the published summary (or, for the recorder alone, an unpublished draft), picks either structured
+    // minutes or a personal note (optionally drafted by their own member-scoped Vy), edits it and sends it, one mail per address, checked recipients. Nothing is sent without `send`.
     followup: {
-      draft: oc.input(zMeetingRef).output(zFollowupDraft),
+      draft: oc.input(zFollowupDraftAsk).output(zFollowupDraft),
       wording: oc.input(zFollowupWordingAsk).output(zFollowupWording),
+      noteStatus: oc.input(zMeetingRef).output(zFollowupNoteStatus),
+      note: oc.input(zFollowupNoteAsk).output(zFollowupNoteAnswer),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
     },
     // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
@@ -3616,6 +3727,23 @@ export const contract = {
       itemSyncStage: oc
         .input(zRoadmapItemSyncStageInput.extend({ idempotencyKey: zId }))
         .output(z.strictObject({ item: zRoadmapAdminItem })),
+      announcementCreate: oc
+        .input(zRoadmapAnnouncementCreateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ announcement: zRoadmapAnnouncement })),
+      announcementUpdate: oc
+        .input(zRoadmapAnnouncementUpdateInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ announcement: zRoadmapAnnouncement })),
+      announcementPublish: oc
+        .input(zRoadmapAnnouncementPublishInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ announcement: zRoadmapAnnouncement })),
+      announcementDelete: oc
+        .input(zRoadmapAnnouncementDeleteInput.extend({ idempotencyKey: zId }))
+        .output(z.strictObject({ deleted: z.boolean() })),
+      announcementSendNotifications: oc
+        .input(zRoadmapAnnouncementSendNotificationsInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapAnnouncementSendNotificationsResult),
+      dedupeSuggest: oc.input(zRoadmapDedupeInput).output(zRoadmapDedupeResult),
+      changelogDraft: oc.input(zRoadmapChangelogDraftInput).output(zRoadmapChangelogDraftResult),
     },
     startTime: oc
       .input(zProjectTimeStartInput.extend({ idempotencyKey: zId }))

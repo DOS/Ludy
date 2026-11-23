@@ -143,6 +143,10 @@ describe('personal-data registry: payroll people (#2530)', () => {
     expect(Object.keys(SEALED_COLUMNS).sort()).toEqual([
       'ludy_finance.supplier_bank_account.account_holder_sealed',
       'ludy_finance.supplier_bank_account.number_sealed',
+      'ludy_hr.onboarding_submission.bank_account_sealed',
+      'ludy_hr.onboarding_submission.insurance_number_sealed',
+      'ludy_hr.onboarding_submission.national_id_sealed',
+      'ludy_hr.onboarding_submission.tax_code_sealed',
       'ludy_hr.payroll_employee.bank_account_sealed',
       'ludy_hr.payroll_employee.insurance_number_sealed',
       'ludy_hr.payroll_employee.national_id_sealed',
@@ -167,7 +171,7 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of ludy_projects for erasure', () => {
-    expect(personal.length).toBe(14);
+    expect(personal.length).toBe(16);
     expect(personal).toEqual(
       expect.arrayContaining([
         'ludy_projects.project.name',
@@ -181,6 +185,8 @@ describe('personal-data registry: projects (#2591)', () => {
         'ludy_projects.roadmap_item.public_title',
         'ludy_projects.roadmap_item.public_summary',
         'ludy_projects.roadmap_item.submitter_display_name',
+        'ludy_projects.roadmap_announcement.title',
+        'ludy_projects.roadmap_announcement.body_md',
         'ludy_projects.roadmap_otp.email',
         'ludy_projects.roadmap_subscriber.email_sealed',
         'ludy_projects.time_entry.note',
@@ -194,6 +200,7 @@ describe('personal-data registry: projects (#2591)', () => {
       }
     }
     expect(entries['ludy_projects.roadmap_vote.voter_email_hash']).toMatchObject({ kind: 'other', handling: 'hashed' });
+    expect(entries['ludy_projects.roadmap_subscriber.mail_hash']).toMatchObject({ kind: 'other', handling: 'hashed', machinery: true });
   });
 });
 

@@ -32,6 +32,8 @@ function baseMeeting(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
     textRetentionDate: null,
     hasAudio: true,
     hasVideo: false,
+    hasTranscript: false,
+    platform: null,
     readersCount: 2,
     createdAt: '2026-11-16T02:00:00.000Z',
     updatedAt: '2026-11-16T03:00:00.000Z',

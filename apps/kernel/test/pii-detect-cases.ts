@@ -102,6 +102,16 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
     text: 'Liên hệ admin@xn--ng-jia.example để kiểm tra.',
     expected: [{ kind: 'email', matchText: 'admin@xn--ng-jia.example' }],
   },
+  {
+    name: 'emails with single-segment and hyphenated multi-segment punycode TLDs (#4375)',
+    text: 'Gửi admin@example.xn--fiqs8s, hoa@xn--ng-jia.xn--vermgensberater-ctb, OPS@SUB.XN--NG-JIA.XN--FOO-BAR-123 và 0912345678@example.xn--vermgensberater-ctb.',
+    expected: [
+      { kind: 'email', matchText: 'admin@example.xn--fiqs8s' },
+      { kind: 'email', matchText: 'hoa@xn--ng-jia.xn--vermgensberater-ctb' },
+      { kind: 'email', matchText: 'OPS@SUB.XN--NG-JIA.XN--FOO-BAR-123' },
+      { kind: 'email', matchText: '0912345678@example.xn--vermgensberater-ctb' },
+    ],
+  },
 
   // --- Vietnamese & international phones ---
   {
@@ -289,6 +299,40 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
       { kind: 'bank_account', matchText: '10912345678' },
     ],
   },
+  {
+    name: 'digit-ending URLs followed by single inline space detect trailing phone (#4375)',
+    text: 'Join https://zoom.us/j/84212345678 0912345678, https://meet.example.com/12345678 0900000001, https://zoom.us/j/84212345678 0912 345 678, http://meet.example.com/12345678\u00a00321234567 và https://example.com/999?id=1 0987654321.',
+    expected: [
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'phone', matchText: '0900000001' },
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'phone', matchText: '0321234567' },
+      { kind: 'phone', matchText: '0987654321' },
+    ],
+  },
+  {
+    name: 'punycode URL suppresses internal digits while detecting trailing phone and email (#4375)',
+    text: 'Xem https://xn--ng-jia.xn--vermgensberater-ctb/0912345678 và https://xn--ng-jia.xn--fiqs8s/84212345678 0912345678 hoặc mail@xn--ng-jia.xn--fiqs8s.',
+    expected: [
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'email', matchText: 'mail@xn--ng-jia.xn--fiqs8s' },
+    ],
+  },
+  {
+    name: 'tax prefixes support title-case So alongside lowercase and uppercase forms (#4375)',
+    text: `Số MST: 5900000018, Số MST: ${SYNTHETIC_MST_VALID}, TIN Số: 12345678, TIN số: 12345678, TIN SỐ: 12345678, TIN So: 12345678, TIN so: 12345678, TIN SO: 12345678, TIN Số 0912345678.`,
+    expected: [
+      { kind: 'tax_code', matchText: '5900000018' },
+      { kind: 'tax_code', matchText: SYNTHETIC_MST_VALID },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '0912345678' },
+    ],
+  },
 
   // --- Mixed spans and Unicode code-point offset alignment ---
   {
@@ -330,7 +374,17 @@ export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
   },
   {
     name: 'near-miss: meeting numbers, Zoom links, UUIDs, IPv4, negative and overlong plus numbers',
-    text: 'Cuộc họp số 42, meeting #123, Zoom ID 842 1234 5678, id cuộc họp 912 3456 7890, https://zoom.us/j/84212345678, 550e8400-e29b-41d4-a716-446655440000, IP 192.168.1.100, 255.255.255.0, lỗ -123456789, mã +1234567890123456.',
+    text: 'Cuộc họp số 42, meeting #123, Zoom ID 842 1234 5678, id cuộc họp 912 3456 7890, https://zoom.us/j/84212345678, https://example.com/0912345678, https://example.com/a?phone=0912345678&ok=1, https://zoom.us/j/84212345678/0912345678, https://example.com/84212345678-0912345678, 550e8400-e29b-41d4-a716-446655440000, IP 192.168.1.100, 255.255.255.0, lỗ -123456789, mã +1234567890123456.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: Vietnamese tin prose with title-case So stays excluded (#4375)',
+    text: 'Thông tin Số 12345678, THÔNG TIN Số: 12345678, THÔNG TIN SỐ: 12345678, Tin Số: 12345678, Bản TIN Số: 12345678.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: malformed punycode TLDs with leading, trailing, or consecutive bare hyphens stay undetected (#4375)',
+    text: 'bad@example.xn--, bad@example.xn---, bad@example.xn---abc, bad@example.xn--fiqs8s-, bad@example.xn--foo-bar-, bad@example.xn--foo--bar, bad@example.xn--fiqs8s.123.',
     expected: [],
   },
   {

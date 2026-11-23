@@ -244,4 +244,124 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(results.filter((r) => r === 'ALREADY_SENT')).toHaveLength(1);
     expect(await mails(m2)).toHaveLength(1);
   });
+
+  it('allows drafting and sending from an unpublished reviewed draft (D1) for the recorder only, requiring confirmation and excluding org attendee suggestions', async () => {
+    const m = randomUUID();
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+       VALUES ($1, $2, 'Họp nháp', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+      [orgId, m, users.recorder],
+    );
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), m, users.attendee]);
+    const partyId = (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, 'Đối tác Nháp', 'organization', 'doitac@draft.test') RETURNING id", [orgId])).rows[0]!.id;
+    await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: partyId });
+
+    // Only a reviewed draft summary + draft item exist (never published).
+    await exec('recorder', 'meetings.summary.save', { meetingId: m, summary: 'Thảo luận gói thử 1 tháng.', decisions: ['Chốt bản nháp'] });
+    await exec('recorder', 'meetings.action_item.create', { meetingId: m, title: 'Gửi đề xuất', who: 'An', whoUserId: null, when: 'thứ năm', whenDate: null, transcriptSeconds: 60 });
+
+    // Falls back to stage 'draft' when nothing is published; excludes internal org member suggestions on draft stage.
+    const draft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+    expect(draft).toMatchObject({ meetingId: m, stage: 'draft', hasPublished: false, hasDraft: true });
+    expect(draft.facts).toEqual({
+      summary: 'Thảo luận gói thử 1 tháng.',
+      decisions: ['Chốt bản nháp'],
+      items: [{ title: 'Gửi đề xuất', who: 'An', when: 'thứ năm' }],
+    });
+    expect(draft.recipients.map((r) => [r.kind, r.email])).toEqual([['party', 'doitac@draft.test']]);
+
+    // Still recorder-only.
+    expect(await refuses(query('attendee', 'meetings.followup.draft', { meetingId: m }))).toBe('FORBIDDEN');
+
+    // Sending from unpublished draft requires confirmUnpublished: true, and manual attendee addresses still count as outsiders.
+    expect(await refuses(send(m, { stage: 'draft', recipients: ['attendee@followup.test'] }))).toBe('UNPUBLISHED_NOT_CONFIRMED');
+    expect(await refuses(send(m, { stage: 'draft', confirmUnpublished: true, recipients: ['attendee@followup.test'] }))).toBe('RECIPIENT_NOT_CONFIRMED');
+    expect(await mails(m)).toEqual([]);
+
+    const sent = await send(m, {
+      stage: 'draft',
+      confirmUnpublished: true,
+      recipients: ['doitac@draft.test', 'attendee@followup.test'],
+      confirmedOutsiders: ['attendee@followup.test'],
+    });
+    expect(sent).toMatchObject({ meetingId: m, queued: 2, suppressed: 0 });
+
+    // Editing a draft action item invalidates the earlier factsKey.
+    const itemRow = await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft' LIMIT 1", [orgId, m]);
+    await exec('recorder', 'meetings.action_item.edit', { itemId: itemRow.rows[0]!.id, title: 'Gửi đề xuất bản mới' });
+    expect(await refuses(send(m, { factsKey: draft.factsKey, stage: 'draft', confirmUnpublished: true, confirmRepeat: true, recipients: ['doitac@draft.test'] }))).toBe('STALE_FOLLOWUP');
+
+    // Publishing promotes the draft: defaults back to published (hasPublished: true, hasDraft: false) and refuses the old draft factsKey as STALE_FOLLOWUP.
+    await exec('recorder', 'meetings.result.publish', { meetingId: m, confirmed: true });
+    const afterPublish = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+    expect(afterPublish).toMatchObject({ stage: 'published', hasPublished: true, hasDraft: false });
+    expect(afterPublish.recipients.map((r) => r.kind)).toContain('attendee');
+    expect(await refuses(send(m, { factsKey: draft.factsKey, stage: 'draft', confirmUnpublished: true, confirmRepeat: true, recipients: ['doitac@draft.test'] }))).toBe('STALE_FOLLOWUP');
+
+    // Saving a new draft edit makes both published and draft available (published stays default), and earlier draft factsKey also returns STALE_FOLLOWUP.
+    await exec('recorder', 'meetings.summary.save', { meetingId: m, summary: 'Bản nháp mới hơn sau khi công bố.', decisions: [] });
+    const withBoth = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+    expect(withBoth).toMatchObject({ stage: 'published', hasPublished: true, hasDraft: true });
+    expect(await refuses(send(m, { factsKey: draft.factsKey, stage: 'draft', confirmUnpublished: true, confirmRepeat: true, recipients: ['doitac@draft.test'] }))).toBe('STALE_FOLLOWUP');
+
+    // Tainted draft is refused until reviewed.
+    await sqlAdmin("DELETE FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'", [orgId, m]);
+    await sqlAdmin(
+      "INSERT INTO ludy_meetings.meeting_result (org_id, id, meeting_id, stage, feature, summary, decisions, tainted) VALUES ($1, $2, $3, 'draft', 'meetings.summary', 'Tóm tắt do Vy soạn chưa đọc.', '[]'::jsonb, true)",
+      [orgId, randomUUID(), m],
+    );
+    expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, stage: 'draft' }))).toBe('DRAFT_NOT_REVIEWED');
+  });
+
+  it('supports style personal_note with review gate, contact/link checks, and safe mail payload + metadata-only audit (#4292)', async () => {
+    const m = await seedPublished(['attendee'], 'Chốt 2 tuần thử nghiệm với đội bạn.');
+    const draft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+
+    // From Vy without review tick is refused.
+    expect(
+      await refuses(
+        send(m, {
+          factsKey: draft.factsKey,
+          style: 'personal_note',
+          body: 'Chào An,\n\nCảm ơn bạn đã trao đổi về 2 tuần thử nghiệm.',
+          fromVy: true,
+          reviewed: false,
+        }),
+      ),
+    ).toBe('FOLLOWUP_NOT_REVIEWED');
+
+    // Links, emails, and phone/8+-digit contact strings in personal_note body are refused.
+    expect(await refuses(send(m, { factsKey: draft.factsKey, style: 'personal_note', body: 'Xem thêm ở https://evil.test/x nhé.' }))).toBe('FOLLOWUP_TEXT_INVALID');
+    expect(await refuses(send(m, { factsKey: draft.factsKey, style: 'personal_note', body: 'Liên hệ qua a@b.test giúp mình.' }))).toBe('FOLLOWUP_TEXT_INVALID');
+    expect(await refuses(send(m, { factsKey: draft.factsKey, style: 'personal_note', body: 'Gọi 0912345678 khi cần.' }))).toBe('FOLLOWUP_TEXT_INVALID');
+    expect(await refuses(send(m, { factsKey: draft.factsKey, style: 'personal_note', body: '   ' }))).toBe('FOLLOWUP_TEXT_INVALID');
+
+    // Valid reviewed personal_note sends cleanly and keeps audit text-free.
+    const noteBody = 'Chào An,\n\nCảm ơn bạn đã họp cùng bên mình. Hai bên đã chốt 2 tuần thử nghiệm:\n- An gửi báo giá cho khách trước thứ sáu\n\nNếu có chỗ nào cần chỉnh, An nhắn lại giúp mình nhé.';
+    const sent = await send(m, {
+      factsKey: draft.factsKey,
+      style: 'personal_note',
+      body: noteBody,
+      fromVy: true,
+      reviewed: true,
+    });
+    expect(sent).toMatchObject({ meetingId: m, queued: 1, suppressed: 0 });
+    const rows = await mails(m);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.payload).toMatchObject({
+      lang: 'vi',
+      style: 'personal_note',
+      body: noteBody,
+      batch: sent.batchId,
+    });
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(
+      "SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2",
+      [orgId, m],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]?.detail).toMatchObject({ style: 'personal_note', stage: 'published', recipientCount: 1, queued: 1 });
+    const auditText = JSON.stringify(audit.rows[0]?.detail);
+    expect(auditText).not.toContain('thử nghiệm');
+    expect(auditText).not.toContain('Chào An');
+  });
 });

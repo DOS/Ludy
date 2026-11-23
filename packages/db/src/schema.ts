@@ -1213,6 +1213,8 @@ export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'co
 export const HR_PAY_BASES = ['monthly', 'hourly', 'piece_rate'] as const;
 export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
 export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
+export const HR_CANDIDATE_SOURCES = ['direct', 'zalo_oa', 'facebook', 'referral', 'job_board', 'other'] as const;
+export type HrCandidateSource = (typeof HR_CANDIDATE_SOURCES)[number];
 // Departments per legal entity (#3412): optional team structure with default pay_function.
 export type HrDepartmentTable = Refine<
   G.HrDepartmentTable,
@@ -1238,6 +1240,7 @@ export type HrCandidateTable = Refine<
   {
     legal_entity_id: LegalEntityColumn;
     stage: Generated<(typeof HR_CANDIDATE_STAGES)[number]>;
+    source: Generated<HrCandidateSource>;
   },
   'legal_entity_id'
 >;
@@ -1276,6 +1279,57 @@ export type HrLeaveRequestTable = Refine<
   {
     kind: ColumnType<HrLeaveRequestKind, HrLeaveRequestKind, never>;
     status: Generated<HrLeaveRequestStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_ATTENDANCE_METHODS = ['web', 'qr', 'manual'] as const;
+export type HrAttendanceMethod = (typeof HR_ATTENDANCE_METHODS)[number];
+export const HR_ATTENDANCE_STATUSES = ['present', 'half_day', 'missing_checkout', 'adjusted'] as const;
+export type HrAttendanceStatus = (typeof HR_ATTENDANCE_STATUSES)[number];
+export type HrAttendanceLogTable = Refine<
+  G.HrAttendanceLogTable,
+  {
+    check_in_method: Generated<HrAttendanceMethod>;
+    status: Generated<HrAttendanceStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export type HrAttendanceQrConfigTable = Refine<
+  G.HrAttendanceQrConfigTable,
+  { legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export const HR_ONBOARDING_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type HrOnboardingStatus = (typeof HR_ONBOARDING_STATUSES)[number];
+export type HrOnboardingSubmissionTable = Refine<
+  G.HrOnboardingSubmissionTable,
+  {
+    status: Generated<HrOnboardingStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_OVERTIME_DAY_TYPES = ['weekday', 'weekend', 'holiday'] as const;
+export type HrOvertimeDayType = (typeof HR_OVERTIME_DAY_TYPES)[number];
+export const HR_OVERTIME_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrOvertimeStatus = (typeof HR_OVERTIME_STATUSES)[number];
+export type HrOvertimeRequestTable = Refine<
+  G.HrOvertimeRequestTable,
+  {
+    day_type: ColumnType<HrOvertimeDayType, HrOvertimeDayType, never>;
+    status: Generated<HrOvertimeStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_PROBATION_DECISIONS = ['pass', 'extend', 'terminate'] as const;
+export type HrProbationDecision = (typeof HR_PROBATION_DECISIONS)[number];
+export type HrProbationReviewTable = Refine<
+  G.HrProbationReviewTable,
+  {
+    decision: HrProbationDecision;
     legal_entity_id: LegalEntityColumn;
   },
   'legal_entity_id'
@@ -1438,6 +1492,16 @@ export type ProjectsProjectCycleTable = Refine<
   G.ProjectsProjectCycleTable,
   {
     status: Generated<ProjectCycleStatus>;
+  }
+>;
+
+export const ROADMAP_ANNOUNCEMENT_STATUSES = ['draft', 'published'] as const;
+export type RoadmapAnnouncementStatus = (typeof ROADMAP_ANNOUNCEMENT_STATUSES)[number];
+
+export type ProjectsRoadmapAnnouncementTable = Refine<
+  G.ProjectsRoadmapAnnouncementTable,
+  {
+    status: Generated<RoadmapAnnouncementStatus>;
   }
 >;
 
@@ -1655,16 +1719,21 @@ type Refined = Tables<{
   'ludy_crm.sales_order': CrmSalesOrderTable;
   'ludy_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'ludy_crm.sales_order_line': CrmSalesOrderLineTable;
+  'ludy_hr.attendance_log': HrAttendanceLogTable;
+  'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'ludy_hr.candidate': HrCandidateTable;
   'ludy_hr.department': HrDepartmentTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
+  'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
+  'ludy_hr.overtime_request': HrOvertimeRequestTable;
   'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
   'ludy_hr.payroll_employment': HrPayrollEmploymentTable;
   'ludy_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'ludy_hr.payroll_line': HrPayrollLineTable;
   'ludy_hr.payroll_run': HrPayrollRunTable;
+  'ludy_hr.probation_review': HrProbationReviewTable;
   'ludy_meetings.action_item': MeetingsActionItemTable;
   'ludy_meetings.capture_session': MeetingsCaptureSessionTable;
   'ludy_meetings.chat_channel': MeetingsChatChannelTable;
@@ -1683,6 +1752,7 @@ type Refined = Tables<{
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;

@@ -25,7 +25,7 @@ import { archiveSource, expandArchive, recordArchiveFailure, type ArchiveSource 
 import { backfillImageSizes, IMAGE_SIZE_SWEEP_MS } from './image-size-backfill.ts';
 import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
 import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
-import { sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
+import { ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT, dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from './projects-roadmap-worker.ts';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from './mail-events.ts';
 import { MAIL_BULK_GAP_MS, MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, MAIL_SWEEP_MS, mailErrorCode, purgeMail, runMailJob, sweepMail, type MailJob, type MailQueueDeps } from './mail-queue.ts';
@@ -61,6 +61,7 @@ import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMe
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
+import { HR_CV_RETRY_LIMIT, runHrCvExtractJob, type HrCvExtractJob } from './hr-cv-worker.ts';
 import {
   SIGN_CLEANUP_CRON,
   SIGN_EXPIRE_SWEEP_CRON,
@@ -907,6 +908,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const notes = deps.runtime.installed('notes');
   const sign = deps.runtime.installed('sign');
   const ads = deps.runtime.installed('ads');
+  const hr = deps.runtime.installed('hr');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
   const dropCron = async (queue: string) => {
@@ -1096,7 +1098,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // time with a gap. Without a mailer (tests, an embedder) queued mail stays queued.
   const mail = deps.mail;
   if (mail) {
-    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, store: deps.store, publicUrl: deps.appUrl ?? deps.publicUrl ?? '', workerDb: deps.workerDb };
+    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, store: deps.store, ...(deps.channels?.broker ? { broker: deps.channels.broker } : {}), publicUrl: deps.appUrl ?? deps.publicUrl ?? '', workerDb: deps.workerDb };
     const sendMail = async (job: { data: MailJob; retryCount: number } | undefined, gap: number) => {
       if (!job) return;
       const label = job.data.messageId.slice(0, 8);
@@ -1430,6 +1432,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // The member purges stay queued (they carry whose notes to purge) for when notes is installed again.
     await dropCron(QUEUES.notesTrash);
     await dropCron(QUEUES.notesRemind);
+  }
+
+  // HR (#4446 Stage 5D): sandboxed CV PDF/DOCX extraction through crove-extract in the worker process (T12).
+  if (hr) {
+    const hrCvConcurrency = extractWorkers(deps.extract);
+    await boss.work<HrCvExtractJob>(
+      QUEUES.hrCvExtract,
+      { batchSize: 1, localConcurrency: hrCvConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS, includeMetadata: true },
+      async ([job]) => {
+        if (!job) return;
+        await runHrCvExtractJob({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, job.data, job.retryCount ?? 0);
+      },
+    );
   }
 
   // eSign (#3323, ADR-0053): PDF inspect and PDF seal are module work gated on org_app_on(orgId, 'sign'); expiry and
@@ -2124,10 +2139,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   await boss.work<AgentDispatchJob & { type: string }>(QUEUES.notify, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
     // The wake-up of an AI app for the minutes of an org-visible meeting (#3803): stored and handed to the wake queue here, by the worker (a module cannot build the signed body).
+    // Without a credential key QUEUES.mcpWake is not worked, so skip storing deliveries or enqueuing unworked wake jobs (#4354).
     if (job.data.type === MINUTES_PUBLISHED_EVENT) {
-      if (!deps.runtime.installed('meetings')) return;
+      if (!deps.runtime.installed('meetings') || !wakeBroker || wakeBroker.id === 'none') return;
       const done = await wakeMinutesPublished({ runtime: deps.runtime, send: sendWake }, { orgId: job.data.orgId, eventId: job.data.eventId });
       if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours)' : ''}`);
+      return;
+    }
+    if (job.data.type === ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT) {
+      if (!deps.runtime.installed('projects')) return;
+      const done = await dispatchRoadmapAnnouncementNotifications({ workerDb: deps.workerDb, runtime: deps.runtime, broker: deps.channels?.broker }, { orgId: job.data.orgId, eventId: job.data.eventId });
+      if (done.queued > 0 || done.skipped > 0) console.log(`[projects-roadmap-notify] ${job.data.eventId.slice(0, 8)} queued ${done.queued}, skipped ${done.skipped}`);
       return;
     }
     const notify = NOTIFY_COMMANDS.get(job.data.type);
@@ -3094,6 +3116,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (notes && row.type === 'notes.attachment.extract_queued') {
                 await queueNoteAttachmentExtract(boss, row);
               }
+              if (hr && row.type === 'hr.recruiting.cv_extract_queued') {
+                const cvJob: HrCvExtractJob = {
+                  orgId: row.org_id,
+                  jobId: String(row.payload.jobId),
+                  storageKey: String(row.payload.storageKey),
+                  kind: row.payload.kind === 'docx_text' ? 'docx_text' : 'pdf_text',
+                  sha256: String(row.payload.sha256),
+                  sizeBytes: Number(row.payload.sizeBytes),
+                };
+                await boss.send(QUEUES.hrCvExtract, cvJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.hrCvExtract, cvJob.jobId),
+                  retryLimit: HR_CV_RETRY_LIMIT,
+                });
+              }
+              if (hr && row.type === 'kernel.org.apps_changed' && row.payload.module === 'hr' && row.payload.enabled === true) {
+                const pendingCv = await deps.runtime
+                  .query<Array<Omit<HrCvExtractJob, 'orgId'>>>(
+                    'hr.recruiting.cv_extract.pending',
+                    {},
+                    { actor: { type: 'system', component: 'hr.cv_extract' }, orgId: row.org_id },
+                  )
+                  .catch(() => []);
+                for (const item of pendingCv) {
+                  await boss.send(
+                    QUEUES.hrCvExtract,
+                    { orgId: row.org_id, ...item } satisfies HrCvExtractJob,
+                    {
+                      singletonKey: jobKey(row.org_id, QUEUES.hrCvExtract, item.jobId),
+                      retryLimit: HR_CV_RETRY_LIMIT,
+                    },
+                  );
+                }
+              }
               if (sign && row.type === 'sign.envelope.inspect_queued') {
                 await enqueueSignInspect(boss, row.org_id, String(row.payload.envelopeId));
               }
@@ -3433,7 +3488,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
               }
               // The minutes of an org-visible meeting were published (#3803): one notify job per event, which stores the wake-ups for the company grants that stand.
-              if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings')) {
+              // Match QUEUES.mcpWake and QUEUES.mcpWakeSweep: when no credential key is configured, skip relaying minutes wakes so deliveries are not stored or queued past the 24h window (#4354).
+              if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings') && wakeBroker && wakeBroker.id !== 'none') {
+                await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
+                  singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
+                  retryLimit: NOTIFY_RETRY_LIMIT,
+                  retryDelay: 20,
+                  retryBackoff: true,
+                });
+              }
+              if (row.type === ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT && deps.runtime.installed('projects')) {
                 await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
                   singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
                   retryLimit: NOTIFY_RETRY_LIMIT,

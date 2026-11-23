@@ -7,15 +7,18 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import {
   HR_CANDIDATE_PAGE_MAX,
+  HR_CANDIDATE_SOURCES,
   HR_CANDIDATE_STAGES,
   HR_CANDIDATE_TRANSITION_STAGES,
   HR_CONTRACT_TYPES,
   HR_PAY_FUNCTIONS,
   HR_REGIONS,
   vietnamToday,
+  type HrCandidateSource,
   type HrCandidateStage,
   type HrCandidateView,
   type HrContractType,
+  type HrCvExtractDraft,
   type HrDepartmentView,
   type HrInterviewerOption,
   type HrOpeningView,
@@ -34,7 +37,10 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Textarea } from '@ludy/ui/components/textarea';
+import { CvIntakePanel, EngageInvitePanel, FunnelAnalyticsSection } from '../components/hr-recruiting-stage5d.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
+
+export { CvIntakePanel, EngageInvitePanel, FunnelAnalyticsSection };
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -333,27 +339,40 @@ export function OpeningForm({
 
 export function CandidateForm({
   candidate,
+  cvDraft,
   openings,
   defaultOpeningId,
   onClose,
 }: {
   candidate?: HrCandidateView;
+  cvDraft?: HrCvExtractDraft;
   openings: readonly HrOpeningView[];
   defaultOpeningId?: string;
   onClose: () => void;
 }) {
   const t = useTranslations('hrRecruiting');
   const openOptions = openings.filter((o) => o.status === 'open' || o.id === candidate?.openingId);
-  const [openingId, setOpeningId] = useState(candidate?.openingId ?? defaultOpeningId ?? '');
-  const [displayName, setDisplayName] = useState(candidate?.displayName ?? '');
-  const [email, setEmail] = useState(candidate?.email ?? '');
-  const [phone, setPhone] = useState(candidate?.phone ?? '');
-  const [yearsExperience, setYearsExperience] = useState(candidate?.yearsExperience !== null && candidate?.yearsExperience !== undefined ? String(candidate.yearsExperience) : '');
-  const [skillsText, setSkillsText] = useState(candidate ? candidate.matchedSkills.join(', ') : '');
+  const [openingId, setOpeningId] = useState(
+    candidate ? (candidate.openingId ?? '') : cvDraft ? (cvDraft.openingId ?? '') : (defaultOpeningId ?? ''),
+  );
+  const [source, setSource] = useState<HrCandidateSource>(candidate?.source ?? cvDraft?.suggestedSource ?? 'direct');
+  const [displayName, setDisplayName] = useState(candidate?.displayName ?? cvDraft?.displayName ?? '');
+  const [email, setEmail] = useState(candidate?.email ?? cvDraft?.email ?? '');
+  const [phone, setPhone] = useState(candidate?.phone ?? cvDraft?.phone ?? '');
+  const [yearsExperience, setYearsExperience] = useState(
+    candidate?.yearsExperience !== null && candidate?.yearsExperience !== undefined
+      ? String(candidate.yearsExperience)
+      : cvDraft?.yearsExperience !== null && cvDraft?.yearsExperience !== undefined
+        ? String(cvDraft.yearsExperience)
+        : '',
+  );
+  const [skillsText, setSkillsText] = useState(
+    candidate ? candidate.matchedSkills.join(', ') : cvDraft ? cvDraft.matchedSkills.join(', ') : '',
+  );
   const [expectedWage, setExpectedWage] = useState(candidate?.expectedWage ?? '');
   const [agreedWage, setAgreedWage] = useState(candidate?.agreedWage ?? '');
   const [plannedStartOn, setPlannedStartOn] = useState(candidate?.plannedStartOn ?? '');
-  const [notes, setNotes] = useState(candidate?.notes ?? '');
+  const [notes, setNotes] = useState(candidate?.notes ?? cvDraft?.notes ?? '');
 
   const expectedOk = expectedWage.trim() === '' || WAGE_RE.test(expectedWage.trim());
   const agreedOk = agreedWage.trim() === '' || WAGE_RE.test(agreedWage.trim());
@@ -374,6 +393,7 @@ export function CandidateForm({
         return client.hr.recruiting.candidates.edit({
           candidateId: candidate.id,
           openingId: openingId || null,
+          source,
           displayName: displayName.trim(),
           email: cleanEmail,
           phone: cleanPhone,
@@ -387,6 +407,7 @@ export function CandidateForm({
       }
       return client.hr.recruiting.candidates.add({
         ...(openingId ? { openingId } : {}),
+        source,
         displayName: displayName.trim(),
         ...(cleanEmail ? { email: cleanEmail } : {}),
         ...(cleanPhone ? { phone: cleanPhone } : {}),
@@ -407,11 +428,20 @@ export function CandidateForm({
   return (
     <Card className="mb-6 block p-4" data-testid="hr-candidate-form">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-medium text-foreground">{candidate ? t('candidateForm.editTitle') : t('candidateForm.newTitle')}</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-medium text-foreground">{candidate ? t('candidateForm.editTitle') : t('candidateForm.newTitle')}</h2>
+          {cvDraft && <Badge variant="proposal">{t('cvExtract.proposalBadge')}</Badge>}
+        </div>
         <Button variant="ghost" size="sm" onClick={onClose}>
           {t('close')}
         </Button>
       </div>
+      {cvDraft && (
+        <div className="mb-3 rounded-md border border-dashed border-proposal/70 bg-proposal/10 p-3 text-xs" data-testid="hr-cv-proposal-banner">
+          <p className="font-medium text-foreground">{t('cvExtract.proposalNotice')}</p>
+          <p className="mt-1 text-muted-foreground">{t(`cvExtract.status.${cvDraft.ai.reason}`)}</p>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1">
           <Label htmlFor="hr-cand-name">{t('fields.candidateName')}</Label>
@@ -424,6 +454,22 @@ export function CandidateForm({
             {openOptions.map((o) => (
               <NativeSelectOption key={o.id} value={o.id}>
                 {o.title}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="hr-cand-source">{t('sourceLabel')}</Label>
+          <NativeSelect
+            id="hr-cand-source"
+            className="max-md:[&_select]:min-h-11"
+            value={source}
+            onChange={(e) => setSource(e.target.value as HrCandidateSource)}
+            data-testid="hr-candidate-source"
+          >
+            {HR_CANDIDATE_SOURCES.map((src) => (
+              <NativeSelectOption key={src} value={src}>
+                {t(`sources.${src}`)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -1191,9 +1237,19 @@ export function CandidateDetailPanel({
           <dd className="tabular-nums">{candidate.agreedWage ? f.money(candidate.agreedWage, 'VND') : '-'}</dd>
         </div>
         <div>
+          <dt className="text-xs text-subtle-foreground">{t('sourceLabel')}</dt>
+          <dd>{t(`sources.${candidate.source}`)}</dd>
+        </div>
+        <div>
           <dt className="text-xs text-subtle-foreground">{t('fields.plannedStartOn')}</dt>
           <dd>{candidate.plannedStartOn ? f.date(candidate.plannedStartOn) : '-'}</dd>
         </div>
+        {candidate.hiredAt && (
+          <div>
+            <dt className="text-xs text-subtle-foreground">{t('stages.hired')}</dt>
+            <dd>{f.dateTime(candidate.hiredAt)}</dd>
+          </div>
+        )}
         <div className="sm:col-span-2 lg:col-span-3">
           <dt className="text-xs text-subtle-foreground">{t('fields.matchedSkills')}</dt>
           <dd>{candidate.matchedSkills.length > 0 ? candidate.matchedSkills.join(', ') : '-'}</dd>
@@ -1248,6 +1304,7 @@ export function CandidateDetailPanel({
             candidateId={candidate.id}
             candidateVersion={`${candidate.updatedAt}:${candidate.openingId ?? ''}:${candidate.interviewEventId ?? ''}:${opening?.updatedAt ?? ''}:${candidate.openingTitle ?? ''}:${candidate.departmentName ?? ''}`}
           />
+          {candidate.stage !== 'hired' && candidate.stage !== 'rejected' && <EngageInvitePanel candidate={candidate} />}
           <HireCandidatePanel key={candidate.id} candidate={candidate} opening={opening} departments={departments} />
         </>
       )}
@@ -1292,11 +1349,16 @@ export function HrRecruitingPage() {
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const owner = org.data?.role === 'owner';
+  const isManager = org.data?.role === 'owner' || org.data?.role === 'admin';
   const [showClosed, setShowClosed] = useState(false);
   const [selectedOpeningId, setSelectedOpeningId] = useState('');
   const [selectedStage, setSelectedStage] = useState<HrCandidateStage | ''>('');
+  const [selectedSource, setSelectedSource] = useState<HrCandidateSource | ''>('');
   const [addingOpening, setAddingOpening] = useState(false);
   const [editingOpening, setEditingOpening] = useState<HrOpeningView | null>(null);
+  const [uploadingCv, setUploadingCv] = useState(false);
+  const [cvDraftProposal, setCvDraftProposal] = useState<HrCvExtractDraft | null>(null);
+  const [cvDraftSeq, setCvDraftSeq] = useState(0);
   const [addingCandidate, setAddingCandidate] = useState(false);
   const [openCandidateId, setOpenCandidateId] = useState<string | null>(null);
 
@@ -1308,12 +1370,13 @@ export function HrRecruitingPage() {
   });
   const openings = openingsQuery.data ?? [];
   const selectedOpening = selectedOpeningId ? openings.find((o) => o.id === selectedOpeningId) ?? null : null;
-  const knownTotalCandidates = selectedOpening && !selectedStage ? selectedOpening.candidateCount : undefined;
+  const knownTotalCandidates = selectedOpening && !selectedStage && !selectedSource ? selectedOpening.candidateCount : undefined;
   const candidatesQuery = useInfiniteQuery({
     ...orpc.hr.recruiting.candidates.list.infiniteOptions({
       input: (cursor: string | undefined) => ({
         ...(selectedOpeningId ? { openingId: selectedOpeningId } : {}),
         ...(selectedStage ? { stage: selectedStage } : {}),
+        ...(selectedSource ? { source: selectedSource } : {}),
         ...(cursor ? { cursor } : {}),
         limit: CANDIDATE_PAGE_SIZE,
       }),
@@ -1354,10 +1417,32 @@ export function HrRecruitingPage() {
         subtitle={t('subtitle')}
         actions={
           <>
-            <Button variant="outline" disabled={addingOpening} onClick={() => setAddingOpening(true)} data-testid="hr-opening-new">
+            <Button variant="outline" className="max-md:min-h-11" disabled={addingOpening} onClick={() => setAddingOpening(true)} data-testid="hr-opening-new">
               {t('newOpening')}
             </Button>
-            <Button disabled={addingCandidate} onClick={() => setAddingCandidate(true)} data-testid="hr-candidate-new">
+            <Button
+              variant="outline"
+              className="max-md:min-h-11"
+              disabled={uploadingCv}
+              onClick={() => {
+                setUploadingCv(true);
+                setAddingCandidate(false);
+                setCvDraftProposal(null);
+              }}
+              data-testid="hr-cv-upload-open"
+            >
+              {t('newCvUpload')}
+            </Button>
+            <Button
+              className="max-md:min-h-11"
+              disabled={addingCandidate}
+              onClick={() => {
+                setCvDraftProposal(null);
+                setUploadingCv(false);
+                setAddingCandidate(true);
+              }}
+              data-testid="hr-candidate-new"
+            >
               {t('newCandidate')}
             </Button>
           </>
@@ -1366,12 +1451,38 @@ export function HrRecruitingPage() {
 
       {addingOpening && <OpeningForm departments={departments} entities={entities} onClose={() => setAddingOpening(false)} />}
       {editingOpening && <OpeningForm key={editingOpening.id} opening={editingOpening} departments={departments} entities={entities} onClose={() => setEditingOpening(null)} />}
-      {addingCandidate && <CandidateForm openings={openings} {...(selectedOpeningId ? { defaultOpeningId: selectedOpeningId } : {})} onClose={() => setAddingCandidate(false)} />}
+      {uploadingCv && (
+        <CvIntakePanel
+          openings={openings}
+          {...(selectedOpeningId ? { defaultOpeningId: selectedOpeningId } : {})}
+          onDraftReady={(draft) => {
+            setUploadingCv(false);
+            setCvDraftProposal(draft);
+            setCvDraftSeq((n) => n + 1);
+            setAddingCandidate(true);
+          }}
+          onClose={() => setUploadingCv(false)}
+        />
+      )}
+      {addingCandidate && (
+        <CandidateForm
+          key={cvDraftProposal ? `cv:${cvDraftSeq}` : 'blank'}
+          openings={openings}
+          {...(cvDraftProposal ? { cvDraft: cvDraftProposal } : {})}
+          {...(selectedOpeningId ? { defaultOpeningId: selectedOpeningId } : {})}
+          onClose={() => {
+            setAddingCandidate(false);
+            setCvDraftProposal(null);
+          }}
+        />
+      )}
       {selectedCandidate && (
         <CandidateDetailPanel key={selectedCandidate.id} candidate={selectedCandidate} openings={openings} departments={departments} owner={owner} onClose={() => setOpenCandidateId(null)} />
       )}
 
-      <section className="mb-6">
+      {isManager && <FunnelAnalyticsSection {...(selectedOpeningId ? { selectedOpeningId } : {})} />}
+
+      <section className="mb-6 min-w-0">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-medium text-foreground">{t('openingsTitle')}</h2>
           <label className="flex items-center gap-1 text-xs text-subtle-foreground">
@@ -1431,11 +1542,11 @@ export function HrRecruitingPage() {
         )}
       </section>
 
-      <section>
+      <section className="min-w-0">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-medium text-foreground">{t('candidatesTitle')}</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <NativeSelect value={selectedOpeningId} onChange={(e) => setSelectedOpeningId(e.target.value)} aria-label={t('fields.opening')}>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <NativeSelect className="min-w-0 max-w-full" value={selectedOpeningId} onChange={(e) => setSelectedOpeningId(e.target.value)} aria-label={t('fields.opening')}>
               <NativeSelectOption value="">{t('allOpenings')}</NativeSelectOption>
               {openings.map((o) => (
                 <NativeSelectOption key={o.id} value={o.id}>
@@ -1443,7 +1554,7 @@ export function HrRecruitingPage() {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <NativeSelect value={selectedStage} onChange={(e) => setSelectedStage(e.target.value as HrCandidateStage | '')} aria-label={t('fields.stage')}>
+            <NativeSelect className="min-w-0 max-w-full" value={selectedStage} onChange={(e) => setSelectedStage(e.target.value as HrCandidateStage | '')} aria-label={t('fields.stage')}>
               <NativeSelectOption value="">{t('allStages')}</NativeSelectOption>
               {HR_CANDIDATE_STAGES.map((st) => (
                 <NativeSelectOption key={st} value={st}>
@@ -1451,21 +1562,38 @@ export function HrRecruitingPage() {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
+            <NativeSelect
+              className="min-w-0 max-w-full max-md:[&_select]:min-h-11"
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value as HrCandidateSource | '')}
+              aria-label={t('sourceLabel')}
+              data-testid="hr-filter-source"
+            >
+              <NativeSelectOption value="">{t('allSources')}</NativeSelectOption>
+              {HR_CANDIDATE_SOURCES.map((src) => (
+                <NativeSelectOption key={src} value={src}>
+                  {t(`sources.${src}`)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
           </div>
         </div>
         {candidatesQuery.isPending ? (
-          <TableSkeleton columns={6} />
+          <TableSkeleton columns={7} />
         ) : candidatesQuery.error && candidates.length === 0 ? (
           <ErrorText>{errorMessage(candidatesQuery.error)}</ErrorText>
         ) : candidates.length === 0 ? (
           <Empty title={t('emptyCandidates')} hint={t('emptyCandidatesHint')} />
         ) : (
           <>
-            <DataTable head={[t('fields.candidateName'), t('fields.opening'), t('fields.stage'), t('fields.expectedWage'), t('fields.interview'), '']} numeric={[3]}>
+            <DataTable head={[t('fields.candidateName'), t('fields.opening'), t('sourceLabel'), t('fields.stage'), t('fields.expectedWage'), t('fields.interview'), '']} numeric={[4]}>
               {candidates.map((c) => (
                 <TableRow key={c.id} data-testid="hr-candidate-row">
                   <TableCell className="px-4 py-3 font-medium">{c.displayName}</TableCell>
                   <TableCell className="px-4 py-3">{c.openingTitle ?? '-'}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    <Badge variant="outline">{t(`sources.${c.source}`)}</Badge>
+                  </TableCell>
                   <TableCell className="px-4 py-3">
                     <Badge variant="outline">{t(`stages.${c.stage}`)}</Badge>
                   </TableCell>

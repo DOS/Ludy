@@ -3,6 +3,7 @@ import {
   projectBoard,
   projectGet,
   projectList,
+  projectMemberCompletedTasks,
   projectTaskProjects,
   projectUnassignedTasks,
 } from './projects.ts';
@@ -153,12 +154,26 @@ export {
   type ProjectOrderRow,
 } from './columns.ts';
 import { roadmapCommands, roadmapQueries } from './roadmap.ts';
+import { roadmapMcpQueries } from './roadmap-mcp.ts';
 export {
   generateEphemeralOtpWrapKey,
   openEphemeralOtpCode,
   renderRoadmapOtpMail,
+  renderRoadmapShippedMail,
   sealEphemeralOtpCode,
 } from './roadmap-mail.ts';
+export {
+  type RoadmapAiChangelogSource,
+  type RoadmapAiDedupeSource,
+} from './roadmap.ts';
+export {
+  MCP_ROADMAP_DEFAULT,
+  MCP_ROADMAP_MAX,
+  zMcpRoadmapDemandSummaryInput,
+  zMcpRoadmapIdeasInput,
+  type McpRoadmapDemandSummaryInput,
+  type McpRoadmapIdeasInput,
+} from './roadmap-mcp.ts';
 export {
   roadmapBoardCreate,
   roadmapBoardGet,
@@ -178,6 +193,7 @@ export {
   projectGet,
   projectList,
   projectMemberAdd,
+  projectMemberCompletedTasks,
   projectMemberRemove,
   projectSetOwner,
   projectSetStatus,
@@ -222,6 +238,7 @@ export const projectsCommands = [
 
 export const projectsQueries = [
   projectList,
+  projectMemberCompletedTasks,
   projectGet,
   projectBoard,
   projectUnassignedTasks,
@@ -238,6 +255,7 @@ export const projectsQueries = [
   projectTimeline,
   ...projectCycleQueries,
   ...roadmapQueries,
+  ...roadmapMcpQueries,
   projectTimeSummary,
   projectTimeExportCsv,
 ];

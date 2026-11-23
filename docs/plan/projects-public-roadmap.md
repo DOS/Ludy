@@ -273,10 +273,10 @@ All model calls live in `packages/agent`, run inside `withAiScope` + `metered(..
   - Returns bounded, sanitized `roadmap_item` metadata (`id`, `boardSlug`, `stage`, `moderationStatus`, `category`, `publicTitle`, `publicSummary`, `voteCount`, `tainted`) and top categories/vote aggregates.
   - Excludes all `voter_email_hash`, `roadmap_otp`, `roadmap_subscriber` data, and private projects; lines pass through `plainLine(...)` and mark tainted submissions clearly as untrusted user feedback (`ADR-0018`, `ADR-0051`).
 
-### 6.3 Future omnichannel signal hook (explicitly deferred out of `M3`)
+### 6.3 Omnichannel signal wave (`M3 Paid pilot`, `#4492`)
 
-- In a future post-M3 slice (not scheduled in `#4398`, `#4399`, or `#4400`), Ludy can ingest candidate feature requests flagged from CRM deals, Inbox conversations, and Meeting Notes into `crove_projects.roadmap_item` (`source = 'internal'`, `moderation_status = 'pending'`) with optional internal customer account demand weighting.
-- Keeping that hook cleanly separated behind `roadmap_item` avoids cross-module coupling (`conformance.db.test.ts` `cross-module`) and keeps `#4399` and `#4400` lean for SMEs today.
+- `#4398`, `#4399`, and `#4400` kept omnichannel ingestion decoupled behind `roadmap_item` so the core Public Roadmap stayed lean and zero-coupling (`conformance.db.test.ts` `cross-module`).
+- Following the owner decision on `2026-11-23` ([#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7090763080)), omnichannel demand signals from CRM Deals, Inbox Conversations, and Meetings (`roadmap_signal`, per-currency `decimal.js` rollups, caller-scoped `ctxQueryFn`, and Vy `projects.roadmap_signal_match`) are now specified in [projects-signals-triage.md](projects-signals-triage.md) ([projects-signals-triage.vi.md](projects-signals-triage.vi.md)) and [ADR-0058](../adr/0058-projects-omnichannel-signals-and-triage.md), tracked across [#4490](https://github.com/DOS/Ludy/issues/4490) (Plan & ADR-0058), [#4491](https://github.com/DOS/Ludy/issues/4491) (Step 0 Invariants), and [#4492](https://github.com/DOS/Ludy/issues/4492) (Slice 1 Omnichannel Roadmap Signals).
 
 ## 7. Phased implementation plan (`#4398`, `#4399`, `#4400`)
 

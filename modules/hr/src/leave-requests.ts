@@ -32,10 +32,10 @@ import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 import { employerName, figuresOfLine, LINE_COLUMNS, type StoredLine } from './payroll-run.ts';
 
-const STAFF_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
+export const STAFF_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const LEAVE_REQUEST = hrManifest.tables.ludy_hr.leave_request;
 
-const selfNotLinked = () =>
+export const selfNotLinked = () =>
   new DomainError('HR_SELF_NOT_LINKED', 403, 'Tài khoản của bạn chưa được liên kết với hồ sơ nhân viên nào');
 const requestNotFound = () =>
   new DomainError('HR_LEAVE_REQUEST_NOT_FOUND', 404, 'Không tìm thấy đơn xin nghỉ phép này');
@@ -44,7 +44,7 @@ const invalidState = (message: string) =>
 const selfApprovalBlocked = () =>
   new DomainError('HR_LEAVE_REQUEST_SELF_APPROVAL', 403, 'Bạn không thể tự duyệt hoặc từ chối đơn xin nghỉ của chính mình');
 
-async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: string, userId: string) {
+export async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: string, userId: string) {
   return trx
     .selectFrom('ludy_hr.payroll_employee as e')
     .leftJoin('ludy_kernel.legal_entity as le', (j) => j.onRef('le.org_id', '=', 'e.org_id').onRef('le.id', '=', 'e.legal_entity_id'))
@@ -692,7 +692,7 @@ export const leaveRequestList = defineQuery({
   },
 });
 
-async function assertNotSelfApprover(
+export async function assertNotSelfApprover(
   trx: QueryContext['trx'],
   orgId: string,
   callerUserId: string,
@@ -719,7 +719,7 @@ async function assertNotSelfApprover(
   return true;
 }
 
-async function assertL1Authority(
+export async function assertL1Authority(
   trx: QueryContext['trx'],
   orgId: string,
   callerUserId: string,
@@ -744,11 +744,11 @@ async function assertL1Authority(
   }
   const dept = await trx
     .selectFrom('ludy_hr.department')
-    .select('manager_user_id')
+    .select(['manager_user_id', 'archived_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', req.department_id)
     .executeTakeFirst();
-  if (!dept || dept.manager_user_id !== callerUserId) {
+  if (!dept || dept.archived_at !== null || dept.manager_user_id !== callerUserId) {
     throw new DomainError('FORBIDDEN', 403, 'Chỉ quản lý phòng ban được phân công hoặc quản trị viên mới duyệt được đơn này');
   }
   return role;

@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MICROSOFT_CALENDAR_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion } from '@ludy/kernel-contract';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MICROSOFT_CALENDAR_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion, type MeetingDetail, type MeetingSummary } from '@ludy/kernel-contract';
 import { Runtime, defineQuery } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -553,6 +553,121 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       // The database refuses an unknown scope even when the application's own check is bypassed.
       const direct = await sqlAdmin("INSERT INTO ludy_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by) VALUES ($1, $2, $3, 'x', ARRAY['nope'], now(), now() + interval '1 day', $2)", [orgId, users.lan, createHash('sha256').update(randomBytes(32)).digest()]).then(() => 'inserted', (e: { code?: string }) => e.code);
       expect(direct).toBe('23514');
+    });
+  });
+
+  // #4477: upcoming 7-day agenda view and hasTranscript/platform badges on MeetingSummary & MeetingDetail.
+  describe('upcoming 7-day agenda and meeting summary enrichment (#4477)', () => {
+    it('lists active/upcoming events for today + next 7 Vietnam days, drops ended and >7d events, keeps {} today-only, and enforces member RLS', async () => {
+      const c = await connection('lan');
+      // Off by default -> disabled empty answer.
+      expect(await query<AgendaList>('lan', 'meetings.agenda.list', { range: 'upcoming' })).toEqual({ enabled: false, events: [] });
+      await on('lan', c);
+
+      const base = vnDayStartMs();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        // Fix clock at 12:00 noon Vietnam time on `base`.
+        vi.setSystemTime(new Date(base + 12 * 3_600_000));
+        const slot = (id: string, dayOffset: number, startHour: number, endHour: number) => ({
+          ...event(id, 0),
+          startsAt: new Date(base + (dayOffset * 24 + startHour) * 3_600_000).toISOString(),
+          endsAt: new Date(base + (dayOffset * 24 + endHour) * 3_600_000).toISOString(),
+        });
+        await sweep(
+          c,
+          [
+            {
+              ...slot('multiday', -2, 9, 10),
+              endsAt: new Date(base + 13 * 3_600_000).toISOString(),
+            },
+            slot('ended', 0, 9, 10),
+            slot('running', 0, 11.5, 12.5),
+            slot('later-today', 0, 15, 16),
+            slot('tomorrow', 1, 9, 10),
+            slot('day7', 7, 10, 11),
+            slot('day7-late', 7, 23 + 59 / 60, 24),
+            slot('day8', 8, 10, 11),
+          ],
+          -96 * 60,
+        );
+
+        const upcoming = await query<AgendaList>('lan', 'meetings.agenda.list', { range: 'upcoming' });
+        expect(upcoming.enabled).toBe(true);
+        expect(upcoming.events.map((e) => e.title)).toEqual(['Họp multiday', 'Họp running', 'Họp later-today', 'Họp tomorrow', 'Họp day7']);
+
+        // Default {} and range: 'today' remain today-only (includes ended today, excludes tomorrow/day7).
+        const todayDefault = await query<AgendaList>('lan', 'meetings.agenda.list');
+        expect(todayDefault.events.map((e) => e.title)).toEqual(['Họp ended', 'Họp running', 'Họp later-today']);
+        const todayExplicit = await query<AgendaList>('lan', 'meetings.agenda.list', { range: 'today' });
+        expect(todayExplicit.events.map((e) => e.title)).toEqual(['Họp ended', 'Họp running', 'Họp later-today']);
+
+        // Member-only RLS: other members, owner, and admin see nothing.
+        for (const who of ['nam', 'owner', 'admin']) {
+          expect(await query<AgendaList>(who, 'meetings.agenda.list', { range: 'upcoming' }), who).toEqual({ enabled: false, events: [] });
+        }
+        const namConn = await connection('nam');
+        await on('nam', namConn);
+        expect(await query<AgendaList>('nam', 'meetings.agenda.list', { range: 'upcoming' })).toEqual({ enabled: true, events: [] });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('exposes hasTranscript (respecting draft vs published RLS) and caller-scoped platform on meeting.list and meeting.get without leaking joinUrl', async () => {
+      const c = await connection('lan');
+      await on('lan', c);
+      await sweep(c, [
+        event('meet-ev', 30, 60, { joinUrl: 'https://meet.google.com/secret-meet-code' }),
+        event('zoom-ev', 120, 60, { joinUrl: 'https://us02web.zoom.us/j/987654321?pwd=xyz' }),
+        event('teams-ev', 210, 60, { joinUrl: 'https://teams.microsoft.com/l/meetup-join/secret-thread' }),
+      ]);
+      const rows = (await sqlAdmin<{ id: string; external_id: string }>('SELECT id, external_id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1', [c])).rows;
+      const agendaIdOf = (extId: string) => rows.find((r) => r.external_id === extId)?.id as string;
+
+      const mMeet = await meeting('lan', 30, 60);
+      const mZoom = await meeting('lan', 120, 60);
+      const mTeams = await meeting('lan', 210, 60);
+      await exec('lan', 'meetings.agenda.link', { agendaId: agendaIdOf('meet-ev'), meetingId: mMeet });
+      await exec('lan', 'meetings.agenda.link', { agendaId: agendaIdOf('zoom-ev'), meetingId: mZoom });
+      await exec('lan', 'meetings.agenda.link', { agendaId: agendaIdOf('teams-ev'), meetingId: mTeams });
+
+      // Add nam as reader of mMeet and store a draft transcript segment.
+      await exec('lan', 'meetings.reader.add', { meetingId: mMeet, userId: users.nam });
+      await exec('lan', 'meetings.transcript.draft_store', {
+        meetingId: mMeet,
+        segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: 'Lan', text: 'Xin chào mọi người' }],
+      });
+
+      // Recorder sees hasTranscript: true on draft and their own platform codes, never raw joinUrl.
+      const lanList = await query<MeetingSummary[]>('lan', 'meetings.meeting.list', {});
+      expect(lanList.find((m) => m.id === mMeet)).toMatchObject({ hasTranscript: true, platform: 'meet' });
+      expect(lanList.find((m) => m.id === mZoom)).toMatchObject({ hasTranscript: false, platform: 'zoom' });
+      expect(lanList.find((m) => m.id === mTeams)).toMatchObject({ hasTranscript: false, platform: 'teams' });
+      expect(JSON.stringify(lanList)).not.toMatch(/secret-meet-code|987654321|secret-thread/);
+
+      const lanDetail = await query<MeetingDetail>('lan', 'meetings.meeting.get', { meetingId: mMeet });
+      expect(lanDetail).toMatchObject({ hasTranscript: true, platform: 'meet' });
+      expect(JSON.stringify(lanDetail)).not.toContain('secret-meet-code');
+
+      // Reader (nam) sees hasTranscript: false while transcript is still draft, and platform: null (lan's calendar is private).
+      const namDraftList = await query<MeetingSummary[]>('nam', 'meetings.meeting.list', {});
+      expect(namDraftList.find((m) => m.id === mMeet)).toMatchObject({ hasTranscript: false, platform: null });
+      const namDraftDetail = await query<MeetingDetail>('nam', 'meetings.meeting.get', { meetingId: mMeet });
+      expect(namDraftDetail).toMatchObject({ hasTranscript: false, platform: null });
+
+      // Once transcript is published, reader sees hasTranscript: true (platform stays null).
+      await sqlAdmin("UPDATE ludy_meetings.transcript_segment SET stage = 'published' WHERE org_id = $1 AND meeting_id = $2", [orgId, mMeet]);
+      const namPubList = await query<MeetingSummary[]>('nam', 'meetings.meeting.list', {});
+      expect(namPubList.find((m) => m.id === mMeet)).toMatchObject({ hasTranscript: true, platform: null });
+      const namPubDetail = await query<MeetingDetail>('nam', 'meetings.meeting.get', { meetingId: mMeet });
+      expect(namPubDetail).toMatchObject({ hasTranscript: true, platform: null });
+
+      // Disabling read_events hides platform immediately on both list and get even before cache deletion.
+      await sqlAdmin('UPDATE ludy_kernel.calendar_connection SET read_events = false WHERE id = $1', [c]);
+      expect((await query<MeetingSummary[]>('lan', 'meetings.meeting.list', {})).find((m) => m.id === mMeet)?.platform).toBeNull();
+      expect((await query<MeetingDetail>('lan', 'meetings.meeting.get', { meetingId: mMeet })).platform).toBeNull();
+      await off('lan', c);
     });
   });
 });

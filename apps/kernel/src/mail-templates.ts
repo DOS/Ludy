@@ -8,9 +8,10 @@ import { FOLLOWUP_MAIL_TEMPLATE, followupMailTemplate } from './followup-mail.ts
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
 import { PAYMENT_REMINDER_TEMPLATE, paymentReminderMailTemplate } from './payment-reminder-mail.ts';
-import { ROADMAP_OTP_MAIL_TEMPLATE } from '@ludy/kernel-contract';
+import { ROADMAP_OTP_MAIL_TEMPLATE, ROADMAP_SHIPPED_MAIL_TEMPLATE } from '@ludy/kernel-contract';
 import { projectWeeklyStatusMailTemplate } from './project-weekly-status-mail.ts';
 import { roadmapOtpMailTemplate } from './roadmap-otp-mail.ts';
+import { roadmapShippedMailTemplate } from './roadmap-shipped-mail.ts';
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
@@ -53,6 +54,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   'projects.weekly_status': projectWeeklyStatusMailTemplate,
   // Public roadmap 6-digit email OTP verification (#4399, ADR-0057).
   [ROADMAP_OTP_MAIL_TEMPLATE]: roadmapOtpMailTemplate,
+  // Public roadmap opt-in shipped changelog alerts (#4400, ADR-0057).
+  [ROADMAP_SHIPPED_MAIL_TEMPLATE]: roadmapShippedMailTemplate,
   // Public eSign invitation, reminder, OTP verification, and completed document notifications (#3324).
   ...signMailTemplates,
 };

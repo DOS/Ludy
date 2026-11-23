@@ -16,6 +16,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'project_cycle',
       'project_member',
       'project_task',
+      'roadmap_announcement',
       'roadmap_board',
       'roadmap_item',
       'roadmap_otp',
@@ -37,6 +38,11 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.ludy_projects.roadmap_otp.claim_sha256).toBe('sensitive');
     expect(projectsManifest.tables.ludy_projects.roadmap_subscriber.email_sealed).toBe('contact');
     expect(projectsManifest.tables.ludy_projects.roadmap_subscriber.unsubscribe_token_sha256).toBe('sensitive');
+    expect(projectsManifest.tables.ludy_projects.roadmap_subscriber.unsub_token_sealed).toBe('sensitive');
+    expect(projectsManifest.tables.ludy_projects.roadmap_subscriber.mail_hash).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.roadmap_announcement.title).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_announcement.body_md).toBe('pii');
+    expect(projectsManifest.tables.ludy_projects.roadmap_announcement.status).toBe('internal');
     expect(projectsManifest.tables.ludy_projects.project.name).toBe('pii');
     expect(projectsManifest.tables.ludy_projects.project.description).toBe('pii');
     expect(projectsManifest.tables.ludy_projects.project.template_tasks).toBe('pii');
@@ -62,6 +68,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.ludy_projects.time_entry.billable).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
+      { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_item', table: 'roadmap_item', legalEntityScoped: false, audit: 'command' },
     ]);
@@ -69,7 +76,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 52 commands and 22 queries with consistent module prefix', () => {
+  it('exports all 57 commands and 29 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -92,6 +99,11 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.project.set_status',
       'projects.project.update',
       'projects.recurring.advance',
+      'projects.roadmap.announcement.create',
+      'projects.roadmap.announcement.delete',
+      'projects.roadmap.announcement.publish',
+      'projects.roadmap.announcement.send_notifications',
+      'projects.roadmap.announcement.update',
       'projects.roadmap.board.create',
       'projects.roadmap.board.update',
       'projects.roadmap.item.convert_to_task',
@@ -130,10 +142,17 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.cycle.metrics',
       'projects.cycle_summary_source',
       'projects.dependency.list',
+      'projects.mcp.roadmap_demand_summary',
+      'projects.mcp.roadmap_ideas',
+      'projects.member_completed_tasks',
       'projects.project.get',
       'projects.project.list',
+      'projects.roadmap.ai_changelog_source',
+      'projects.roadmap.ai_dedupe_source',
+      'projects.roadmap.announcement_from_event',
       'projects.roadmap.board.get',
       'projects.roadmap.boards',
+      'projects.roadmap.shipped_mail_data',
       'projects.task.recurrence.get',
       'projects.task_projects',
       'projects.tasks_from_note.seats',
@@ -149,7 +168,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.weekly_status_source',
     ]);
     for (const command of projectsCommands) {
-      if (command.name === 'projects.weekly_status.send_mail') {
+      if (command.name === 'projects.weekly_status.send_mail' || command.name === 'projects.roadmap.announcement.send_notifications') {
         expect(command.risk).toBe('R2');
         expect(command.sideEffect).toBe('external');
       } else if (command.name === 'projects.roadmap.board.create' || command.name === 'projects.roadmap.board.update') {

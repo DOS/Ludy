@@ -23,7 +23,9 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { normalizeLeaveDaysInput } from '../components/hr-leave-panel.tsx';
+import { HrSelfOnboardingCard, HrSelfOvertimeCard } from '../components/hr-onboarding-ot-card.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
@@ -328,6 +330,8 @@ export function HrSelfServicePage() {
             </dl>
           </Card>
 
+          <HrAttendanceCheckinCard enabled={linked} />
+
           <Card className="mb-6 block space-y-4 p-4" data-testid="hr-my-leave-card">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-medium text-foreground">{t('leave.title')}</h2>
@@ -614,6 +618,9 @@ export function HrSelfServicePage() {
           {openLineId && <SelfPayslipDetail key={openLineId} lineId={openLineId} onClose={() => setOpenLineId(null)} />}
         </Card>
       )}
+
+      {profile && linked && <HrSelfOnboardingCard />}
+      {profile && (linked || managesTeam) && <HrSelfOvertimeCard linked={linked} />}
     </>
   );
 }

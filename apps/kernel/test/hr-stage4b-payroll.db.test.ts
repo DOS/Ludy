@@ -232,14 +232,23 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
     expect(updatedPiece.figures?.gross).toBe('12500000.00');
     expect(updatedPiece.checks.find((c) => c.id === 'minimum_wage')?.ok).toBe(true);
 
-    // Partial line edit preserves previously entered workedHours (#4301):
+    // Partial line edit preserves previously entered workedHours (#4301) and omitted overtime (#4448):
     await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: hourlyLine.id, inputs: { bonus: '100000' } });
     const bonusSheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
     const hourlyAfterBonus = bonusSheet.lines.find((l) => l.employeeId === hourlyEmp.employeeId)!;
     expect(hourlyAfterBonus.inputs.workedHours).toBe('160');
     expect(hourlyAfterBonus.inputs.bonus).toBe('100000');
-    // 160h * 50,000 + 100,000 bonus = 8,100,000.00 (omitted overtime defaults to []).
-    expect(hourlyAfterBonus.figures?.gross).toBe('8100000.00');
+    // 160h * 50,000 + 750,000 OT + 100,000 bonus = 8,850,000.00 (omitted overtime stays preserved).
+    expect(hourlyAfterBonus.figures?.gross).toBe('8850000.00');
+
+    // Explicit overtime: [] clears overtime while preserving workedHours and bonus:
+    await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: hourlyLine.id, inputs: { bonus: '100000', overtime: [] } });
+    const clearedOtSheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const hourlyAfterClearOt = clearedOtSheet.lines.find((l) => l.employeeId === hourlyEmp.employeeId)!;
+    expect(hourlyAfterClearOt.inputs.workedHours).toBe('160');
+    expect(hourlyAfterClearOt.inputs.bonus).toBe('100000');
+    // 160h * 50,000 + 100,000 bonus = 8,100,000.00.
+    expect(hourlyAfterClearOt.figures?.gross).toBe('8100000.00');
 
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: hourlyEmp.employeeId });
     expect(detail.current?.payBasis).toBe('hourly');

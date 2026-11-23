@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Public 2-tab Roadmap & Ideas portal (/-/roadmap/:orgSlug/:boardSlug & ?embed=1, #4399, ADR-0057).
+// Public 3-tab Roadmap, Ideas & Changelog portal (/-/roadmap/:orgSlug/:boardSlug & ?embed=1, #4399, #4400, ADR-0057).
 import type { RoadmapBoardStage, RoadmapPublicItem, RoadmapPublicViewResult } from '@ludy/kernel-contract';
 import { ROADMAP_BOARD_STAGES } from '@ludy/kernel-contract';
 import { useParams } from '@tanstack/react-router';
@@ -16,6 +16,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { Textarea } from '@ludy/ui/components/textarea';
+import { SafeRoadmapMarkdown } from '../components/roadmap-markdown.tsx';
 import { Empty, ErrorText, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
 import {
   forgetRoadmapVoterToken,
@@ -28,11 +29,12 @@ import {
 import { useFormat } from '../i18n/provider.tsx';
 import { toast } from '../lib/toast.ts';
 
-type RoadmapTab = 'ideas' | 'roadmap';
+type RoadmapTab = 'ideas' | 'roadmap' | 'changelog';
 type IdeaSort = 'top' | 'newest';
 type PendingOtpAction =
   | { type: 'vote'; itemId: string }
-  | { type: 'open_submit' };
+  | { type: 'open_submit' }
+  | { type: 'subscribe'; notifyOnShip: boolean };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -40,6 +42,14 @@ function stageBadgeVariant(stage: RoadmapPublicItem['stage']): 'secondary' | 'ou
   if (stage === 'shipped') return 'default';
   if (stage === 'in_progress' || stage === 'planned') return 'secondary';
   return 'outline';
+}
+
+export function initialRoadmapTab(search?: string): RoadmapTab {
+  if (typeof window === 'undefined' && search === undefined) return 'ideas';
+  const raw = search ?? window.location.search;
+  const tab = new URLSearchParams(raw).get('tab');
+  if (tab === 'roadmap' || tab === 'changelog') return tab;
+  return 'ideas';
 }
 
 export function isRoadmapEmbedQuery(search?: string): boolean {
@@ -69,12 +79,13 @@ export function PublicRoadmapPage({
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
   const [unsubscribedBanner, setUnsubscribedBanner] = useState(false);
-  const [activeTab, setActiveTab] = useState<RoadmapTab>('ideas');
+  const [activeTab, setActiveTab] = useState<RoadmapTab>(() => initialRoadmapTab());
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<'all' | RoadmapPublicItem['stage']>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<IdeaSort>('top');
   const [notifyOnShip, setNotifyOnShip] = useState(false);
+  const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [votingItemId, setVotingItemId] = useState<string | null>(null);
 
   // OTP modal state
@@ -208,6 +219,61 @@ export function PublicRoadmapPage({
     [orgSlug, boardSlug, notifyOnShip, t],
   );
 
+  const performSubscribe = useCallback(
+    async (nextNotify: boolean) => {
+      if (!orgSlug || !boardSlug) return;
+      setSubscribeBusy(true);
+      try {
+        const res = await publicRoadmapApi.subscribe(orgSlug, boardSlug, nextNotify);
+        const updated = Boolean(res.notifyOnShip);
+        setNotifyOnShip(updated);
+        setView((prev) =>
+          prev
+            ? {
+                ...prev,
+                viewer: {
+                  ...prev.viewer,
+                  verified: true,
+                  notifyOnShip: updated,
+                },
+              }
+            : prev,
+        );
+        if (!updated) {
+          setUnsubscribedBanner(true);
+          toast(t('unsubscribedToast'), 'success');
+        } else {
+          setUnsubscribedBanner(false);
+          toast(t('subscribedToast'), 'success');
+        }
+      } catch (error) {
+        if (error instanceof PublicRoadmapError && error.code === 'ROADMAP_OTP_REQUIRED') {
+          forgetRoadmapVoterToken(orgSlug, boardSlug);
+          setPendingAction({ type: 'subscribe', notifyOnShip: nextNotify });
+          setOtpStep('email');
+          setOtpError(null);
+          setOtpOpen(true);
+          return;
+        }
+        toast(error instanceof Error ? error.message : t('voteFailed'), 'error');
+      } finally {
+        setSubscribeBusy(false);
+      }
+    },
+    [orgSlug, boardSlug, t],
+  );
+
+  const handleSubscribeClick = (nextNotify: boolean) => {
+    if (!isVerified) {
+      setPendingAction({ type: 'subscribe', notifyOnShip: nextNotify });
+      setOtpStep('email');
+      setOtpError(null);
+      setOtpOpen(true);
+      return;
+    }
+    void performSubscribe(nextNotify);
+  };
+
   const handleVoteClick = (itemId: string) => {
     if (!view?.board.allowVoting) return;
     if (!isVerified) {
@@ -289,6 +355,8 @@ export function PublicRoadmapPage({
       } else if (action?.type === 'open_submit') {
         setSubmitError(null);
         setSubmitOpen(true);
+      } else if (action?.type === 'subscribe') {
+        void performSubscribe(action.notifyOnShip);
       }
     } catch (error) {
       setOtpError(error instanceof Error ? error.message : t('otpVerifyFailed'));
@@ -445,12 +513,20 @@ export function PublicRoadmapPage({
 
             <Tabs value={activeTab} onValueChange={(next) => setActiveTab(next as RoadmapTab)} className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <TabsList aria-label={t('tabsLabel')}>
+                <TabsList aria-label={t('tabsLabel')} className="flex h-auto max-w-full flex-wrap">
                   <TabsTrigger value="ideas" className="min-h-11" data-testid="public-roadmap-tab-ideas">
                     {t('tabIdeas')}
                   </TabsTrigger>
                   <TabsTrigger value="roadmap" className="min-h-11" data-testid="public-roadmap-tab-roadmap">
                     {t('tabRoadmap')}
+                  </TabsTrigger>
+                  <TabsTrigger value="changelog" className="min-h-11" data-testid="public-roadmap-tab-changelog">
+                    {t('tabChangelog')}
+                    {view.announcements.length > 0 && (
+                      <Badge variant="secondary" className="ml-1.5 tabular-nums">
+                        {view.announcements.length}
+                      </Badge>
+                    )}
                   </TabsTrigger>
                 </TabsList>
 
@@ -610,7 +686,73 @@ export function PublicRoadmapPage({
                   })}
                 </div>
               </TabsContent>
+
+              <TabsContent value="changelog" className="space-y-4" data-testid="public-roadmap-changelog">
+                {view.announcements.length === 0 ? (
+                  <Empty title={t('emptyChangelog')} hint={t('emptyChangelogHint')} />
+                ) : (
+                  <ul className="space-y-4" data-testid="public-roadmap-announcements-list">
+                    {view.announcements.map((ann) => (
+                      <li key={ann.id}>
+                        <Card className="p-4 sm:p-5" data-testid={`public-roadmap-announcement-${ann.id}`}>
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <p className="text-xs text-muted-foreground">
+                                {t('changelogPublishedOn', { date: f.date(ann.publishedAt) })}
+                              </p>
+                              <h2 className="text-lg font-semibold leading-snug text-foreground">{ann.title}</h2>
+                            </div>
+                            {ann.linkedItems.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5" data-testid={`public-roadmap-ann-linked-${ann.id}`}>
+                                {ann.linkedItems.map((item) => (
+                                  <Badge key={item.id} variant="default" className="max-w-full whitespace-normal text-left">
+                                    {t('changelogShippedBadge')}: {item.publicTitle}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                            <SafeRoadmapMarkdown markdown={ann.bodyMd} />
+                          </div>
+                        </Card>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </TabsContent>
             </Tabs>
+
+            <Card className="p-4" data-testid="public-roadmap-subscribe-footer">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {view.viewer.verified && view.viewer.notifyOnShip
+                    ? t('footerSubscribedActive', { email: view.viewer.maskedEmail ?? '' })
+                    : t('footerNotifyPrompt')}
+                </p>
+                {view.viewer.verified && view.viewer.notifyOnShip ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 shrink-0"
+                    disabled={subscribeBusy}
+                    onClick={() => handleSubscribeClick(false)}
+                    data-testid="public-roadmap-footer-unsub-btn"
+                  >
+                    {t('footerUnsubscribeBtn')}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 shrink-0"
+                    disabled={subscribeBusy}
+                    onClick={() => handleSubscribeClick(true)}
+                    data-testid="public-roadmap-footer-sub-btn"
+                  >
+                    {t('footerSubscribeBtn')}
+                  </Button>
+                )}
+              </div>
+            </Card>
           </div>
         )}
       </main>

@@ -24,6 +24,18 @@ export type HrJobOpeningStatus = (typeof HR_JOB_OPENING_STATUSES)[number];
 export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
 export type HrCandidateStage = (typeof HR_CANDIDATE_STAGES)[number];
 
+export const HR_CANDIDATE_SOURCES = ['direct', 'zalo_oa', 'facebook', 'referral', 'job_board', 'other'] as const;
+export type HrCandidateSource = (typeof HR_CANDIDATE_SOURCES)[number];
+export const zHrCandidateSource = z.enum(HR_CANDIDATE_SOURCES);
+
+export const HR_ENGAGE_CHANNELS = ['zalo_oa', 'facebook'] as const;
+export type HrEngageChannel = (typeof HR_ENGAGE_CHANNELS)[number];
+
+export const HR_CV_EXTRACT_REASONS = ['ok', 'ai_off', 'budget', 'rate_limited', 'unavailable', 'refused'] as const;
+export type HrCvExtractReason = (typeof HR_CV_EXTRACT_REASONS)[number];
+
+export const HR_CV_MAX_BYTES = 10 * 1024 * 1024;
+
 export const HR_CANDIDATE_TRANSITION_STAGES = ['applied', 'screening', 'interview', 'offer', 'rejected'] as const;
 export type HrCandidateTransitionStage = (typeof HR_CANDIDATE_TRANSITION_STAGES)[number];
 
@@ -164,6 +176,7 @@ export const zHrCandidateView = z.strictObject({
   email: z.string().nullable(),
   phone: z.string().nullable(),
   stage: z.enum(HR_CANDIDATE_STAGES),
+  source: zHrCandidateSource,
   yearsExperience: z.number().int().nullable(),
   matchedSkills: z.array(z.string()),
   expectedWage: zHrWage.nullable(),
@@ -176,6 +189,7 @@ export const zHrCandidateView = z.strictObject({
   interviewerUserId: zId.nullable(),
   interviewerName: z.string().nullable(),
   hiredEmployeeId: zId.nullable(),
+  hiredAt: zInstant.nullable(),
   erasedAt: zInstant.nullable(),
   createdAt: zInstant,
   updatedAt: zInstant,
@@ -185,6 +199,7 @@ export type HrCandidateView = z.infer<typeof zHrCandidateView>;
 export const zHrCandidateList = z.strictObject({
   openingId: zId.optional(),
   stage: z.enum(HR_CANDIDATE_STAGES).optional(),
+  source: zHrCandidateSource.optional(),
   cursor: zId.optional(),
   limit: z.number().int().min(1).max(HR_CANDIDATE_PAGE_MAX).default(HR_CANDIDATE_PAGE_MAX),
 });
@@ -198,6 +213,7 @@ export type HrCandidateRef = z.infer<typeof zHrCandidateRef>;
 export const zHrCandidateAdd = z.strictObject({
   legalEntityId: zId.optional(),
   openingId: zId.nullable().optional(),
+  source: zHrCandidateSource.default('direct'),
   displayName: z.string().trim().min(1).max(200),
   email: zEmail.nullable().optional(),
   phone: z.string().trim().min(1).max(40).nullable().optional(),
@@ -213,6 +229,7 @@ export type HrCandidateAdd = z.input<typeof zHrCandidateAdd>;
 export const zHrCandidateEdit = z.strictObject({
   candidateId: zId,
   openingId: zId.nullable().optional(),
+  source: zHrCandidateSource.optional(),
   displayName: z.string().trim().min(1).max(200).optional(),
   email: zEmail.nullable().optional(),
   phone: z.string().trim().min(1).max(40).nullable().optional(),
@@ -336,6 +353,7 @@ export const zHrCandidateHireResult = z.strictObject({
   employmentId: zId,
   legalEntityId: zId,
   stage: z.literal('hired'),
+  hiredAt: zInstant,
 });
 export type HrCandidateHireResult = z.infer<typeof zHrCandidateHireResult>;
 
@@ -390,3 +408,173 @@ export const zHrRecruitingBriefResult = z.strictObject({
   }),
 });
 export type HrRecruitingBriefResult = z.infer<typeof zHrRecruitingBriefResult>;
+
+export const zHrRecruitingAnalyticsQuery = z.strictObject({
+  legalEntityId: zId.optional(),
+  openingId: zId.optional(),
+  from: zLocalDate.optional(),
+  to: zLocalDate.optional(),
+});
+export type HrRecruitingAnalyticsQuery = z.input<typeof zHrRecruitingAnalyticsQuery>;
+
+export const zHrRecruitingStageMetric = z.strictObject({
+  stage: z.enum(HR_CANDIDATE_STAGES),
+  count: z.number().int().nonnegative(),
+  sharePct: z.string(),
+});
+export type HrRecruitingStageMetric = z.infer<typeof zHrRecruitingStageMetric>;
+
+export const HR_RECRUITING_FUNNEL_STEPS = ['applied', 'screening', 'interview', 'offer'] as const;
+export const zHrRecruitingConversionStep = z.strictObject({
+  fromStage: z.enum(HR_RECRUITING_FUNNEL_STEPS),
+  toStage: z.enum(['screening', 'interview', 'offer', 'hired']),
+  enteredFromCount: z.number().int().nonnegative(),
+  reachedToCount: z.number().int().nonnegative(),
+  conversionPct: z.string().nullable(),
+  dropOffPct: z.string().nullable(),
+});
+export type HrRecruitingConversionStep = z.infer<typeof zHrRecruitingConversionStep>;
+
+export const zHrRecruitingSourceMetric = z.strictObject({
+  source: zHrCandidateSource,
+  totalCount: z.number().int().nonnegative(),
+  activeCount: z.number().int().nonnegative(),
+  hiredCount: z.number().int().nonnegative(),
+  rejectedCount: z.number().int().nonnegative(),
+  hireRatePct: z.string().nullable(),
+  avgTimeToHireDays: z.string().nullable(),
+});
+export type HrRecruitingSourceMetric = z.infer<typeof zHrRecruitingSourceMetric>;
+
+export const zHrRecruitingAnalyticsResult = z.strictObject({
+  legalEntityId: zId,
+  openingId: zId.nullable(),
+  from: zLocalDate.nullable(),
+  to: zLocalDate.nullable(),
+  llmCost: z.literal(0),
+  totalCandidates: z.number().int().nonnegative(),
+  activeCandidates: z.number().int().nonnegative(),
+  hiredCount: z.number().int().nonnegative(),
+  rejectedCount: z.number().int().nonnegative(),
+  erasedExcludedCount: z.number().int().nonnegative(),
+  timeToHire: z.strictObject({
+    sampleSize: z.number().int().nonnegative(),
+    avgDays: z.string().nullable(),
+    medianDays: z.string().nullable(),
+  }),
+  stages: z.array(zHrRecruitingStageMetric),
+  funnel: z.array(zHrRecruitingConversionStep),
+  sources: z.array(zHrRecruitingSourceMetric),
+});
+export type HrRecruitingAnalyticsResult = z.infer<typeof zHrRecruitingAnalyticsResult>;
+
+export const zHrCvExtractDraft = z.strictObject({
+  openingId: zId.nullable(),
+  openingTitle: z.string().nullable(),
+  displayName: z.string().nullable(),
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+  yearsExperience: z.number().int().min(0).max(80).nullable(),
+  matchedSkills: z.array(z.string()),
+  suggestedSource: zHrCandidateSource,
+  notes: z.string().nullable(),
+  sourceKind: z.enum(['pdf_text', 'docx_text']),
+  extractedChars: z.number().int().nonnegative(),
+  textPreview: z.string().nullable(),
+  ai: z.strictObject({
+    ok: z.boolean(),
+    reason: z.enum(HR_CV_EXTRACT_REASONS),
+  }),
+  tainted: z.literal(true),
+  draftKind: z.literal('proposal'),
+  autoSaved: z.literal(false),
+  autonomousDecision: z.literal('none'),
+});
+export type HrCvExtractDraft = z.infer<typeof zHrCvExtractDraft>;
+
+export const zHrCvExtractResponse = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('ready'), jobId: zId, draft: zHrCvExtractDraft }),
+  z.strictObject({ status: z.literal('pending'), jobId: zId }),
+]);
+export type HrCvExtractResponse = z.infer<typeof zHrCvExtractResponse>;
+
+export const zHrInviteDraftAsk = z.strictObject({
+  candidateId: zId,
+  channel: z.enum(HR_ENGAGE_CHANNELS),
+  interviewerUserId: zId.optional(),
+  from: zLocalDate.optional(),
+  to: zLocalDate.optional(),
+  durationMinutes: z.number().int().min(15).max(240).optional(),
+  lang: z.enum(['vi', 'en']).default('vi'),
+});
+export type HrInviteDraftAsk = z.input<typeof zHrInviteDraftAsk>;
+
+export const zHrInviteDraftResult = z.strictObject({
+  candidateId: zId,
+  channel: z.enum(HR_ENGAGE_CHANNELS),
+  candidateLabel: z.string(),
+  openingTitle: z.string(),
+  interviewerUserId: zId.nullable(),
+  interviewerName: z.string().nullable(),
+  slots: z.array(zHrInterviewSlot),
+  message: z.string(),
+  autoSent: z.literal(false),
+  humanSendRequired: z.literal(true),
+  ai: z.strictObject({
+    ok: z.boolean(),
+    reason: z.enum(['template']),
+  }),
+});
+export type HrInviteDraftResult = z.infer<typeof zHrInviteDraftResult>;
+
+export const zHrCvExtractAuthorizeInput = z.strictObject({
+  legalEntityId: zId.optional(),
+  openingId: zId.optional(),
+});
+export type HrCvExtractAuthorizeInput = z.infer<typeof zHrCvExtractAuthorizeInput>;
+
+export const zHrCvExtractContextInput = z.strictObject({
+  jobId: zId,
+  legalEntityId: zId.optional(),
+  openingId: zId.optional(),
+});
+export type HrCvExtractContextInput = z.infer<typeof zHrCvExtractContextInput>;
+
+export const zHrCvExtractRequestInput = z.strictObject({
+  jobId: zId,
+  kind: z.enum(['pdf_text', 'docx_text']),
+  legalEntityId: zId.optional(),
+  openingId: zId.optional(),
+  sizeBytes: z.number().int().min(1).max(HR_CV_MAX_BYTES),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  useAi: z.boolean().optional(),
+});
+export type HrCvExtractRequestInput = z.infer<typeof zHrCvExtractRequestInput>;
+
+export const zHrCvExtractAuditInput = z.strictObject({
+  jobId: zId,
+  openingId: zId.nullable().optional(),
+  kind: z.enum(['pdf_text', 'docx_text']),
+  extractedChars: z.number().int().nonnegative(),
+  aiReason: z.enum(HR_CV_EXTRACT_REASONS),
+});
+export type HrCvExtractAuditInput = z.infer<typeof zHrCvExtractAuditInput>;
+
+export const zHrCvExtractPendingInput = z.strictObject({});
+export type HrCvExtractPendingInput = z.infer<typeof zHrCvExtractPendingInput>;
+
+export const zHrCvExtractCompleteInput = z.strictObject({
+  jobId: zId,
+  ok: z.boolean(),
+  resultSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
+  errorCode: z.string().trim().min(1).max(64).optional(),
+});
+export type HrCvExtractCompleteInput = z.infer<typeof zHrCvExtractCompleteInput>;
+
+export const zHrInviteDraftAuditInput = z.strictObject({
+  candidateId: zId,
+  channel: z.enum(HR_ENGAGE_CHANNELS),
+  slotCount: z.number().int().min(0).max(50),
+});
+export type HrInviteDraftAuditInput = z.infer<typeof zHrInviteDraftAuditInput>;
+

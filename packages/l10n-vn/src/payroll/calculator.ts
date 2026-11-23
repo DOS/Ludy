@@ -292,7 +292,7 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
   // Days and proration.
   const standardDays = amount('standardWorkingDays', inputs.standardWorkingDays, true);
   if (!standardDays.greaterThan(0)) throw invalid('standardWorkingDays must be above zero');
-  const unpaidLeave = amount('unpaidLeaveDays', inputs.unpaidLeaveDays);
+  const unpaidLeave = decimal('unpaidLeaveDays', inputs.unpaidLeaveDays);
   const notEmployed = amount('daysNotEmployed', inputs.daysNotEmployed);
   const sicknessBhxh = decimal('sicknessBhxhDays', inputs.sicknessBhxhDays);
   const maternityBhxh = decimal('maternityBhxhDays', inputs.maternityBhxhDays);

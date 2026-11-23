@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Internal Projects Public Roadmap management panel (#4399, ADR-0057):
-// 1-click board activation, public/iframe embed snippet copy, and ideas moderation queue (Pending / Published / Merged / Archived + Convert to Task).
+// Internal Projects Public Roadmap management panel (#4399, #4400, ADR-0057):
+// 1-click board activation, iframe embed snippet, ideas moderation queue, Vy duplicate proposals (human confirms merge),
+// Changelog announcement composer (Vy draft + manual authoring, publish), and explicit confirmation for shipped email alerts.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
+  ROADMAP_ANNOUNCEMENT_BODY_MAX,
+  ROADMAP_ANNOUNCEMENT_TITLE_MAX,
   ROADMAP_ITEM_MODERATION_STATUSES,
   ROADMAP_ITEM_STAGES,
   normalizeRoadmapEmbedOrigin,
   type RoadmapAdminItem,
+  type RoadmapAnnouncement,
   type RoadmapBoardSummary,
+  type RoadmapDedupeResult,
+  type RoadmapDedupeSuggestion,
   type RoadmapItemModerationStatus,
   type RoadmapItemStage,
 } from '@ludy/kernel-contract';
 import { useState, type FormEvent } from 'react';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -23,9 +29,10 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Textarea } from '@ludy/ui/components/textarea';
+import { SafeRoadmapMarkdown } from './roadmap-markdown.tsx';
 import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 
 function refreshRoadmapQueries() {
@@ -71,6 +78,7 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
   const tPub = useTranslations('projects.roadmap.public');
   const tc = useTranslations('common');
   const f = useFormat();
+  const locale = useLocale() === 'en' ? 'en' : 'vi';
 
   const boardsQuery = useQuery(orpc.projects.roadmap.boards.queryOptions({ input: {} }));
   const boards = boardsQuery.data?.boards ?? [];
@@ -118,6 +126,19 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
   const [convertItem, setConvertItem] = useState<RoadmapAdminItem | null>(null);
   const [convertProjectId, setConvertProjectId] = useState('');
   const [convertSeatId, setConvertSeatId] = useState('');
+
+  // Vy duplicate suggestions (proposal only, human confirms merge)
+  const [dedupeResult, setDedupeResult] = useState<RoadmapDedupeResult | null>(null);
+  const [dismissedPairs, setDismissedPairs] = useState<string[]>([]);
+
+  // Changelog announcements composer & alert confirmation
+  const [annDialogOpen, setAnnDialogOpen] = useState(false);
+  const [editingAnn, setEditingAnn] = useState<RoadmapAnnouncement | null>(null);
+  const [annTitle, setAnnTitle] = useState('');
+  const [annBodyMd, setAnnBodyMd] = useState('');
+  const [annLinkedIds, setAnnLinkedIds] = useState<string[]>([]);
+  const [annVyMessage, setAnnVyMessage] = useState<string | null>(null);
+  const [confirmNotifyAnn, setConfirmNotifyAnn] = useState<RoadmapAnnouncement | null>(null);
 
   const boardCreate = useMutation(
     orpc.projects.roadmap.boardCreate.mutationOptions({
@@ -202,6 +223,108 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
     }),
   );
 
+  const vyAiStatusMessage = (state: string): string => {
+    if (state === 'budget') return t('vyStateBudget');
+    if (state === 'busy') return t('vyStateBusy');
+    if (state === 'refused' || state === 'failed') return t('vyStateRefused');
+    return t('vyStateOff');
+  };
+
+  const vyDedupe = useMutation({
+    mutationFn: (boardId: string) => client.projects.roadmap.dedupeSuggest({ boardId, language: locale }),
+    onSuccess: (res) => {
+      setDismissedPairs([]);
+      setDedupeResult(res);
+    },
+    onError: (error) => {
+      toast(errorMessage(error), 'error');
+    },
+  });
+
+  const vyChangelogDraft = useMutation({
+    mutationFn: (input: { boardId: string; itemIds: string[] }) =>
+      client.projects.roadmap.changelogDraft({ boardId: input.boardId, itemIds: input.itemIds, language: locale }),
+    onSuccess: (res) => {
+      if (res.ai === 'used' && res.title && res.bodyMd) {
+        setAnnTitle(res.title);
+        setAnnBodyMd(res.bodyMd);
+        setAnnVyMessage(null);
+      } else {
+        setAnnVyMessage(vyAiStatusMessage(res.ai));
+      }
+    },
+    onError: (error) => {
+      setAnnVyMessage(errorMessage(error));
+    },
+  });
+
+  const announcementCreate = useMutation(
+    orpc.projects.roadmap.announcementCreate.mutationOptions({
+      onSuccess: () => {
+        refreshRoadmapQueries();
+        setAnnDialogOpen(false);
+        toast(t('announcementCreated'), 'success');
+      },
+      onError: (error) => {
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
+
+  const announcementUpdate = useMutation(
+    orpc.projects.roadmap.announcementUpdate.mutationOptions({
+      onSuccess: () => {
+        refreshRoadmapQueries();
+        setAnnDialogOpen(false);
+        toast(t('announcementUpdated'), 'success');
+      },
+      onError: (error) => {
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
+
+  const announcementPublish = useMutation(
+    orpc.projects.roadmap.announcementPublish.mutationOptions({
+      onSuccess: () => {
+        refreshRoadmapQueries();
+        toast(t('announcementPublished'), 'success');
+      },
+      onError: (error) => {
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
+
+  const announcementDelete = useMutation(
+    orpc.projects.roadmap.announcementDelete.mutationOptions({
+      onSuccess: () => {
+        refreshRoadmapQueries();
+        toast(t('announcementDeleted'), 'success');
+      },
+      onError: (error) => {
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
+
+  const announcementSendNotifications = useMutation(
+    orpc.projects.roadmap.announcementSendNotifications.mutationOptions({
+      onSuccess: (res) => {
+        refreshRoadmapQueries();
+        setConfirmNotifyAnn(null);
+        if (res.queuedDispatch) {
+          toast(t('announcementAlertsQueued', { count: String(res.eligibleCount) }), 'success');
+        } else {
+          toast(t('announcementAlertsNone'), 'success');
+        }
+      },
+      onError: (error) => {
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
+
   if (boardsQuery.isPending) {
     return <ListSkeleton rows={4} />;
   }
@@ -211,8 +334,44 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
 
   const activeBoard: RoadmapBoardSummary | null = detailQuery.data?.board ?? boards.find((b) => b.id === effectiveBoardId) ?? null;
   const items = detailQuery.data?.items ?? [];
+  const announcements = detailQuery.data?.announcements ?? [];
+  const activeSubscriberCount = detailQuery.data?.activeSubscriberCount ?? 0;
+  const shippedPublishedItems = items.filter((it) => it.moderationStatus === 'published' && it.stage === 'shipped');
+  const itemsById = new Map(items.map((it) => [it.id, it]));
+  const visibleDedupeSuggestions: RoadmapDedupeSuggestion[] = (dedupeResult?.suggestions ?? []).filter((s) => {
+    const pairKey = `${s.sourceItemId}:${s.targetItemId}`;
+    if (dismissedPairs.includes(pairKey)) return false;
+    const src = itemsById.get(s.sourceItemId);
+    const tgt = itemsById.get(s.targetItemId);
+    return src && tgt && src.moderationStatus !== 'merged' && tgt.moderationStatus === 'published';
+  });
   const filteredItems = modFilter === 'all' ? items : items.filter((it) => it.moderationStatus === modFilter);
   const mergeTargets = items.filter((it) => it.id !== mergeItem?.id && it.moderationStatus !== 'merged' && it.moderationStatus !== 'archived');
+
+  const openNewAnnouncementDialog = () => {
+    setEditingAnn(null);
+    setAnnTitle('');
+    setAnnBodyMd('');
+    setAnnLinkedIds(shippedPublishedItems.slice(0, 5).map((i) => i.id));
+    setAnnVyMessage(null);
+    setAnnDialogOpen(true);
+  };
+
+  const openEditAnnouncementDialog = (ann: RoadmapAnnouncement) => {
+    setEditingAnn(ann);
+    setAnnTitle(ann.title);
+    setAnnBodyMd(ann.bodyMd);
+    setAnnLinkedIds(ann.linkedItemIds);
+    setAnnVyMessage(null);
+    setAnnDialogOpen(true);
+  };
+
+  const toggleLinkedShippedItem = (itemId: string, checked: boolean) => {
+    setAnnLinkedIds((prev) => {
+      if (checked) return prev.includes(itemId) ? prev : [...prev, itemId];
+      return prev.filter((id) => id !== itemId);
+    });
+  };
 
   const openSettingsForBoard = (board: RoadmapBoardSummary) => {
     setEditTitle(board.title);
@@ -386,6 +545,18 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                   {canWrite && (
                     <Button
                       type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={vyDedupe.isPending || items.length < 2}
+                      onClick={() => vyDedupe.mutate(activeBoard.id)}
+                      data-testid="roadmap-admin-vy-dedupe-btn"
+                    >
+                      {vyDedupe.isPending ? t('vyDedupeBusy') : t('vyDedupeBtn')}
+                    </Button>
+                  )}
+                  {canWrite && (
+                    <Button
+                      type="button"
                       className="min-h-11"
                       onClick={() => setNewItemOpen(true)}
                       data-testid="roadmap-admin-new-item-btn"
@@ -397,6 +568,77 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
               </CardHeader>
 
               <CardContent className="space-y-4">
+                {dedupeResult && (
+                  <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3" data-testid="roadmap-admin-vy-dedupe-box">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">{t('vyProposalBadge')}</Badge>
+                        <h3 className="text-sm font-semibold text-foreground">{t('vyDedupeTitle')}</h3>
+                      </div>
+                    </div>
+                    {dedupeResult.ai !== 'used' && dedupeResult.ai !== 'empty' ? (
+                      <Alert>
+                        <AlertDescription>{vyAiStatusMessage(dedupeResult.ai)}</AlertDescription>
+                      </Alert>
+                    ) : visibleDedupeSuggestions.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">{t('vyDedupeEmpty')}</p>
+                    ) : (
+                      <ul className="space-y-2.5">
+                        {visibleDedupeSuggestions.map((s) => {
+                          const src = itemsById.get(s.sourceItemId);
+                          const tgt = itemsById.get(s.targetItemId);
+                          if (!src || !tgt) return null;
+                          const pairKey = `${s.sourceItemId}:${s.targetItemId}`;
+                          return (
+                            <li
+                              key={pairKey}
+                              className="flex flex-col gap-3 rounded-md border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between"
+                              data-testid={`roadmap-vy-dedupe-${s.sourceItemId}`}
+                            >
+                              <div className="min-w-0 space-y-1">
+                                <div className="flex flex-wrap items-center gap-2 text-sm">
+                                  <Badge variant="secondary">{t('vyProposalBadge')}</Badge>
+                                  <span className="font-medium text-foreground">{src.publicTitle}</span>
+                                  <span className="text-muted-foreground">-&gt;</span>
+                                  <span className="font-semibold text-foreground">{tgt.publicTitle}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground">{s.reason}</p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="min-h-11"
+                                  onClick={() => setDismissedPairs((prev) => [...prev, pairKey])}
+                                >
+                                  {t('vyDismissProposalBtn')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="min-h-11"
+                                  disabled={itemMerge.isPending}
+                                  onClick={() =>
+                                    itemMerge.mutate({
+                                      sourceItemId: s.sourceItemId,
+                                      targetItemId: s.targetItemId,
+                                      idempotencyKey: crypto.randomUUID(),
+                                    })
+                                  }
+                                  data-testid={`roadmap-vy-confirm-merge-${s.sourceItemId}`}
+                                >
+                                  {t('vyConfirmMergeBtn')}
+                                </Button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center gap-2">
                   {(['all', ...ROADMAP_ITEM_MODERATION_STATUSES] as const).map((status) => (
                     <Button
@@ -550,6 +792,135 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                                   }
                                 >
                                   {t('syncStageBtn')}
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {activeBoard && (
+            <Card data-testid="roadmap-admin-changelog-card">
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <CardTitle>{t('changelogHeading')}</CardTitle>
+                  <CardDescription>{t('changelogSubtitle')}</CardDescription>
+                </div>
+                {canWrite && (
+                  <Button
+                    type="button"
+                    className="min-h-11 shrink-0"
+                    onClick={openNewAnnouncementDialog}
+                    data-testid="roadmap-admin-new-announcement-btn"
+                  >
+                    {t('newAnnouncementBtn')}
+                  </Button>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {detailQuery.isPending ? (
+                  <ListSkeleton rows={2} />
+                ) : announcements.length === 0 ? (
+                  <Empty title={t('emptyAnnouncements')} hint={t('emptyAnnouncementsHint')} />
+                ) : (
+                  <ul className="space-y-3" data-testid="roadmap-admin-announcements-list">
+                    {announcements.map((ann) => (
+                      <li
+                        key={ann.id}
+                        className="rounded-lg border border-border bg-background p-4 space-y-3"
+                        data-testid={`roadmap-admin-ann-${ann.id}`}
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold text-foreground">{ann.title}</span>
+                              <Badge variant={ann.status === 'published' ? 'default' : 'secondary'}>
+                                {ann.status === 'published' ? t('announcementPublishedBadge') : t('announcementDraftBadge')}
+                              </Badge>
+                              {ann.notificationsSentAt && (
+                                <Badge variant="outline">{t('announcementNotifiedBadge')}</Badge>
+                              )}
+                            </div>
+                            {ann.publishedAt && (
+                              <p className="text-xs text-muted-foreground">{f.date(ann.publishedAt)}</p>
+                            )}
+                            {ann.linkedItems.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {ann.linkedItems.map((li) => (
+                                  <Badge key={li.id} variant="outline">
+                                    {li.publicTitle}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                            <SafeRoadmapMarkdown markdown={ann.bodyMd} />
+                          </div>
+                          {(ann.status === 'draft' && (canWrite || canManageBoard) || (ann.status === 'published' && canManageBoard)) && (
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              {ann.status === 'draft' && canWrite && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="min-h-11"
+                                  onClick={() => openEditAnnouncementDialog(ann)}
+                                  data-testid={`roadmap-admin-edit-ann-${ann.id}`}
+                                >
+                                  {t('editAnnouncementBtn')}
+                                </Button>
+                              )}
+                              {ann.status === 'draft' && canManageBoard && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="min-h-11"
+                                  disabled={announcementPublish.isPending}
+                                  onClick={() =>
+                                    announcementPublish.mutate({
+                                      announcementId: ann.id,
+                                      idempotencyKey: crypto.randomUUID(),
+                                    })
+                                  }
+                                  data-testid={`roadmap-admin-publish-ann-${ann.id}`}
+                                >
+                                  {t('announcementPublishBtn')}
+                                </Button>
+                              )}
+                              {ann.status === 'draft' && canWrite && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="min-h-11"
+                                  disabled={announcementDelete.isPending}
+                                  onClick={() =>
+                                    announcementDelete.mutate({
+                                      announcementId: ann.id,
+                                      idempotencyKey: crypto.randomUUID(),
+                                    })
+                                  }
+                                  data-testid={`roadmap-admin-delete-ann-${ann.id}`}
+                                >
+                                  {t('announcementDeleteDraftBtn')}
+                                </Button>
+                              )}
+                              {ann.status === 'published' && canManageBoard && !ann.notificationsSentAt && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  className="min-h-11"
+                                  disabled={!activeBoard.enabled || activeSubscriberCount === 0 || announcementSendNotifications.isPending}
+                                  onClick={() => setConfirmNotifyAnn(ann)}
+                                  data-testid={`roadmap-admin-notify-ann-${ann.id}`}
+                                >
+                                  {t('announcementSendAlertsBtn', { count: String(activeSubscriberCount) })}
                                 </Button>
                               )}
                             </div>
@@ -852,6 +1223,159 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={annDialogOpen} onOpenChange={setAnnDialogOpen}>
+        <DialogContent closeLabel={tc('close')} className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingAnn ? t('editAnnouncementBtn') : t('newAnnouncementBtn')}</DialogTitle>
+            <DialogDescription>{t('changelogSubtitle')}</DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!activeBoard) return;
+              if (editingAnn) {
+                announcementUpdate.mutate({
+                  announcementId: editingAnn.id,
+                  title: annTitle.trim(),
+                  bodyMd: annBodyMd.trim(),
+                  linkedItemIds: annLinkedIds,
+                  idempotencyKey: crypto.randomUUID(),
+                });
+                return;
+              }
+              announcementCreate.mutate({
+                boardId: activeBoard.id,
+                title: annTitle.trim(),
+                bodyMd: annBodyMd.trim(),
+                linkedItemIds: annLinkedIds,
+                idempotencyKey: crypto.randomUUID(),
+              });
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label>{t('announcementShippedItemsLabel')}</Label>
+              {shippedPublishedItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t('announcementNoShippedItems')}</p>
+              ) : (
+                <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-border p-2.5">
+                  {shippedPublishedItems.map((item) => (
+                    <label key={item.id} className="flex min-h-11 cursor-pointer items-center gap-2.5 text-sm">
+                      <Checkbox
+                        checked={annLinkedIds.includes(item.id)}
+                        onCheckedChange={(c) => toggleLinkedShippedItem(item.id, c === true)}
+                      />
+                      <span className="text-foreground">{item.publicTitle}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {activeBoard && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={vyChangelogDraft.isPending || annLinkedIds.length === 0}
+                    onClick={() => vyChangelogDraft.mutate({ boardId: activeBoard.id, itemIds: annLinkedIds })}
+                    data-testid="roadmap-admin-vy-draft-changelog-btn"
+                  >
+                    {vyChangelogDraft.isPending ? t('vyDraftChangelogBusy') : t('vyDraftChangelogBtn')}
+                  </Button>
+                  {annLinkedIds.length === 0 && shippedPublishedItems.length > 0 && (
+                    <span className="text-xs text-muted-foreground">{t('vyDraftRequiresItems')}</span>
+                  )}
+                </div>
+              )}
+              {annVyMessage && (
+                <Alert>
+                  <AlertDescription>{annVyMessage}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="roadmap-ann-title">{t('announcementTitleLabel')}</Label>
+              <Input
+                id="roadmap-ann-title"
+                required
+                maxLength={ROADMAP_ANNOUNCEMENT_TITLE_MAX}
+                value={annTitle}
+                onChange={(e) => setAnnTitle(e.target.value)}
+                placeholder={t('announcementTitlePlaceholder')}
+                className="min-h-11"
+                data-testid="roadmap-admin-ann-title-input"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="roadmap-ann-body">{t('announcementBodyLabel')}</Label>
+              <Textarea
+                id="roadmap-ann-body"
+                required
+                rows={7}
+                maxLength={ROADMAP_ANNOUNCEMENT_BODY_MAX}
+                value={annBodyMd}
+                onChange={(e) => setAnnBodyMd(e.target.value)}
+                placeholder={t('announcementBodyPlaceholder')}
+                data-testid="roadmap-admin-ann-body-input"
+              />
+            </div>
+
+            {(announcementCreate.error || announcementUpdate.error) && (
+              <ErrorText>{errorMessage(announcementCreate.error ?? announcementUpdate.error)}</ErrorText>
+            )}
+            <DialogFooter>
+              <DialogClose render={<Button type="button" variant="outline" className="min-h-11" />}>{tPub('cancel')}</DialogClose>
+              <Button
+                type="submit"
+                disabled={announcementCreate.isPending || announcementUpdate.isPending}
+                className="min-h-11"
+                data-testid="roadmap-admin-ann-save-btn"
+              >
+                {t('announcementSaveDraftBtn')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmNotifyAnn !== null} onOpenChange={(next) => !next && setConfirmNotifyAnn(null)}>
+        <DialogContent closeLabel={tc('close')}>
+          <DialogHeader>
+            <DialogTitle>{t('announcementConfirmNotifyTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('announcementConfirmNotifyDesc', {
+                title: confirmNotifyAnn?.title ?? '',
+                count: String(activeSubscriberCount),
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          {announcementSendNotifications.error && (
+            <ErrorText>{errorMessage(announcementSendNotifications.error)}</ErrorText>
+          )}
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" className="min-h-11" />}>{tPub('cancel')}</DialogClose>
+            <Button
+              type="button"
+              disabled={!confirmNotifyAnn || announcementSendNotifications.isPending}
+              className="min-h-11"
+              onClick={() => {
+                if (!confirmNotifyAnn) return;
+                announcementSendNotifications.mutate({
+                  announcementId: confirmNotifyAnn.id,
+                  idempotencyKey: crypto.randomUUID(),
+                });
+              }}
+              data-testid="roadmap-admin-confirm-notify-submit"
+            >
+              {t('announcementConfirmNotifySubmit')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

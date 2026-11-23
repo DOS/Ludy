@@ -4,9 +4,13 @@ import { describe, expect, it } from 'vitest';
 import {
   FOLLOWUP_CLOSING_MAX,
   FOLLOWUP_GREETING_MAX,
+  FOLLOWUP_NOTE_MAX,
   FOLLOWUP_SUBJECT_MAX,
   followupAddress,
   followupClean,
+  followupHasBareLink,
+  followupHasPhoneOrLongDigits,
+  followupNoteProblem,
   followupSubjectProblem,
   followupWordsProblem,
   zFollowupSend,
@@ -60,13 +64,38 @@ describe('followupAddress', () => {
   });
 });
 
+describe('followupNoteProblem', () => {
+  it('accepts personal note prose with grounded numbers/dates and blocks links, emails and phone/8+-digit runs', () => {
+    expect(followupNoteProblem(followupClean('Chào Lan,\n\nCảm ơn bạn đã trao đổi về lộ trình 1 và 2 tháng.\n- Ngân sách 15.000.000 đồng\n- Ngày bắt đầu 2026-12-01\n\nHẹn gặp lại.', false))).toBeNull();
+    expect(followupNoteProblem(followupClean('  \u200b\u202e\u3164  ', false))).toBe('EMPTY');
+    expect(followupNoteProblem('x'.repeat(FOLLOWUP_NOTE_MAX + 1))).toBe('TOO_LONG');
+    for (const link of ['Xem https://evil.test', 'Vào www.evil.test', 'Liên hệ an@example.com', 'Vào 123.com', 'an [at] example [dot] com']) {
+      expect(followupNoteProblem(followupClean(link, false)), link).toBe('LINK');
+    }
+    for (const phone of ['Gọi 09012345', 'Số 090 123 4567', 'Số +84 90-123-4567', 'Mã 12345678', 'Số (028) 3822 1234', 'Số 090.123.4567']) {
+      expect(followupNoteProblem(followupClean(phone, false)), phone).toBe('CONTACT');
+    }
+    expect(followupHasBareLink('check 123.com now')).toBe(true);
+    expect(followupHasBareLink('check 123.com:8080 or 123.com?a=1')).toBe(true);
+    expect(followupHasBareLink('giá 15.000.000')).toBe(false);
+    expect(followupHasPhoneOrLongDigits('15.000.000 và ngày 2026-11-22')).toBe(false);
+    expect(followupHasPhoneOrLongDigits('Lương 15.000.000 - 20.000.000 đồng (2025 - 2026)')).toBe(false);
+    expect(followupHasPhoneOrLongDigits('Hạn 2026-11-22 - 2026-12-01, gói 15.000.000 (2026)')).toBe(false);
+    expect(followupHasPhoneOrLongDigits('Gọi 84 (028) 3822 1234')).toBe(true);
+  });
+});
+
 describe('the send and mail shapes', () => {
   it('holds a send to twenty recipients and refuses unknown fields', () => {
     const base = { meetingId: '00000000-0000-4000-8000-000000000001', factsKey: 'k', subject: 's', greeting: 'g', lead: 'l', closing: 'c', recipients: ['a@b.test'], confirmedOutsiders: [], confirmRepeat: false, fromVy: false, reviewed: false };
     expect(zFollowupSend.safeParse(base).success).toBe(true);
+    expect(zFollowupSend.safeParse({ ...base, style: 'personal_note', stage: 'draft', confirmUnpublished: true, body: 'Cảm ơn bạn.' }).success).toBe(true);
     expect(zFollowupSend.safeParse({ ...base, recipients: Array.from({ length: 21 }, (_, i) => `a${i}@b.test`) }).success).toBe(false);
     expect(zFollowupSend.safeParse({ ...base, recipients: [] }).success).toBe(false);
     expect(zFollowupSend.safeParse({ ...base, extra: 1 }).success).toBe(false);
     expect(zFollowupMail.safeParse({ lang: 'vi', org: 'o', batch: base.meetingId, greeting: 'g', lead: 'l', closing: 'c', facts: { summary: '', decisions: [], items: [] } }).success).toBe(true);
+    expect(zFollowupMail.safeParse({ style: 'personal_note', lang: 'vi', org: 'o', batch: base.meetingId, body: 'Cảm ơn bạn.' }).success).toBe(true);
+    expect(zFollowupMail.safeParse({ style: 'personal_note', lang: 'vi', org: 'o', batch: base.meetingId, body: '' }).success).toBe(false);
+    expect(zFollowupMail.safeParse({ style: 'personal_note', lang: 'vi', org: 'o', batch: base.meetingId, body: 'x', extra: 1 }).success).toBe(false);
   });
 });

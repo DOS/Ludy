@@ -206,4 +206,13 @@ export const publicRoadmapApi = {
     });
     return parseJsonOrThrow<RoadmapPublicVoteResult>(res);
   },
+
+  async subscribe(orgSlug: string, boardSlug: string, notifyOnShip: boolean): Promise<RoadmapPublicVoteResult> {
+    const res = await fetch(`${endpointBase(orgSlug, boardSlug)}/votes`, {
+      method: 'POST',
+      headers: buildPublicHeaders(orgSlug, boardSlug, true),
+      body: JSON.stringify({ action: 'subscribe', notifyOnShip }),
+    });
+    return parseJsonOrThrow<RoadmapPublicVoteResult>(res);
+  },
 };

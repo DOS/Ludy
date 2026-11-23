@@ -15,7 +15,7 @@
 import { zTranscriptCopy, zTranscriptResult, zTranscriptSegmentInput, type TranscriptSegmentInput } from '@ludy/kernel-contract';
 import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { TRANSCRIBE_FEATURE as FEATURE } from './transcribe-run.ts';
-import { ROLES, openMeeting, replaceDraft, userOf } from './transcript.ts';
+import { ROLES, lockMeeting, openMeeting, replaceDraft, userOf } from './transcript.ts';
 
 // The most a result row holds (member_vy_result.body, a database check). A transcript longer than this is a failed run, never a cut one.
 export const TRANSCRIPT_RESULT_MAX = 100_000;
@@ -69,6 +69,9 @@ export const transcriptCopyResult = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its transcription');
+    // Lock the meeting row first (the order replaceDraft, redact and personal_erase take), before reading the private result,
+    // so a concurrent redaction serializes and drops the private result before it can be read (#4415).
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The recorder's own result, read in the recorder's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
     const found = await ctx.query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null }>('kernel.member_vy.result.get', { runId: input.runId });
     if (found.status !== 'ok') throw new DomainError('TRANSCRIPT_RESULT_NOT_FOUND', 404, 'No transcription result for this meeting');

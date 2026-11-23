@@ -54,7 +54,7 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
-import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource } from '@ludy/mod-projects';
+import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -66,7 +66,20 @@ import { saveMeetingSummaryAsNote } from './notes-meeting-summary.ts';
 import { explainPayrollDiff, explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
-import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
+import {
+  generateAttendanceAnomaliesBrief,
+  type AttendanceAnomaliesAi,
+  type AttendanceAnomaliesPorts,
+} from './attendance-coworker-ai.ts';
+import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
+import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
+import type {
+  HrInviteDraftContext,
+  HrLaborCheckSnapshot,
+  HrProbationBriefSource,
+  HrRecruitingBriefSnapshot,
+} from '@ludy/mod-hr';
+import { buildEngageInviteDraftResult } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
 import { explainSurplus, stockSurplusAi } from './stock-surplus-ai.ts';
@@ -75,6 +88,7 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
+import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from './project-roadmap-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
@@ -86,7 +100,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
+import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -546,6 +560,16 @@ export function createRpcHandler(
     reader: conversationReader?.recruitingBrief ? { recruitingBrief: conversationReader.recruitingBrief.bind(conversationReader) } : null,
     budget: suggestionBudget(),
   };
+  const attendanceAnomaliesAi: AttendanceAnomaliesAi = {
+    reader: conversationReader?.attendanceAnomalies ? { attendanceAnomalies: conversationReader.attendanceAnomalies.bind(conversationReader) } : null,
+    budget: suggestionBudget(),
+  };
+  const probationAi = hrProbationAi(
+    conversationReader?.hrProbationSummary
+      ? { hrProbationSummary: conversationReader.hrProbationSummary.bind(conversationReader) }
+      : null,
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -598,6 +622,15 @@ export function createRpcHandler(
   );
   const projectCycleSummaryCoworker = projectCycleSummaryAi(
     conversationReader?.projectCycleSummary ? { projectCycleSummary: conversationReader.projectCycleSummary.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
+  const projectRoadmapCoworker = projectRoadmapAi(
+    conversationReader
+      ? {
+          ...(conversationReader.roadmapDedupe ? { roadmapDedupe: conversationReader.roadmapDedupe.bind(conversationReader) } : {}),
+          ...(conversationReader.roadmapChangelogDraft ? { roadmapChangelogDraft: conversationReader.roadmapChangelogDraft.bind(conversationReader) } : {}),
+        }
+      : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -776,6 +809,16 @@ export function createRpcHandler(
       runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang, includeNotes }, { actor, orgId }),
     record: (candidateId, aiReason, includeNotes) =>
       runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason, includeNotes }, { actor, orgId }),
+  });
+  const attendanceAnomaliesPorts = (orgId: string, actor: UserActor): AttendanceAnomaliesPorts => ({
+    read: (input) => runtime.query<HrAttendanceAnomaliesSnapshot>('hr.attendance.anomalies.read', input, { actor, orgId }),
+    record: (month, legalEntityId, aiReason) =>
+      runtime.execute('hr.attendance.anomalies.audit', { month, legalEntityId, aiReason }, { actor, orgId }),
+  });
+  const hrProbationPorts = (orgId: string, actor: UserActor): HrProbationPorts => ({
+    read: (input) => runtime.query<HrProbationBriefSource>('hr.probation.brief.read', input, { actor, orgId }),
+    isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.probation.ai_status', {}, { actor, orgId })).aiStopped,
+    record: (input) => runtime.execute('hr.probation.brief.audit', input, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1178,6 +1221,64 @@ export function createRpcHandler(
           list: os.hr.self.payslips.list.handler(hrQuery('hr.self.payslips.list')),
           get: os.hr.self.payslips.get.handler(hrQuery('hr.self.payslip.get')),
         },
+        attendance: {
+          checkIn: os.hr.self.attendance.checkIn.handler(hrCommand('hr.self.attendance.check_in')),
+          checkOut: os.hr.self.attendance.checkOut.handler(hrCommand('hr.self.attendance.check_out')),
+          list: os.hr.self.attendance.list.handler(hrQuery('hr.self.attendance.list')),
+        },
+        onboarding: {
+          get: os.hr.self.onboarding.get.handler(hrQuery('hr.self.onboarding.get')),
+          submit: os.hr.self.onboarding.submit.handler(hrCommand('hr.self.onboarding.submit')),
+          cancel: os.hr.self.onboarding.cancel.handler(hrCommand('hr.self.onboarding.cancel')),
+        },
+        overtime: {
+          list: os.hr.self.overtime.list.handler(hrQuery('hr.self.overtime.list')),
+          submit: os.hr.self.overtime.submit.handler(hrCommand('hr.self.overtime.submit')),
+          cancel: os.hr.self.overtime.cancel.handler(hrCommand('hr.self.overtime.cancel')),
+        },
+      },
+      attendance: {
+        list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
+        adjust: os.hr.attendance.adjust.handler(hrCommand('hr.attendance.adjust')),
+        qr: {
+          rotate: os.hr.attendance.qr.rotate.handler(hrCommand('hr.attendance.qr.rotate')),
+        },
+        anomaliesBrief: os.hr.attendance.anomaliesBrief.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            generateAttendanceAnomaliesBrief(attendanceAnomaliesAi, attendanceAnomaliesPorts(orgId, actor), orgId, actor.userId, input),
+          ),
+        ),
+        rollupToPayroll: os.hr.attendance.rollupToPayroll.handler(hrCommand('hr.attendance.rollup_to_payroll')),
+      },
+      onboarding: {
+        list: os.hr.onboarding.list.handler(hrQuery('hr.onboarding.list')),
+        approve: os.hr.onboarding.approve.handler(hrCommand('hr.onboarding.approve')),
+        reject: os.hr.onboarding.reject.handler(hrCommand('hr.onboarding.reject')),
+      },
+      overtimeRequests: {
+        list: os.hr.overtimeRequests.list.handler(hrQuery('hr.overtime.list')),
+        approveL1: os.hr.overtimeRequests.approveL1.handler(hrCommand('hr.overtime.approve_l1')),
+        approveFinal: os.hr.overtimeRequests.approveFinal.handler(hrCommand('hr.overtime.approve_final')),
+        reject: os.hr.overtimeRequests.reject.handler(hrCommand('hr.overtime.reject')),
+      },
+      probation: {
+        preview: os.hr.probation.preview.handler(hrQuery('hr.probation.preview')),
+        draftSummary: os.hr.probation.draftSummary.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            draftProbationSummary(
+              probationAi,
+              hrProbationPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        decide: os.hr.probation.decide.handler(hrCommand('hr.probation.decide')),
+        list: os.hr.probation.list.handler(hrQuery('hr.probation.list')),
       },
       leaveRequests: {
         list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),
@@ -1221,6 +1322,7 @@ export function createRpcHandler(
           thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
           applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
           syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
+          syncOvertime: os.hr.payroll.runs.syncOvertime.handler(hrCommand('hr.payroll.run.sync_overtime')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
         leave: {
@@ -1271,6 +1373,19 @@ export function createRpcHandler(
         interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
         brief: os.hr.recruiting.brief.handler(({ context, input }) =>
           inHr(context, (orgId, actor) => generateRecruitingBrief(recruitingBriefAi, recruitingBriefPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
+        analytics: os.hr.recruiting.analytics.handler(hrQuery('hr.recruiting.analytics')),
+        inviteDraft: os.hr.recruiting.inviteDraft.handler(({ context, input }) =>
+          inHr(context, async (orgId, actor) => {
+            const ctxData = await runtime.query<HrInviteDraftContext>('hr.recruiting.invite_draft.context', input, { actor, orgId });
+            const draft = buildEngageInviteDraftResult(ctxData);
+            await runtime.execute(
+              'hr.recruiting.invite_draft.audit',
+              { candidateId: draft.candidateId, channel: draft.channel, slotCount: draft.slots.length },
+              { actor, orgId },
+            );
+            return draft;
+          }),
         ),
       },
     },
@@ -1394,12 +1509,22 @@ export function createRpcHandler(
       ),
       followup: {
         draft: os.meetings.followup.draft.handler(meetingsQuery('meetings.followup.draft')),
-        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only, a published summary).
+        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only).
         wording: os.meetings.followup.wording.handler(({ context, input }) =>
           inMeetings(context, async (orgId, actor) => {
-            const draft = await runtime.query<FollowupDraft>('meetings.followup.draft', { meetingId: input.meetingId }, { actor, orgId });
+            const draft = await runtime.query<FollowupDraft>(
+              'meetings.followup.draft',
+              { meetingId: input.meetingId, ...(input.stage ? { stage: input.stage } : {}) },
+              { actor, orgId },
+            );
             return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
           }),
+        ),
+        noteStatus: os.meetings.followup.noteStatus.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => followupNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        note: os.meetings.followup.note.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingFollowupNote({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input)),
         ),
         // A send runs once per idempotency key: a double click or a retry gets the first answer, never a second mail.
         send: os.meetings.followup.send.handler(({ context, input }) => inMeetings(context, (orgId, actor) => {
@@ -4717,6 +4842,31 @@ export function createRpcHandler(
         itemMerge: os.projects.roadmap.itemMerge.handler(projectsCommand('projects.roadmap.item.merge')),
         itemConvertToTask: os.projects.roadmap.itemConvertToTask.handler(projectsCommand('projects.roadmap.item.convert_to_task')),
         itemSyncStage: os.projects.roadmap.itemSyncStage.handler(projectsCommand('projects.roadmap.item.sync_stage')),
+        announcementCreate: os.projects.roadmap.announcementCreate.handler(projectsCommand('projects.roadmap.announcement.create')),
+        announcementUpdate: os.projects.roadmap.announcementUpdate.handler(projectsCommand('projects.roadmap.announcement.update')),
+        announcementPublish: os.projects.roadmap.announcementPublish.handler(projectsCommand('projects.roadmap.announcement.publish')),
+        announcementDelete: os.projects.roadmap.announcementDelete.handler(projectsCommand('projects.roadmap.announcement.delete')),
+        announcementSendNotifications: os.projects.roadmap.announcementSendNotifications.handler(projectsCommand('projects.roadmap.announcement.send_notifications')),
+        dedupeSuggest: os.projects.roadmap.dedupeSuggest.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<RoadmapAiDedupeSource>(
+              'projects.roadmap.ai_dedupe_source',
+              { boardId: input.boardId },
+              { actor, orgId },
+            );
+            return prepareRoadmapDedupe(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
+        changelogDraft: os.projects.roadmap.changelogDraft.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<RoadmapAiChangelogSource>(
+              'projects.roadmap.ai_changelog_source',
+              { boardId: input.boardId, itemIds: input.itemIds },
+              { actor, orgId },
+            );
+            return prepareRoadmapChangelogDraft(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
       },
       startTime: os.projects.startTime.handler(projectsCommand('projects.time.start')),
       stopTime: os.projects.stopTime.handler(projectsCommand('projects.time.stop')),

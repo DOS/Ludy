@@ -679,7 +679,10 @@ export function MeetingResults({
             {...(signInfo.canEdit !== undefined ? { canEdit: signInfo.canEdit } : {})}
           />
         )}
-        {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
+        {isRecorder &&
+          (published !== null ||
+            items.some((i) => i.stage === 'published') ||
+            (!unread && (draft !== null || items.some((i) => i.stage === 'draft')))) && <MeetingFollowup meetingId={meetingId} />}
         {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
         {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
