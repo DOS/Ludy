@@ -3,7 +3,7 @@
 // reviewed/manual unpublished draft) clicks "Soạn thư cảm ơn", picks either the structured minutes layout or a personal note prose style (optionally drafted by their own
 // member-scoped Vy under meetings.followup_note), edits the text and the recipients, and sends it. Nothing is sent without that click.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   FOLLOWUP_CLOSING_MAX,
@@ -600,6 +600,15 @@ export function MeetingFollowup({ meetingId }: { meetingId: string }) {
   );
 }
 
+/**
+ * The stage to ask for after a failed load. A draft the recorder chose that was published (or removed) in another tab is gone: the default stage (published, else draft) is
+ * asked for again instead of leaving the dialog on "no draft" until it is reopened (#4479).
+ */
+export function stageAfterLoadError(choice: FollowupStage | undefined, error: unknown): FollowupStage | undefined {
+  const code = (error as { code?: string } | null)?.code;
+  return choice === 'draft' && code === 'NO_DRAFT_SUMMARY' ? undefined : choice;
+}
+
 function FollowupBody({ meetingId, onSent }: { meetingId: string; onSent: (queued: number) => void }) {
   const [stageChoice, setStageChoice] = useState<FollowupStage | undefined>(undefined);
   const draft = useQuery({
@@ -610,7 +619,13 @@ function FollowupBody({ meetingId, onSent }: { meetingId: string; onSent: (queue
     ...orpc.meetings.followup.noteStatus.queryOptions({ input: { meetingId } }),
     ...FRESH,
   });
+  const fallback = draft.error ? stageAfterLoadError(stageChoice, draft.error) : stageChoice;
+  useEffect(() => {
+    if (fallback !== stageChoice) setStageChoice(fallback);
+  }, [fallback, stageChoice]);
   if (draft.isPending) return null;
+  // The default stage is being asked for: nothing is shown for the one render before it loads, not the error of the stage that is gone.
+  if (draft.error && fallback !== stageChoice) return null;
   if (draft.error) return <ErrorText>{errorMessage(draft.error)}</ErrorText>;
   return (
     <FollowupForm
