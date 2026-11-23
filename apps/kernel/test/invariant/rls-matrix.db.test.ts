@@ -129,6 +129,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_kernel.push_subscription',
   'crove_meetings.capture_session',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
@@ -210,6 +211,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
   ['crove_kernel.notification', () => 'false'], // Per member.
   ['crove_kernel.notification_mute', () => 'false'], // Per member.
+  ['crove_kernel.push_subscription', () => 'false'], // A member's own browser push subscriptions (generic web push, #3736): endpoint and keys, read by that member, a user; an agent context reads none.
   ['crove_kernel.saved_view', () => 'false'], // Per member.
   ['crove_kernel.today_mail', () => 'false'], // Per member.
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
@@ -3016,6 +3018,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #676: per-org reminder and escalation settings for pending proposals (one row per org).
   'crove_kernel.proposal_policy': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), remind_after_days: 3, escalate_after_days: 7, updated_by: o.owner } }) },
+  // A member's browser push subscription on one device, for every kernel notification of a pushed kind (generic web push, #3736, step 1 of 2: its factory lands before the table, so PENDING_TABLES holds it until the migration of step 2).
+  // It is Social's `push_subscription` (#1238) moved to the kernel: under a restrictive policy like the mutes, each member sees and changes only their own. One endpoint per member, so every row gets its own; the keys are a P-256
+  // point and a 16-byte secret, base64url.
+  'crove_kernel.push_subscription': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        endpoint: `https://push.example.com/rls-${tag()}`,
+        p256dh: Buffer.concat([Buffer.from([4]), randomBytes(64)]).toString('base64url'),
+        auth: randomBytes(16).toString('base64url'),
+        user_agent: 'RLS matrix',
+      },
+    }),
+  },
   // #1280 part 3b: an org-wide record (a party) linked to a legal entity, so a member limited to that entity sees it.
   // The link names an entity of its own org, made in the same transaction.
   'crove_kernel.record_le': {
