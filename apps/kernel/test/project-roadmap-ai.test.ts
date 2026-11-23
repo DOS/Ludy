@@ -26,6 +26,7 @@ function sourceFixture(overrides: Partial<RoadmapAiSignalMatchSource> = {}): Roa
         title: 'Xuat hoa don XML hang loat',
         summary: null,
         stage: 'planned',
+        tainted: false,
       },
     ],
     inspectedCount: 1,

@@ -664,6 +664,7 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       'projects.roadmap.ai_signal_match_source',
       { boardId: board.id, sourceType: 'kernel.conversation', sourceId: convId },
     );
+    expect(aiSource.items[0]?.tainted).toBe(false);
 
     const offAi = projectRoadmapAi(null, new DraftBudget({ perUserPerMinute: 20, perOrgPerMinute: 60 }));
     const offRes = await prepareRoadmapSignalMatch(offAi, orgA.orgId, alice.userId, aiSource, 'vi');
@@ -1580,5 +1581,17 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       roadmapItemId: itemDel.id,
     });
     expect(listAlice.signals.find((s) => s.id === meetCreated.signal.id)?.quoteExcerpt).toBe(meetQuoteCanary);
+
+    // 4. Propagates item tainted flag to ai_signal_match_source so external submissions are never whitelisted
+    await sqlAdmin(`UPDATE ludy_projects.roadmap_item SET tainted = true WHERE org_id = $1 AND id = $2`, [
+      org3.orgId,
+      itemDel.id,
+    ]);
+    const taintedMatchSource = await query3<RoadmapAiSignalMatchSource>(
+      alice3.userId,
+      'projects.roadmap.ai_signal_match_source',
+      { boardId: board3.id, sourceType: 'meetings.meeting', sourceId: privMeeting },
+    );
+    expect(taintedMatchSource.items.find((i) => i.id === itemDel.id)?.tainted).toBe(true);
   }, 60_000);
 });

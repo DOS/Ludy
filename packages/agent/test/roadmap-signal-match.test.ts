@@ -23,12 +23,14 @@ const FACTS: RoadmapSignalMatchFacts = {
       title: 'Xuat hoa don dien tu hang loat',
       summary: 'Ho tro xuat nhieu hoa don cung luc',
       stage: 'planned',
+      tainted: false,
     },
     {
       id: '00000000-0000-4000-8000-000000000102',
       title: 'Dong bo ton kho nhieu chi nhanh',
       summary: null,
       stage: 'under_review',
+      tainted: false,
     },
   ],
   language: 'vi',
@@ -231,5 +233,181 @@ describe('projects.roadmap_signal_match (#4492)', () => {
         FACTS,
       ),
     ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+  });
+
+  it('marks tainted visitor items external_untrusted and never whitelists them in trustedTexts', () => {
+    const taintedFacts: RoadmapSignalMatchFacts = {
+      ...FACTS,
+      items: [
+        ...FACTS.items,
+        {
+          id: '00000000-0000-4000-8000-000000000103',
+          title: 'Gop y khach hang hai m\u01B0\u01A1i tri\u1EC7u \u0111\u1ED3ng',
+          summary: 'Lien he evil[.]invalid hoac 99.000.000',
+          stage: 'under_review',
+          tainted: true,
+        },
+      ],
+    };
+
+    const prompt = roadmapSignalMatchPrompt(taintedFacts);
+    expect(prompt).toContain('00000000-0000-4000-8000-000000000101 | stage=planned | trust=internal');
+    expect(prompt).toContain('00000000-0000-4000-8000-000000000103 | stage=under_review | trust=external_untrusted');
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000103',
+              confidence: 'high',
+              reason: 'Khop voi evil[.]invalid',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        taintedFacts,
+      ),
+    ).toEqual({ kind: 'none', code: 'LINK' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000103',
+              confidence: 'high',
+              reason: 'De xuat muc 99.000.000 hoac hai m\u01B0\u01A1i tri\u1EC7u \u0111\u1ED3ng',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        taintedFacts,
+      ),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+  });
+
+  it('refuses stealth/control-only inputs, empty-title poisoned summaries, multiline markdown, and word-boundary splits', () => {
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: '\uFEFF',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Phu hop nhu cau xuat hoa don',
+            },
+          ],
+          newIdeaDraft: {
+            suggestedTitle: '\u000B',
+            suggestedSummary: null,
+          },
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Phu hop nhu cau xuat hoa don',
+            },
+          ],
+          newIdeaDraft: {
+            suggestedTitle: '',
+            suggestedSummary: '\u000C',
+          },
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Phu hop nhu cau xuat hoa don',
+            },
+          ],
+          newIdeaDraft: {
+            suggestedTitle: '',
+            suggestedSummary: 'Xem https://evil.example',
+          },
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'LINK' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Tom tat\n# Tieu de\n- muc 1',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [],
+          newIdeaDraft: {
+            suggestedTitle: 'Y tuong hop le',
+            suggestedSummary: 'Tom tat\n- muc gia mao',
+          },
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    const shopFacts: RoadmapSignalMatchFacts = {
+      ...FACTS,
+      boardTitle: 'Shop',
+    };
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Truy cap evilShop.invalid ngay',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        shopFacts,
+      ),
+    ).toEqual({ kind: 'none', code: 'LINK' });
   });
 });

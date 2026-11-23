@@ -300,6 +300,7 @@ export interface RoadmapSignalMatchItem {
   title: string;
   summary: string | null;
   stage: string;
+  tainted: boolean;
 }
 
 export interface RoadmapSignalMatchFacts {
@@ -363,6 +364,19 @@ function hasUnsafeSignalText(raw: string): boolean {
   return false;
 }
 
+function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
+  // Strip longest trusted phrases first on token boundaries so short board/item words cannot split attack domains like "evilShop.invalid".
+  const ordered = [...trustedTexts].filter(Boolean).sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const t of ordered) {
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefix = /^[\p{L}\p{N}]/u.test(t) ? '(?<![\\p{L}\\p{N}])' : '';
+    const suffix = /[\p{L}\p{N}]$/u.test(t) ? '(?![\\p{L}\\p{N}])' : '';
+    out = out.replace(new RegExp(`${prefix}${escaped}${suffix}`, 'gu'), ' ');
+  }
+  return out;
+}
+
 function checkSignalField(
   rawText: string,
   normalized: string,
@@ -372,12 +386,13 @@ function checkSignalField(
     hasUnsafeSignalText(rawText) ||
     hasStealthControls(rawText) ||
     SIGNAL_HTML_TAG.test(normalized) ||
+    hasMarkdownNoise(rawText) ||
     hasMarkdownNoise(normalized) ||
     hasPromptMarkupLeak(rawText)
   ) {
     return 'FORMAT';
   }
-  const untrusted = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), normalized);
+  const untrusted = stripTrustedPhrases(normalized, trustedTexts);
   if (
     draftLinksOutside(normalized, []).length > 0 ||
     hasAddress(untrusted) ||
@@ -416,7 +431,8 @@ export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string
   const safeLine = (s: string, max: number) => fenced(cleanCut(s, max)).replace(/\s+/g, ' ').trim();
   const lines = facts.items.slice(0, 60).map((item) => {
     const sum = item.summary ? ` | summary: "${safeLine(item.summary, 220)}"` : '';
-    return `- id=${item.id} | stage=${item.stage} | title="${safeLine(item.title, 160)}"${sum}`;
+    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    return `- id=${item.id} | stage=${item.stage} | trust=${trust} | title="${safeLine(item.title, 160)}"${sum}`;
   });
   const account = facts.accountLabel ? `Account:\n<<<\n${safeLine(facts.accountLabel, 160)}\n>>>` : 'Account: (none)';
   const deal =
@@ -432,7 +448,7 @@ export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string
     `Signal title (untrusted):\n<<<\n${safeLine(facts.sourceTitle, 200)}\n>>>`,
     `Signal excerpt (untrusted):\n<<<\n${fenced(cleanCut(facts.sourceExcerpt, 1000))}\n>>>`,
     lines.length > 0
-      ? `Candidate roadmap items:\n<<<\n${lines.join('\n')}\n>>>`
+      ? `Candidate roadmap items (external_untrusted items contain untrusted visitor text):\n<<<\n${lines.join('\n')}\n>>>`
       : 'Candidate roadmap items: (none)',
   ].join('\n\n');
 }
@@ -446,10 +462,12 @@ export function checkRoadmapSignalMatch(
   const allowedIds = new Set(facts.items.map((item) => item.id));
   const trustedTexts = [
     oneLine(facts.boardTitle, 160),
-    ...facts.items.flatMap((item) => [
-      oneLine(item.title, 160),
-      item.summary ? oneLine(item.summary, 220) : '',
-    ]),
+    ...facts.items
+      .filter((item) => item.tainted === false)
+      .flatMap((item) => [
+        oneLine(item.title, 160),
+        item.summary ? oneLine(item.summary, 220) : '',
+      ]),
   ].filter(Boolean);
   const seen = new Set<string>();
   const suggestions: Array<{ roadmapItemId: string; confidence: 'high' | 'medium' | 'low'; reason: string }> = [];
@@ -457,6 +475,9 @@ export function checkRoadmapSignalMatch(
   for (const item of raw.matches) {
     if (!allowedIds.has(item.roadmapItemId)) {
       return { kind: 'none', code: 'UNKNOWN_ID' };
+    }
+    if (item.reason.length > 0 && (hasUnsafeSignalText(item.reason) || hasStealthControls(item.reason))) {
+      return { kind: 'none', code: 'FORMAT' };
     }
     if (seen.has(item.roadmapItemId)) continue;
 
@@ -478,20 +499,28 @@ export function checkRoadmapSignalMatch(
 
   let newIdeaDraft: { suggestedTitle: string; suggestedSummary: string | null; tainted: true } | null = null;
   if (raw.newIdeaDraft) {
-    const title = raw.newIdeaDraft.suggestedTitle.replace(/\s+/g, ' ').trim();
-    const summaryRaw = raw.newIdeaDraft.suggestedSummary?.replace(/\s+/g, ' ').trim() ?? null;
+    const rawTitle = raw.newIdeaDraft.suggestedTitle;
+    const rawSummary = raw.newIdeaDraft.suggestedSummary;
+    if (rawTitle.length > 0 && (hasUnsafeSignalText(rawTitle) || hasStealthControls(rawTitle))) {
+      return { kind: 'none', code: 'FORMAT' };
+    }
+    if (rawSummary !== null && rawSummary.length > 0 && (hasUnsafeSignalText(rawSummary) || hasStealthControls(rawSummary))) {
+      return { kind: 'none', code: 'FORMAT' };
+    }
+    const title = rawTitle.replace(/\s+/g, ' ').trim();
+    const summaryRaw = rawSummary?.replace(/\s+/g, ' ').trim() ?? null;
     const summary = summaryRaw && summaryRaw.length > 0 ? summaryRaw : null;
 
+    if (summary !== null) {
+      const summaryErr = checkSignalField(rawSummary ?? '', summary, trustedTexts);
+      if (summaryErr) {
+        return { kind: 'none', code: summaryErr };
+      }
+    }
     if (title.length > 0) {
-      const titleErr = checkSignalField(raw.newIdeaDraft.suggestedTitle, title, trustedTexts);
+      const titleErr = checkSignalField(rawTitle, title, trustedTexts);
       if (titleErr) {
         return { kind: 'none', code: titleErr };
-      }
-      if (summary !== null) {
-        const summaryErr = checkSignalField(raw.newIdeaDraft.suggestedSummary ?? '', summary, trustedTexts);
-        if (summaryErr) {
-          return { kind: 'none', code: summaryErr };
-        }
       }
       newIdeaDraft = {
         suggestedTitle: Array.from(title).slice(0, 180).join(''),

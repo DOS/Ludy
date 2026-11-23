@@ -1439,8 +1439,8 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     dealValue: null,
     dealCurrency: null,
     items: [
-      { id: 'item-1', title: 'Xuat Excel bao cao', summary: 'Ho tro xuat file xlsx', stage: 'planned' },
-      { id: 'item-2', title: 'Dong bo ton kho', summary: null, stage: 'under_review' },
+      { id: 'item-1', title: 'Xuat Excel bao cao', summary: 'Ho tro xuat file xlsx', stage: 'planned', tainted: false },
+      { id: 'item-2', title: 'Dong bo ton kho', summary: null, stage: 'under_review', tainted: false },
     ],
   };
   cases.push(

@@ -64,6 +64,7 @@ export interface RoadmapAiSignalMatchSource {
     title: string;
     summary: string | null;
     stage: RoadmapItemStage;
+    tainted: boolean;
   }>;
   inspectedCount: number;
   truncated: boolean;
@@ -821,7 +822,7 @@ export const roadmapAiSignalMatchSource = defineQuery({
 
     const rows = await ctx.trx
       .selectFrom('ludy_projects.roadmap_item')
-      .select(['id', 'public_title', 'public_summary', 'stage'])
+      .select(['id', 'public_title', 'public_summary', 'stage', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('board_id', '=', input.boardId)
       .where('merged_into_item_id', 'is', null)
@@ -853,6 +854,7 @@ export const roadmapAiSignalMatchSource = defineQuery({
         title: r.public_title,
         summary: r.public_summary,
         stage: r.stage as RoadmapItemStage,
+        tainted: Boolean(r.tainted),
       })),
       inspectedCount: sliced.length,
       truncated,
