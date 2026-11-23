@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { assignShards, dbTestFiles, DB_TEST_GLOBS, HEAVY_FILES, loadTimes, plan } from '../ci/db-shards.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const COUNT = 4;
+const COUNT = 8;
 
 type Shard = { files: string[]; seconds: number };
 
