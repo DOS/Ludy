@@ -96,6 +96,12 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
          FROM ludy_kernel.calendar_connection c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
       { slug, open: EVENT_TITLES.open },
     );
+    exec(
+      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, join_url)
+       SELECT c.org_id, c.id, c.user_id, 'a11y-upcoming', 'Họp sắp tới tuần này', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '1 day 10 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '1 day 11 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh', 'Asia/Ho_Chi_Minh', 'https://meet.google.com/a11y-upcoming-call'
+         FROM ludy_kernel.calendar_connection c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
+      { slug },
+    );
   });
 
   const screens: Screen[] = [
@@ -105,13 +111,46 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
       ready: (p) => ensureMorning(p, slug, false),
     },
     {
-      name: 'meetings list (Today view and weekly card)',
+      name: 'meetings list (Recorded table)',
       path: `/o/${slug}/meetings`,
       ready: async (p) => {
+        await expect(p.getByTestId('meetings-tabs')).toBeVisible();
+        await expect(p.getByTestId('meeting-row').first()).toBeVisible();
+      },
+    },
+    {
+      name: 'meetings list (Today tab)',
+      path: `/o/${slug}/meetings`,
+      ready: async (p) => {
+        await p.getByTestId('meetings-tab-today').click();
         await expect(p.getByTestId('meeting-agenda')).toBeVisible();
         await expect(p.getByTestId('meeting-agenda-event')).toHaveCount(2);
+      },
+    },
+    {
+      name: 'meetings list (Upcoming tab)',
+      path: `/o/${slug}/meetings`,
+      ready: async (p) => {
+        await p.getByTestId('meetings-tab-upcoming').click();
+        await expect(p.getByTestId('meeting-upcoming')).toBeVisible();
+        await expect(p.getByTestId('meeting-upcoming-event').first()).toBeVisible();
+      },
+    },
+    {
+      name: 'meetings list (Weekly digest tool)',
+      path: `/o/${slug}/meetings`,
+      ready: async (p) => {
+        await p.getByTestId('meetings-tool-digest').click();
         await expect(p.getByTestId('meeting-digest')).toBeVisible();
         await expect(p.getByTestId('digest-meeting').first()).toBeVisible();
+      },
+    },
+    {
+      name: 'meetings list (Settings drawer)',
+      path: `/o/${slug}/meetings`,
+      ready: async (p) => {
+        await p.getByTestId('meetings-settings-trigger').click();
+        await expect(p.getByTestId('meetings-settings-sheet')).toBeVisible();
       },
     },
   ];
@@ -185,6 +224,7 @@ test('names, descriptions and announcements: the morning switch, the Today rows 
 
   await test.step('the Today view: each row\'s link says which meeting it is for', async () => {
     await page.goto(`/o/${slug}/meetings`);
+    await page.getByTestId('meetings-tab-today').click();
     const rows = page.getByTestId('meeting-agenda-event');
     await expect(rows).toHaveCount(2);
     await expect(rows.filter({ hasText: EVENT_TITLES.open }).getByRole('link', { name: 'Ghi cuộc họp này' })).toHaveAccessibleDescription(EVENT_TITLES.open);
@@ -192,6 +232,8 @@ test('names, descriptions and announcements: the morning switch, the Today rows 
   });
 
   await test.step('the weekly card: its picker has a name, and changing the window says which one is shown', async () => {
+    await page.getByTestId('meetings-tab-recorded').click();
+    await page.getByTestId('meetings-tool-digest').click();
     const card = page.getByTestId('meeting-digest');
     const picker = card.getByRole('combobox', { name: 'Xem lại bao lâu' });
     await expect(picker).toBeVisible();

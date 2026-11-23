@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgendaEvent, BriefFacts } from '@ludy/kernel-contract';
+import { safeJoinUrl, type AgendaEvent, type BriefFacts } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -37,7 +37,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-const { TodayAgenda, AgendaAttach, joinService } = await import('../src/components/meeting-agenda.tsx');
+const { TodayAgenda, UpcomingAgenda, AgendaAttach, joinService } = await import('../src/components/meeting-agenda.tsx');
 
 const event = (over: Partial<AgendaEvent>): AgendaEvent => ({
   id: 'a1',
@@ -64,25 +64,38 @@ const reset = () => {
   modules.list = ['kernel', 'crm', 'meetings'];
 };
 
-describe('joinService', () => {
-  it('names the service by host and never anything else', () => {
+describe('joinService & safeJoinUrl', () => {
+  it('names the service by host and returns trimmed URL only for safe https hosts', () => {
     expect(joinService('https://meet.google.com/abc')).toBe('meet');
     expect(joinService('https://us02web.zoom.us/j/1')).toBe('zoom');
     expect(joinService('https://teams.microsoft.com/l/meetup-join/x')).toBe('teams');
     expect(joinService('https://evil.example/zoom.us')).toBeNull();
+    expect(joinService('http://meet.google.com/abc')).toBeNull();
+    expect(joinService('javascript:alert(1)')).toBeNull();
     expect(joinService('not a url')).toBeNull();
     expect(joinService(null)).toBeNull();
+
+    expect(safeJoinUrl('  https://meet.google.com/abc-defg-hij  ')).toBe('https://meet.google.com/abc-defg-hij');
+    expect(safeJoinUrl('http://meet.google.com/abc-defg-hij')).toBeNull();
+    expect(safeJoinUrl('javascript:alert(1)')).toBeNull();
+    expect(safeJoinUrl('https://evil.example/zoom.us')).toBeNull();
+    expect(safeJoinUrl(null)).toBeNull();
   });
 });
 
 describe('TodayAgenda', () => {
-  it('lists the events, links a recorded one to its meeting and an unrecorded one to the record screen with the title', () => {
+  it('lists the events, links a recorded one to its meeting, renders safe https Join link without exposing raw URL text, and links an unrecorded one to the record screen', () => {
     reset();
     client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({}), event({ id: 'a2', title: 'Chốt báo giá', meetingId: 'm9', joinUrl: null, invitees: 0 })]));
     const html = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
     expect(html.match(/data-testid="meeting-agenda-event"/g)).toHaveLength(2);
     expect(html).toContain('Họp với khách A');
     expect(html).toContain(en.meetings.agenda.service.meet);
+    expect(html).toContain('data-testid="meeting-agenda-join"');
+    expect(html).toContain('href="https://meet.google.com/abc-defg-hij"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain(`>${en.meetings.agenda.join}</a>`);
     expect(html).toContain('3 invited');
     expect(html.match(/data-testid="meeting-agenda-record"/g)).toHaveLength(1);
     expect(html).toContain('&quot;title&quot;:&quot;Họp với khách A&quot;');
@@ -90,8 +103,19 @@ describe('TodayAgenda', () => {
     expect(html).toContain(en.meetings.agenda.recorded);
     expect(html).toContain('&quot;id&quot;:&quot;m9&quot;');
     expect(html).toContain(en.meetings.agenda.private.replaceAll('"', '&quot;'));
-    // The address itself is never drawn, only the service it leads to.
-    expect(html).not.toContain('abc-defg-hij');
+    // Visible stripped text never draws the raw URL path.
+    const visibleText = html.replace(/<[^>]*>/g, ' ');
+    expect(visibleText).not.toContain('abc-defg-hij');
+
+    // Rejects http://, javascript:, and unrecognized hosts.
+    for (const unsafe of ['http://meet.google.com/abc-defg-hij', 'javascript:alert(1)', 'https://evil.example/zoom.us']) {
+      reset();
+      client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({ joinUrl: unsafe })]));
+      const badHtml = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
+      expect(badHtml).not.toContain('data-testid="meeting-agenda-join"');
+      expect(badHtml).not.toContain('javascript:');
+      expect(badHtml).not.toContain('evil.example');
+    }
   });
 
   it('names the event a row\'s link acts on: the same words "Record this meeting" and "Recorded" on every row say which row they are on (WCAG 2.4.6, 4.1.2; #4055)', () => {
@@ -181,6 +205,67 @@ describe('TodayAgenda', () => {
     client.current.setQueryData(['meetings', 'brief', 'status'], { enabled: true, reason: null, estimate: null });
     client.current.setQueryData(['ai', 'meter'], { aiOn: true, state: 'ok', percent: 10 });
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />)).match(/data-testid="brief-write"/g)).toHaveLength(2);
+  });
+});
+
+describe('UpcomingAgenda', () => {
+  it('renders 7-day upcoming events in a DataTable with safe Join links, Record/Recorded CTAs, and aria-describedby', () => {
+    reset();
+    client.current.setQueryData(['meetings', 'agenda', 'list'], {
+      enabled: true,
+      events: [
+        event({}),
+        event({
+          id: 'a2',
+          title: 'Họp Zoom ngày mai',
+          startsAt: '2026-11-15T02:00:00.000Z',
+          endsAt: '2026-11-15T03:00:00.000Z',
+          joinUrl: 'http://zoom.us/j/unsafe',
+          invitees: 0,
+          meetingId: 'm9',
+        }),
+      ],
+    });
+    const html = renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />));
+    expect(html).toContain('data-testid="meeting-upcoming"');
+    expect(html.match(/data-testid="meeting-upcoming-event"/g)).toHaveLength(2);
+    expect(html).toContain('Họp với khách A');
+    expect(html).toContain('Họp Zoom ngày mai');
+    expect(html.match(/data-testid="meeting-upcoming-join"/g)).toHaveLength(1);
+    expect(html).toContain('href="https://meet.google.com/abc-defg-hij"');
+    expect(html).toContain('aria-describedby="upcoming-event-a1"');
+    expect(html).toContain('aria-describedby="upcoming-event-a2"');
+    expect(html).toContain('data-testid="meeting-upcoming-record"');
+    expect(html).toContain('data-testid="meeting-upcoming-recorded"');
+    expect(html).not.toContain('http://zoom.us/j/unsafe');
+    const visibleText = html.replace(/<[^>]*>/g, ' ');
+    expect(visibleText).not.toContain('abc-defg-hij');
+  });
+
+  it('handles empty, disabled with providers, disabled without providers, loading, and module-off states', () => {
+    reset();
+    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: true, events: [] });
+    expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toContain('data-testid="meeting-upcoming-empty"');
+
+    reset();
+    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: false, events: [] });
+    client.current.setQueryData(['calendar', 'providers'], ['google_calendar']);
+    const offHtml = renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />));
+    expect(offHtml).toContain('data-testid="meeting-upcoming-off"');
+    expect(offHtml).toContain(en.meetings.agenda.offLink);
+
+    reset();
+    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: false, events: [] });
+    client.current.setQueryData(['calendar', 'providers'], []);
+    expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toBe('');
+
+    reset();
+    expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toBe('');
+
+    reset();
+    modules.list = ['kernel'];
+    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: true, events: [event({})] });
+    expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toBe('');
   });
 });
 

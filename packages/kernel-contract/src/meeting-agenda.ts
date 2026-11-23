@@ -8,11 +8,43 @@ import { zId } from './schemas.ts';
 // How far a recording's time may be from an event's for the event to be suggested (the plan says 15 minutes), and the most events a list shows.
 export const AGENDA_OVERLAP_MINUTES = 15;
 export const AGENDA_LIST_MAX = 50;
+export const AGENDA_UPCOMING_DAYS = 7;
 // The most events one replace carries (the adapter's own cut).
 export const AGENDA_REPLACE_MAX = 300;
 // What the extension's "Sắp họp" card may read (B2, #3166): at most this many events, starting within this many minutes (or running now).
 export const AGENDA_NEXT_MAX = 5;
 export const AGENDA_NEXT_MINUTES = 30;
+
+export const MEETING_PLATFORMS = ['meet', 'zoom', 'teams'] as const;
+export const zMeetingPlatform = z.enum(MEETING_PLATFORMS);
+export type MeetingPlatform = z.infer<typeof zMeetingPlatform>;
+
+/** Identifies the video call platform from an https join URL; refuses non-https or unrecognized hosts. */
+export function joinServiceFromUrl(url: string | null): MeetingPlatform | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') return null;
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'meet.google.com') return 'meet';
+  if (host === 'zoom.us' || (host.endsWith('.zoom.us') && host.length > '.zoom.us'.length && !host.startsWith('.'))) return 'zoom';
+  if (host === 'teams.microsoft.com' || host === 'teams.live.com') return 'teams';
+  return null;
+}
+
+/** Returns the trimmed join URL only when it is a safe https Meet, Zoom, or Teams address. */
+export function safeJoinUrl(url: string | null): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  return joinServiceFromUrl(trimmed) !== null ? trimmed : null;
+}
 
 // How far a meeting/recording interval may extend when matching against calendar events or existing Ludy meetings (B1 15-minute rule).
 export function meetingOverlapWindow(
@@ -50,9 +82,11 @@ export const zAgendaEvent = z.strictObject({
 });
 export type AgendaEvent = z.infer<typeof zAgendaEvent>;
 
-// The member's list of today's meetings. `enabled`: at least one of their connections reads its events (the switch is on and the grant carries the scope); without it the list is empty and the
+// The member's list of today's or upcoming meetings. `enabled`: at least one of their connections reads its events (the switch is on and the grant carries the scope); without it the list is empty and the
 // screen says how to turn it on.
-export const zAgendaListInput = z.strictObject({});
+export const zAgendaListInput = z.strictObject({
+  range: z.enum(['today', 'upcoming']).optional(),
+});
 export const zAgendaList = z.strictObject({ enabled: z.boolean(), events: z.array(zAgendaEvent).max(AGENDA_LIST_MAX) });
 export type AgendaList = z.infer<typeof zAgendaList>;
 

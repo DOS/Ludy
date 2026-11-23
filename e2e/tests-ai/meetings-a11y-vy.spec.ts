@@ -135,6 +135,7 @@ test('a window of the weekly card that fails to load keeps the card, its picker 
   const { slug, meetingId } = await prepare(page, 'meetings-a11y-vy-digest', 'Công ty Tuần Lỗi');
   publishOutcome(meetingId, ['Chốt lịch rà soát truy cập'], []);
   await page.goto(`/o/${slug}/meetings`);
+  await page.getByTestId('meetings-tool-digest').click();
   const card = page.getByTestId('meeting-digest');
   const picker = card.getByRole('combobox', { name: 'Xem lại bao lâu' });
   await expect(picker).toBeVisible();

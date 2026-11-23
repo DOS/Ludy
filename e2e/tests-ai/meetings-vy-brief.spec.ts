@@ -32,6 +32,7 @@ test('Vy briefs one event of the Today view on a click: nothing runs before it, 
 
   await test.step('the Today view lists the events with the facts of each brief, and opening it runs nothing', async () => {
     await page.goto(`/o/${slug}/meetings`);
+    await page.getByTestId('meetings-tab-today').click();
     await expect(page.getByTestId('meeting-agenda')).toBeVisible();
     await expect(page.getByTestId('meeting-agenda-event')).toHaveCount(3);
     const first = event('Giao ban đầu tuần');

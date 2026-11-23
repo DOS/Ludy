@@ -59,6 +59,7 @@ import {
 } from './retention.ts';
 import {
   auditValue,
+  joinServiceFromUrl,
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
   zMeetingExtensionStatus,
@@ -79,6 +80,7 @@ import {
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
+  type MeetingPlatform,
   type MeetingRecordingStoppedDone,
   type RecordingStopReason,
   type MeetingLanguage,
@@ -178,7 +180,14 @@ interface MeetingRow {
   updated_at: Date | string;
 }
 
-function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVideo: boolean): MeetingSummary {
+function toSummary(
+  r: MeetingRow,
+  readersCount: number,
+  hasAudio: boolean,
+  hasVideo: boolean,
+  hasTranscript: boolean,
+  platform: MeetingPlatform | null,
+): MeetingSummary {
   return {
     id: r.id,
     recorderUserId: r.recorder_user_id,
@@ -196,6 +205,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
     hasVideo,
+    hasTranscript,
+    platform,
     readersCount,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
@@ -665,8 +676,39 @@ export const meetingList = defineQuery({
       .execute();
     const videoSet = new Set(videos.map((v) => v.meeting_id));
 
+    // transcript_segment_read RESTRICTIVE RLS ensures recorders see drafts/published while readers only see published.
+    const transcriptMeetings = await ctx.trx
+      .selectFrom('crove_meetings.transcript_segment')
+      .select('meeting_id')
+      .distinct()
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', 'in', meetingIds)
+      .execute();
+    const transcriptSet = new Set(transcriptMeetings.map((t) => t.meeting_id));
+
+    // calendar_agenda_read RESTRICTIVE RLS limits rows to the caller's own linked calendar events; map to platform code only.
+    const agendaPlatforms = await ctx.trx
+      .selectFrom('crove_meetings.calendar_agenda')
+      .select(['meeting_id', 'join_url'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', 'in', meetingIds)
+      .execute();
+    const platformMap = new Map<string, MeetingPlatform>();
+    for (const row of agendaPlatforms) {
+      if (!row.meeting_id) continue;
+      const platform = joinServiceFromUrl(row.join_url);
+      if (platform !== null) platformMap.set(row.meeting_id, platform);
+    }
+
     return rows.map((r) =>
-      toSummary(r, readersMap.get(r.id) ?? 0, audioSet.has(r.id), videoSet.has(r.id)),
+      toSummary(
+        r,
+        readersMap.get(r.id) ?? 0,
+        audioSet.has(r.id),
+        videoSet.has(r.id),
+        transcriptSet.has(r.id),
+        platformMap.get(r.id) ?? null,
+      ),
     );
   },
 });
@@ -709,13 +751,35 @@ export const meetingGet = defineQuery({
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
 
+    const transcriptSegment = await ctx.trx
+      .selectFrom('crove_meetings.transcript_segment')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .limit(1)
+      .executeTakeFirst();
+
+    const agendaPlatform = await ctx.trx
+      .selectFrom('crove_meetings.calendar_agenda')
+      .select(['join_url'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+
     const videoRetentionDate = video?.video_retention_date
       ? typeof video.video_retention_date === 'string'
         ? video.video_retention_date.slice(0, 10)
         : new Date(video.video_retention_date).toISOString().slice(0, 10)
       : null;
 
-    const summary = toSummary(meeting, readerIds.length, audioSegment !== undefined, video !== undefined);
+    const summary = toSummary(
+      meeting,
+      readerIds.length,
+      audioSegment !== undefined,
+      video !== undefined,
+      transcriptSegment !== undefined,
+      joinServiceFromUrl(agendaPlatform?.join_url ?? null),
+    );
     return {
       ...summary,
       consentMethod: meeting.consent_method,

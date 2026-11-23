@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod';
+import { zMeetingPlatform } from './meeting-agenda.ts';
 import { zCaptureStart } from './meeting-capture.ts';
 import { zMinutesTemplateCopy } from './meeting-minutes-templates.ts';
 import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
@@ -91,6 +92,8 @@ export const zMeetingSummary = z.strictObject({
   textRetentionDate: z.string().nullable(),
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
+  hasTranscript: z.boolean(),
+  platform: zMeetingPlatform.nullable(),
   readersCount: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
