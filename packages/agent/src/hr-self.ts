@@ -9,6 +9,14 @@ import { z } from 'zod';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
 import { normalizeContractText } from './sign-ai.ts';
@@ -689,9 +697,28 @@ function validateAiRequestDraft(
   }
 
   const rawReason = typeof raw.reason === 'string' ? raw.reason : '';
-  if (CONTROL_FORMAT_TEST_RE.test(rawReason) || hasMarkdownNoise(rawReason)) return null;
+  if (
+    CONTROL_FORMAT_TEST_RE.test(rawReason) ||
+    hasStealthControls(rawReason) ||
+    hasPromptMarkupLeak(rawReason) ||
+    hasAutonomousActionDirective(rawReason) ||
+    hasMarkdownNoise(rawReason) ||
+    hasMarkdownLink(rawReason) ||
+    hasObfuscatedContactOrLink(rawReason, []) ||
+    EMAIL_TEST_RE.test(rawReason) ||
+    hasUngroundedMoneyOrIdToken(rawReason, [input.text]) ||
+    (!hasUngroundedMoneyOrScaleWords(input.text) && hasUngroundedMoneyOrScaleWords(rawReason))
+  ) {
+    return null;
+  }
   const reason = cleanPlainLine(rawReason, 300) || cleanPlainLine(input.text, 300);
-  if (draftLinksOutside(reason, [input.text]).length > 0) return null;
+  if (
+    draftLinksOutside(reason, []).length > 0 ||
+    hasObfuscatedContactOrLink(reason, []) ||
+    EMAIL_TEST_RE.test(reason)
+  ) {
+    return null;
+  }
 
   if (raw.kind === 'leave') {
     if (!raw.startOn || !raw.endOn || !isValidIsoCalendarDate(raw.startOn) || !isValidIsoCalendarDate(raw.endOn)) {
@@ -1010,7 +1037,14 @@ export function checkSelfHrPolicyAnswer(
   raw: HrSelfPolicyQaAiOut | null | undefined,
 ): { answer: string; citations: HrSelfPolicyCitation[] } | null {
   if (!raw || typeof raw.answer !== 'string' || !raw.answer.trim()) return null;
-  if (CONTROL_FORMAT_TEST_RE.test(raw.answer) || hasMarkdownNoise(raw.answer) || hasMarkdownLink(raw.answer)) {
+  if (
+    CONTROL_FORMAT_TEST_RE.test(raw.answer) ||
+    hasStealthControls(raw.answer) ||
+    hasPromptMarkupLeak(raw.answer) ||
+    hasAutonomousActionDirective(raw.answer) ||
+    hasMarkdownNoise(raw.answer) ||
+    hasMarkdownLink(raw.answer)
+  ) {
     return null;
   }
 
@@ -1054,7 +1088,11 @@ export function checkSelfHrPolicyAnswer(
   const cleanedAnswer = cleanPlainLine(raw.answer, HR_SELF_POLICY_ANSWER_MAX_CHARS);
   if (!cleanedAnswer) return null;
   if (draftFiguresOutside(cleanedAnswer, citedCorpora).length > 0) return null;
+  if (hasUngroundedMoneyOrIdToken(cleanedAnswer, citedCorpora)) return null;
+  const citedHasScaleWords = citedCorpora.some((text) => hasUngroundedMoneyOrScaleWords(text));
+  if (!citedHasScaleWords && hasUngroundedMoneyOrScaleWords(cleanedAnswer)) return null;
   if (draftLinksOutside(cleanedAnswer, []).length > 0) return null;
+  if (hasObfuscatedContactOrLink(cleanedAnswer, [])) return null;
   if (EMAIL_TEST_RE.test(cleanedAnswer)) return null;
 
   return { answer: cleanedAnswer, citations: verifiedCitations };

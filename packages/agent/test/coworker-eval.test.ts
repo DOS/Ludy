@@ -285,6 +285,35 @@ function createStubRuntime() {
       output: { summary: 'Trong giai doan tu 2026-08-01 den 2026-09-30 nhan vien hoan thanh 1 cong viec du an Ke toan.' },
       usage: zeroUsage,
     }),
+    hrRequestDraft: async () => ({
+      output: {
+        kind: 'leave',
+        startOn: '2026-11-27',
+        endOn: '2026-11-27',
+        leaveKind: 'annual_leave',
+        days: '0.5',
+        halfDaySession: 'afternoon',
+        workDate: null,
+        hours: null,
+        dayType: null,
+        isNight: null,
+        destination: null,
+        reason: 'Nghi phep chieu thu 6.',
+      },
+      usage: zeroUsage,
+    }),
+    hrPolicyQa: async () => ({
+      output: {
+        answer: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+        citations: [
+          {
+            noteId: '11111111-1111-4111-8111-111111111801',
+            quoteExcerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          },
+        ],
+      },
+      usage: zeroUsage,
+    }),
   });
 
   return createCoworkerEvalRuntime(STUB_CONFIG, {
