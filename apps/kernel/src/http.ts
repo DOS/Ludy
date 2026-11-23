@@ -30,6 +30,7 @@ import {
   SIGN_PUBLIC_HUB_PAGE_PREFIX,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
+  DESKTOP_CLIENT_ID,
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
@@ -154,7 +155,7 @@ import {
   type SignupRules,
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
-import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
+import { exchangeClientId, exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
 import { assembleLivePieces } from './meetings-live-assemble.ts';
@@ -2886,7 +2887,7 @@ export function createHttpApp(deps: HttpDeps) {
     }
     const refused = () => c.json({ code: 'EXTENSION_CODE_INVALID', message: 'Mã đăng nhập tiện ích không hợp lệ hoặc đã hết hạn, hãy đăng nhập lại' }, 400);
     try {
-      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown } | null;
+      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown; client?: unknown } | null;
       if (!input || typeof input !== 'object' || !wellFormedExtensionCode(input.code) || !wellFormedVerifier(input.codeVerifier)) return refused();
       const code = input.code;
       const verifier = input.codeVerifier;
@@ -2894,8 +2895,9 @@ export function createHttpApp(deps: HttpDeps) {
       // states in the Origin header (chrome-extension://<id>). A missing, malformed, unlisted or different origin gets the same
       // answer as a wrong code, and the code is not spent. Defence in depth only: a client outside the browser can set any Origin, so PKCE
       // and the allow-list stay the primary protection.
-      const extensionId = extensionIdOfOrigin(c.req.header('origin'));
-      if (extensionId === null || !allowedExtensionIds.includes(extensionId)) return refused();
+      // Ludy Desktop (#4515) sends no Origin and says client "desktop": the code must then be the one made for the reserved desktop id.
+      const extensionId = exchangeClientId(c.req.header('origin'), input.client);
+      if (extensionId === null || (extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(extensionId))) return refused();
       const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier, extensionId));
       if (!done) return refused();
       // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
@@ -2903,13 +2905,16 @@ export function createHttpApp(deps: HttpDeps) {
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
       // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      // A desktop token holds no scope and no scoped command can audit it: the exchange definer wrote its audit row in the same transaction (#4515).
       const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
-        await runtime.execute(
-          exchangeAuditCommand,
-          { codeId: done.exchange.codeId },
-          { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
-        );
+        if (extensionId !== DESKTOP_CLIENT_ID) {
+          await runtime.execute(
+            exchangeAuditCommand,
+            { codeId: done.exchange.codeId },
+            { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes, client: 'extension' } }, orgId: done.exchange.orgId },
+          );
+        }
       } catch (error) {
         const voided = await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
         // The clean-up did not void the row: it was already revoked (a demotion raced the exchange) or the clean-up itself failed, in which
@@ -3050,8 +3055,9 @@ export function createHttpApp(deps: HttpDeps) {
       const parsed = zExtensionAuthorize.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
       const input = parsed.data;
-      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list.
-      if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
+      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list. Ludy Desktop (#4515)
+      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and it may ask for no scope.
+      if (input.extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
@@ -3084,6 +3090,7 @@ export function createHttpApp(deps: HttpDeps) {
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
+      client: extension.client ?? 'extension',
       expiresAt: extension.expiresAt,
       features: {
         meetings: extension.scopes.includes('meetings') && meetingsOn,

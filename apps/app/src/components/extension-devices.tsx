@@ -42,6 +42,7 @@ export function ExtensionDevices() {
             <div className="min-w-0">
               <p className="flex flex-wrap items-center gap-2 text-foreground">
                 <span className="truncate">{r.deviceName}</span>
+                <Badge>{t(`client.${r.client}`)}</Badge>
                 {r.scopes.map((s) => (
                   <Badge key={s}>{t(`scope.${s}`)}</Badge>
                 ))}
@@ -75,7 +76,9 @@ export function ExtensionDevices() {
           <ul className="mt-1 divide-y">
             {ended.map((r) => (
               <li key={r.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="truncate text-foreground">{r.deviceName}</span>
+                <span className="truncate text-foreground">
+                  {r.deviceName} <span className="text-xs text-subtle-foreground">({t(`client.${r.client}`)})</span>
+                </span>
                 <Badge variant="destructive">{r.revokedAt ? t('revoked') : t('expired')}</Badge>
               </li>
             ))}

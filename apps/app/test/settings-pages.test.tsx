@@ -166,7 +166,8 @@ describe('which cards each tab of Settings holds', () => {
       expect(cardsOf(render('SettingsSalesPage'))).toEqual([]);
       expect(cardsOf(render('SettingsQuotesPage'))).toEqual([]);
       expect(cardsOf(render('SettingsOrgPage'))).toEqual([]);
-      expect(cardsOf(render('SettingsSecurityPage'))).toEqual(['two-factor', 'my-sessions']);
+      // The connected devices are not tied to an app: Ludy Desktop is a general client (ADR-0055 slice 2, #4515), so they stay while Meetings is off.
+      expect(cardsOf(render('SettingsSecurityPage'))).toEqual(['two-factor', 'my-sessions', 'extension-devices', 'org-extension-devices']);
       expect(cardsOf(render('SettingsConnectionsPage'))).toEqual([]);
     } finally {
       modules.current = ['kernel', 'finance', 'social', 'crm', 'meetings'];

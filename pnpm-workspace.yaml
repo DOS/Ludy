@@ -13,6 +13,7 @@ catalog:
   '@aws-sdk/s3-request-presigner': 3.1151.0
   '@axe-core/playwright': 4.14.0
   '@base-ui/react': 1.8.0
+  '@electron/packager': 20.3.0
   '@hono/node-server': 2.1.5
   '@orpc/client': 1.15.6
   '@orpc/contract': 1.15.6
@@ -36,6 +37,8 @@ catalog:
   cn: 0.4.0
   decimal.js: 10.6.0
   dependency-cruiser: 18.7.0
+  electron: 45.3.4
+  electron-winstaller: 5.4.4
   exceljs: 4.4.0
   fast-check: 4.10.2
   fast-xml-parser: 5.11.2
@@ -105,6 +108,9 @@ minimumReleaseAgeExclude:
 
 allowBuilds:
   sharp: true
+  # Its install script only copies the x64 7-Zip files to the names Squirrel uses and (in 5.4.4) reads `os.arch` without calling it. Not run on every install:
+  # the Windows build job copies the two files itself (.github/workflows/desktop-build.yml).
+  electron-winstaller: false
 
 # dependency-cruiser parses TypeScript with the TypeScript compiler API, which the native TypeScript 7 the workspace
 # typechecks with does not ship; it accepts typescript <7. TypeScript 6, the last release with the JS API, is its own

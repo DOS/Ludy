@@ -15,6 +15,14 @@ export const zExtensionScope = z.enum(EXTENSION_SCOPE_IDS);
 export const EXTENSION_ID_FORMAT = /^[a-p]{32}$/;
 export const zExtensionId = z.string().regex(EXTENSION_ID_FORMAT);
 
+// Who a token was made for (ADR-0055 slice 2, #4515): the browser extension, or Ludy Desktop. The server sets the marker, never a client:
+// a desktop sign-in code is bound to DESKTOP_CLIENT_ID, a reserved id that is a valid extension id in form only (the HTTP edge gives
+// it to an exchange that carries no browser Origin and says client "desktop"; Chrome and Edge never issue it), and the exchange copies
+// the marker to the token. ludy_kernel.extension_token.client's CHECK lists the same two values and the migration the same id.
+export const EXTENSION_CLIENTS = ['extension', 'desktop'] as const;
+export type ExtensionClient = (typeof EXTENSION_CLIENTS)[number];
+export const DESKTOP_CLIENT_ID = 'abababababababababababababababab';
+
 // The ids that may receive a sign-in code when the deployment sets none (EXTENSION_IDS): the Ludy extension's id in the
 // Chrome Web Store (#3010, first upload 2026-11-13; an item keeps its id for life, and the id is public, not a secret). The Edge Add-ons
 // item has its own id, to be added here the same way once the owner has created it (D2, #3181; docs/runbooks/extension-store.md, step E5).
@@ -29,15 +37,18 @@ export const zExtensionAuthorize = z.strictObject({
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
   // The agenda scope rides with the meetings scope (B2): the token's own exchange is a meetings command, and the card exists to start a recording.
-  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
+  // At least one scope for the extension; Ludy Desktop (DESKTOP_CLIENT_ID) may ask for none, since its features are not built yet (#4515).
+  scopes: z.array(zExtensionScope).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
   deviceName: z.string().trim().min(1).max(80),
-});
+}).refine((input) => input.scopes.length >= 1 || input.extensionId === DESKTOP_CLIENT_ID, { path: ['scopes'], message: 'the extension needs a scope' });
 
 // One connected device of the member in the org of the request. Never a hash.
 export const zExtensionToken = z.strictObject({
   id: zId,
   deviceName: z.string(),
   scopes: z.array(zExtensionScope),
+  // Which client the device is (#4515): the browser extension or Ludy Desktop, so the devices screen can tell them apart.
+  client: z.enum(EXTENSION_CLIENTS),
   createdAt: z.string(),
   expiresAt: z.string(),
   lastUsedAt: z.string().nullable(),
