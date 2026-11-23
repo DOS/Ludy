@@ -74,7 +74,7 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
 
   // On a 1366x768 laptop no app's menu scrolls.
   await page.setViewportSize({ width: 1366, height: 768 });
-  const menuScrolls = () => sidebar.locator('.overflow-y-auto').evaluate((el) => el.scrollHeight > el.clientHeight);
+  const menuScrolls = () => desktopSidebar.locator('.overflow-y-auto').evaluate((el) => el.scrollHeight > el.clientHeight);
   expect(await menuScrolls()).toBe(false);
 
   // Every screen of every app, each opened from a fresh document so the listener sees its first render.
@@ -82,10 +82,17 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   const appCount = await apps.getByRole('link').count();
   expect(appCount).toBeGreaterThan(1);
   for (let i = 0; i < appCount; i++) {
-    await apps.getByRole('link').nth(i).click();
+    const link = apps.getByRole('link').nth(i);
+    const href = (await link.getAttribute('href')) ?? '';
+    await link.click();
     await page.waitForLoadState('networkidle');
-    expect(await menuScrolls(), `app ${i}`).toBe(false);
-    for (const path of await sidebar.getByRole('link').evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).pathname))) links.add(path);
+    // Overview (first entry of the switcher) collapses to the 64px rail with no secondary menu (#4519).
+    if (href.endsWith('/overview')) {
+      await expect.poll(sidebarWidth).toBe(64);
+    } else {
+      expect(await menuScrolls(), `app ${i}`).toBe(false);
+    }
+    for (const path of await desktopSidebar.getByRole('link').evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).pathname))) links.add(path);
   }
   expect(links.size).toBeGreaterThan(5);
   await page.setViewportSize({ width: 1280, height: 600 });
