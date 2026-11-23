@@ -64,7 +64,7 @@ describe('field border contrast (WCAG 1.4.11)', () => {
   });
 
   it('the field components draw their border with the token', () => {
-    for (const file of ['input', 'textarea', 'native-select', 'checkbox']) {
+    for (const file of ['input', 'textarea', 'native-select', 'checkbox', 'switch']) {
       const source = readFileSync(fileURLToPath(new URL(`../src/components/${file}.tsx`, import.meta.url)), 'utf8');
       expect(source, file).toContain('border-field-border');
       expect(source, file).not.toMatch(/border-input/);

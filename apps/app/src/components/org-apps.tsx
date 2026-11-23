@@ -10,7 +10,8 @@ import { useTranslations } from 'use-intl';
 import { APP_IDS, isKnownModule, modulesOfApp, type AppId } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Card } from '@ludy/ui/components/card';
-import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Switch } from '@ludy/ui/components/switch';
+import { cn } from '@ludy/ui/lib/utils';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
@@ -82,22 +83,25 @@ export function OrgAppsCard() {
     set.mutate({ module, enabled });
   };
   const target = rows.find((a) => a.id === asking);
-  const renderRow = (row: OrgAppEntry, indented: boolean) => {
+  const renderRow = (row: OrgAppEntry, isSingle: boolean) => {
     const status = !row.entitled ? 'notInPlan' : row.enabled ? 'on' : 'off';
     const label = nameOf(row.id);
     return (
       <li
         key={row.id}
-        className={`flex items-center justify-between gap-3 py-3 pr-3 text-sm ${indented ? 'pl-7' : 'pl-3'}`}
+        className="flex items-center justify-between gap-3 px-3 py-1.5 text-sm"
         data-testid={`org-app-${row.id}`}
       >
-        <label className="flex min-w-0 items-center gap-2 text-foreground">
-          <Checkbox
+        <span className={cn('min-w-0 text-foreground', isSingle ? 'font-medium' : 'font-normal')}>{label}</span>
+        <div className="flex shrink-0 items-center gap-2.5">
+          {/* One signal per row (ST-2): a row in use shows only its checked switch; a badge says why a row is not. */}
+          {status !== 'on' && <Badge variant="outline">{t(`status.${status}`)}</Badge>}
+          <Switch
             checked={row.enabled && row.entitled}
             // Another row's change is under way: this one waits (its own stays enabled, so focus is not lost when the dialog closes).
             disabled={!canChange || !row.entitled || (set.isPending && set.variables?.module !== row.id)}
             aria-label={t('switchLabel', { app: label })}
-            aria-busy={set.isPending}
+            aria-busy={set.isPending && set.variables?.module === row.id ? true : undefined}
             onCheckedChange={(checked) => {
               // A change is under way: this row takes no second one (and opens no second confirmation).
               if (set.isPending) return;
@@ -105,10 +109,7 @@ export function OrgAppsCard() {
               else setAsking(row.id);
             }}
           />
-          <span className={indented ? 'font-normal' : 'font-medium'}>{label}</span>
-        </label>
-        {/* One signal per row (ST-2): a row in use shows only its checked switch; a badge says why a row is not. */}
-        {status !== 'on' && <Badge variant="outline">{t(`status.${status}`)}</Badge>}
+        </div>
       </li>
     );
   };
@@ -118,22 +119,32 @@ export function OrgAppsCard() {
         <h2 className="text-sm font-medium text-muted-foreground">{t('title')}</h2>
         <p className="mt-1 text-sm text-subtle-foreground">{t('hint')}</p>
       </div>
-      <ul className="divide-y rounded-lg border">
+      <div className="space-y-3">
         {sections.map((section) => {
-          if (section.kind === 'single') return renderRow(section.row, false);
+          if (section.kind === 'single') {
+            return (
+              <ul key={section.row.id} className="overflow-hidden rounded-lg border">
+                {renderRow(section.row, true)}
+              </ul>
+            );
+          }
           const labelId = `org-app-group-${section.appId}-label`;
           return (
-            <li key={`group:${section.appId}`} data-testid={`org-app-group-${section.appId}`}>
-              <div role="group" aria-labelledby={labelId}>
-                <p id={labelId} className="border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
-                  {tNav(`apps.${section.appId}`)}
-                </p>
-                <ul className="divide-y">{section.rows.map((row) => renderRow(row, true))}</ul>
-              </div>
-            </li>
+            <div
+              key={`group:${section.appId}`}
+              data-testid={`org-app-group-${section.appId}`}
+              role="group"
+              aria-labelledby={labelId}
+              className="overflow-hidden rounded-lg border"
+            >
+              <p id={labelId} className="border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                {tNav(`apps.${section.appId}`)}
+              </p>
+              <ul className="divide-y">{section.rows.map((row) => renderRow(row, false))}</ul>
+            </div>
           );
         })}
-      </ul>
+      </div>
       {!canChange && <p className="text-xs text-subtle-foreground">{t('readOnly')}</p>}
       {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
       {target && (

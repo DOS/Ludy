@@ -58,11 +58,39 @@ describe('Settings Apps', () => {
     expect(html.indexOf('org-app-finance')).toBeLessThan(html.indexOf('data-testid="org-app-group-engage"'));
     expect(html).not.toContain('org-app-group-finance');
     expect(html).toContain(en.orgApps.hint.slice(0, 30));
+    expect(html.match(/role="switch"/g)).toHaveLength(3);
+    expect(html).not.toContain('role="checkbox"');
+    expect(html).toContain('aria-label="Use Finance"');
+    expect(html).toContain('aria-label="Use Inbox &amp; Posts"');
     expect(html.match(/aria-checked="true"/g)).toHaveLength(3);
     expect(html).not.toContain('aria-disabled="true"');
     expect(html).not.toContain(en.orgApps.readOnly);
     expect(html).not.toContain('role="dialog"');
     expect(html).not.toContain('>Social<');
+  });
+
+  it('separates each top-level app into its own bordered block with uniform left padding and right-aligned switches (#4508)', () => {
+    const html = render(true, [
+      app('notes'),
+      app('meetings'),
+      app('finance'),
+      app('social', { enabled: false }),
+      app('hr'),
+      app('sign', { entitled: false }),
+    ]);
+    // Separated blocks (5 top-level apps), never one merged list or jagged pl-7 indentation.
+    expect(html).toContain('space-y-3');
+    expect(html.split('rounded-lg border')).toHaveLength(6);
+    expect(html).not.toContain('pl-7');
+    expect(html.match(/max-md:min-h-11/g)).toHaveLength(6);
+    expect(html.match(/max-md:min-w-11/g)).toHaveLength(6);
+    // Optional status badges sit before the switch in the right column so the switch alignment never shifts.
+    const socialStart = html.indexOf('data-testid="org-app-social"');
+    const socialRow = html.slice(socialStart, html.indexOf('</li>', socialStart));
+    expect(socialRow.indexOf(en.orgApps.status.off)).toBeLessThan(socialRow.indexOf('role="switch"'));
+    const signStart = html.indexOf('data-testid="org-app-sign"');
+    const signRow = html.slice(signStart, html.indexOf('</li>', signStart));
+    expect(signRow.indexOf(en.orgApps.status.notInPlan)).toBeLessThan(signRow.indexOf('role="switch"'));
   });
 
   it('shows one status signal per row: no badge on a row in use, a badge on a row that is off or not in the plan (ST-2)', () => {
