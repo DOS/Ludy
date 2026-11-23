@@ -809,6 +809,8 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'ludy_hr', 'business_trip_request', ['status', 'destination', 'purpose', 'decision_note', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'contract_addendum', ['change_summary', 'previous_title', 'new_title', 'void_reason', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'employee_asset_handover', ['serial_number', 'notes', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'okr_key_result', ['last_checkin_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'okr_objective', ['owner_employee_id', 'status', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
@@ -1008,6 +1010,34 @@ export const employeeErase = defineCommand({
       .where((eb) => eb.or([eb('serial_number', 'is not', null), eb('notes', 'is not', null)]))
       .returning('id')
       .execute();
+    const erasedOkrKeyResults = await ctx.trx
+      .updateTable('ludy_hr.okr_key_result')
+      .set({ last_checkin_note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('last_checkin_note', 'is not', null)
+      .where(({ eb, selectFrom }) =>
+        eb(
+          'objective_id',
+          'in',
+          selectFrom('ludy_hr.okr_objective')
+            .select('id')
+            .where('org_id', '=', ctx.orgId)
+            .where('owner_employee_id', '=', input.employeeId),
+        ),
+      )
+      .returning('id')
+      .execute();
+    const erasedOkrObjectives = await ctx.trx
+      .updateTable('ludy_hr.okr_objective')
+      .set({
+        owner_employee_id: null,
+        status: sql<'draft' | 'active' | 'completed' | 'archived'>`CASE WHEN scope = 'individual' AND status IN ('draft', 'active') THEN 'archived' ELSE status END`,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('owner_employee_id', '=', input.employeeId)
+      .returning('id')
+      .execute();
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({
@@ -1024,6 +1054,8 @@ export const employeeErase = defineCommand({
       erasedProbationReviews: erasedProbation.length,
       erasedAddendums: erasedAddendums.length,
       erasedAssetHandovers: erasedAssets.length,
+      erasedOkrKeyResults: erasedOkrKeyResults.length,
+      erasedOkrObjectives: erasedOkrObjectives.length,
       retentionEnded: until,
     });
     return {
@@ -1048,6 +1080,7 @@ export const employeeErase = defineCommand({
         'business trip details',
         'contract addendum summaries, titles and void reasons',
         'asset handover serial numbers and notes',
+        'okr ownership and check-in notes',
       ],
       kept: [
         { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },

@@ -1387,6 +1387,29 @@ export type HrEmployeeAssetHandoverTable = Refine<
   },
   'legal_entity_id'
 >;
+export const HR_OKR_SCOPES = ['company', 'department', 'individual'] as const;
+export type HrOkrScope = (typeof HR_OKR_SCOPES)[number];
+export const HR_OKR_STATUSES = ['draft', 'active', 'completed', 'archived'] as const;
+export type HrOkrStatus = (typeof HR_OKR_STATUSES)[number];
+export const HR_OKR_METRIC_TYPES = ['percent', 'number', 'currency', 'boolean', 'project_tasks'] as const;
+export type HrOkrMetricType = (typeof HR_OKR_METRIC_TYPES)[number];
+export type HrOkrObjectiveTable = Refine<
+  G.HrOkrObjectiveTable,
+  {
+    scope: HrOkrScope;
+    status: Generated<HrOkrStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export type HrOkrKeyResultTable = Refine<
+  G.HrOkrKeyResultTable,
+  {
+    metric_type: HrOkrMetricType;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1836,6 +1859,8 @@ type Refined = Tables<{
   'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
+  'ludy_hr.okr_key_result': HrOkrKeyResultTable;
+  'ludy_hr.okr_objective': HrOkrObjectiveTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
   'ludy_hr.overtime_request': HrOvertimeRequestTable;
   'ludy_hr.payroll_adjustment_item': HrPayrollAdjustmentItemTable;

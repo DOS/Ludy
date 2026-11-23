@@ -450,6 +450,27 @@ import {
   zHrTimelineAsk,
   zHrTimelineResult,
 } from './hr-addendum-assets.ts';
+import {
+  zHrOkrDraftCheckinAsk,
+  zHrOkrDraftCheckinResult,
+  zHrOkrKeyResultAdd,
+  zHrOkrKeyResultCheckin,
+  zHrOkrKeyResultMutationResult,
+  zHrOkrKeyResultRemove,
+  zHrOkrKeyResultRemoveResult,
+  zHrOkrKeyResultSyncProjects,
+  zHrOkrKeyResultUpdate,
+  zHrOkrObjectiveCreate,
+  zHrOkrObjectiveMutationResult,
+  zHrOkrObjectiveSetStatus,
+  zHrOkrObjectiveUpdate,
+  zHrOkrProjectOptionsAsk,
+  zHrOkrProjectOptionsResult,
+  zHrOkrProjectTasksAsk,
+  zHrOkrProjectTasksResult,
+  zHrOkrTreeAsk,
+  zHrOkrTreeResult,
+} from './hr-okr.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1553,6 +1574,24 @@ export const contract = {
       list: oc.input(zHrAssetList).output(z.array(zHrAssetView)),
       assign: oc.input(zHrAssetAssign).output(zHrAssetWriteResult),
       updateStatus: oc.input(zHrAssetUpdateStatus).output(zHrAssetWriteResult),
+    },
+    okr: {
+      tree: oc.input(zHrOkrTreeAsk).output(zHrOkrTreeResult),
+      projectOptions: oc.input(zHrOkrProjectOptionsAsk).output(zHrOkrProjectOptionsResult),
+      projectTasks: oc.input(zHrOkrProjectTasksAsk).output(zHrOkrProjectTasksResult),
+      draftCheckin: oc.input(zHrOkrDraftCheckinAsk).output(zHrOkrDraftCheckinResult),
+      objective: {
+        create: oc.input(zHrOkrObjectiveCreate).output(zHrOkrObjectiveMutationResult),
+        update: oc.input(zHrOkrObjectiveUpdate).output(zHrOkrObjectiveMutationResult),
+        setStatus: oc.input(zHrOkrObjectiveSetStatus).output(zHrOkrObjectiveMutationResult),
+      },
+      kr: {
+        add: oc.input(zHrOkrKeyResultAdd).output(zHrOkrKeyResultMutationResult),
+        update: oc.input(zHrOkrKeyResultUpdate).output(zHrOkrKeyResultMutationResult),
+        remove: oc.input(zHrOkrKeyResultRemove).output(zHrOkrKeyResultRemoveResult),
+        checkin: oc.input(zHrOkrKeyResultCheckin).output(zHrOkrKeyResultMutationResult),
+        syncProjects: oc.input(zHrOkrKeyResultSyncProjects).output(zHrOkrKeyResultMutationResult),
+      },
     },
     leaveRequests: {
       list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),

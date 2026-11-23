@@ -161,6 +161,8 @@ export const AI_FEATURES = {
   'hr.policy_qa': 'hr',
   // Ly's pseudonymized contract addendum statutory completeness review (#4528 Stage 6C): reads alias P1, contract type, effective date, wage/title delta and scrubbed summary only; deterministic checks decide readiness, human HR issues/voids.
   'hr.addendum_check': 'hr',
+  // Ly's pseudonymized quarterly OKR check-in draft (#4529 Stage 6D): reads alias P1, numeric progress & optional Projects task titles only; never scores, ranks, or recommends employment actions.
+  'hr.okr_checkin_draft': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
