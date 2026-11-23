@@ -84,15 +84,15 @@ function BooksTable({
           const difference = booksDifference(row.spend, books);
           return (
             <TableRow key={row.month}>
-              <TableCell className="px-4 py-3 text-foreground">
+              <TableCell className="text-foreground">
                 {monthLabel(row.month)}
                 {row.month === todayMonth && <span className="ml-2 text-xs text-subtle-foreground">{t('books.monthOpen')}</span>}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(row.spend, 'VND')}</TableCell>
-              <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(books, 'VND')}</TableCell>
-              <TableCell className={`px-4 py-3 text-right tabular-nums ${isZeroAmount(difference) ? 'text-muted-foreground' : 'font-medium text-foreground'}`}>{f.money(difference, 'VND')}</TableCell>
+              <TableCell className="text-right text-foreground tabular-nums">{f.money(row.spend, 'VND')}</TableCell>
+              <TableCell className="text-right text-foreground tabular-nums">{f.money(books, 'VND')}</TableCell>
+              <TableCell className={`text-right tabular-nums ${isZeroAmount(difference) ? 'text-muted-foreground' : 'font-medium text-foreground'}`}>{f.money(difference, 'VND')}</TableCell>
               {range && (
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-foreground">
                   {documents.isPending ? (
                     <span className="text-muted-foreground">{t('books.documentsChecking')}</span>
                   ) : counts === null || !complete ? (

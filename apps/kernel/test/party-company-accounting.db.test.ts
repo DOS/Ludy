@@ -272,6 +272,8 @@ suite('the company of a person and the accounting (#2438)', () => {
       'ludy_finance.supplier_bank_account_change.party_id',
       // A supplier payment (#3113 S2) only names the supplier it pays: no command reads the party's kind, and the account it pins carries the sealed number.
       'ludy_finance.supplier_payment.party_id',
+      // An omnichannel roadmap signal (#4492) stores source_party_id only for PDPL attribution when a deal or conversation changes party; it never reads party.kind.
+      'ludy_projects.roadmap_signal.source_party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(

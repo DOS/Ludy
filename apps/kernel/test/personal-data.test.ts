@@ -171,7 +171,7 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of ludy_projects for erasure', () => {
-    expect(personal.length).toBe(16);
+    expect(personal.length).toBe(18);
     expect(personal).toEqual(
       expect.arrayContaining([
         'ludy_projects.project.name',
@@ -185,6 +185,8 @@ describe('personal-data registry: projects (#2591)', () => {
         'ludy_projects.roadmap_item.public_title',
         'ludy_projects.roadmap_item.public_summary',
         'ludy_projects.roadmap_item.submitter_display_name',
+        'ludy_projects.roadmap_signal.account_label',
+        'ludy_projects.roadmap_signal.quote_excerpt',
         'ludy_projects.roadmap_announcement.title',
         'ludy_projects.roadmap_announcement.body_md',
         'ludy_projects.roadmap_otp.email',

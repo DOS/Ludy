@@ -80,18 +80,18 @@ export function MeetingOwnerDeletion({ nameOf }: { nameOf: (userId: string) => s
         <DataTable head={[t('columns.startedAt'), t('columns.recorder'), t('columns.visibility'), t('columns.status'), t('columns.retention'), t('columns.actions')]}>
           {items.map((m) => (
             <TableRow key={m.id} data-testid="meeting-owner-row">
-              <TableCell className="px-4 py-3 text-sm text-foreground">{f.dateTime(m.startedAt)}</TableCell>
-              <TableCell className="px-4 py-3 text-sm text-foreground">{nameOf(m.recorderUserId)}</TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell className="text-sm text-foreground tabular-nums">{f.dateTime(m.startedAt)}</TableCell>
+              <TableCell className="text-sm text-foreground">{nameOf(m.recorderUserId)}</TableCell>
+              <TableCell>
                 <Badge variant={m.visibility === 'attendees' ? 'secondary' : 'outline'}>{t(`visibility.${m.visibility}`)}</Badge>
               </TableCell>
-              <TableCell className="px-4 py-3 text-xs text-muted-foreground">{t(`status.${m.status}`)}</TableCell>
-              <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+              <TableCell className="text-xs text-muted-foreground">{t(`status.${m.status}`)}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">
                 <span className="block">{t('retentionAudio', { date: f.date(m.audioRetentionDate) })}</span>
                 {m.videoRetentionDate && <span className="block">{t('retentionVideo', { date: f.date(m.videoRetentionDate) })}</span>}
                 <span className="block">{m.textRetentionDate ? t('retentionText', { date: f.date(m.textRetentionDate) }) : t('retentionTextKept')}</span>
               </TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell>
                 <Button
                   variant="destructive"
                   size="sm"

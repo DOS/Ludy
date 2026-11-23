@@ -54,3 +54,66 @@ test('on a wide screen the pending list stays beside the proposal, and approving
     await expect(queue.locator(`a[href$="/inbox/${other}"]`)).toHaveAttribute('aria-current', 'page');
   });
 });
+
+test('at xl (1280px), the Inbox shows inline split preview, switches rows, approves in place, and collapses on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signInNewUser(page, newEmail('inbox-inline-split'));
+  const slug = await createOrg(page, 'Công ty Tách màn hình');
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
+  await page.locator('input[type=file]').setInputFiles([invoice(4201), invoice(4202)]);
+  const links = page.getByRole('main').getByRole('link', { name: SELLER });
+  await expect(links).toHaveCount(2, { timeout: 90_000 });
+
+  await test.step('xl layout keeps one h1 and renders the first pending proposal inline beside the queue', async () => {
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    expect(await page.title()).toBe('Chứng từ chờ duyệt · Ludy');
+    await expect(page.locator('main h1')).toHaveCount(1);
+    await expect(page.getByTestId('inbox-split-layout')).toBeVisible();
+    const preview = page.getByTestId('inbox-split-preview');
+    await expect(preview).toBeVisible();
+    await expect(preview.getByRole('heading', { level: 2, name: SELLER })).toBeVisible();
+    await expect(preview.getByRole('link', { name: 'Mở trang chi tiết' })).toHaveAttribute('href', /\/inbox\/[^/]+$/);
+    const firstSubtitle = preview.getByText(/Hóa đơn C26TAB · số 420[12]/);
+    await expect(firstSubtitle).toBeVisible();
+    const firstNumber = ((await firstSubtitle.textContent()) ?? '').includes('4201') ? '4201' : '4202';
+    const secondNumber = firstNumber === '4201' ? '4202' : '4201';
+    const buttons = page.getByTestId('inbox-preview-select');
+    await expect(buttons).toHaveCount(2);
+    await expect(buttons.nth(0)).toHaveAttribute('aria-pressed', 'true');
+    await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'false');
+    await buttons.nth(1).click();
+    await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(preview.getByText(new RegExp(`số ${secondNumber}`))).toBeVisible();
+
+    await test.step('approving from the inline preview advances to the remaining proposal on /inbox', async () => {
+      await preview.getByRole('checkbox', { name: 'Tôi đã kiểm tra hóa đơn gốc và vẫn muốn duyệt' }).check();
+      await preview.getByRole('button', { name: 'Duyệt và ghi sổ' }).click();
+      await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
+      const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
+      await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
+      await page.getByRole('button', { name: 'Xác nhận' }).click();
+      await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+      await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
+      await expect(links).toHaveCount(1);
+      await expect(preview.getByRole('heading', { level: 2, name: SELLER })).toBeVisible();
+      await expect(preview.getByText(new RegExp(`số ${firstNumber}`))).toBeVisible();
+    });
+  });
+
+  await test.step('medium desktop (< 1280px) renders the full DataTable without split preview', async () => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.getByTestId('inbox-split-layout')).toHaveCount(0);
+    await expect(links).toHaveCount(1);
+    await expect(page.getByRole('columnheader', { name: 'Ngày HĐ' })).toBeVisible();
+  });
+
+  await test.step('narrow phone view (< 640px) stacks rows without split preview or horizontal scroll', async () => {
+    await page.setViewportSize({ width: 360, height: 780 });
+    await expect(page.getByTestId('inbox-split-layout')).toHaveCount(0);
+    await expect(links).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+    await links.first().click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox/[^/]+$`));
+    await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeVisible();
+  });
+});

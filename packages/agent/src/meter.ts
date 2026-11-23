@@ -139,6 +139,8 @@ export const AI_FEATURES = {
   'projects.roadmap_dedupe': 'projects',
   // Vy's release-note draft for shipped roadmap items (#4400): reads shipped item titles/summaries only, checked by summaryNumbersOutside, human edits & publishes.
   'projects.roadmap_changelog_draft': 'projects',
+  // Vy's omnichannel roadmap signal match suggestions (#4492): suggests up to 3 existing items or 1 tainted new-idea draft, never writes signals.
+  'projects.roadmap_signal_match': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.

@@ -13,6 +13,7 @@ import {
   zRoadmapPublicOtpVerifyInput,
   zRoadmapPublicSubmitIdeaInput,
   zRoadmapPublicVoteInput,
+  zRoadmapSignalValueByCurrency,
 } from '@ludy/kernel-contract';
 import {
   generateEphemeralOtpWrapKey,
@@ -27,6 +28,8 @@ import {
   zMcpRoadmapDemandSummaryInput,
   zMcpRoadmapIdeasInput,
 } from '../src/roadmap-mcp.ts';
+import { formatMeetingTaskSource } from '../src/index.ts';
+import { computeSignalRollup } from '../src/roadmap-signals.ts';
 
 describe('projects roadmap embed origins and contracts (#4399)', () => {
   it('accepts strict HTTPS origins without path, query, fragment, trailing slash, or wildcards and rejects unsafe inputs', () => {
@@ -198,5 +201,160 @@ describe('Slice 2 announcements, shipped email renderer, subscribe toggle, & MCP
     expect(() => zMcpRoadmapIdeasInput.parse({ limit: 51 })).toThrow();
     expect(zMcpRoadmapDemandSummaryInput.parse({}).topLimit).toBe(10);
     expect(() => zMcpRoadmapDemandSummaryInput.parse({ topLimit: 21 })).toThrow();
+  });
+});
+
+describe('computeSignalRollup (#4492)', () => {
+  it('partitions multi-currency totals strictly by currency using decimal.js precision and deduplicates account labels', () => {
+    const boardId = '00000000-0000-4000-8000-000000000001';
+    const itemA = '00000000-0000-4000-8000-000000000010';
+    const itemB = '00000000-0000-4000-8000-000000000011';
+
+    const rollup = computeSignalRollup(boardId, [
+      {
+        roadmapItemId: itemA,
+        sourceType: 'crm.deal',
+        accountLabel: 'Cong ty ABC',
+        dealValue: '15000000.10',
+        dealCurrency: 'VND',
+      },
+      {
+        roadmapItemId: itemA,
+        sourceType: 'kernel.conversation',
+        accountLabel: '  cong ty abc ',
+        dealValue: '5000000.20',
+        dealCurrency: 'VND',
+      },
+      {
+        roadmapItemId: itemA,
+        sourceType: 'crm.deal',
+        accountLabel: 'Global Buyer Inc',
+        dealValue: '1200.55',
+        dealCurrency: 'USD',
+      },
+      {
+        roadmapItemId: itemB,
+        sourceType: 'meetings.meeting',
+        accountLabel: 'Global Buyer Inc',
+        dealValue: '300.45',
+        dealCurrency: 'USD',
+      },
+      {
+        roadmapItemId: itemB,
+        sourceType: 'meetings.meeting',
+        accountLabel: null,
+        dealValue: null,
+        dealCurrency: null,
+      },
+    ]);
+
+    expect(rollup.boardId).toBe(boardId);
+    expect(rollup.totalSignals).toBe(5);
+    expect(rollup.distinctAccountCount).toBe(2);
+    expect(rollup.sourceCounts).toEqual({ crmDeal: 2, conversation: 1, meeting: 2 });
+    expect(rollup.valueByCurrency).toEqual([
+      { currency: 'USD', totalAmount: '1501.00', signalCount: 2 },
+      { currency: 'VND', totalAmount: '20000000.30', signalCount: 2 },
+    ]);
+
+    expect(rollup.byItem).toEqual([
+      {
+        roadmapItemId: itemA,
+        totalSignals: 3,
+        distinctAccountCount: 2,
+        sourceCounts: { crmDeal: 2, conversation: 1, meeting: 0 },
+        valueByCurrency: [
+          { currency: 'USD', totalAmount: '1200.55', signalCount: 1 },
+          { currency: 'VND', totalAmount: '20000000.30', signalCount: 2 },
+        ],
+      },
+      {
+        roadmapItemId: itemB,
+        totalSignals: 2,
+        distinctAccountCount: 1,
+        sourceCounts: { crmDeal: 0, conversation: 0, meeting: 2 },
+        valueByCurrency: [{ currency: 'USD', totalAmount: '300.45', signalCount: 1 }],
+      },
+    ]);
+  });
+
+  it('validates multi-signal aggregate currency totals exceeding 16 integer digits (#4492)', () => {
+    const parsed = zRoadmapSignalValueByCurrency.parse({
+      currency: 'USD',
+      totalAmount: '19999999999999999.98',
+      signalCount: 2,
+    });
+    expect(parsed.totalAmount).toBe('19999999999999999.98');
+    expect(() => zRoadmapSignalValueByCurrency.parse({ currency: 'USD', totalAmount: '-1.00', signalCount: 1 })).toThrow();
+    expect(() => zRoadmapSignalValueByCurrency.parse({ currency: 'USD', totalAmount: 'invalid', signalCount: 1 })).toThrow();
+  });
+
+  it('falls back to published meeting summary when draft summary and decisions are whitespace only', () => {
+    const formatted = formatMeetingTaskSource({
+      meeting: {
+        title: 'Customer Sync Q1',
+      } as Parameters<typeof formatMeetingTaskSource>[0]['meeting'],
+      results: {
+        meetingId: '00000000-0000-4000-8000-000000000010',
+        isRecorder: true,
+        draft: {
+          id: '00000000-0000-4000-8000-000000000011',
+          feature: 'manual',
+          stage: 'draft',
+          summary: '   \n  ',
+          decisions: ['   ', '\t'],
+          tainted: false,
+        },
+        published: {
+          id: '00000000-0000-4000-8000-000000000012',
+          feature: 'manual',
+          stage: 'published',
+          summary: 'Customers requested scheduled PDF reports.',
+          decisions: ['Prioritize weekly PDF digest'],
+          tainted: false,
+        },
+        items: [],
+      },
+      notes: null,
+      transcript: null,
+    });
+
+    expect(formatted.sourceTitle).toBe('Customer Sync Q1');
+    expect(formatted.sourceBody).toContain('Summary:\nCustomers requested scheduled PDF reports.');
+    expect(formatted.sourceBody).toContain('Decisions:\n- Prioritize weekly PDF digest');
+  });
+
+  it('treats U+200D-only draft summary and decisions as empty and falls back to published summary', () => {
+    const formatted = formatMeetingTaskSource({
+      meeting: {
+        title: 'Customer Sync Q1',
+      } as Parameters<typeof formatMeetingTaskSource>[0]['meeting'],
+      results: {
+        meetingId: '00000000-0000-4000-8000-000000000010',
+        isRecorder: true,
+        draft: {
+          id: '00000000-0000-4000-8000-000000000011',
+          feature: 'manual',
+          stage: 'draft',
+          summary: '\u200D \u200D',
+          decisions: ['\u200D'],
+          tainted: false,
+        },
+        published: {
+          id: '00000000-0000-4000-8000-000000000012',
+          feature: 'manual',
+          stage: 'published',
+          summary: 'Published summary after ZWJ draft.',
+          decisions: ['Ship ZWJ check'],
+          tainted: false,
+        },
+        items: [],
+      },
+      notes: null,
+      transcript: null,
+    });
+
+    expect(formatted.sourceBody).toContain('Summary:\nPublished summary after ZWJ draft.');
+    expect(formatted.sourceBody).toContain('Decisions:\n- Ship ZWJ check');
   });
 });

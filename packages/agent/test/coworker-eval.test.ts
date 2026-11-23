@@ -239,6 +239,13 @@ function createStubRuntime() {
       output: { title: 'Cap nhat tinh nang xuat bao cao Excel', bodyMd: 'Da bo sung tinh nang xuat bao cao dinh dang Excel.' },
       usage: zeroUsage,
     }),
+    roadmapSignalMatch: async () => ({
+      output: {
+        matches: [{ roadmapItemId: 'item-1', confidence: 'high', reason: 'Khach hang de cap truc tiep nhu cau xuat bao cao Excel.' }],
+        newIdeaDraft: null,
+      },
+      usage: zeroUsage,
+    }),
     recruitingBrief: async () => ({
       output: {
         summary: 'Ung vien C1 co 3 nam kinh nghiem ke toan va khop 1 trong 2 ky nang yeu cau.',

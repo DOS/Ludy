@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { brandName } from '../i18n/brand.ts';
 import { auth, authErrorText, authFailure, type AuthFailure, verifySecondFactor } from '../lib/auth.ts';
@@ -321,6 +321,12 @@ export function StepUpDialog({
   // Closing the dialog ends the attempt: a code or an enrollment that finishes afterwards, even once the dialog is open again, must not repeat the refused request
   // (an approval the person cancelled). Each render hands its form the attempt it belongs to; a cancel moves the counter on.
   const attempt = useRef(0);
+  useEffect(
+    () => () => {
+      attempt.current += 1;
+    },
+    [],
+  );
   const mine = attempt.current;
   const verified = () => (attempt.current === mine ? onVerified() : undefined);
   return (

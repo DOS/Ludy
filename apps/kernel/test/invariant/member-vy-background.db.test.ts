@@ -36,7 +36,7 @@ import { financeCommands, financeQueries } from "@ludy/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
-import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
+import { auditRoleFunctionExecute, createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
@@ -62,29 +62,527 @@ const POLICIES = [
   ["crove_kernel.member_vy_result", "member_only", "*", false],
   ["crove_notes.note", "note_read", "r", false],
 ];
-// One named policy, `crove_meetings.meeting.meeting_read`, may read the sealed context once, to compare its kind with 'mcp_company' (#3731, owner-approved change of this net, 2026-11-18):
-// `(SELECT crove_kernel.ctx_verified() ->> 'kind') = 'mcp_company'`. That comparison and the role list of the person branch (`ARRAY['owner', 'admin', 'member']`, whose string 'member' the net
-// below would otherwise take for a read of the sealed member) are set aside for that policy only. For that policy the rendered text must hold exactly one `ctx_verified`, and it must be that
-// comparison; any other read through ctx_verified, ctx_acting_user_id or crove.ctx written in the policy text (a second comparison, another key, a path read, another kind, the setting read
-// directly) fails, and so does the same text on any other policy. What the net does not do, as before: it reads only the policy text, so a read through a view or a function is not seen
-// (the functions are pinned below), and a policy that reads `ctx_verified` and holds no 'member' string and no ctx_acting_user_id is not matched at all (a gap, filed separately).
-const COMPANY_READ_POLICIES = [["crove_meetings.meeting", "meeting_read"]] as const;
-const KIND_COMPARE = /\(\s*SELECT\s*\(crove_kernel\.ctx_verified\(\) ->> 'kind'::text\)\s*\)\s*=\s*'mcp_company'::text/g;
+// Five named restrictive read policies may read the sealed context once, to compare its kind with 'mcp_company' (#3731, #3858, #3771):
+// `(SELECT <kernel>.ctx_verified() ->> 'kind') = 'mcp_company'`. That comparison (and for meeting_read only, the person-branch role list
+// `ARRAY['owner', 'admin', 'member']`, whose string 'member' the net would otherwise take for a read of the sealed member) is set aside per
+// exact `(schema.table, policyname)` entry. Eight named restrictive policies on the mail tables (#3956, #4564) may read the sealed context
+// only via `pg_catalog.left(((SELECT <kernel>.ctx_verified()) ->> 'kind'), 4) IS DISTINCT FROM 'mcp_'` (plus `source = 'kernel.conversation.reply'`
+// on `mail_message.mcp_sealed_closed` FOR SELECT). Any other policy reading ctx_acting_user_id, ctx_verified (any schema prefix or bare), raw
+// current_setting(...) on a sealed-context GUC (current ludy.* or legacy crove.*), pg_settings/pg_show_all_settings, any view/materialized view
+// referencing them (transitively if views chain), or any non-standard SQL/PLpgSQL helper function called by a policy or view that reads them
+// is flagged.
+// Scope boundary: dynamic SQL inside PL/pgSQL EXECUTE that builds a function or GUC name by concatenating string fragments, custom aggregates
+// (`prokind = 'a'`), custom operators (`pg_operator`), and postfix composite calls (`r.fn`) fall outside static `pg_depend` / body scanning;
+// the 10 standard ctx_* field accessors (ctx_org_id, ctx_user_id, ctx_actor_type, ctx_agent_id, ctx_has_flag, ctx_le_scope, ctx_le_allowed,
+// ctx_position_id, ctx_run_id, ctx_run_tainted) are excluded, and the 3 MCP helpers pinned in mcp-grant-read.db.test.ts and
+// mcp-engage-write.db.test.ts (ctx_mcp_member_id, conversation_access_mcp_member, ctx_mcp_engage_write) are excluded only on the exact
+// policies pinned to use them (calls from other policies, wrappers, or views are flagged).
+const COMPANY_READ_POLICIES = [
+  { t: "crove_kernel.conversation", n: "conversation_scope_read", allowRoleList: false },
+  { t: "crove_kernel.conversation_message", n: "conversation_message_scope_read", allowRoleList: false },
+  { t: "crove_meetings.action_item", n: "action_item_read", allowRoleList: false },
+  { t: "crove_meetings.meeting", n: "meeting_read", allowRoleList: true },
+  { t: "crove_meetings.meeting_result", n: "meeting_result_read", allowRoleList: false },
+] as const;
+const MCP_SEALED_CLOSED_POLICIES = [
+  { t: "crove_kernel.inbound_message", n: "mcp_sealed_closed", cmd: "*", perm: false, expectedCount: 2, allowConversationReply: false },
+  { t: "crove_kernel.mail_event", n: "mcp_sealed_closed", cmd: "*", perm: false, expectedCount: 2, allowConversationReply: false },
+  { t: "crove_kernel.mail_message", n: "mcp_sealed_closed", cmd: "r", perm: false, expectedCount: 1, allowConversationReply: true },
+  { t: "crove_kernel.mail_message", n: "mcp_sealed_closed_delete", cmd: "d", perm: false, expectedCount: 1, allowConversationReply: false },
+  { t: "crove_kernel.mail_message", n: "mcp_sealed_closed_insert", cmd: "a", perm: false, expectedCount: 1, allowConversationReply: false },
+  { t: "crove_kernel.mail_message", n: "mcp_sealed_closed_update", cmd: "w", perm: false, expectedCount: 2, allowConversationReply: false },
+  { t: "crove_kernel.mail_suppression", n: "mcp_sealed_closed", cmd: "*", perm: false, expectedCount: 2, allowConversationReply: false },
+  { t: "crove_kernel.today_mail", n: "mcp_sealed_closed", cmd: "*", perm: false, expectedCount: 2, allowConversationReply: false },
+] as const;
+const KIND_COMPARE = /\(\s*SELECT\s*\((?:crove|ludy)_kernel\.ctx_verified\(\) ->> 'kind'::text\)\s*\)\s*=\s*'mcp_company'::text/g;
+const MCP_PREFIX_CLOSED =
+  /"?left"?\(\(\(\s*SELECT\s*(?:crove|ludy)_kernel\.ctx_verified\(\)(?:\s+AS\s+ctx_verified)?\)\s*->>\s*'kind'::text\),\s*4\)\s+IS\s+DISTINCT\s+FROM\s+'mcp_'::text/g;
+const CONVERSATION_REPLY_PRED = /source\s*=\s*'kernel\.conversation\.reply'::text/g;
 const ROLE_LIST = /ARRAY\['owner'::text, 'admin'::text, 'member'::text\]/g;
-// The policies of {t, n, text} that the net flags: those that read the helper or the sealed member, after the allowance above is applied to the named policy.
-function readsSealedMember(policies: ReadonlyArray<{ t: string; n: string; text: string }>): Array<{ t: string; n: string }> {
+const ACTING_USER_RE = /\bctx_acting_user_id\b/i;
+const CTX_VERIFIED_RE = /\bctx_verified\b/i;
+const CTX_VERIFIED_GLOBAL_RE = /\bctx_verified\b/gi;
+const MEMBER_LITERAL_RE = /'\{?member\}?'/i;
+const UNICODE_ESCAPE_RE = /\bU&["']/i;
+const STD_STRINGS_RE = /\bstandard_conforming_strings\b/i;
+const RAW_CTX_GUC_RE =
+  /(?:crove|ludy)\.(?:ctx(?:_seal)?|org_id|user_id)(?![a-z0-9_])|\b(?:pg_settings|pg_show_all_settings)\b|"?current_setting"?\s*\(\s*(?!'[a-z0-9_]+(?:\.[a-z0-9_]+)?'(?:\s*::\s*text)?\s*(?:,|\)))/i;
+const MCP_HELPER_RE = /\b(ctx_mcp_member_id|conversation_access_mcp_member|ctx_mcp_engage_write)\b/i;
+const STANDARD_CTX_ACCESSORS = new Set([
+  "ctx_org_id()",
+  "ctx_user_id()",
+  "ctx_actor_type()",
+  "ctx_agent_id()",
+  "ctx_has_flag(text)",
+  "ctx_le_scope()",
+  "ctx_le_allowed(uuid)",
+  "ctx_position_id()",
+  "ctx_run_id()",
+  "ctx_run_tainted()",
+]);
+const PINNED_MCP_HELPER_POLICIES: Record<string, ReadonlyArray<readonly [string, string]>> = {
+  "ctx_mcp_member_id()": [
+    ["crove_kernel.conversation", "conversation_scope_read"],
+    ["crove_kernel.conversation_message", "conversation_message_scope_read"],
+  ],
+  "conversation_access_mcp_member(text,uuid)": [
+    ["crove_kernel.conversation", "conversation_scope_read"],
+    ["crove_kernel.conversation_message", "conversation_message_scope_read"],
+  ],
+  "ctx_mcp_engage_write()": [
+    ["crove_crm.deal_next_step", "deal_next_step_update"],
+    ["crove_crm.quote", "quote_insert"],
+    ["crove_crm.quote", "quote_update"],
+    ["crove_crm.quote_line", "quote_line_delete"],
+    ["crove_crm.quote_line", "quote_line_insert"],
+    ["crove_kernel.conversation", "conversation_scope_read"],
+    ["crove_kernel.conversation", "conversation_scope_update"],
+    ["crove_kernel.conversation_message", "conversation_message_scope_read"],
+    ["crove_kernel.conversation_note", "conversation_note_scope"],
+  ],
+};
+
+const SQL_IDENT_START_RE = /^[A-Za-z_\u0080-\uFFFF]/;
+const SQL_IDENT_CONT_RE = /[A-Za-z0-9_$\u0080-\uFFFF]/;
+
+function stripSqlComments(sql: string): string {
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    const next = sql[i + 1] ?? "";
+    if (ch === "-" && next === "-") {
+      i += 2;
+      while (i < sql.length && sql[i] !== "\n" && sql[i] !== "\r") i++;
+      out += " ";
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < sql.length && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") {
+          depth++;
+          i += 2;
+        } else if (sql[i] === "*" && sql[i + 1] === "/") {
+          depth--;
+          i += 2;
+        } else {
+          i++;
+        }
+      }
+      out += " ";
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      i++;
+      while (i < sql.length) {
+        const q = sql[i]!;
+        out += q;
+        i++;
+        if (q === '"') {
+          if (sql[i] === '"') {
+            out += '"';
+            i++;
+          } else {
+            break;
+          }
+        }
+      }
+      continue;
+    }
+    if ((ch === "e" || ch === "E") && next === "'" && (i === 0 || !SQL_IDENT_CONT_RE.test(sql[i - 1]!))) {
+      out += `${ch}'`;
+      i += 2;
+      while (i < sql.length) {
+        const s = sql[i]!;
+        if (s === "\\" && i + 1 < sql.length) {
+          out += s + sql[i + 1]!;
+          i += 2;
+          continue;
+        }
+        out += s;
+        i++;
+        if (s === "'") {
+          if (sql[i] === "'") {
+            out += "'";
+            i++;
+          } else {
+            let k = i;
+            let sawNewline = false;
+            while (k < sql.length) {
+              const ws = sql[k]!;
+              if (ws === " " || ws === "\t" || ws === "\f" || ws === "\v") {
+                k++;
+              } else if (ws === "\n" || ws === "\r") {
+                sawNewline = true;
+                k++;
+              } else if (ws === "-" && sql[k + 1] === "-") {
+                k += 2;
+                while (k < sql.length && sql[k] !== "\n" && sql[k] !== "\r") k++;
+              } else {
+                break;
+              }
+            }
+            if (sawNewline && sql[k] === "'") {
+              out += "\n'";
+              i = k + 1;
+            } else {
+              break;
+            }
+          }
+        }
+      }
+      continue;
+    }
+    if (SQL_IDENT_START_RE.test(ch)) {
+      out += ch;
+      i++;
+      while (i < sql.length && SQL_IDENT_CONT_RE.test(sql[i]!)) {
+        out += sql[i]!;
+        i++;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      out += ch;
+      i++;
+      while (i < sql.length) {
+        const s = sql[i]!;
+        out += s;
+        i++;
+        if (s === "'") {
+          if (sql[i] === "'") {
+            out += "'";
+            i++;
+          } else {
+            break;
+          }
+        }
+      }
+      continue;
+    }
+    if (ch === "$") {
+      const tagMatch = /^\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$/.exec(sql.slice(i));
+      if (tagMatch) {
+        const tag = tagMatch[0];
+        const endIdx = sql.indexOf(tag, i + tag.length);
+        if (endIdx !== -1) {
+          out += sql.slice(i, endIdx + tag.length);
+          i = endIdx + tag.length;
+          continue;
+        }
+      }
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const canonicalizeRelName = (name: string) =>
+  name.replace(/^ludy_(kernel|meta|jobs|finance|hr|crm|social|ads|notes|projects|meetings|sign)\./, "crove_$1.");
+const qualifiedOrClauseRefRe = (qualifiedName: string, clauseOnly = false) => {
+  const dot = qualifiedName.indexOf(".");
+  if (dot === -1) return new RegExp(`(?:^|[^a-z0-9_."])"?${escapeRe(qualifiedName)}"?(?![a-z0-9_"])`, "i");
+  const qSchema = escapeRe(qualifiedName.slice(0, dot));
+  const qRel = escapeRe(qualifiedName.slice(dot + 1));
+  const qualifiedBare = `"?${qSchema}"?\\s*\\.\\s*"?${qRel}"?(?![a-z0-9_"])`;
+  const qualified = `(?:^|[^a-z0-9_."])${qualifiedBare}`;
+  const unqualified = `"?${qRel}"?(?![a-z0-9_"])`;
+  return clauseOnly
+    ? new RegExp(`${qualified}|(?:\\b(?:FROM|JOIN|TABLE)\\b|,)\\s*(?:(?:ONLY\\b|\\()\\s*)*(?:${qualifiedBare}|${unqualified})`, "i")
+    : new RegExp(`(?:^|[^a-z0-9_."])(?:"?${qSchema}"?\\s*\\.\\s*)?"?${qRel}"?(?![a-z0-9_"])`, "i");
+};
+const fnCallRe = (qualifiedName: string) => {
+  const dot = qualifiedName.indexOf(".");
+  const schema = dot === -1 ? "" : qualifiedName.slice(0, dot);
+  const fn = dot === -1 ? qualifiedName : qualifiedName.slice(dot + 1);
+  const prefix = schema ? `(?:"?${escapeRe(schema)}"?\\s*\\.\\s*)?` : "";
+  return new RegExp(`(?:^|[^a-z0-9_."])(${prefix}"?${escapeRe(fn)}"?)\\s*\\(`, "i");
+};
+
+type SealedPolicyInput = {
+  t: string;
+  n: string;
+  text: string;
+  cmd?: string;
+  perm?: boolean;
+  taintedViewDeps?: readonly string[];
+  taintedFnDeps?: readonly string[];
+};
+
+function findTaintedViews(views: ReadonlyArray<{ name: string; def: string }>): Set<string> {
+  const tainted = new Set<string>();
+  for (const v of views) {
+    if (ACTING_USER_RE.test(v.def) || CTX_VERIFIED_RE.test(v.def) || RAW_CTX_GUC_RE.test(v.def) || MCP_HELPER_RE.test(v.def)) {
+      tainted.add(v.name);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const v of views) {
+      if (tainted.has(v.name)) continue;
+      for (const tv of tainted) {
+        if (qualifiedOrClauseRefRe(tv, true).test(v.def)) {
+          tainted.add(v.name);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return tainted;
+}
+
+// The policies of {t, n, text} that the net flags: those that read ctx_acting_user_id, ctx_verified (outside the exact-name allowlists),
+// raw current_setting(...) on the sealed-context GUC, tainted views, or non-standard tainted helper functions.
+function readsSealedMember(
+  policies: ReadonlyArray<SealedPolicyInput>,
+  taintedViews?: ReadonlySet<string>,
+): Array<{ t: string; n: string }> {
   return policies
     .filter((p) => {
-      const named = COMPANY_READ_POLICIES.some(([t, n]) => t === p.t && n === p.n);
-      if (named) {
+      const viewHit =
+        (p.taintedViewDeps?.length ?? 0) > 0 ||
+        (taintedViews ? [...taintedViews].some((v) => qualifiedOrClauseRefRe(v, true).test(p.text)) : false);
+      const canonT = canonicalizeRelName(p.t);
+      const allow = COMPANY_READ_POLICIES.find((entry) => entry.t === canonT && entry.n === p.n);
+      if (allow) {
+        const extraFnHit = (p.taintedFnDeps ?? []).some((fn) => canonicalizeRelName(fn) !== "crove_kernel.ctx_verified()");
+        if (viewHit || extraFnHit) return true;
+        if (p.cmd !== undefined && p.cmd !== "r") return true;
+        if (p.perm !== undefined && p.perm !== false) return true;
         // Exactly one read of the sealed context in the whole text, and it is the allowed comparison; nothing else of the net's match survives once the allowance is set aside.
-        if ((p.text.match(/ctx_verified/gi) ?? []).length !== 1 || (p.text.match(KIND_COMPARE) ?? []).length !== 1) return true;
-        const rest = p.text.replace(KIND_COMPARE, "").replace(ROLE_LIST, "");
-        return /ctx_acting_user_id|ctx_verified|crove\.ctx|'\{?member\}?'/i.test(rest);
+        if ((p.text.match(CTX_VERIFIED_GLOBAL_RE) ?? []).length !== 1 || (p.text.match(KIND_COMPARE) ?? []).length !== 1) return true;
+        let rest = p.text.replace(KIND_COMPARE, "");
+        if (allow.allowRoleList) rest = rest.replace(ROLE_LIST, "");
+        return ACTING_USER_RE.test(rest) || CTX_VERIFIED_RE.test(rest) || RAW_CTX_GUC_RE.test(rest) || MEMBER_LITERAL_RE.test(rest);
       }
-      return /(ctx_acting_user_id|ctx_verified)/i.test(p.text) && /ctx_acting_user_id|'member'/i.test(p.text);
+      const closedAllow = MCP_SEALED_CLOSED_POLICIES.find((entry) => entry.t === canonT && entry.n === p.n);
+      if (closedAllow) {
+        const extraFnHit = (p.taintedFnDeps ?? []).some((fn) => canonicalizeRelName(fn) !== "crove_kernel.ctx_verified()");
+        if (viewHit || extraFnHit) return true;
+        if (p.cmd !== undefined && p.cmd !== closedAllow.cmd) return true;
+        if (p.perm !== undefined && p.perm !== closedAllow.perm) return true;
+        if ((p.text.match(MCP_PREFIX_CLOSED) ?? []).length !== closedAllow.expectedCount) return true;
+        let rest = p.text.replace(MCP_PREFIX_CLOSED, "");
+        if (closedAllow.allowConversationReply) {
+          if ((rest.match(CONVERSATION_REPLY_PRED) ?? []).length !== 1) return true;
+          rest = rest.replace(CONVERSATION_REPLY_PRED, "").replace(/\bOR\b/g, "");
+        }
+        if (ACTING_USER_RE.test(rest) || CTX_VERIFIED_RE.test(rest) || RAW_CTX_GUC_RE.test(rest) || MEMBER_LITERAL_RE.test(rest)) {
+          return true;
+        }
+        return !/^[\s()]*$/.test(rest);
+      }
+      const fnHit = (p.taintedFnDeps?.length ?? 0) > 0;
+      return viewHit || fnHit || ACTING_USER_RE.test(p.text) || CTX_VERIFIED_RE.test(p.text) || RAW_CTX_GUC_RE.test(p.text);
     })
     .map(({ t, n }) => ({ t, n }));
+}
+
+type ScannedPolicy = SealedPolicyInput & {
+  rawT: string;
+  rawText: string;
+  cmd: string;
+  perm: boolean;
+};
+
+async function scanPolicyContextReads(
+  c: pg.Client,
+  ids?: DbIdentifiers,
+): Promise<{
+  policies: ScannedPolicy[];
+  readers: string[];
+  sealReaders: string[];
+  taintedViews: string[];
+}> {
+  const activeKernelSchema = ids ? ids.schema("kernel") : "crove_kernel";
+  const toCanonTable = (s: string) => (ids ? ids.toCanonicalTable(s) : s);
+  const toCanonSig = (s: string) => (ids ? ids.toCanonicalRegprocedure(s) : s);
+  const toCanonText = (s: string) => (ids ? ids.toCanonicalCatalogText(s) : s);
+
+  const [policyRes, viewRes, viewDepRes, polDepRes, procRes] = await Promise.all([
+    rawQuery<{ oid: string; t: string; n: string; cmd: string; perm: boolean; text: string }>(
+      c,
+      `SELECT p.oid::text AS oid, n.nspname || '.' || r.relname AS t, p.polname::text AS n, p.polcmd::text AS cmd, p.polpermissive AS perm,
+              coalesce(pg_catalog.pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), '') AS text
+       FROM pg_catalog.pg_policy p
+       JOIN pg_catalog.pg_class r ON r.oid = p.polrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = r.relnamespace
+       WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+       ORDER BY 2, 3`,
+    ),
+    rawQuery<{ oid: string; name: string; def: string }>(
+      c,
+      `SELECT v.oid::text AS oid, n.nspname || '.' || v.relname AS name, pg_catalog.pg_get_viewdef(v.oid) AS def
+       FROM pg_catalog.pg_class v
+       JOIN pg_catalog.pg_namespace n ON n.oid = v.relnamespace
+       WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema' AND v.relkind IN ('v', 'm')
+       ORDER BY 2`,
+    ),
+    rawQuery<{ view_oid: string; refclass: string; ref_oid: string }>(
+      c,
+      `SELECT DISTINCT rw.ev_class::text AS view_oid,
+              CASE WHEN d.refclassid = 'pg_catalog.pg_class'::regclass THEN 'pg_class' ELSE 'pg_proc' END AS refclass,
+              d.refobjid::text AS ref_oid
+       FROM pg_catalog.pg_rewrite rw
+       JOIN pg_catalog.pg_class v ON v.oid = rw.ev_class
+       JOIN pg_catalog.pg_namespace n ON n.oid = v.relnamespace
+       JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_rewrite'::regclass AND d.objid = rw.oid
+       WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema' AND v.relkind IN ('v', 'm')
+         AND d.refclassid IN ('pg_catalog.pg_class'::regclass, 'pg_catalog.pg_proc'::regclass)
+         AND NOT (d.refclassid = 'pg_catalog.pg_class'::regclass AND d.refobjid = rw.ev_class)`,
+    ),
+    rawQuery<{ pol_oid: string; refclass: string; ref_oid: string }>(
+      c,
+      `SELECT DISTINCT p.oid::text AS pol_oid,
+              CASE WHEN d.refclassid = 'pg_catalog.pg_class'::regclass THEN 'pg_class' ELSE 'pg_proc' END AS refclass,
+              d.refobjid::text AS ref_oid
+       FROM pg_catalog.pg_policy p
+       JOIN pg_catalog.pg_class r ON r.oid = p.polrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = r.relnamespace
+       JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_policy'::regclass AND d.objid = p.oid
+       WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+         AND d.refclassid IN ('pg_catalog.pg_class'::regclass, 'pg_catalog.pg_proc'::regclass)
+         AND NOT (d.refclassid = 'pg_catalog.pg_class'::regclass AND d.refobjid = p.polrelid)`,
+    ),
+    // pg_get_functiondef covers a BEGIN ATOMIC body, whose prosrc is empty; prosqlbody IS NULL functions expose their inner body in prosrc without the outer AS $function$ wrapper.
+    rawQuery<{ oid: string; name: string; sig: string; def: string; body: string }>(
+      c,
+      `SELECT p.oid::text AS oid, n.nspname || '.' || p.proname AS name,
+              CASE WHEN pg_catalog.split_part(p.oid::regprocedure::text, '(', 1) LIKE '%.%'
+                   THEN p.oid::regprocedure::text
+                   ELSE n.nspname || '.' || p.oid::regprocedure::text END AS sig,
+              pg_catalog.pg_get_functiondef(p.oid) AS def,
+              CASE WHEN p.prosqlbody IS NULL THEN coalesce(p.prosrc, '')
+                   ELSE pg_catalog.pg_get_functiondef(p.oid) END AS body
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema' AND p.prokind IN ('f', 'p')
+       ORDER BY 3`,
+    ),
+  ]);
+
+  const isStandardCtx = (sig: string) =>
+    sig.startsWith(`${activeKernelSchema}.`) && STANDARD_CTX_ACCESSORS.has(sig.slice(activeKernelSchema.length + 1));
+  const isAllowedMcpHelperForPolicy = (sig: string, canonTable: string, policyName: string) => {
+    if (!sig.startsWith(`${activeKernelSchema}.`)) return false;
+    const allowed = PINNED_MCP_HELPER_POLICIES[sig.slice(activeKernelSchema.length + 1)];
+    return allowed?.some(([t, n]) => t === canonTable && n === policyName) ?? false;
+  };
+
+  const procs = procRes.rows.map((p) => ({ ...p, cleanDef: stripSqlComments(p.body) }));
+  const matchesProc = (p: { def: string; cleanDef: string }, re: RegExp) => re.test(p.def) || re.test(p.cleanDef);
+  const procByOid = new Map(procs.map((p) => [p.oid, p]));
+  const viewByOid = new Map(viewRes.rows.map((v) => [v.oid, v]));
+  const taintedProcs = new Set<string>();
+  for (const p of procs) {
+    if (isStandardCtx(p.sig)) continue;
+    if (
+      p.sig === `${activeKernelSchema}.ctx_verified()` ||
+      matchesProc(p, ACTING_USER_RE) ||
+      matchesProc(p, CTX_VERIFIED_RE) ||
+      matchesProc(p, RAW_CTX_GUC_RE) ||
+      matchesProc(p, MCP_HELPER_RE) ||
+      matchesProc(p, UNICODE_ESCAPE_RE) ||
+      matchesProc(p, STD_STRINGS_RE)
+    ) {
+      taintedProcs.add(p.oid);
+    }
+  }
+  const taintedViewOids = new Set<string>();
+  for (const v of viewRes.rows) {
+    if (ACTING_USER_RE.test(v.def) || CTX_VERIFIED_RE.test(v.def) || RAW_CTX_GUC_RE.test(v.def) || MCP_HELPER_RE.test(v.def)) {
+      taintedViewOids.add(v.oid);
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const d of viewDepRes.rows) {
+      if (taintedViewOids.has(d.view_oid)) continue;
+      if ((d.refclass === "pg_class" && taintedViewOids.has(d.ref_oid)) || (d.refclass === "pg_proc" && taintedProcs.has(d.ref_oid))) {
+        taintedViewOids.add(d.view_oid);
+        changed = true;
+      }
+    }
+    const taintedFnCallRes = [...taintedProcs].map((oid) => fnCallRe(procByOid.get(oid)!.name));
+    const taintedViewClauseRes = [...taintedViewOids].map((oid) => qualifiedOrClauseRefRe(viewByOid.get(oid)!.name, true));
+    for (const v of viewRes.rows) {
+      if (taintedViewOids.has(v.oid)) continue;
+      if (taintedViewClauseRes.some((re) => re.test(v.def)) || taintedFnCallRes.some((re) => re.test(v.def))) {
+        taintedViewOids.add(v.oid);
+        changed = true;
+      }
+    }
+    for (const p of procs) {
+      if (isStandardCtx(p.sig) || taintedProcs.has(p.oid)) continue;
+      if (taintedFnCallRes.some((re) => matchesProc(p, re)) || taintedViewClauseRes.some((re) => matchesProc(p, re))) {
+        taintedProcs.add(p.oid);
+        changed = true;
+      }
+    }
+  }
+
+  const depsByPolicy = new Map<string, Array<{ refclass: string; ref_oid: string }>>();
+  for (const d of polDepRes.rows) {
+    const list = depsByPolicy.get(d.pol_oid) ?? [];
+    list.push(d);
+    depsByPolicy.set(d.pol_oid, list);
+  }
+
+  const policies: ScannedPolicy[] = policyRes.rows.map((pol) => {
+    const canonTable = toCanonTable(pol.t);
+    const deps = depsByPolicy.get(pol.oid) ?? [];
+    const taintedViewDeps = deps
+      .filter((d) => d.refclass === "pg_class" && taintedViewOids.has(d.ref_oid))
+      .map((d) => toCanonTable(viewByOid.get(d.ref_oid)!.name));
+    const taintedFnDeps = deps
+      .filter((d) => {
+        if (d.refclass !== "pg_proc" || !taintedProcs.has(d.ref_oid)) return false;
+        const proc = procByOid.get(d.ref_oid)!;
+        return !isAllowedMcpHelperForPolicy(proc.sig, canonTable, pol.n);
+      })
+      .map((d) => {
+        const proc = procByOid.get(d.ref_oid)!;
+        if (proc.sig === `${activeKernelSchema}.ctx_verified()`) return "crove_kernel.ctx_verified()";
+        const canon = toCanonSig(proc.sig);
+        return canonicalizeRelName(canon) === "crove_kernel.ctx_verified()" ? `nonkernel:${proc.sig}` : canon;
+      });
+    return {
+      t: canonTable,
+      rawT: pol.t,
+      n: pol.n,
+      cmd: pol.cmd,
+      perm: pol.perm,
+      text: toCanonText(pol.text),
+      rawText: pol.text,
+      taintedViewDeps,
+      taintedFnDeps,
+    };
+  });
+
+  const readers = procs
+    .filter((p) => p.sig !== `${activeKernelSchema}.ctx_acting_user_id()` && matchesProc(p, ACTING_USER_RE))
+    .map((p) => toCanonSig(p.sig))
+    .sort();
+  const sealReaders = procs
+    .filter((p) => matchesProc(p, /(->>?|#>>?)\s*'\{?member\}?'/i))
+    .map((p) => toCanonSig(p.sig))
+    .sort();
+
+  return {
+    policies,
+    readers,
+    sealReaders,
+    taintedViews: [...taintedViewOids].map((oid) => toCanonTable(viewByOid.get(oid)!.name)).sort(),
+  };
 }
 // What the catalog may hold, nothing else. No meeting table (Platform PO decision on #2756), no task, proposal or notification.
 const CATALOG: Record<string, string> = {
@@ -616,31 +1114,16 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("reads ctx_acting_user_id only in the pinned policies, and nowhere else: no function, wrapper or direct read of the sealed member", async () => {
-    const found = await admin(async (c) => ({
-      policies: (
-        await c.query<{ t: string; n: string; cmd: string; perm: boolean; text: string }>(
-          `SELECT p.polrelid::regclass::text AS t, p.polname::text AS n, p.polcmd::text AS cmd, p.polpermissive AS perm,
-                  coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') AS text FROM pg_policy p
-           WHERE coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~* '(ctx_acting_user_id|ctx_verified)'
-           ORDER BY 1, 2`,
-        )
-      ).rows,
-      // pg_get_functiondef covers a BEGIN ATOMIC body, whose prosrc is empty.
-      readers: (
-        await c.query<{ n: string }>(
-          `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-           WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND p.oid <> to_regprocedure('crove_kernel.ctx_acting_user_id()') AND pg_get_functiondef(p.oid) ~* 'ctx_acting_user_id'
-           ORDER BY 1`,
-        )
-      ).rows.map((r) => r.n),
-      sealReaders: (
-        await c.query<{ n: string }>(
-          `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-           WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* '(->>?|#>>?)\\s*''\\{?member\\}?'''
-           ORDER BY 1`,
-        )
-      ).rows.map((r) => r.n),
-    }));
+    const found = await admin((c) => scanPolicyContextReads(c, dbIds));
+    const activeKernelSchema = dbIds ? dbIds.schema("kernel") : "crove_kernel";
+    const activeKindCompare = new RegExp(
+      `\\(\\s*SELECT\\s*\\(${escapeRe(activeKernelSchema)}\\.ctx_verified\\(\\) ->> 'kind'::text\\)\\s*\\)\\s*=\\s*'mcp_company'::text`,
+      "g",
+    );
+    const activeMcpPrefixClosed = new RegExp(
+      `"?left"?\\(\\(\\(\\s*SELECT\\s*${escapeRe(activeKernelSchema)}\\.ctx_verified\\(\\)(?:\\s+AS\\s+ctx_verified)?\\)\\s*->>\\s*'kind'::text\\),\\s*4\\)\\s+IS\\s+DISTINCT\\s+FROM\\s+'mcp_'::text`,
+      "g",
+    );
     expect(
       found.readers,
       "functions that call ctx_acting_user_id (a wrapper, or a definer that gates on it)",
@@ -649,10 +1132,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       [...found.sealReaders].sort(),
       "functions that read the sealed member directly",
     ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper].sort());
-    // The named policies of Meetings, when they exist, read the sealed kind through the one allowed comparison, once each, as restrictive read policies.
-    for (const p of found.policies.filter((x) => COMPANY_READ_POLICIES.some(([t, n]) => t === x.t && n === x.n))) {
+    expect(found.taintedViews, "views or materialized views that touch the sealed context").toEqual([]);
+    // The named company-read policies, when they exist, read the sealed kind through the one allowed comparison, once each, as restrictive read policies.
+    for (const p of found.policies.filter((x) => COMPANY_READ_POLICIES.some((entry) => entry.t === x.t && entry.n === x.n))) {
       expect([...p.text.matchAll(KIND_COMPARE)].length, `${p.t}.${p.n}: one comparison of the sealed kind`).toBe(1);
+      expect([...p.rawText.matchAll(activeKindCompare)].length, `${p.t}.${p.n}: uses active kernel schema ${activeKernelSchema}`).toBe(1);
       expect([p.cmd, p.perm], `${p.t}.${p.n}: a restrictive read policy`).toEqual(["r", false]);
+    }
+    // The named mail-closed policies, when they exist, read only the 4-char 'mcp_' kind prefix via left(ctx_verified() ->> 'kind', 4) IS DISTINCT FROM 'mcp_'.
+    for (const p of found.policies.filter((x) => MCP_SEALED_CLOSED_POLICIES.some((entry) => entry.t === x.t && entry.n === x.n))) {
+      const entry = MCP_SEALED_CLOSED_POLICIES.find((e) => e.t === p.t && e.n === p.n)!;
+      expect([...p.text.matchAll(MCP_PREFIX_CLOSED)].length, `${p.t}.${p.n}: expected mcp_ prefix checks`).toBe(entry.expectedCount);
+      expect([...p.rawText.matchAll(activeMcpPrefixClosed)].length, `${p.t}.${p.n}: uses active kernel schema ${activeKernelSchema}`).toBe(
+        entry.expectedCount,
+      );
+      expect([p.cmd, p.perm], `${p.t}.${p.n}: exact command and restrictive flag`).toEqual([entry.cmd, entry.perm]);
     }
     const byTablePolicy = (a: readonly (string | boolean)[], b: readonly (string | boolean)[]) => {
       const ta = String(a[0]);
@@ -668,18 +1162,61 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     ).toEqual([...POLICIES].sort(byTablePolicy));
   });
 
-  it("sets aside only the one comparison of the sealed kind in meeting_read, and flags every other match (planted texts)", () => {
+  it("sets aside only the one comparison of the sealed kind in allowlisted policies, and flags every other match (planted texts)", () => {
     const compare = "(( SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_company'::text)";
+    const compareLudy = "(( SELECT (ludy_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_company'::text)";
+    const prefixClosed = "(\"left\"((( SELECT crove_kernel.ctx_verified() AS ctx_verified) ->> 'kind'::text), 4) IS DISTINCT FROM 'mcp_'::text)";
+    const prefixClosedLudy = "(\"left\"((( SELECT ludy_kernel.ctx_verified() AS ctx_verified) ->> 'kind'::text), 4) IS DISTINCT FROM 'mcp_'::text)";
     const roles = "m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])";
     const meeting = { t: "crove_meetings.meeting", n: "meeting_read" };
-    // The real shape is set aside.
+    // The real shape is set aside for each allowlisted policy (in both crove_* and ludy_* spellings).
     expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare}` }])).toEqual([]);
-    // The same text on any other policy, table or name is flagged (so are the other two Meetings read policies, should they ever hold the role list).
+    expect(readsSealedMember([{ t: "ludy_meetings.meeting", n: "meeting_read", text: `(${roles}) OR ${compareLudy}` }])).toEqual([]);
+    for (const entry of COMPANY_READ_POLICIES) {
+      if (entry.allowRoleList) continue;
+      expect(readsSealedMember([{ t: entry.t, n: entry.n, text: `true OR ${compare}` }]), `${entry.t}.${entry.n}`).toEqual([]);
+    }
+    for (const entry of MCP_SEALED_CLOSED_POLICIES) {
+      const pred = entry.expectedCount === 2 ? `${prefixClosed} ${prefixClosed}` : prefixClosed;
+      const text = entry.allowConversationReply ? `((source = 'kernel.conversation.reply'::text) OR ${pred})` : pred;
+      expect(readsSealedMember([{ t: entry.t, n: entry.n, cmd: entry.cmd, perm: entry.perm, text }]), `${entry.t}.${entry.n}`).toEqual([]);
+      const ludyText = entry.allowConversationReply
+        ? `((source = 'kernel.conversation.reply'::text) OR ${prefixClosedLudy})`
+        : entry.expectedCount === 2
+          ? `${prefixClosedLudy} ${prefixClosedLudy}`
+          : prefixClosedLudy;
+      expect(readsSealedMember([{ t: canonicalizeRelName(entry.t).replace("crove_", "ludy_"), n: entry.n, cmd: entry.cmd, perm: entry.perm, text: ludyText }])).toEqual([]);
+    }
+    // Tampered mcp_sealed_closed policies are caught (wrong count, missing WITH CHECK, extra OR predicate, reply exception added elsewhere, wrong cmd/perm, or unlisted table).
+    expect(readsSealedMember([{ t: "crove_kernel.mail_event", n: "mcp_sealed_closed", cmd: "*", perm: false, text: prefixClosed }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_kernel.mail_event", n: "mcp_sealed_closed", cmd: "*", perm: false, text: `${prefixClosed} (${prefixClosed} OR true)` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_kernel.mail_message", n: "mcp_sealed_closed", cmd: "r", perm: false, text: `((source = 'kernel.conversation.reply'::text) OR ${prefixClosed} OR true)` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_kernel.mail_message", n: "mcp_sealed_closed_insert", cmd: "a", perm: false, text: `((source = 'kernel.conversation.reply'::text) OR ${prefixClosed})` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_kernel.mail_message", n: "mcp_sealed_closed_insert", cmd: "*", perm: false, text: prefixClosed }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_kernel.mail_message", n: "mcp_sealed_closed_insert", cmd: "a", perm: true, text: prefixClosed }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "mcp_sealed_closed", text: prefixClosed }])).toHaveLength(1);
+    // The same text on any other policy, table or name is flagged (so are the other allowlisted policies, should they ever hold the role list).
     expect(readsSealedMember([{ t: "crove_meetings.meeting", n: "other_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
     expect(readsSealedMember([{ t: "crove_meetings.meeting_result", n: "meeting_result_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_kernel.conversation", n: "conversation_scope_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
     expect(readsSealedMember([{ t: "crove_notes.note", n: "meeting_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
     // Another policy holding the comparison beside any 'member' string is flagged.
     expect(readsSealedMember([{ t: "crove_meetings.meeting_result", n: "meeting_result_read", text: `${compare} OR (x = 'member'::text)` }])).toHaveLength(1);
+    // Any non-allowlisted policy reading ctx_verified (with any schema prefix or bare) WITHOUT 'member' or ctx_acting_user_id is flagged (#3771).
+    for (const [label, expr] of [
+      ["crove_kernel.ctx_verified without 'member'", compare],
+      ["ludy_kernel.ctx_verified without 'member'", compareLudy],
+      ["bare ctx_verified without 'member'", "(( SELECT (ctx_verified() ->> 'kind'::text)) = 'mcp_company'::text)"],
+      ["arbitrary schema ctx_verified", "(( SELECT (other_schema.ctx_verified() ->> 'kind'::text)) = 'mcp_company'::text)"],
+      ["raw current_setting('ludy.ctx')", "((current_setting('ludy.ctx'::text, true))::jsonb ->> 'kind'::text) = 'mcp_company'::text"],
+      ["raw current_setting('crove.ctx')", "((current_setting('crove.ctx'::text, true))::jsonb ->> 'kind'::text) = 'mcp_company'::text"],
+      ["raw current_setting('ludy.ctx_seal')", "current_setting('ludy.ctx_seal'::text, true) IS NOT NULL"],
+      ["dynamic current_setting concatenation", "current_setting(('ludy.'::text || 'ctx'::text), true) IS NOT NULL"],
+      ["pg_settings catalog query", "EXISTS (SELECT 1 FROM pg_settings WHERE name LIKE '%ctx%')"],
+      ["pg_show_all_settings catalog query", "EXISTS (SELECT 1 FROM pg_show_all_settings() s WHERE s.name LIKE '%ctx%')"],
+    ] as const) {
+      expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "je_read", text: expr }]), label).toHaveLength(1);
+    }
     // meeting_read with any other read of the sealed context or of the helper is flagged, whatever the key or kind it names.
     const extras = [
       "(crove_kernel.ctx_acting_user_id() IS NOT NULL)",
@@ -690,11 +1227,294 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       `${compare}`,
     ];
     for (const extra of extras) expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR ${extra}` }]), extra).toHaveLength(1);
-    // A direct read of the sealed setting is flagged as well.
+    // Direct reads of current or legacy sealed settings are flagged on allowlisted policies as well.
     expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR ((current_setting('crove.ctx'::text, true))::jsonb ->> 'member'::text) IS NOT NULL` }])).toHaveLength(1);
+    expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR ((current_setting('ludy.ctx'::text, true))::jsonb ->> 'kind'::text) = 'mcp_company'::text` }])).toHaveLength(1);
     // meeting_read without the comparison, or with a different one, is flagged too.
     expect(readsSealedMember([{ ...meeting, text: `(${roles})` }])).toHaveLength(1);
     expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ((SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_member'::text)` }])).toHaveLength(1);
+    // Indirect reads through views (1-hop, chained, FROM ONLY, parenthesized) are caught even when the policy has no 'member' or ctx_verified text; harmless views/policies pass.
+    const tainted = findTaintedViews([
+      { name: "crove_kernel.v_ctx", def: "SELECT (ludy_kernel.ctx_verified() ->> 'kind'::text) AS k" },
+      { name: "crove_kernel.v_guc", def: "SELECT (current_setting('crove.ctx'::text, true))::jsonb AS ctx" },
+      { name: "crove_kernel.v_chain", def: "SELECT k FROM crove_kernel.v_ctx" },
+      { name: "crove_kernel.v_chain_only", def: "SELECT k FROM ONLY (crove_kernel.v_ctx)" },
+      { name: "crove_kernel.v_mcp_helper", def: "SELECT crove_kernel.conversation_access_mcp_member('direct', gen_random_uuid()) AS ok" },
+      { name: "crove_kernel.v_ok", def: "SELECT 1 AS ok" },
+      { name: "crove_kernel.ba_v_ctx", def: "SELECT 1 AS ok" },
+    ]);
+    expect([...tainted].sort()).toEqual([
+      "crove_kernel.v_chain",
+      "crove_kernel.v_chain_only",
+      "crove_kernel.v_ctx",
+      "crove_kernel.v_guc",
+      "crove_kernel.v_mcp_helper",
+    ]);
+    expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "via_view", text: "(EXISTS (SELECT 1 FROM crove_kernel.v_ctx))" }], tainted)).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "via_only_view", text: "(EXISTS (SELECT 1 FROM ONLY (v_ctx)))" }], tainted)).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "via_chain", text: "(EXISTS (SELECT 1 FROM crove_kernel.v_chain))" }], tainted)).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "via_guc_view", text: "(EXISTS (SELECT 1 FROM crove_kernel.v_guc))" }], tainted)).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_finance.journal_entry", n: "via_mcp_view", text: "(EXISTS (SELECT 1 FROM crove_kernel.v_mcp_helper))" }], tainted)).toHaveLength(1);
+    expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR (EXISTS (SELECT 1 FROM crove_kernel.v_chain))` }], tainted)).toHaveLength(1);
+    expect(
+      readsSealedMember(
+        [
+          {
+            t: "crove_finance.journal_entry",
+            n: "harmless",
+            text: "(org_id = crove_kernel.ctx_org_id()) AND (EXISTS (SELECT 1 FROM crove_kernel.v_ok)) AND (EXISTS (SELECT 1 FROM other_crove_kernel.v_ctx)) AND (current_setting('application_name'::text, true) <> 'x'::text)",
+          },
+        ],
+        tainted,
+      ),
+    ).toEqual([]);
+    // SQL comment stripper lexer regression cases: CR line comments, ident$ identifiers, UTF-8 dollar tags, CASE'x'/ée'x', and E'...' newline continuation.
+    expect(stripSqlComments("SELECT 1 -- cr\r+ probe_3771 /* c */ . fn_sql /* c */ ()")).toContain("probe_3771   . fn_sql   ()");
+    expect(stripSqlComments("DECLARE a$$foo$ int := 1; RETURN probe_3771 /* c */ . fn_sql /* c */ ();")).toContain("a$$foo$");
+    expect(stripSqlComments("DECLARE a text := $é$/*$é$; RETURN probe_3771 /* c */ . fn_sql /* c */ ();")).toContain("probe_3771   . fn_sql   ()");
+    expect(stripSqlComments("SELECT CASE'x', ée'x'; RETURN probe_3771 /* c */ . fn_sql /* c */ ();")).toContain("probe_3771   . fn_sql   ()");
+    expect(stripSqlComments("SELECT E'a'\r\n-- ignored ' quote\r\n'\\'' || probe_3771 /* c */ . fn_sql /* c */ ();")).toContain(
+      "probe_3771   . fn_sql   ()",
+    );
+  });
+
+  it("catches real PostgreSQL policies that read ctx_verified without 'member', read sealed-context GUCs via current_setting, read via views/chained views, or call tainted helpers", async () => {
+    const activeKernel = dbIds ? dbIds.schema("kernel") : "crove_kernel";
+    const activeMeetings = dbIds ? dbIds.schema("meetings") : "crove_meetings";
+    const tenantRole = dbIds ? dbIds.role("tenant") : "crove_tenant";
+    const result = await admin(async (c) => {
+      await rawQuery(c, "BEGIN");
+      try {
+        await rawQuery(
+          c,
+          `CREATE SCHEMA probe_3771;
+           CREATE FUNCTION probe_3771.ctx_verified() RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT '{"kind":"mcp_company"}'::jsonb $$;
+           CREATE FUNCTION probe_3771.ctx_org_id() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT (${activeKernel}.ctx_verified() ->> 'org')::uuid $$;
+           CREATE FUNCTION probe_3771.ctx_mcp_engage_write() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT (${activeKernel}.ctx_verified() ->> 'kind') = 'mcp_company' $$;
+           CREATE FUNCTION probe_3771.fn_sql() RETURNS text LANGUAGE sql STABLE AS $$ SELECT ${activeKernel}.ctx_verified() ->> 'kind' $$;
+           CREATE FUNCTION probe_3771.fn_plpgsql() RETURNS text LANGUAGE plpgsql STABLE AS $$ BEGIN RETURN current_setting('ludy.ctx', true)::jsonb ->> 'kind'; END $$;
+           CREATE FUNCTION probe_3771.fn_chain() RETURNS text LANGUAGE sql STABLE AS $$ SELECT probe_3771.fn_sql() $$;
+           CREATE FUNCTION probe_3771.fn_wrap_engage() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT ${activeKernel}.ctx_mcp_engage_write() $$;
+           CREATE FUNCTION probe_3771.fn_comment_call() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           BEGIN
+             RETURN probe_3771 /* comment */ . fn_sql /* comment */ ();
+           END $$;
+           CREATE FUNCTION probe_3771.fn_quoted_guc() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           BEGIN
+             RETURN pg_catalog."current_setting" /* comment */ ('ludy.' || 'ctx', true)::jsonb ->> 'kind';
+           END $$;
+           CREATE FUNCTION probe_3771.fn_dollar_block() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           DECLARE a text := $tag$/*$tag$;
+           BEGIN
+             IF a IS NOT NULL THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_dollar_line() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           BEGIN
+             RETURN $tag$--$tag$ || probe_3771 /* c */ . fn_sql /* c */ ();
+           END $$;
+           CREATE FUNCTION probe_3771.fn_cr_comment() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           BEGIN
+             RETURN probe_3771
+             -- cr comment${"\r"}/* c */ . fn_sql /* c */ ();
+           END $$;
+           CREATE FUNCTION probe_3771.fn_ident_dollar() RETURNS text LANGUAGE plpgsql STABLE AS $outer$
+           DECLARE a$$foo$ text := 'ok';
+           BEGIN
+             IF a$$foo$ IS NOT NULL THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $outer$;
+           CREATE FUNCTION probe_3771.fn_utf8_dollar() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           DECLARE a text := $é$/*$é$;
+           BEGIN
+             IF a IS NOT NULL THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_escape_continue() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           DECLARE a text := E'first'
+             -- comment between continued parts
+             '\\'';
+           BEGIN
+             IF a IS NOT NULL THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_case_escape_traps() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           BEGIN
+             RETURN CASE'x' WHEN 'x' THEN probe_3771 /* c */ . fn_sql /* c */ () END;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_std_strings() RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+           BEGIN
+             PERFORM set_config('standard_conforming_strings', 'off', true);
+             RETURN true;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_pos_params(a text, b text) RETURNS text LANGUAGE sql STABLE AS $$
+             SELECT COALESCE($1, $2, probe_3771 /* c */ . fn_sql /* c */ ())
+           $$;
+           CREATE FUNCTION probe_3771.fn_atomic_sql() RETURNS text LANGUAGE sql STABLE
+           BEGIN ATOMIC
+             RETURN $tên$/*$tên$ || probe_3771 /* c */ . fn_sql /* c */ ();
+           END;
+           CREATE FUNCTION probe_3771.fn_dollar_apostrophe() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           DECLARE a text := $tag$it's$tag$;
+           BEGIN
+             IF a IS NOT NULL THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_escape_quote() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           DECLARE a text := E'\\'';
+           BEGIN
+             IF a IS NOT NULL THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_quoted_ident_traps() RETURNS text LANGUAGE plpgsql STABLE AS $$
+           DECLARE "/*" text := ''; "a'b" text := '';
+           BEGIN
+             IF "/*" = "a'b" THEN RETURN probe_3771 /* c */ . fn_sql /* c */ (); END IF;
+             RETURN NULL;
+           END $$;
+           CREATE FUNCTION probe_3771.fn_dollar_acting() RETURNS uuid LANGUAGE plpgsql STABLE AS $$
+           DECLARE a text := $tag$/*$tag$;
+           BEGIN
+             IF a IS NOT NULL THEN RETURN ${activeKernel}.ctx_acting_user_id(); END IF;
+             RETURN NULL;
+           END $$;
+
+           CREATE VIEW probe_3771.v_ctx AS SELECT (${activeKernel}.ctx_verified() ->> 'kind') AS kind;
+           CREATE VIEW probe_3771.v_crove_guc WITH (security_invoker = true) AS SELECT (current_setting('crove.ctx', true)::jsonb ->> 'kind') AS kind;
+           CREATE VIEW probe_3771.v_chain AS SELECT kind FROM probe_3771.v_crove_guc;
+           CREATE VIEW probe_3771.v_ludy_guc AS SELECT (current_setting('ludy.ctx', true)::jsonb ->> 'kind') AS kind;
+           CREATE VIEW probe_3771.v_via_fn AS SELECT probe_3771.fn_sql() AS kind;
+           CREATE MATERIALIZED VIEW probe_3771.mv_ctx AS SELECT (${activeKernel}.ctx_verified() ->> 'kind') AS kind;
+           CREATE VIEW probe_3771.v_ok AS SELECT 1 AS ok;
+
+           CREATE FUNCTION probe_3771.fn_via_view() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT EXISTS (SELECT 1 FROM probe_3771.v_ludy_guc) $$;
+
+           CREATE TABLE probe_3771.t (org_id uuid, id uuid);
+           ALTER TABLE probe_3771.t ENABLE ROW LEVEL SECURITY;
+
+           CREATE POLICY p_ctx ON probe_3771.t FOR SELECT USING ((SELECT ${activeKernel}.ctx_verified() ->> 'kind') = 'mcp_company');
+           CREATE POLICY p_ludy_guc ON probe_3771.t FOR SELECT USING ((current_setting('ludy.ctx', true)::jsonb ->> 'kind') = 'mcp_company');
+           CREATE POLICY p_crove_guc ON probe_3771.t FOR SELECT USING ((current_setting('crove.ctx', true)::jsonb ->> 'kind') = 'mcp_company');
+           CREATE POLICY p_seal_guc ON probe_3771.t FOR SELECT USING (current_setting('ludy.ctx_seal', true) IS NOT NULL);
+           CREATE POLICY p_dyn_guc ON probe_3771.t FOR SELECT USING (current_setting('ludy.' || 'ctx', true) IS NOT NULL);
+           CREATE POLICY p_pg_settings ON probe_3771.t FOR SELECT USING (EXISTS (SELECT 1 FROM pg_catalog.pg_settings WHERE name LIKE '%ctx%'));
+           CREATE POLICY p_view_ctx ON probe_3771.t FOR SELECT USING (EXISTS (SELECT 1 FROM probe_3771.v_ctx WHERE kind = 'mcp_company'));
+           CREATE POLICY p_view_chain ON probe_3771.t FOR SELECT USING (EXISTS (SELECT 1 FROM probe_3771.v_chain WHERE kind = 'mcp_company'));
+           CREATE POLICY p_view_with_check ON probe_3771.t FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM probe_3771.v_ludy_guc WHERE kind = 'mcp_company'));
+           CREATE POLICY p_view_fn ON probe_3771.t FOR SELECT USING (EXISTS (SELECT 1 FROM probe_3771.v_via_fn WHERE kind = 'mcp_company'));
+           CREATE POLICY p_matview ON probe_3771.t FOR SELECT USING (EXISTS (SELECT 1 FROM probe_3771.mv_ctx WHERE kind = 'mcp_company'));
+           CREATE POLICY p_fn_sql ON probe_3771.t FOR SELECT USING (probe_3771.fn_sql() = 'mcp_company');
+           CREATE POLICY p_fn_plpgsql ON probe_3771.t FOR SELECT USING (probe_3771.fn_plpgsql() = 'mcp_company');
+           CREATE POLICY p_fn_chain ON probe_3771.t FOR SELECT USING (probe_3771.fn_chain() = 'mcp_company');
+           CREATE POLICY p_fn_view ON probe_3771.t FOR SELECT USING (probe_3771.fn_via_view());
+           CREATE POLICY p_fn_comment_call ON probe_3771.t FOR SELECT USING (probe_3771.fn_comment_call() = 'mcp_company');
+           CREATE POLICY p_fn_quoted_guc ON probe_3771.t FOR SELECT USING (probe_3771.fn_quoted_guc() = 'mcp_company');
+           CREATE POLICY p_fn_dollar_block ON probe_3771.t FOR SELECT USING (probe_3771.fn_dollar_block() = 'mcp_company');
+           CREATE POLICY p_fn_dollar_line ON probe_3771.t FOR SELECT USING (probe_3771.fn_dollar_line() = 'mcp_company');
+           CREATE POLICY p_fn_cr_comment ON probe_3771.t FOR SELECT USING (probe_3771.fn_cr_comment() = 'mcp_company');
+           CREATE POLICY p_fn_ident_dollar ON probe_3771.t FOR SELECT USING (probe_3771.fn_ident_dollar() = 'mcp_company');
+           CREATE POLICY p_fn_utf8_dollar ON probe_3771.t FOR SELECT USING (probe_3771.fn_utf8_dollar() = 'mcp_company');
+           CREATE POLICY p_fn_escape_continue ON probe_3771.t FOR SELECT USING (probe_3771.fn_escape_continue() = 'mcp_company');
+           CREATE POLICY p_fn_case_escape ON probe_3771.t FOR SELECT USING (probe_3771.fn_case_escape_traps() = 'mcp_company');
+           CREATE POLICY p_fn_std_strings ON probe_3771.t FOR SELECT USING (probe_3771.fn_std_strings());
+           CREATE POLICY p_fn_pos_params ON probe_3771.t FOR SELECT USING (probe_3771.fn_pos_params(NULL, NULL) = 'mcp_company');
+           CREATE POLICY p_fn_atomic_sql ON probe_3771.t FOR SELECT USING (probe_3771.fn_atomic_sql() = 'mcp_company');
+           CREATE POLICY p_fn_dollar_apostrophe ON probe_3771.t FOR SELECT USING (probe_3771.fn_dollar_apostrophe() = 'mcp_company');
+           CREATE POLICY p_fn_escape_quote ON probe_3771.t FOR SELECT USING (probe_3771.fn_escape_quote() = 'mcp_company');
+           CREATE POLICY p_fn_quoted_ident ON probe_3771.t FOR SELECT USING (probe_3771.fn_quoted_ident_traps() = 'mcp_company');
+           CREATE POLICY p_fn_dollar_acting ON probe_3771.t FOR SELECT USING (probe_3771.fn_dollar_acting() IS NOT NULL);
+           CREATE POLICY p_mcp_member_leak ON probe_3771.t FOR SELECT USING (${activeKernel}.ctx_mcp_member_id() IS NOT NULL);
+           CREATE POLICY p_spoof_std ON probe_3771.t FOR SELECT USING (org_id = probe_3771.ctx_org_id());
+           CREATE POLICY p_spoof_mcp ON probe_3771.t FOR SELECT USING (probe_3771.ctx_mcp_engage_write());
+           CREATE POLICY p_wrap_mcp ON probe_3771.t FOR SELECT USING (probe_3771.fn_wrap_engage());
+           CREATE POLICY p_ok ON probe_3771.t FOR SELECT USING (
+             org_id = ${activeKernel}.ctx_org_id()
+             AND EXISTS (SELECT 1 FROM probe_3771.v_ok)
+             AND current_setting('application_name', true) <> 'blocked'
+           );`,
+        );
+        // Also verify an unqualified bare ctx_verified() call, Unicode-escaped identifier U&"...", and tampered allowlisted policies are caught.
+        await rawQuery(c, "SET LOCAL search_path = probe_3771, pg_catalog");
+        await rawQuery(c, `CREATE FUNCTION probe_3771.fn_unicode() RETURNS text LANGUAGE sql STABLE AS $$ SELECT U&"\\0063tx_verified"() ->> 'kind' $$`);
+        await rawQuery(c, `CREATE POLICY p_fn_unicode ON probe_3771.t FOR SELECT USING (probe_3771.fn_unicode() = 'mcp_company')`);
+        await rawQuery(c, `CREATE POLICY p_bare_ctx ON probe_3771.t FOR SELECT USING ((ctx_verified() ->> 'kind') = 'mcp_company')`);
+        await rawQuery(c, "SET LOCAL search_path = pg_catalog, pg_temp");
+        await rawQuery(c, `DROP POLICY meeting_result_read ON ${activeMeetings}.meeting_result`);
+        await rawQuery(
+          c,
+          `CREATE POLICY meeting_result_read ON ${activeMeetings}.meeting_result AS RESTRICTIVE FOR SELECT TO ${tenantRole}
+           USING (((SELECT ${activeKernel}.ctx_verified() ->> 'kind') = 'mcp_company') OR EXISTS (SELECT 1 FROM probe_3771.v_ctx))`,
+        );
+        await rawQuery(c, `DROP POLICY mcp_sealed_closed ON ${activeKernel}.mail_event`);
+        await rawQuery(
+          c,
+          `CREATE POLICY mcp_sealed_closed ON ${activeKernel}.mail_event AS RESTRICTIVE FOR ALL TO ${tenantRole}
+           USING (pg_catalog.left(((SELECT ${activeKernel}.ctx_verified()) ->> 'kind'), 4) IS DISTINCT FROM 'mcp_' OR true)`,
+        );
+        const scan = await scanPolicyContextReads(c, dbIds);
+        return {
+          taintedViews: scan.taintedViews,
+          readers: scan.readers,
+          flagged: readsSealedMember(scan.policies).map((p) => `${p.t}.${p.n}`).sort(),
+        };
+      } finally {
+        await rawQuery(c, "ROLLBACK").catch(() => {});
+      }
+    });
+
+    expect(result.taintedViews).toEqual([
+      "probe_3771.mv_ctx",
+      "probe_3771.v_chain",
+      "probe_3771.v_crove_guc",
+      "probe_3771.v_ctx",
+      "probe_3771.v_ludy_guc",
+      "probe_3771.v_via_fn",
+    ]);
+    expect(result.readers).toEqual(["probe_3771.fn_dollar_acting()"]);
+    const expectedFlagged = [
+      ...POLICIES.map(([t, n]) => `${t}.${n}`),
+      "crove_kernel.mail_event.mcp_sealed_closed",
+      "crove_meetings.meeting_result.meeting_result_read",
+      "probe_3771.t.p_bare_ctx",
+      "probe_3771.t.p_crove_guc",
+      "probe_3771.t.p_ctx",
+      "probe_3771.t.p_dyn_guc",
+      "probe_3771.t.p_fn_atomic_sql",
+      "probe_3771.t.p_fn_case_escape",
+      "probe_3771.t.p_fn_chain",
+      "probe_3771.t.p_fn_comment_call",
+      "probe_3771.t.p_fn_cr_comment",
+      "probe_3771.t.p_fn_dollar_acting",
+      "probe_3771.t.p_fn_dollar_apostrophe",
+      "probe_3771.t.p_fn_dollar_block",
+      "probe_3771.t.p_fn_dollar_line",
+      "probe_3771.t.p_fn_escape_continue",
+      "probe_3771.t.p_fn_escape_quote",
+      "probe_3771.t.p_fn_ident_dollar",
+      "probe_3771.t.p_fn_plpgsql",
+      "probe_3771.t.p_fn_pos_params",
+      "probe_3771.t.p_fn_quoted_guc",
+      "probe_3771.t.p_fn_quoted_ident",
+      "probe_3771.t.p_fn_sql",
+      "probe_3771.t.p_fn_std_strings",
+      "probe_3771.t.p_fn_unicode",
+      "probe_3771.t.p_fn_utf8_dollar",
+      "probe_3771.t.p_fn_view",
+      "probe_3771.t.p_ludy_guc",
+      "probe_3771.t.p_matview",
+      "probe_3771.t.p_mcp_member_leak",
+      "probe_3771.t.p_pg_settings",
+      "probe_3771.t.p_seal_guc",
+      "probe_3771.t.p_spoof_mcp",
+      "probe_3771.t.p_spoof_std",
+      "probe_3771.t.p_view_chain",
+      "probe_3771.t.p_view_ctx",
+      "probe_3771.t.p_view_fn",
+      "probe_3771.t.p_view_with_check",
+      "probe_3771.t.p_wrap_mcp",
+    ].sort();
+    expect(result.flagged).toEqual(expectedFlagged);
+    expect(result.flagged).not.toContain("probe_3771.t.p_ok");
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------

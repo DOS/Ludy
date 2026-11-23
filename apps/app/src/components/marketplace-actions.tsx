@@ -17,7 +17,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { DataTable } from './ui.tsx';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 // One request: the key is kept for the life of the row, so a retry returns the same proposal. After it, the row says so and links to the proposal.
 function AskButton({ label, disabled, ask, testId, pending }: { label: string; disabled: boolean; ask: (idempotencyKey: string) => Promise<{ proposalId: string }>; testId: string; pending: string | null }) {
@@ -73,11 +73,11 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
   const canSetRate = org.data?.role === 'owner' || org.data?.role === 'admin';
   return (
     <TableRow data-testid="marketplace-action-settlement">
-      <TableCell className="px-4 py-3">{s.platformName}</TableCell>
-      <TableCell className="px-4 py-3">{period(s.periodFrom, s.periodTo)}</TableCell>
-      <TableCell className="px-4 py-3" data-testid="marketplace-settlement-month">{s.months.length === 0 ? t('monthWaiting', { count: String(s.waitingLines) }) : s.months.join(', ')}</TableCell>
+      <TableCell>{s.platformName}</TableCell>
+      <TableCell>{period(s.periodFrom, s.periodTo)}</TableCell>
+      <TableCell data-testid="marketplace-settlement-month">{s.months.length === 0 ? t('monthWaiting', { count: String(s.waitingLines) }) : s.months.join(', ')}</TableCell>
       <TableCell className={NUM}>{s.months.length === 0 ? '' : f.money(s.net)}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="text-right">
         {s.months.length === 0 ? (
           <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting">{t('waitingDelivery')}</span>
         ) : waitingVat ? (
@@ -145,10 +145,10 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
   return (
     <>
       <TableRow data-testid="marketplace-action-payout">
-        <TableCell className="px-4 py-3">{p.platformName}</TableCell>
-        <TableCell className="px-4 py-3">{period(p.periodFrom, p.periodTo)}</TableCell>
+        <TableCell>{p.platformName}</TableCell>
+        <TableCell>{period(p.periodFrom, p.periodTo)}</TableCell>
         <TableCell className={NUM}>{f.money(p.received)}</TableCell>
-        <TableCell className="px-4 py-3">
+        <TableCell>
           {p.proposalId !== null ? null : p.candidates.length === 0 ? (
             <span className="text-subtle-foreground" data-testid="marketplace-no-candidates">
               {t('noCandidates')}
@@ -163,7 +163,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
             </NativeSelect>
           )}
         </TableCell>
-        <TableCell className="px-4 py-3 text-right">
+        <TableCell className="text-right">
           <AskButton
             label={t('record')}
             disabled={!open || bankLineId === '' || !ready}
@@ -181,7 +181,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
       </TableRow>
       {p.proposalId === null && p.adjustable.length > 0 && (
         <TableRow data-testid="marketplace-payout-adjustments">
-          <TableCell colSpan={5} className="px-4 py-3">
+          <TableCell colSpan={5} className="py-3">
             <p className="mb-2 text-sm text-subtle-foreground">{t('adjustHint')}</p>
             {p.adjustable.some((a) => a.source === 'other') && <p className="mb-2 text-sm text-subtle-foreground" data-testid="marketplace-adjustment-note">{t('adjustIncentiveNote')}</p>}
             {!ready && (
@@ -248,10 +248,10 @@ function AccrualRow({ a, open }: { a: MarketplaceFeeAccrual; open: boolean }) {
   const f = useFormat();
   return (
     <TableRow data-testid="marketplace-action-accrual">
-      <TableCell className="px-4 py-3">{a.platformName}</TableCell>
-      <TableCell className="px-4 py-3">{monthLabel(a.month)}</TableCell>
+      <TableCell>{a.platformName}</TableCell>
+      <TableCell>{monthLabel(a.month)}</TableCell>
       <TableCell className={NUM}>{f.money(a.amount)}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="text-right">
         <AskButton
           label={t('accrue')}
           disabled={!open}
@@ -297,12 +297,12 @@ function ReturnRow({ r }: { r: MarketplaceReturnToConfirm }) {
   const label = `${r.orderNo} ${r.itemCode}`;
   return (
     <TableRow data-testid="marketplace-action-return">
-      <TableCell className="px-4 py-3">{r.platformName}</TableCell>
-      <TableCell className="px-4 py-3">{r.orderNo}</TableCell>
-      <TableCell className="px-4 py-3">{r.itemCode} {r.itemName}</TableCell>
+      <TableCell>{r.platformName}</TableCell>
+      <TableCell>{r.orderNo}</TableCell>
+      <TableCell>{r.itemCode} {r.itemName}</TableCell>
       <TableCell className={NUM}>{f.number(r.quantity)} {r.unit}</TableCell>
-      <TableCell className="px-4 py-3">{t(`returnStage_${r.stage}`)}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell>{t(`returnStage_${r.stage}`)}</TableCell>
+      <TableCell className="text-right">
         {!canAnswer ? (
           org.data ? <span className="text-xs text-subtle-foreground" data-testid="marketplace-return-no-right">{t('returnNoRight')}</span> : null
         ) : (
@@ -357,11 +357,11 @@ function AccrualReversalRow({ r, open }: { r: MarketplaceFeeAccrualReversal; ope
   const f = useFormat();
   return (
     <TableRow data-testid="marketplace-action-accrual-reversal">
-      <TableCell className="px-4 py-3">{r.platformName}</TableCell>
-      <TableCell className="px-4 py-3">{monthLabel(r.month)}</TableCell>
+      <TableCell>{r.platformName}</TableCell>
+      <TableCell>{monthLabel(r.month)}</TableCell>
       <TableCell className={NUM}>{f.money(r.amount)}</TableCell>
-      <TableCell className="px-4 py-3">{r.reverseOn}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="tabular-nums">{r.reverseOn}</TableCell>
+      <TableCell className="text-right">
         <AskButton
           label={t('reverseAccrual')}
           disabled={!open}
@@ -381,12 +381,12 @@ function InvoiceRow({ i, open }: { i: MarketplaceInvoiceToClear; open: boolean }
   const f = useFormat();
   return (
     <TableRow data-testid="marketplace-action-invoice">
-      <TableCell className="px-4 py-3">{i.platformName}</TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>{i.platformName}</TableCell>
+      <TableCell>
         {i.invoice} ({i.date})
       </TableCell>
       <TableCell className={NUM}>{f.money(i.clearable)}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="text-right">
         <AskButton label={t('clear')} disabled={!open} testId="marketplace-clear" pending={i.proposalId} ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_fee_clearing.record', idempotencyKey, input: { purchaseDocumentId: i.documentId } })} />
       </TableCell>
     </TableRow>
@@ -451,9 +451,9 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
           <DataTable head={[t('platform'), t('period'), t('state')]}>
             {data.halfReversed.map((h) => (
               <TableRow key={h.settlementId} data-testid="marketplace-action-half-reversed">
-                <TableCell className="px-4 py-3">{h.platformName}</TableCell>
-                <TableCell className="px-4 py-3">{period(h.periodFrom, h.periodTo)}</TableCell>
-                <TableCell className="px-4 py-3" data-testid="marketplace-half-reversed-state">{t('halfReversedRow', { standing: String(h.standingMonths), reversed: String(h.reversedMonths) })}</TableCell>
+                <TableCell>{h.platformName}</TableCell>
+                <TableCell>{period(h.periodFrom, h.periodTo)}</TableCell>
+                <TableCell data-testid="marketplace-half-reversed-state">{t('halfReversedRow', { standing: String(h.standingMonths), reversed: String(h.reversedMonths) })}</TableCell>
               </TableRow>
             ))}
           </DataTable>

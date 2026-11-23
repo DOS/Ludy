@@ -37,7 +37,7 @@ import {
 } from '../lib/bank-statement.ts';
 import type { SheetRows } from '../lib/xlsx.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 // The preview lists this many rows; the counts cover them all.
 const PREVIEW_ROWS = 300;
 // Owners and admins see the payroll payment an open money-out line may be for the first lines of the month only: one read per line, so a big month does not ask for hundreds at once.
@@ -203,14 +203,14 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                   const out = row.amount?.startsWith('-') ?? false;
                   return (
                     <TableRow key={row.rowNo}>
-                      <TableCell className="px-4 py-3 text-muted-foreground">{row.rowNo}</TableCell>
-                      <TableCell className="px-4 py-3">{row.date ? f.date(row.date) : ''}</TableCell>
-                      <TableCell className="px-4 py-3 font-mono text-xs">{row.reference ?? ''}</TableCell>
-                      <TableCell className="px-4 py-3 text-foreground">{row.description}</TableCell>
+                      <TableCell className="text-muted-foreground tabular-nums">{row.rowNo}</TableCell>
+                      <TableCell className="tabular-nums">{row.date ? f.date(row.date) : ''}</TableCell>
+                      <TableCell className="font-mono text-xs">{row.reference ?? ''}</TableCell>
+                      <TableCell className="text-foreground">{row.description}</TableCell>
                       <TableCell className={NUM}>{row.amount && !out ? f.money(row.amount) : ''}</TableCell>
                       <TableCell className={NUM}>{row.amount && out ? f.money(row.amount.slice(1)) : ''}</TableCell>
                       <TableCell className={NUM}>{row.balance ? f.money(row.balance) : ''}</TableCell>
-                      <TableCell className="px-4 py-3">
+                      <TableCell>
                         {row.status ? (
                           <>
                             <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
@@ -403,21 +403,21 @@ export function BankPage() {
               head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('voucherColumn')]}
               foot={
                 <TableRow>
-                  <TableCell className="px-4 py-3 text-foreground" colSpan={3}>
+                  <TableCell className="text-foreground" colSpan={3}>
                     {t('total')}
                   </TableCell>
                   <TableCell className={NUM}>{f.money(lines.data.moneyIn)}</TableCell>
                   <TableCell className={NUM}>{f.money(lines.data.moneyOut)}</TableCell>
-                  <TableCell className="px-4 py-3" />
-                  <TableCell className="px-4 py-3" />
+                  <TableCell />
+                  <TableCell />
                 </TableRow>
               }
             >
               {lines.data.lines.map((line) => (
                 <TableRow key={line.id}>
-                  <TableCell className="px-4 py-3 text-muted-foreground">{f.date(line.date)}</TableCell>
-                  <TableCell className="px-4 py-3 font-mono text-xs">{line.reference ?? ''}</TableCell>
-                  <TableCell className="px-4 py-3 text-foreground">
+                  <TableCell className="text-muted-foreground tabular-nums">{f.date(line.date)}</TableCell>
+                  <TableCell className="font-mono text-xs">{line.reference ?? ''}</TableCell>
+                  <TableCell className="text-foreground">
                     {line.description}
                     {line.ambiguous && (
                       <Badge variant="warning" className="ml-2">
@@ -430,7 +430,7 @@ export function BankPage() {
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? '' : f.money(line.amount)}</TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? f.money(line.amount.slice(1)) : ''}</TableCell>
                   <TableCell className={NUM}>{line.balance === null ? '' : f.money(line.balance)}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs">
+                  <TableCell className="text-xs">
                     <LineState slug={slug} line={line} canEnter={canImport} onEnter={() => setEntering(line)} />
                   </TableCell>
                 </TableRow>

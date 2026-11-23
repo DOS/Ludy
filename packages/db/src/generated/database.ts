@@ -257,6 +257,7 @@ export interface LudyProjectsSchema {
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_board': ProjectsRoadmapBoardTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'ludy_projects.roadmap_signal': ProjectsRoadmapSignalTable;
   'ludy_projects.roadmap_vote': ProjectsRoadmapVoteTable;
   'ludy_projects.task_dependency': ProjectsTaskDependencyTable;
   'ludy_projects.time_entry': ProjectsTimeEntryTable;
@@ -4038,6 +4039,25 @@ export interface ProjectsRoadmapItemTable {
   vote_count: Generated<number>;
   tainted: Generated<boolean>;
   submitter_display_name: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.roadmap_signal */
+export interface ProjectsRoadmapSignalTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  roadmap_item_id: string;
+  source_type: string;
+  source_id: string;
+  source_party_id: string | null;
+  account_label: string | null;
+  quote_excerpt: string | null;
+  deal_value: string | null;
+  deal_currency: string | null;
+  tainted: Generated<boolean>;
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;

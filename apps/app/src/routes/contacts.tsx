@@ -132,7 +132,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
   const [editing, setEditing] = useState(false);
   return (
     <TableRow>
-      <TableCell colSpan={columns} className="space-y-4 px-4 py-4">
+      <TableCell colSpan={columns} className="space-y-4 py-3">
         {editing ? (
           <EditParty party={contact} ns="contacts" kind={contact.kind} onDone={() => setEditing(false)} />
         ) : (
@@ -325,7 +325,7 @@ export function ContactRows({ mode, contact, open, onToggle, canEdit, columns }:
   return (
     <>
       <TableRow>
-        <TableCell className="min-w-48 px-4 py-3">
+        <TableCell className="min-w-48">
           {/* The name opens the contact (#3649); its panel is the row below. */}
           <button type="button" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })} className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
             {contact.name}
@@ -334,36 +334,36 @@ export function ContactRows({ mode, contact, open, onToggle, canEdit, columns }:
         </TableCell>
         {mode === 'companies' ? (
           <>
-            <TableCell data-label={t('columns.taxCode')} className="px-4 py-3 font-mono text-xs text-muted-foreground">
+            <TableCell data-label={t('columns.taxCode')} className="font-mono text-xs text-muted-foreground">
               {contact.taxCode ?? ''}
             </TableCell>
-            <TableCell data-label={t('columns.people')} className="px-4 py-3 text-muted-foreground tabular-nums">
+            <TableCell data-label={t('columns.people')} className="text-muted-foreground tabular-nums">
               {f.number(contact.peopleCount)}
             </TableCell>
-            <TableCell data-label={t('columns.openDeals')} className="px-4 py-3 text-muted-foreground tabular-nums">
+            <TableCell data-label={t('columns.openDeals')} className="text-muted-foreground tabular-nums">
               {f.number(contact.openDeals)}
             </TableCell>
           </>
         ) : (
           <>
-            <TableCell data-label={t('columns.company')} className="px-4 py-3 text-muted-foreground">
+            <TableCell data-label={t('columns.company')} className="text-muted-foreground">
               {contact.company?.name ?? ''}
             </TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground">
+            <TableCell className="text-muted-foreground">
               {contact.phone && (
                 <a href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`} className="text-link underline-offset-4 hover:underline">
                   {contact.phone}
                 </a>
               )}
             </TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground">
+            <TableCell className="text-muted-foreground">
               {contact.email && (
                 <a href={`mailto:${contact.email}`} className="break-all text-link underline-offset-4 hover:underline">
                   {contact.email}
                 </a>
               )}
             </TableCell>
-            <TableCell data-label={t('columns.openDeals')} className="px-4 py-3 text-muted-foreground tabular-nums">
+            <TableCell data-label={t('columns.openDeals')} className="text-muted-foreground tabular-nums">
               {f.number(contact.openDeals)}
             </TableCell>
           </>

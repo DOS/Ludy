@@ -21,6 +21,7 @@ import { useDebounced } from '../lib/use-debounced.ts';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 import { ContactDeals } from './contact-deals.tsx';
 import { ConversationTasks } from './conversation-tasks.tsx';
+import { RoadmapSignalModal } from './roadmap-signal-modal.tsx';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
 import { FollowupReplyInsert } from './followup-draft.tsx';
@@ -206,9 +207,11 @@ function LinkContact({ conversationId, defaultName, hasParty }: { conversationId
 export function ContactPanel({ conversationId, onOpen, onErased }: { conversationId: string; onOpen: (id: string) => void; onErased: () => void }) {
   const t = useTranslations('conversations.contact');
   const tc = useTranslations('conversations');
+  const tRoadmap = useTranslations('projects.roadmap.admin');
   const f = useFormat();
   const contactName = useContactName();
   const { canWrite, isAdmin } = useMe();
+  const [roadmapSignalOpen, setRoadmapSignalOpen] = useState(false);
   const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
   if (detail.isPending) return <PanelSkeleton />;
   if (detail.error || !detail.data) return <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="panel-error" />;
@@ -245,6 +248,31 @@ export function ContactPanel({ conversationId, onOpen, onErased }: { conversatio
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <QuoteReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <FollowupReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       <ConversationTasks key={`tasks:${conversationId}`} conversationId={conversationId} channelName={c.channel.displayName} canWrite={canWrite} />
+      {canWrite && installedModules().includes('projects') && (
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={TOUCH_BUTTON}
+            onClick={() => setRoadmapSignalOpen(true)}
+            data-testid="conversation-link-roadmap"
+          >
+            {tRoadmap('linkToRoadmapBtn')}
+          </Button>
+          <RoadmapSignalModal
+            open={roadmapSignalOpen}
+            onOpenChange={setRoadmapSignalOpen}
+            prefillSource={{
+              sourceType: 'kernel.conversation',
+              sourceId: conversationId,
+              accountLabel: c.contact.partyName ?? c.contact.displayName ?? null,
+              quoteExcerpt:
+                [...detail.data.messages].reverse().find((m) => m.direction === 'in' && m.body.trim().length > 0)?.body.slice(0, 1000) ?? null,
+            }}
+          />
+        </div>
+      )}
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-foreground">{t('others')}</h3>
         {others.length === 0 ? (

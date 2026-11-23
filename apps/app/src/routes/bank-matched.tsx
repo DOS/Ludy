@@ -21,7 +21,7 @@ import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../compo
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 // 'YYYY-MM' of today in Vietnam.
 const thisMonth = () => vietnamToday().slice(0, 7);
@@ -146,12 +146,12 @@ export function BankMatchedPage() {
               const reversed = item.reversal !== null;
               return (
                 <TableRow key={item.voucher.id} data-testid="matched-line">
-                  <TableCell className="px-4 py-3 text-muted-foreground">{f.date(item.line.date)}</TableCell>
-                  <TableCell className="px-4 py-3 text-foreground">{item.line.description}</TableCell>
+                  <TableCell className="text-muted-foreground tabular-nums">{f.date(item.line.date)}</TableCell>
+                  <TableCell className="text-foreground">{item.line.description}</TableCell>
                   <TableCell className={NUM}>{f.money(item.line.amount.replace(/^-/, ''))}</TableCell>
-                  <TableCell className="px-4 py-3 font-mono text-xs">{item.voucher.code}</TableCell>
-                  <TableCell className="px-4 py-3">{item.party?.name ?? ''}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs">
+                  <TableCell className="font-mono text-xs">{item.voucher.code}</TableCell>
+                  <TableCell>{item.party?.name ?? ''}</TableCell>
+                  <TableCell className="text-xs">
                     {item.approvedBy?.name ?? t('noApprover')}
                     {item.approvedAt ? <span className="block text-subtle-foreground">{f.date(item.approvedAt.slice(0, 10))}</span> : null}
                     {item.proposalId ? (
@@ -160,10 +160,10 @@ export function BankMatchedPage() {
                       </Link>
                     ) : null}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-xs text-muted-foreground" data-testid="matched-how">
+                  <TableCell className="text-xs text-muted-foreground" data-testid="matched-how">
                     {say.matchedBy(item.matchedBy)}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-xs">
+                  <TableCell className="text-xs">
                     {reversed ? <Badge variant="warning">{t('reversed')}</Badge> : <Badge variant="success">{t('posted')}</Badge>}
                     {!reversed && canUndo ? (
                       <div className="mt-2">

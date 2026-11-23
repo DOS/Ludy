@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Public Roadmap & Ideas portal schemas and RPC contracts (#4399, ADR-0057, docs/plan/projects-public-roadmap.md).
 import { z } from 'zod';
-import { zId } from './schemas.ts';
+import { zId, zMoney } from './schemas.ts';
 
 export const ROADMAP_PAGE_PREFIX = '/-/roadmap';
 export const ROADMAP_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -494,6 +494,177 @@ export const zRoadmapChangelogDraftResult = z.strictObject({
   bodyMd: z.string().nullable(),
 });
 export type RoadmapChangelogDraftResult = z.infer<typeof zRoadmapChangelogDraftResult>;
+
+// Omnichannel Roadmap Signals Slice 1 (#4492, ADR-0058)
+export const ROADMAP_SIGNAL_SOURCE_TYPES = ['crm.deal', 'kernel.conversation', 'meetings.meeting'] as const;
+export type RoadmapSignalSourceType = (typeof ROADMAP_SIGNAL_SOURCE_TYPES)[number];
+export const zRoadmapSignalSourceType = z.enum(ROADMAP_SIGNAL_SOURCE_TYPES);
+
+export const ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX = 160;
+export const ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX = 1000;
+export const ROADMAP_SIGNAL_LIST_LIMIT = 200;
+export const ROADMAP_SIGNAL_MATCH_MAX_ITEMS = 60;
+export const ROADMAP_SIGNAL_MATCH_MAX_SUGGESTIONS = 3;
+export const ROADMAP_SIGNAL_DRAFT_TITLE_MAX = 180;
+export const ROADMAP_SIGNAL_DRAFT_SUMMARY_MAX = 500;
+
+export const zRoadmapSignalCurrency = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, 'Currency must be a 3-letter ISO code');
+
+export const zRoadmapSignalDealValue = z
+  .string()
+  .trim()
+  .regex(/^\d{1,16}(\.\d{1,2})?$/, 'Deal value must be a non-negative decimal string with up to 2 decimal places');
+
+export const zRoadmapSignalAggregateAmount = z
+  .string()
+  .trim()
+  .regex(/^\d{1,30}(\.\d{1,2})?$/, 'Aggregate amount must be a non-negative decimal string with up to 2 decimal places');
+
+export const zRoadmapSignal = z.strictObject({
+  id: zId,
+  boardId: zId,
+  roadmapItemId: zId,
+  sourceType: zRoadmapSignalSourceType,
+  sourceId: zId,
+  accountLabel: z.string().nullable(),
+  quoteExcerpt: z.string().nullable(),
+  dealValue: zMoney.nullable(),
+  dealCurrency: z.string().regex(/^[A-Z]{3}$/).nullable(),
+  tainted: z.boolean(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type RoadmapSignal = z.infer<typeof zRoadmapSignal>;
+
+export const zRoadmapSignalValueByCurrency = z.strictObject({
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  totalAmount: zRoadmapSignalAggregateAmount,
+  signalCount: z.number().int().nonnegative(),
+});
+export type RoadmapSignalValueByCurrency = z.infer<typeof zRoadmapSignalValueByCurrency>;
+
+export const zRoadmapSignalSourceCounts = z.strictObject({
+  crmDeal: z.number().int().nonnegative(),
+  conversation: z.number().int().nonnegative(),
+  meeting: z.number().int().nonnegative(),
+});
+export type RoadmapSignalSourceCounts = z.infer<typeof zRoadmapSignalSourceCounts>;
+
+export const zRoadmapSignalItemRollup = z.strictObject({
+  roadmapItemId: zId,
+  totalSignals: z.number().int().nonnegative(),
+  distinctAccountCount: z.number().int().nonnegative(),
+  sourceCounts: zRoadmapSignalSourceCounts,
+  valueByCurrency: z.array(zRoadmapSignalValueByCurrency),
+});
+export type RoadmapSignalItemRollup = z.infer<typeof zRoadmapSignalItemRollup>;
+
+export const zRoadmapSignalRollupResult = z.strictObject({
+  boardId: zId,
+  totalSignals: z.number().int().nonnegative(),
+  distinctAccountCount: z.number().int().nonnegative(),
+  sourceCounts: zRoadmapSignalSourceCounts,
+  valueByCurrency: z.array(zRoadmapSignalValueByCurrency),
+  byItem: z.array(zRoadmapSignalItemRollup),
+});
+export type RoadmapSignalRollupResult = z.infer<typeof zRoadmapSignalRollupResult>;
+
+export const zRoadmapSignalCreateInput = z
+  .strictObject({
+    boardId: zId,
+    roadmapItemId: zId,
+    sourceType: zRoadmapSignalSourceType,
+    sourceId: zId,
+    accountLabel: zOptionalCleanText(ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX),
+    quoteExcerpt: zOptionalCleanText(ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX),
+    dealValue: zRoadmapSignalDealValue.nullable().optional(),
+    dealCurrency: zRoadmapSignalCurrency.nullable().optional(),
+  })
+  .superRefine((v, ctx) => {
+    const hasVal = v.dealValue !== undefined && v.dealValue !== null;
+    const hasCur = v.dealCurrency !== undefined && v.dealCurrency !== null;
+    if (hasVal !== hasCur) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [hasVal ? 'dealCurrency' : 'dealValue'],
+        message: 'dealValue and dealCurrency must both be provided or both omitted',
+      });
+    }
+  });
+export type RoadmapSignalCreateInput = z.input<typeof zRoadmapSignalCreateInput>;
+
+export const zRoadmapSignalCreateResult = z.strictObject({
+  signal: zRoadmapSignal,
+  alreadyLinked: z.boolean(),
+});
+export type RoadmapSignalCreateResult = z.infer<typeof zRoadmapSignalCreateResult>;
+
+export const zRoadmapSignalListInput = z.strictObject({
+  boardId: zId,
+  roadmapItemId: zId.optional(),
+  limit: z.number().int().min(1).max(ROADMAP_SIGNAL_LIST_LIMIT).optional(),
+});
+export type RoadmapSignalListInput = z.input<typeof zRoadmapSignalListInput>;
+
+export const zRoadmapSignalListResult = z.strictObject({
+  signals: z.array(zRoadmapSignal),
+});
+export type RoadmapSignalListResult = z.infer<typeof zRoadmapSignalListResult>;
+
+export const zRoadmapSignalDeleteInput = z.strictObject({
+  signalId: zId,
+});
+export type RoadmapSignalDeleteInput = z.infer<typeof zRoadmapSignalDeleteInput>;
+
+export const zRoadmapSignalDeleteResult = z.strictObject({
+  deleted: z.boolean(),
+  signalId: zId,
+  boardId: zId,
+  roadmapItemId: zId,
+});
+export type RoadmapSignalDeleteResult = z.infer<typeof zRoadmapSignalDeleteResult>;
+
+export const zRoadmapSignalRollupInput = z.strictObject({
+  boardId: zId,
+  roadmapItemId: zId.optional(),
+});
+export type RoadmapSignalRollupInput = z.input<typeof zRoadmapSignalRollupInput>;
+
+export const zRoadmapSignalMatchInput = z.strictObject({
+  boardId: zId,
+  sourceType: zRoadmapSignalSourceType,
+  sourceId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type RoadmapSignalMatchInput = z.input<typeof zRoadmapSignalMatchInput>;
+
+export const zRoadmapSignalMatchSuggestion = z.strictObject({
+  roadmapItemId: zId,
+  confidence: z.enum(['high', 'medium', 'low']),
+  reason: z.string(),
+});
+export type RoadmapSignalMatchSuggestion = z.infer<typeof zRoadmapSignalMatchSuggestion>;
+
+export const zRoadmapSignalNewIdeaDraft = z.strictObject({
+  suggestedTitle: z.string(),
+  suggestedSummary: z.string().nullable(),
+  tainted: z.literal(true),
+});
+export type RoadmapSignalNewIdeaDraft = z.infer<typeof zRoadmapSignalNewIdeaDraft>;
+
+export const zRoadmapSignalMatchResult = z.strictObject({
+  ai: z.enum(ROADMAP_AI_STATES),
+  suggestions: z.array(zRoadmapSignalMatchSuggestion),
+  newIdeaDraft: zRoadmapSignalNewIdeaDraft.nullable(),
+  inspectedCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type RoadmapSignalMatchResult = z.infer<typeof zRoadmapSignalMatchResult>;
 
 export const ROADMAP_MAIL_SOURCE = 'projects.roadmap.otp_request';
 export const ROADMAP_OTP_MAIL_TEMPLATE = 'projects.roadmap_otp';

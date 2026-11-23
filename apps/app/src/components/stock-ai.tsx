@@ -16,7 +16,7 @@ import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { DataTable, ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 export const lineKey = (line: { documentId: string; lineNo: number }) => `${line.documentId}:${line.lineNo}`;
 
@@ -233,14 +233,14 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
       <DataTable head={[t('code'), t('name'), t('onHand'), t('cover'), t('daily'), t('orderQuantity')]} numeric={[2, 3, 4]}>
         {group.items.map((i) => (
           <TableRow key={i.itemId} data-testid="stock-low-item">
-            <TableCell className="px-4 py-3">{i.code}</TableCell>
-            <TableCell className="px-4 py-3">{i.name}</TableCell>
+            <TableCell>{i.code}</TableCell>
+            <TableCell>{i.name}</TableCell>
             <TableCell className={NUM}>
               {i.onHand} {i.unit}
             </TableCell>
             <TableCell className={NUM}>{t('coverDays', { count: i.coverDays })}</TableCell>
             <TableCell className={NUM}>{i.dailyOut}</TableCell>
-            <TableCell className="px-4 py-3 text-right">
+            <TableCell className="text-right">
               <Label htmlFor={`${id}-${i.itemId}`} className="sr-only">
                 {t('orderQuantityOf', { name: i.name })}
               </Label>

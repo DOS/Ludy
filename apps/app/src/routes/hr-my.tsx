@@ -31,7 +31,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const PHONE_SELECT_TARGET = 'max-md:min-h-11 [&_select]:max-md:min-h-11';
 const PHONE_INPUT_TARGET = 'max-md:min-h-11';
 
@@ -591,7 +591,7 @@ export function HrSelfServicePage() {
             <DataTable head={[t('payslips.month'), t('payslips.gross'), t('payslips.net'), '']} numeric={[1, 2]}>
               {payslips.map((p) => (
                 <TableRow key={p.lineId} data-testid="hr-my-payslip-row">
-                  <TableCell className="px-4 py-3 font-medium">
+                  <TableCell className="font-medium tabular-nums">
                     {p.month}
                     <Badge className="ml-2" variant="secondary">
                       {t(`payslips.status.${p.status}`)}
@@ -599,7 +599,7 @@ export function HrSelfServicePage() {
                   </TableCell>
                   <TableCell className={NUM}>{f.money(p.gross, 'VND')}</TableCell>
                   <TableCell className={NUM}>{f.money(p.net, 'VND')}</TableCell>
-                  <TableCell className="px-4 py-3 text-right">
+                  <TableCell className="text-right">
                     <Button
                       type="button"
                       variant="outline"

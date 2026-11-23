@@ -32,7 +32,7 @@ const SMALL_REGIONS: Readonly<Record<string, number>> = {
   // Waiting for the host's answer, next to "waiting" (the visitor's and the manage page).
   'routes/booking-page.tsx': 2,
   // "Reading the document again", in a line with its words.
-  'routes/inbox-detail.tsx': 1,
+  'components/proposal-detail.tsx': 1,
   // The forwarding address, one line in its card.
   'routes/inbox.tsx': 1,
   // A figure in an overview tile.

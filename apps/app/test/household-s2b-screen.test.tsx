@@ -121,7 +121,7 @@ describe('the S2b-HKD book on the household screen (#2517 slice 2c)', () => {
     expect(text).toContain('₫25,000');
     // The PIT of this method comes from income: no PIT column, percentage or total on this book.
     expect(html).not.toContain('Personal income tax %');
-    expect(html).not.toContain('<th data-slot="table-head" class="h-10 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 px-4 text-xs font-medium text-subtle-foreground text-right">Personal income tax</th>');
+    expect(html).not.toMatch(/<th\b[^>]*>Personal income tax<\/th>/);
     expect(html).not.toContain('household-s2a');
     expect(html).not.toMatch(DOWNLOAD_DISABLED);
     expect(html).not.toContain('(not built yet)');

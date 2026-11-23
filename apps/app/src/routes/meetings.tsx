@@ -22,7 +22,6 @@ import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
@@ -30,6 +29,7 @@ import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@ludy/ui/
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { FormPanel } from '../components/form-panel.tsx';
 import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { MeetingAsk } from '../components/meeting-ask.tsx';
@@ -158,23 +158,14 @@ function RetentionSettingsCard() {
   );
 }
 
-export function MeetingsPage() {
+export function NewMeetingFormPanel({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (meetingId: string) => void;
+}) {
   const t = useTranslations('meetings');
-  const f = useFormat();
-  const navigate = useNavigate();
-  const { slug } = useParams({ strict: false }) as { slug: string };
-  const meetingsOn = meetingsInstalled();
-
-  const [activeTab, setActiveTab] = useState<MeetingsTab>('recorded');
-  const [activeTool, setActiveTool] = useState<UtilityTool | null>(null);
-  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set());
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [filter, setFilter] = useState<MeetingListFilter>(EMPTY_MEETING_FILTER);
-  const [sort, setSort] = useState<MeetingSort>('started_desc');
-  const [modalOpen, setModalOpen] = useState(false);
-  const tableContainerRef = useRef<HTMLDivElement>(null);
-
-  // Form state
   const [title, setTitle] = useState('');
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
@@ -197,6 +188,246 @@ export function MeetingsPage() {
   // The same facts as state, so the form can lock the meeting-level fields and the media already sent.
   const [meetingCreated, setMeetingCreated] = useState(false);
   const [uploadedKinds, setUploadedKinds] = useState<ReadonlyArray<'audio' | 'video'>>([]);
+
+  const dirty =
+    title.trim() !== '' ||
+    language !== 'vi' ||
+    visibility !== 'attendees' ||
+    keepVideo ||
+    consentMethod !== '' ||
+    consentAgreed ||
+    audioFile !== null ||
+    videoFile !== null;
+
+  const handleCreate = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setFormError(null);
+
+    if (!title.trim()) {
+      setFormError(t('form.titleRequired'));
+      return;
+    }
+    if (!consentMethod) {
+      setFormError(t('form.consentMethodRequired'));
+      return;
+    }
+    if (!consentAgreed) {
+      setFormError(t('form.consentRequired'));
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      if (!createdIdRef.current) {
+        const made = await orpc.meetings.create.call({
+          title: title.trim(),
+          language,
+          visibility,
+          keepVideo,
+          consentMethod,
+          consentNoticeVersion: RECORDING_NOTICE.version,
+        });
+        createdIdRef.current = made.meetingId;
+        setMeetingCreated(true);
+      }
+      const created = { meetingId: createdIdRef.current };
+
+      if (audioFile && !uploadedRef.current.has('audio')) {
+        await uploadMeetingMedia(created.meetingId, 'audio', audioFile);
+        uploadedRef.current.add('audio');
+        setUploadedKinds([...uploadedRef.current]);
+      }
+
+      if (keepVideo && videoFile && !uploadedRef.current.has('video')) {
+        await uploadMeetingMedia(created.meetingId, 'video', videoFile);
+        uploadedRef.current.add('video');
+        setUploadedKinds([...uploadedRef.current]);
+      }
+
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
+      toast(t('created'), 'success');
+      onCreated(created.meetingId);
+    } catch (err) {
+      setFormError(errorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormPanel
+      testId="new-meeting-panel"
+      title={t('newModalTitle')}
+      description={t('newModalDesc')}
+      wide
+      noValidate
+      busy={submitting}
+      dirty={dirty}
+      onClose={onClose}
+      onSubmit={(e) => void handleCreate(e)}
+      footer={(requestClose) => (
+        <>
+          <Button type="button" variant="outline" disabled={submitting} onClick={requestClose}>
+            {t('form.cancel')}
+          </Button>
+          <Button type="submit" disabled={!consentAgreed || !consentMethod} loading={submitting}>
+            {t('form.submit')}
+          </Button>
+        </>
+      )}
+    >
+      {formError && <ErrorText>{formError}</ErrorText>}
+      {meetingCreated && <p className="text-xs text-muted-foreground">{t('form.lockedHint')}</p>}
+
+      <div className="space-y-1">
+        <Label htmlFor="meeting-title">{t('form.title')}</Label>
+        <Input
+          id="meeting-title"
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={t('form.titlePlaceholder')}
+          required
+          disabled={meetingCreated}
+          maxLength={200}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="meeting-lang">{t('form.language')}</Label>
+          <NativeSelect
+            id="meeting-lang"
+            className="w-full"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as MeetingLanguage)}
+            disabled={meetingCreated}
+          >
+            <NativeSelectOption value="vi">{t('form.langVi')}</NativeSelectOption>
+            <NativeSelectOption value="en">{t('form.langEn')}</NativeSelectOption>
+          </NativeSelect>
+        </div>
+
+        <div className="space-y-1">
+          <Label htmlFor="meeting-vis">{t('form.visibility')}</Label>
+          <NativeSelect
+            id="meeting-vis"
+            className="w-full"
+            value={visibility}
+            onChange={(e) => setVisibility(e.target.value as MeetingVisibility)}
+            disabled={meetingCreated}
+          >
+            <NativeSelectOption value="attendees">{t('form.visibilityAttendees')}</NativeSelectOption>
+            <NativeSelectOption value="org">{t('form.visibilityOrg')}</NativeSelectOption>
+          </NativeSelect>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="meeting-audio">{t('form.audioFile')}</Label>
+        <Input
+          id="meeting-audio"
+          type="file"
+          accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.webm,.opus,.mp4,.mov,.m4v"
+          aria-describedby="meeting-audio-hint"
+          onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
+          disabled={uploadedKinds.includes('audio')}
+        />
+        <p id="meeting-audio-hint" className="text-xs text-muted-foreground">
+          {t('form.audioFileVideoHint')}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex max-md:min-h-11 items-center gap-2">
+          <Checkbox
+            id="keep-video"
+            checked={keepVideo}
+            onCheckedChange={(checked) => setKeepVideo(Boolean(checked))}
+            disabled={meetingCreated}
+          />
+          <Label htmlFor="keep-video" className="cursor-pointer max-md:min-h-11">
+            {t('form.keepVideo')}
+          </Label>
+        </div>
+
+        {keepVideo && (
+          <div className="mt-2 space-y-1 pl-6">
+            <Label htmlFor="meeting-video">{t('form.videoFile')}</Label>
+            <Input
+              id="meeting-video"
+              type="file"
+              accept="video/*,.mp4,.mov,.webm,.m4v"
+              onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+              disabled={uploadedKinds.includes('video')}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Mandatory Consent Gate Box */}
+      <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
+        <div className="text-sm font-semibold text-foreground">
+          {t('form.consentSectionTitle')}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t('form.consentNotice')}
+        </p>
+        <RecordingNotice meetingLanguage={language} />
+
+        <div className="space-y-1">
+          <Label htmlFor="consent-method" className="text-xs">
+            {t('form.consentMethod')}
+          </Label>
+          <NativeSelect
+            id="consent-method"
+            className="w-full"
+            value={consentMethod}
+            onChange={(e) => setConsentMethod(e.target.value as LiveConsentMethod)}
+            required
+            disabled={meetingCreated}
+          >
+            <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
+            {consentPolicy === 'standard' && <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>}
+            <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
+            <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
+            <NativeSelectOption value="in_call_chat">{t('form.inCallChat')}</NativeSelectOption>
+          </NativeSelect>
+          {consentPolicy === 'strict' && <p className="text-xs text-muted-foreground" data-testid="consent-strict-note">{t('consentPolicy.strictNote')}</p>}
+        </div>
+
+        <div className="flex max-md:min-h-11 items-start gap-2 pt-1">
+          <Checkbox
+            id="consent-agreed"
+            checked={consentAgreed}
+            onCheckedChange={(c) => setConsentAgreed(Boolean(c))}
+            disabled={meetingCreated}
+          />
+          <Label htmlFor="consent-agreed" className="cursor-pointer text-xs leading-snug font-medium text-foreground max-md:min-h-11">
+            {t('form.consentConfirmCheckbox')}
+          </Label>
+        </div>
+      </div>
+    </FormPanel>
+  );
+}
+
+export function MeetingsPage() {
+  const t = useTranslations('meetings');
+  const f = useFormat();
+  const navigate = useNavigate();
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const meetingsOn = meetingsInstalled();
+
+  const [activeTab, setActiveTab] = useState<MeetingsTab>('recorded');
+  const [activeTool, setActiveTool] = useState<UtilityTool | null>(null);
+  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filter, setFilter] = useState<MeetingListFilter>(EMPTY_MEETING_FILTER);
+  const [sort, setSort] = useState<MeetingSort>('started_desc');
+  const [modalOpen, setModalOpen] = useState(false);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const meetingsQuery = useQuery(orpc.meetings.list.queryOptions({ input: { limit: 200 } }));
   const todayAgendaQuery = useQuery({
@@ -249,80 +480,6 @@ export function MeetingsPage() {
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [activeTab, modalOpen, settingsOpen]);
-
-  const resetForm = () => {
-    setTitle('');
-    setLanguage('vi');
-    setVisibility('attendees');
-    setKeepVideo(false);
-    setConsentMethod('');
-    setConsentAgreed(false);
-    setAudioFile(null);
-    setVideoFile(null);
-    setFormError(null);
-    setSubmitting(false);
-    createdIdRef.current = null;
-    uploadedRef.current = new Set();
-    setMeetingCreated(false);
-    setUploadedKinds([]);
-  };
-
-  const handleCreate = async (e: FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-
-    if (!title.trim()) {
-      setFormError(t('form.titleRequired'));
-      return;
-    }
-    if (!consentMethod) {
-      setFormError(t('form.consentMethodRequired'));
-      return;
-    }
-    if (!consentAgreed) {
-      setFormError(t('form.consentRequired'));
-      return;
-    }
-
-    try {
-      setSubmitting(true);
-      if (!createdIdRef.current) {
-        const made = await orpc.meetings.create.call({
-          title: title.trim(),
-          language,
-          visibility,
-          keepVideo,
-          consentMethod,
-          consentNoticeVersion: RECORDING_NOTICE.version,
-        });
-        createdIdRef.current = made.meetingId;
-        setMeetingCreated(true);
-      }
-      const created = { meetingId: createdIdRef.current };
-
-      if (audioFile && !uploadedRef.current.has('audio')) {
-        await uploadMeetingMedia(created.meetingId, 'audio', audioFile);
-        uploadedRef.current.add('audio');
-        setUploadedKinds([...uploadedRef.current]);
-      }
-
-      if (keepVideo && videoFile && !uploadedRef.current.has('video')) {
-        await uploadMeetingMedia(created.meetingId, 'video', videoFile);
-        uploadedRef.current.add('video');
-        setUploadedKinds([...uploadedRef.current]);
-      }
-
-      await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-      toast(t('created'), 'success');
-      setModalOpen(false);
-      resetForm();
-      void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: created.meetingId } });
-    } catch (err) {
-      setFormError(errorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const durationLabels = {
     hours: (hours: number) => t('duration.hours', { hours: String(hours) }),
@@ -701,7 +858,7 @@ export function MeetingsPage() {
                   const duration = m.lengthSeconds === null ? null : formatMeetingDuration(m.lengthSeconds, durationLabels);
                   return (
                     <TableRow key={m.id} data-testid="meeting-row">
-                      <TableCell data-label={t('table.colMeeting')} className="px-4 py-3">
+                      <TableCell data-label={t('table.colMeeting')}>
                         <div className="inline-flex flex-wrap items-center gap-2">
                           <Link
                             data-meeting-row-link
@@ -715,13 +872,13 @@ export function MeetingsPage() {
                           {m.platform && <Badge variant="outline">{t(`agenda.service.${m.platform}`)}</Badge>}
                         </div>
                       </TableCell>
-                      <TableCell data-label={t('table.colWhen')} className="px-4 py-3 text-xs text-muted-foreground">
+                      <TableCell data-label={t('table.colWhen')} className="text-xs text-muted-foreground tabular-nums">
                         <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
                           <span className="text-foreground">{f.dateTime(m.startedAt ?? m.createdAt)}</span>
                           {duration && <span className="font-mono tabular-nums">{duration}</span>}
                         </span>
                       </TableCell>
-                      <TableCell data-label={t('table.colSummary')} className="px-4 py-3">
+                      <TableCell data-label={t('table.colSummary')}>
                         <div className="inline-flex flex-wrap items-center gap-1.5">
                           <Badge variant="outline">{m.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}</Badge>
                           <span className="text-xs text-muted-foreground tabular-nums">
@@ -732,7 +889,7 @@ export function MeetingsPage() {
                           {m.hasTranscript && <Badge variant="secondary">{t('badgeTranscript')}</Badge>}
                         </div>
                       </TableCell>
-                      <TableCell data-label={t('table.colRetention')} className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
+                      <TableCell data-label={t('table.colRetention')} className="text-xs text-muted-foreground tabular-nums">
                         {f.date(m.audioRetentionDate)}
                       </TableCell>
                     </TableRow>
@@ -772,163 +929,16 @@ export function MeetingsPage() {
         </SheetContent>
       </Sheet>
 
-      {/* New Meeting Modal with Mandatory Consent Gate */}
-      <Dialog
-        open={modalOpen}
-        onOpenChange={(open) => {
-          // A running create-and-upload is not dismissed: its result would land on a later draft.
-          if (!open && submitting) return;
-          setModalOpen(open);
-          if (!open) resetForm();
-        }}
-      >
-        <DialogContent className="max-w-lg" showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>{t('newModalTitle')}</DialogTitle>
-            <DialogDescription>{t('newModalDesc')}</DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleCreate} className="space-y-4">
-            {formError && <ErrorText>{formError}</ErrorText>}
-            {meetingCreated && <p className="text-xs text-muted-foreground">{t('form.lockedHint')}</p>}
-
-            <div className="space-y-1">
-              <Label htmlFor="meeting-title">{t('form.title')}</Label>
-              <Input
-                id="meeting-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder={t('form.titlePlaceholder')}
-                required
-                disabled={meetingCreated}
-                maxLength={200}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <Label htmlFor="meeting-lang">{t('form.language')}</Label>
-                <NativeSelect
-                  id="meeting-lang"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as MeetingLanguage)}
-                  disabled={meetingCreated}
-                >
-                  <NativeSelectOption value="vi">{t('form.langVi')}</NativeSelectOption>
-                  <NativeSelectOption value="en">{t('form.langEn')}</NativeSelectOption>
-                </NativeSelect>
-              </div>
-
-              <div className="space-y-1">
-                <Label htmlFor="meeting-vis">{t('form.visibility')}</Label>
-                <NativeSelect
-                  id="meeting-vis"
-                  value={visibility}
-                  onChange={(e) => setVisibility(e.target.value as MeetingVisibility)}
-                  disabled={meetingCreated}
-                >
-                  <NativeSelectOption value="attendees">{t('form.visibilityAttendees')}</NativeSelectOption>
-                  <NativeSelectOption value="org">{t('form.visibilityOrg')}</NativeSelectOption>
-                </NativeSelect>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="meeting-audio">{t('form.audioFile')}</Label>
-              <Input
-                id="meeting-audio"
-                type="file"
-                accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.webm,.opus,.mp4,.mov,.m4v"
-                aria-describedby="meeting-audio-hint"
-                onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
-                disabled={uploadedKinds.includes('audio')}
-              />
-              <p id="meeting-audio-hint" className="text-xs text-muted-foreground">
-                {t('form.audioFileVideoHint')}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="keep-video"
-                  checked={keepVideo}
-                  onCheckedChange={(checked) => setKeepVideo(Boolean(checked))}
-                  disabled={meetingCreated}
-                />
-                <Label htmlFor="keep-video" className="cursor-pointer">
-                  {t('form.keepVideo')}
-                </Label>
-              </div>
-
-              {keepVideo && (
-                <div className="mt-2 space-y-1 pl-6">
-                  <Label htmlFor="meeting-video">{t('form.videoFile')}</Label>
-                  <Input
-                    id="meeting-video"
-                    type="file"
-                    accept="video/*,.mp4,.mov,.webm,.m4v"
-                    onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
-                    disabled={uploadedKinds.includes('video')}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Mandatory Consent Gate Box */}
-            <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
-              <div className="text-sm font-semibold text-foreground">
-                {t('form.consentSectionTitle')}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {t('form.consentNotice')}
-              </p>
-              <RecordingNotice meetingLanguage={language} />
-
-              <div className="space-y-1">
-                <Label htmlFor="consent-method" className="text-xs">
-                  {t('form.consentMethod')}
-                </Label>
-                <NativeSelect
-                  id="consent-method"
-                  value={consentMethod}
-                  onChange={(e) => setConsentMethod(e.target.value as LiveConsentMethod)}
-                  required
-                  disabled={meetingCreated}
-                >
-                  <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
-                  {consentPolicy === 'standard' && <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>}
-                  <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
-                  <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
-                  <NativeSelectOption value="in_call_chat">{t('form.inCallChat')}</NativeSelectOption>
-                </NativeSelect>
-                {consentPolicy === 'strict' && <p className="text-xs text-muted-foreground" data-testid="consent-strict-note">{t('consentPolicy.strictNote')}</p>}
-              </div>
-
-              <div className="flex items-start gap-2 pt-1">
-                <Checkbox
-                  id="consent-agreed"
-                  checked={consentAgreed}
-                  onCheckedChange={(c) => setConsentAgreed(Boolean(c))}
-                  disabled={meetingCreated}
-                />
-                <Label htmlFor="consent-agreed" className="text-xs leading-snug cursor-pointer font-medium text-foreground">
-                  {t('form.consentConfirmCheckbox')}
-                </Label>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <DialogClose render={<Button type="button" variant="outline" disabled={submitting} />}>
-                {t('form.cancel')}
-              </DialogClose>
-              <Button type="submit" disabled={!consentAgreed || !consentMethod} loading={submitting}>
-                {t('form.submit')}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* New Meeting FormPanel with Mandatory Consent Gate */}
+      {modalOpen && (
+        <NewMeetingFormPanel
+          onClose={() => setModalOpen(false)}
+          onCreated={(meetingId) => {
+            setModalOpen(false);
+            void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: meetingId } });
+          }}
+        />
+      )}
     </div>
   );
 }

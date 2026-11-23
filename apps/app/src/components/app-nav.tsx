@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
@@ -14,6 +14,7 @@ import {
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { Popover, PopoverContent, PopoverTrigger } from '@ludy/ui/components/popover';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
+import { cn } from '@ludy/ui/lib/utils';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
 import { APP_ICON, menuIcon } from '../lib/menu-icons.ts';
 import {
@@ -34,6 +35,7 @@ import {
 import { installedItems } from '../lib/modules.ts';
 import { installedModules } from '../lib/org-modules.ts';
 import { signOut } from '../lib/session-actions.ts';
+import { hasSecondaryNav } from '../lib/sidebar-rail.ts';
 import { StatusLink } from './status-link.tsx';
 import { SupportLink } from './support-link.tsx';
 import { EntitySwitcher } from './entity-switcher.tsx';
@@ -62,15 +64,35 @@ export interface ShellNavProps {
   onOpenQuickCapture?: (() => void) | undefined;
   // Called after a link or the org switch navigates: the phone drawer closes then.
   onNavigate?: () => void;
+  // Desktop sidebar mode collapses to the 64px rail on no-app org screens and honors user toggle on App/Settings (#4519).
+  // Mobile drawer mode always stays expanded with full labels and 44px targets.
+  mode?: 'sidebar' | 'drawer';
+  secondaryCollapsed?: boolean;
+  onToggleSecondary?: (() => void) | undefined;
 }
 
 const railItemClass = (selected: boolean) =>
-  `relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`;
+  `relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-10 md:py-0.5 md:text-[10.5px] md:leading-[1.15] ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`;
 
 // What the sidebar and the phone drawer both hold (#1245, #1528): the app switcher down the left edge, with the org's
-// own screens at its foot; beside it the org switch, the palette button, the current app or Settings menu and the account menu.
+// own screens at its foot; beside it the palette button, the current app or Settings menu and the account popover.
 // Every control is at least 44px tall in the phone drawer (below md) and 24px in the sidebar.
-export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, onOpenPalette, paletteKeys, onOpenQuickCapture, onNavigate }: ShellNavProps) {
+export function ShellNav({
+  slug,
+  apps,
+  app,
+  settingsItems,
+  badges,
+  orgs,
+  email,
+  onOpenPalette,
+  paletteKeys,
+  onOpenQuickCapture,
+  onNavigate,
+  mode = 'sidebar',
+  secondaryCollapsed = false,
+  onToggleSecondary,
+}: ShellNavProps) {
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
   const tmw = useTranslations('myWork');
@@ -83,6 +105,26 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
   const { pathname } = useLocation();
   const currentTo = currentMenuItem(pathname);
   const settingsSelected = current === undefined && isSettingsPath(pathname);
+  const hasSecondary = hasSecondaryNav(app, apps, pathname);
+  const railOnly = mode === 'sidebar' && (!hasSecondary || secondaryCollapsed);
+  const toggleBtnRef = useRef<HTMLButtonElement>(null);
+  const restoreToggleFocusRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!restoreToggleFocusRef.current) return;
+    restoreToggleFocusRef.current = false;
+    toggleBtnRef.current?.focus({ preventScroll: true });
+  }, [railOnly]);
+  const handleToggleSecondary = () => {
+    if (typeof document !== 'undefined' && document.activeElement === toggleBtnRef.current) {
+      restoreToggleFocusRef.current = true;
+    }
+    onToggleSecondary?.();
+  };
+  const handleToggleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === '[' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      restoreToggleFocusRef.current = true;
+    }
+  };
   const menuTitle = current ? t(`appNames.${current.id}`) : settingsSelected ? t('settings') : null;
   const menuGroups: ReadonlyArray<{ id: string; heading: HeadedGroupId | null; ariaLabel?: string; items: readonly (NavItem | SettingsNavItem)[] }> = current
     ? current.groups.map((group) => {
@@ -108,9 +150,9 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
         activeOptions={{ exact: true }}
         {...(item.to === currentTo ? { 'aria-current': 'page' as const } : {})}
       >
-        <NavIcon name={menuIcon(item.label)} className="size-5" />
+        <NavIcon name={menuIcon(item.label)} className="size-5 md:size-4" />
         <span>{name}</span>
-        {badge ? <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary" aria-hidden="true" /> : null}
+        {badge ? <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary md:top-1" aria-hidden="true" /> : null}
       </Link>
     </li>
   );
@@ -121,8 +163,27 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
     // up the row vanishes (`contents`) and the sidebar is laid out as before.
     <nav aria-label={t('menu')} className="flex min-h-0 min-w-0 flex-1 max-md:items-start max-md:overflow-y-auto">
       <div className="flex min-w-0 flex-1 max-md:min-h-full md:contents">
-        <div className="flex w-16 shrink-0 flex-col border-r py-3 md:py-4">
-          <ul aria-label={t('appsLabel')} className="flex flex-col items-center gap-1">
+        <div className={cn('flex shrink-0 flex-col py-3', railOnly ? 'w-full md:py-2' : 'w-16 border-r md:py-4')}>
+          {railOnly && hasSecondary && onToggleSecondary && (
+            <div className="mb-1 flex justify-center">
+              <Button
+                ref={toggleBtnRef}
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleToggleSecondary}
+                onKeyDown={handleToggleKeyDown}
+                aria-label={t('expandSidebar')}
+                title={t('expandSidebar')}
+                aria-expanded={false}
+                data-testid="sidebar-toggle-btn"
+                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              >
+                <NavIcon name="sidebarExpand" className="size-4" />
+              </Button>
+            </div>
+          )}
+          <ul aria-label={t('appsLabel')} className="flex flex-col items-center gap-1 md:gap-0.5">
             {TOP_ITEMS.map((item) => railLink(item, t(item.label)))}
             {apps.map((a) => {
               const selected = a.id === current?.id;
@@ -135,118 +196,173 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
                     aria-current={selected ? 'true' : undefined}
                     className={railItemClass(selected)}
                   >
-                    <NavIcon name={APP_ICON[a.id]} className="size-5" />
+                    <NavIcon name={APP_ICON[a.id]} className="size-5 md:size-4" />
                     <span>{t(`apps.${a.id}`)}</span>
-                    {hasBadge(a.groups.flatMap((g) => g.items)) && <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary" aria-hidden="true" />}
+                    {hasBadge(a.groups.flatMap((g) => g.items)) && <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary md:top-1" aria-hidden="true" />}
                   </Link>
                 </li>
               );
             })}
           </ul>
-          <ul className="mt-auto flex flex-col items-center gap-1 pt-3">
-            {BELL_ITEM && railLink(BELL_ITEM, t('bell'), badges[BELL_ITEM.label] as string | number | null | undefined)}
-            {ADMIN_ITEMS.map((item) => {
-              if (item.to !== '/o/$slug/settings') return railLink(item, t(item.label));
-              // Use a plain anchor with router navigate so TanStack Router does not overwrite aria-current="true"
-              // to "page" on /o/<slug>/settings, and omit onNavigate so the phone drawer stays open (#4499).
-              return (
-                <li key={item.to}>
-                  <a
-                    href={`/o/${encodeURIComponent(slug)}/settings`}
-                    aria-current={settingsSelected ? 'true' : undefined}
-                    onClick={(event) => {
-                      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
-                      event.preventDefault();
-                      void navigate({ to: item.to, params: { slug } });
-                    }}
-                    className={railItemClass(settingsSelected)}
-                  >
-                    <NavIcon name={menuIcon(item.label)} className="size-5" />
-                    <span>{t(item.label)}</span>
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
-          <div className="mb-3 hidden px-2 md:block">
-            <Logo />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={onOpenPalette}
-              className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-0"
-            >
-              <span className="min-w-0 truncate">{tp('open')}</span>
-              <kbd className="shrink-0 rounded-sm border px-1 font-mono text-[11px] whitespace-nowrap">{paletteKeys}</kbd>
-            </button>
-            {onOpenQuickCapture && (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={onOpenQuickCapture}
-                aria-label={tmw('quickCaptureTrigger')}
-                title={tmw('quickCaptureTrigger')}
-                data-testid="shell-quick-capture-btn"
-                className="min-h-11 min-w-11 shrink-0 md:size-8 md:min-h-0 md:min-w-0"
-              >
-                <ProjectIcon name="plus" className="size-4" />
-              </Button>
-            )}
-          </div>
-          {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
-          <EntitySwitcher slug={slug} />
-          {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. On Overview,
-              Notifications, and Audit there is no menu, only the rail (#3588); Settings shows its sub-pages (#4499). On a phone the nav scrolls instead (above). */}
-          <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto max-md:overflow-y-visible">
-            {menuTitle && (
-              <p className="px-3 pb-1.5 text-sm font-semibold text-foreground">{menuTitle}</p>
-            )}
-            {menuGroups.map((group, index) => {
-              const labelId = `${groupIdBase}-${group.id}`;
-              return (
-                <section
-                  key={group.id}
-                  className={index === 0 ? '' : 'mt-3 md:mt-2'}
-                  {...(group.heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.ariaLabel })}
-                >
-                  {group.heading && (
-                    // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
-                    <p id={labelId} className="px-3 pb-1 text-xs font-medium text-subtle-foreground">
-                      {t(`groups.${group.heading}`)}
-                    </p>
+          <div className="mt-auto flex flex-col items-center gap-1 pt-2 md:gap-0.5">
+            {railOnly && (
+              <div className="mb-1 flex items-center justify-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  onClick={onOpenPalette}
+                  aria-label={`${tp('open')} (${paletteKeys})`}
+                  title={`${tp('open')} (${paletteKeys})`}
+                  data-testid="rail-search-btn"
+                  className={cn(
+                    'bg-background text-muted-foreground hover:bg-sidebar-accent hover:text-foreground',
+                    onOpenQuickCapture && 'size-[26px]',
                   )}
-                  <ul className="flex flex-col gap-0.5">
-                    {group.items.map((item) => {
-                      const badge = badges[item.label];
-                      const isCurrent = item.to === currentTo;
-                      return (
-                        <li key={item.to}>
-                          <Link
-                            to={item.to}
-                            params={{ slug }}
-                            onClick={onNavigate}
-                            className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
-                            activeOptions={{ exact: true }}
-                            {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
-                          >
-                            <NavIcon name={menuIcon(item.label)} />
-                            <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label as NavLabel] ?? item.label)}</span>
-                            {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              );
-            })}
+                >
+                  <NavIcon name="search" className={onOpenQuickCapture ? 'size-3.5' : 'size-4'} />
+                </Button>
+                {onOpenQuickCapture && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    onClick={onOpenQuickCapture}
+                    aria-label={tmw('quickCaptureTrigger')}
+                    title={tmw('quickCaptureTrigger')}
+                    data-testid="shell-quick-capture-btn"
+                    className="size-[26px] bg-background text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                  >
+                    <ProjectIcon name="plus" className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+            )}
+            <ul className="flex flex-col items-center gap-1 md:gap-0.5">
+              {BELL_ITEM && railLink(BELL_ITEM, t('bell'), badges[BELL_ITEM.label] as string | number | null | undefined)}
+              {ADMIN_ITEMS.map((item) => {
+                if (item.to !== '/o/$slug/settings') return railLink(item, t(item.label));
+                // Use a plain anchor with router navigate so TanStack Router does not overwrite aria-current="true"
+                // to "page" on /o/<slug>/settings, and omit onNavigate so the phone drawer stays open (#4499).
+                return (
+                  <li key={item.to}>
+                    <a
+                      href={`/o/${encodeURIComponent(slug)}/settings`}
+                      aria-current={settingsSelected ? 'true' : undefined}
+                      onClick={(event) => {
+                        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
+                        event.preventDefault();
+                        void navigate({ to: item.to, params: { slug } });
+                      }}
+                      className={railItemClass(settingsSelected)}
+                    >
+                      <NavIcon name={menuIcon(item.label)} className="size-5 md:size-4" />
+                      <span>{t(item.label)}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+            {railOnly && <AccountPopover slug={slug} orgs={orgs} email={email} compact onNavigate={onNavigate} />}
           </div>
-          <AccountPopover slug={slug} orgs={orgs} email={email} onNavigate={onNavigate} />
         </div>
+        {!railOnly && (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
+            <div className="mb-3 hidden items-center justify-between gap-2 px-2 md:flex">
+              <Logo />
+              {mode === 'sidebar' && hasSecondary && onToggleSecondary && (
+                <Button
+                  ref={toggleBtnRef}
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={handleToggleSecondary}
+                  onKeyDown={handleToggleKeyDown}
+                  aria-label={t('collapseSidebar')}
+                  title={t('collapseSidebar')}
+                  aria-expanded={true}
+                  data-testid="sidebar-toggle-btn"
+                  className="shrink-0 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                >
+                  <NavIcon name="sidebarCollapse" className="size-4" />
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onOpenPalette}
+                className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-0"
+              >
+                <span className="min-w-0 truncate">{tp('open')}</span>
+                <kbd className="shrink-0 rounded-sm border px-1 font-mono text-[11px] whitespace-nowrap">{paletteKeys}</kbd>
+              </button>
+              {onOpenQuickCapture && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={onOpenQuickCapture}
+                  aria-label={tmw('quickCaptureTrigger')}
+                  title={tmw('quickCaptureTrigger')}
+                  data-testid="shell-quick-capture-btn"
+                  className="min-h-11 min-w-11 shrink-0 md:size-8 md:min-h-0 md:min-w-0"
+                >
+                  <ProjectIcon name="plus" className="size-4" />
+                </Button>
+              )}
+            </div>
+            {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
+            <EntitySwitcher slug={slug} />
+            {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. On Overview,
+                Notifications, and Audit there is no menu, only the rail (#3588); Settings shows its sub-pages (#4499). On a phone the nav scrolls instead (above). */}
+            <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto max-md:overflow-y-visible">
+              {menuTitle && (
+                <p className="px-3 pb-1.5 text-sm font-semibold text-foreground">{menuTitle}</p>
+              )}
+              {menuGroups.map((group, index) => {
+                const labelId = `${groupIdBase}-${group.id}`;
+                return (
+                  <section
+                    key={group.id}
+                    className={index === 0 ? '' : 'mt-3 md:mt-2'}
+                    {...(group.heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.ariaLabel })}
+                  >
+                    {group.heading && (
+                      // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
+                      <p id={labelId} className="px-3 pb-1 text-xs font-medium text-subtle-foreground">
+                        {t(`groups.${group.heading}`)}
+                      </p>
+                    )}
+                    <ul className="flex flex-col gap-0.5">
+                      {group.items.map((item) => {
+                        const badge = badges[item.label];
+                        const isCurrent = item.to === currentTo;
+                        return (
+                          <li key={item.to}>
+                            <Link
+                              to={item.to}
+                              params={{ slug }}
+                              onClick={onNavigate}
+                              className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                              activeOptions={{ exact: true }}
+                              {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
+                            >
+                              <NavIcon name={menuIcon(item.label)} />
+                              <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label as NavLabel] ?? item.label)}</span>
+                              {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                );
+              })}
+            </div>
+            <AccountPopover slug={slug} orgs={orgs} email={email} onNavigate={onNavigate} />
+          </div>
+        )}
       </div>
     </nav>
   );
@@ -388,11 +504,13 @@ export function AccountPopover({
   slug,
   orgs,
   email,
+  compact = false,
   onNavigate,
 }: {
   slug: string;
   orgs: readonly ShellOrg[];
   email: string | undefined;
+  compact?: boolean;
   onNavigate?: (() => void) | undefined;
 }) {
   const t = useTranslations('nav');
@@ -401,38 +519,53 @@ export function AccountPopover({
   const current = orgs.find((o) => o.slug === slug);
   const orgName = current?.name ?? slug;
   const initial = (email?.trim()[0] ?? orgName.trim()[0] ?? 'L').toUpperCase();
+  const compactLabel = email ? `${email} · ${orgName}` : orgName;
   const closeAndNavigate = () => {
     setOpen(false);
     onNavigate?.();
   };
   return (
-    <div ref={host} className="mt-3 shrink-0 border-t pt-2">
+    <div ref={host} className={compact ? 'mt-1 flex w-full shrink-0 justify-center border-t pt-1.5' : 'mt-3 shrink-0 border-t pt-2'}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           data-testid="account-menu-trigger"
-          className="group/account flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent md:min-h-10"
+          title={compact ? compactLabel : undefined}
+          aria-label={compact ? `${t('account')}: ${compactLabel}` : undefined}
+          className={
+            compact
+              ? 'flex size-9 items-center justify-center rounded-lg outline-none hover:bg-sidebar-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent'
+              : 'group/account flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent md:min-h-10'
+          }
         >
-          <span className="sr-only">{t('account')}: </span>
-          <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-            {initial}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium text-foreground" title={email}>
-              {email ?? t('account')}
-            </span>{' '}
-            <span className="block truncate text-xs text-muted-foreground" title={orgName}>
-              {orgName}
+          {compact ? (
+            <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+              {initial}
             </span>
-          </span>
-          <NavIcon
-            name="expand"
-            className="shrink-0 text-muted-foreground transition-transform group-data-popup-open/account:rotate-180 motion-reduce:transition-none"
-          />
+          ) : (
+            <>
+              <span className="sr-only">{t('account')}: </span>
+              <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                {initial}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium text-foreground" title={email}>
+                  {email ?? t('account')}
+                </span>{' '}
+                <span className="block truncate text-xs text-muted-foreground" title={orgName}>
+                  {orgName}
+                </span>
+              </span>
+              <NavIcon
+                name="expand"
+                className="shrink-0 text-muted-foreground transition-transform group-data-popup-open/account:rotate-180 motion-reduce:transition-none"
+              />
+            </>
+          )}
         </PopoverTrigger>
         <PopoverContent
           container={host}
-          side="top"
-          align="start"
+          side={compact ? 'right' : 'top'}
+          align={compact ? 'end' : 'start'}
           sideOffset={8}
           aria-label={t('account')}
           className="w-72 p-3"

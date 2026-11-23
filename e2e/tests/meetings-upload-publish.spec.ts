@@ -42,13 +42,29 @@ test('a file is uploaded, the summary is written, edited and shared twice, and t
 
   await test.step('a meeting is made from a file on the Meetings list', async () => {
     await page.goto(`/o/${slug}/meetings`);
-    await page.getByRole('button', { name: 'Ghi lại cuộc họp mới' }).first().click();
+    const newMeetingBtn = page.getByRole('button', { name: 'Ghi lại cuộc họp mới' }).first();
+    await expect(newMeetingBtn).toBeVisible();
+    await newMeetingBtn.click();
     const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAttribute('data-slot', 'sheet-content');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(newMeetingBtn).toBeFocused();
+
+    await newMeetingBtn.click();
     await dialog.getByLabel('Tiêu đề cuộc họp').fill('Họp tải tệp lên');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('panel-discard')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tiếp tục nhập' })).toBeFocused();
+    await page.getByRole('button', { name: 'Tiếp tục nhập' }).click();
+    await expect(dialog.getByLabel('Tiêu đề cuộc họp')).toBeFocused();
+    await expect(dialog.getByLabel('Tiêu đề cuộc họp')).toHaveValue('Họp tải tệp lên');
+
     await dialog.getByLabel(/Tệp âm thanh/).setInputFiles({ name: 'hop-giao-ban.wav', mimeType: 'audio/wav', buffer: wav(5) });
     await dialog.getByLabel('Hình thức thông báo').selectOption('told_at_start');
     await dialog.getByRole('checkbox', { name: /Tôi xác nhận đã thông báo/ }).click();
-    await dialog.getByRole('button', { name: 'Tạo cuộc họp và mã hóa tệp' }).click();
+    await expect(dialog.getByRole('button', { name: 'Tạo cuộc họp và mã hóa tệp' })).toBeEnabled();
+    await dialog.getByLabel('Tiêu đề cuộc họp').press('Control+Enter');
     await expect(page).toHaveURL(/\/meetings\/[0-9a-f-]{36}$/, { timeout: 90_000 });
   });
 

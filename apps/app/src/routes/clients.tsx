@@ -76,19 +76,19 @@ function TaxCalendarRow({ row, periodLabel }: { row: TaxDueRow; periodLabel: (pe
   });
   return (
     <TableRow>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         <DueWhen due={row} />
       </TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         <Link to="/o/$slug/overview" params={{ slug: row.slug }} className="font-medium text-foreground hover:text-link hover:underline">
           {row.name}
         </Link>
       </TableCell>
-      <TableCell className="px-4 py-3" title={row.legalBasis}>
+      <TableCell title={row.legalBasis}>
         {tt(`obligations.${row.obligation}`)}
       </TableCell>
-      <TableCell className="px-4 py-3 text-muted-foreground">{periodLabel(row.period)}</TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="text-muted-foreground">{periodLabel(row.period)}</TableCell>
+      <TableCell className="text-right">
         {markFor ? (
           <Button loading={done.isPending} size="sm" variant="outline" onClick={() => done.mutate()}>
             {tt('markDone')}
@@ -241,12 +241,12 @@ export function ClientsPage() {
               <div className="overflow-x-auto">
                 <DataTable head={head}>
                   {rows.map((c) => {
-                    const company = <TableCell className="px-4 py-3">{companyOf(c)}</TableCell>;
+                    const company = <TableCell>{companyOf(c)}</TableCell>;
                     if (!c.overview) {
                       return (
                         <TableRow key={c.orgId}>
                           {company}
-                          <TableCell colSpan={head.length - 1} className="px-4 py-3">
+                          <TableCell colSpan={head.length - 1}>
                             {retry}
                           </TableCell>
                         </TableRow>
@@ -256,12 +256,12 @@ export function ClientsPage() {
                     return (
                       <TableRow key={c.orgId}>
                         {company}
-                        {social && <TableCell className="px-4 py-3 align-top">{socialOf(c, o)}</TableCell>}
-                        <TableCell className="px-4 py-3 tabular-nums">{pendingOf(c, o)}</TableCell>
-                        <TableCell className="px-4 py-3 tabular-nums">{failedOf(o)}</TableCell>
-                        <TableCell className="px-4 py-3 text-muted-foreground">{activityOf(o)}</TableCell>
-                        {finance && <TableCell className="px-4 py-3">{vatOf(c, o)}</TableCell>}
-                        {finance && <TableCell className="px-4 py-3">{nextOf(o)}</TableCell>}
+                        {social && <TableCell className="align-top">{socialOf(c, o)}</TableCell>}
+                        <TableCell className="tabular-nums">{pendingOf(c, o)}</TableCell>
+                        <TableCell className="tabular-nums">{failedOf(o)}</TableCell>
+                        <TableCell className="text-muted-foreground">{activityOf(o)}</TableCell>
+                        {finance && <TableCell>{vatOf(c, o)}</TableCell>}
+                        {finance && <TableCell>{nextOf(o)}</TableCell>}
                       </TableRow>
                     );
                   })}

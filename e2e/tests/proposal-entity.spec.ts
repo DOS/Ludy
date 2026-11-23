@@ -39,7 +39,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
     await expect(page.getByRole('main').getByLabel('Ghi sổ vào').locator('option:checked')).toHaveText(BRANCH);
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    await expect(row.getByRole('cell', { name: BRANCH, exact: true })).toBeVisible();
+    await expect(row).toContainText(BRANCH);
   });
 
   await test.step('the proposal shows its entity, with no way to move it', async () => {

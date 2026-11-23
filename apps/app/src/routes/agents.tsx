@@ -669,12 +669,12 @@ export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templa
   };
   return (
     <TableRow data-testid="agent-row">
-      <TableCell className="px-4">
+      <TableCell>
         <span className="font-medium text-foreground">{agent.displayName}</span>{' '}
         <Badge variant="secondary">{t('aiBadge')}</Badge>
       </TableCell>
-      <TableCell className="px-4 text-xs text-muted-foreground">{resolveTpl(agent.templateKey, templateTitle)}</TableCell>
-      <TableCell className="px-4">
+      <TableCell className="text-xs text-muted-foreground">{resolveTpl(agent.templateKey, templateTitle)}</TableCell>
+      <TableCell>
         {editable ? (
           <NativeSelect size="sm" aria-label={t('colStatus')} value={status} disabled={locked} onChange={(e) => {
               setStatus(e.target.value as typeof status);
@@ -691,7 +691,7 @@ export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templa
         )}
         {editable && status === 'retired' && agent.status !== 'retired' && <p className="mt-1 text-xs text-warning">{t('retireHint')}</p>}
       </TableCell>
-      <TableCell className="px-4">
+      <TableCell>
         {editable ? (
           <NativeSelect size="sm" aria-label={t('colMaxRisk')} value={maxRisk} disabled={locked} onChange={(e) => setMaxRisk(e.target.value as typeof maxRisk)}>
             {RISKS.map((r) => (
@@ -704,14 +704,14 @@ export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templa
           agent.maxRisk
         )}
       </TableCell>
-      <TableCell className="px-4">
+      <TableCell>
         {editable ? (
           <Input aria-label={t('colDailyCap')} type="number" min={1} max={10000} value={cap} disabled={locked} onChange={(e) => setCap(e.target.value)} className="w-24" />
         ) : (
           agent.dailyRunCap
         )}
       </TableCell>
-      <TableCell className="px-4">
+      <TableCell>
         {editable && !confirmRetire && (
           <Button size="sm" disabled={!changed || !capValid || update.isPending || locked} onClick={() => (retiring ? setConfirmRetire(true) : send())}>
             {t('save')}
@@ -975,7 +975,7 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_stock_columns', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'hr_attendance_anomaly', 'hr_cv_extract', 'hr_probation_summary', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_month_close_explain', 'finance_expense_variance_note', 'finance_cash_forecast_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_marketplace_fee_note', 'finance_marketplace_proposal_note', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_misa_amis_blocker_notes', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_adherence', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_title', 'meetings_commitments', 'meetings_followup_words', 'meetings_followup_note', 'projects_weekly_status', 'projects_cycle_summary', 'projects_tasks_from_note', 'projects_tasks_from_source', 'projects_roadmap_dedupe', 'projects_roadmap_changelog_draft', 'notes_summary', 'notes_todo_suggest', 'notes_todo_plan', 'notes_organize', 'sign_field_propose', 'sign_clause_summary', 'sign_acceptance_draft', 'sign_version_diff', 'sign_contract_draft', 'sign_obligation_extract', 'sign_vault_qa', 'sign_playbook_check', 'sign_kyc_check', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_stock_columns', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'hr_attendance_anomaly', 'hr_cv_extract', 'hr_probation_summary', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_month_close_explain', 'finance_expense_variance_note', 'finance_cash_forecast_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_marketplace_fee_note', 'finance_marketplace_proposal_note', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_misa_amis_blocker_notes', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_adherence', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_title', 'meetings_commitments', 'meetings_followup_words', 'meetings_followup_note', 'projects_weekly_status', 'projects_cycle_summary', 'projects_tasks_from_note', 'projects_tasks_from_source', 'projects_roadmap_dedupe', 'projects_roadmap_changelog_draft', 'projects_roadmap_signal_match', 'notes_summary', 'notes_todo_suggest', 'notes_todo_plan', 'notes_organize', 'sign_field_propose', 'sign_clause_summary', 'sign_acceptance_draft', 'sign_version_diff', 'sign_contract_draft', 'sign_obligation_extract', 'sign_vault_qa', 'sign_playbook_check', 'sign_kyc_check', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 export function AiUse({ agents }: { agents: Agent[] }) {
@@ -1014,12 +1014,12 @@ export function AiUse({ agents }: { agents: Agent[] }) {
             <DataTable head={[t('colFeature'), t('colCalls'), t('colTokens'), t('colCost')]}>
               {report.data.byFeature.map((row) => (
                 <TableRow key={row.feature} data-testid="ai-use-feature">
-                  <TableCell className="px-4">{feature(row.feature)}</TableCell>
-                  <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
-                  <TableCell className="px-4 tabular-nums">
+                  <TableCell>{feature(row.feature)}</TableCell>
+                  <TableCell className="tabular-nums">{f.number(row.calls)}</TableCell>
+                  <TableCell className="tabular-nums">
                     {f.number(row.inputTokens)} / {f.number(row.outputTokens)}
                   </TableCell>
-                  <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                  <TableCell className="tabular-nums">{f.aiAmount(row.cost)}</TableCell>
                 </TableRow>
               ))}
             </DataTable>
@@ -1030,9 +1030,9 @@ export function AiUse({ agents }: { agents: Agent[] }) {
               <DataTable head={[t('colAiAgent'), t('colCalls'), t('colCost')]}>
                 {report.data.byAgent.map((row) => (
                   <TableRow key={row.agentId} data-testid="ai-use-agent">
-                    <TableCell className="px-4">{agents.find((a) => a.id === row.agentId)?.displayName ?? row.name ?? row.agentId}</TableCell>
-                    <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
-                    <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                    <TableCell>{agents.find((a) => a.id === row.agentId)?.displayName ?? row.name ?? row.agentId}</TableCell>
+                    <TableCell className="tabular-nums">{f.number(row.calls)}</TableCell>
+                    <TableCell className="tabular-nums">{f.aiAmount(row.cost)}</TableCell>
                   </TableRow>
                 ))}
               </DataTable>
@@ -1067,12 +1067,12 @@ export function Budgets({ agents, perms }: { agents: Agent[]; perms: AgentPermis
             const usage = budgetUsage(b.spent, b.monthlyLimit, b.warnPercent);
             return (
               <TableRow key={b.id} data-testid="budget-row">
-                <TableCell className="px-4">{targetText(b.scope, b.target)}</TableCell>
-                <TableCell className="px-4 tabular-nums">
+                <TableCell>{targetText(b.scope, b.target)}</TableCell>
+                <TableCell className="tabular-nums">
                   {f.aiAmount(b.monthlyLimit)} <span className="text-xs text-subtle-foreground">({b.hardStop ? t('hardStop') : t('softLimit')})</span>
                 </TableCell>
-                <TableCell className="px-4 tabular-nums">{f.aiAmount(b.spent)}</TableCell>
-                <TableCell className="px-4">
+                <TableCell className="tabular-nums">{f.aiAmount(b.spent)}</TableCell>
+                <TableCell>
                   <Badge variant={usage.state === 'spent' ? 'destructive' : usage.state === 'warn' ? 'warning' : 'success'}>
                     {t('usage', { percent: String(usage.percent) })} {t(`usageState.${usage.state}`)}
                   </Badge>
