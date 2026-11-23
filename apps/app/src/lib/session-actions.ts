@@ -2,6 +2,7 @@
 import { client, orglessClient, orpc, queryClient } from './api.ts';
 import { auth } from './auth.ts';
 import { forgetInvite } from './invite.ts';
+import { clearRecentItems } from './palette-recents.ts';
 import { forgetPushDevice } from './push.ts';
 import { forgetShare } from './social-share.ts';
 import { stopAndSave } from './recording-controller.ts';
@@ -19,6 +20,7 @@ export async function signOut(options: { keepInvite?: boolean } = {}): Promise<v
   await stopAndSave({ quiet: true });
   if (!options.keepInvite) forgetInvite();
   forgetShare();
+  clearRecentItems();
   await forgetPushDevice((endpoint) => client.notifications.push.unsubscribe({ endpoint }));
   return signOutWithRevoke({
     // The kernel's user id (me.get), not Supabase Auth's: a revoke names the Crove user (issue #184).

@@ -97,6 +97,57 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
     await expect(trigger).toContainText('Công ty Hoa Sen');
   });
 
+  await test.step('Cmd+K tracks org-isolated recents and runs quick actions cleanly (#4525)', async () => {
+    await sidebar.getByRole('link', { name: 'Sổ sách', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${first}/ledger$`));
+
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog', { name: 'Bảng lệnh' });
+    await expect(palette).toBeVisible();
+    const combobox = palette.getByRole('combobox');
+    await expect(combobox).toBeFocused();
+    const recentGroup = palette.getByRole('group', { name: 'Gần đây' });
+    await expect(recentGroup).toContainText('Sổ sách');
+    await expect(recentGroup).toContainText('Tổng quan tài chính');
+
+    // Switch theme via inline submenu and verify live sync with AccountPopover's ThemeSwitcher.
+    await combobox.fill('doi giao dien');
+    await page.keyboard.press('Enter');
+    await expect(palette.getByTestId('palette-back')).toBeVisible();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+    await trigger.click();
+    await expect(sidebar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toHaveAttribute('aria-checked', 'true');
+    await sidebar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Sáng' }).click();
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
+    await page.keyboard.press('Escape');
+
+    // Open New task quick capture dialog from Cmd+K.
+    await page.keyboard.press('Control+k');
+    await combobox.fill('tao viec moi');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('quick-capture-dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('quick-capture-dialog')).toBeHidden();
+
+    // Switch org via Cmd+K inline org list and verify first org's recents do not leak.
+    await page.keyboard.press('Control+k');
+    await combobox.fill('doi to chuc');
+    await page.keyboard.press('Enter');
+    await palette.getByRole('option', { name: 'Công ty Hướng Dương' }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${second}/overview$`));
+
+    await page.keyboard.press('Control+k');
+    await expect(palette).toBeVisible();
+    const secondRecentGroup = palette.getByRole('group', { name: 'Gần đây' });
+    await expect(secondRecentGroup).toContainText('Tổng quan');
+    await expect(secondRecentGroup).not.toContainText('Sổ sách');
+    await expect(secondRecentGroup).not.toContainText('Tổng quan tài chính');
+    await expect(palette).not.toContainText('Sổ sách');
+    await page.keyboard.press('Escape');
+  });
+
   await test.step('"Thêm tổ chức" opens the form for the next org', async () => {
     await trigger.click();
     await orgButton(sidebar).click();
