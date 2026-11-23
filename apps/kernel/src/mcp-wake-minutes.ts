@@ -4,7 +4,7 @@
 //   1. Meetings must be on for the org, asked fresh when the job runs (the relay does not park this app's events, outbox-hold.ts: while Meetings is off the event is not sent and not released later;
 //      the agent reads current state through the tool, so nothing it needs is lost).
 //   2. `kernel.mcp.wake.minutes_targets` reads the event itself, lists the company grants whose wake-up stands now (worker-only definer, ids only) and drops, with an audit row by the event's id, an
-//      event older than 24 hours when it would be sent.
+//      event older than 24 hours when it would be sent and one whose meeting is no longer org-visible, is deleted or is past its text period (#4536).
 //   3. For each grant: the body is built by the one builder (mcp-wake-body.ts), stored through `kernel.mcp.wake.enqueue` (the database checks the body again and refuses the type for a member-bound
 //      grant) and handed to the queue (mcp-wake.ts signs and sends it). A queue failure leaves the delivery stored, to be handed over again by the sweep; a grant that stopped standing between the list
 //      and the store is skipped; any other failure for one grant (a deadlock, a lost connection) never stops the others, and is thrown after them so the job retries: the derived ids make the retry

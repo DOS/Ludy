@@ -16,6 +16,7 @@
 //   figures, and each quantity stands only on the line of its own item): the caller shows the screen's own template, and nothing is cut or repaired.
 // A call that fails, is refused by the AI budget or returns nothing usable gives no suggestion: the screens work as they do with AI off.
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
 import { hasAddress, hasNumberWords } from './reminder.ts';
 
 // How much one call reads: lines per call, items offered, and the length of a description. A bound on what one paid call sends.
@@ -111,7 +112,8 @@ const addressIn = (text: string, given: readonly string[]) => hasAddress(without
 // what a seller wrote, so a link or a number in it is not made safe by the model repeating it. A number said in words is not checked here: the reason is display-only and "the only one" is prose.
 function reasonProblem(reason: string, item: StockMatchItem): boolean {
   if (reason === '' || Array.from(reason).length > STOCK_MATCH_REASON_MAX) return true;
-  return addressIn(reason, [item.code, item.name]) || draftFiguresOutside(reason, [item.code, item.name, item.unit]).length > 0;
+  if (hasStealthControls(reason) || hasPromptMarkupLeak(reason) || hasAutonomousActionDirective(reason)) return true;
+  return addressIn(reason, [item.code, item.name]) || hasObfuscatedContactOrLink(without(reason, [item.code, item.name])) || draftFiguresOutside(reason, [item.code, item.name, item.unit]).length > 0;
 }
 
 /** The suggestion for each line, in the order given (null: none). Pure: the model call is the caller's. `lines` and `items` are what the model was shown. */
@@ -234,9 +236,13 @@ export function checkReorderText(request: ReorderRequest, output: ReorderOutput 
   // would eat part of every word); it is only trusted as a whole word by the figure checks.
   const names = [shown.orgName, shown.supplierName, ...items.map((i) => i.name)];
   const given = [...names, ...items.map((i) => `${i.name} ${i.quantity} ${i.unit}`)];
-  if (addressIn(text, names)) return { kind: 'none', code: 'LINK' };
+  if (hasStealthControls(text)) return { kind: 'none', code: 'FIGURES' };
+  if (hasPromptMarkupLeak(text) || addressIn(text, names)) return { kind: 'none', code: 'LINK' };
   // A reorder message has no reason to say a number in words (a quantity is written in digits), and each quantity stands on the line of its own item.
   if (draftFiguresOutside(text, given).length > 0 || numberWordIn(text, names)) return { kind: 'none', code: 'FIGURES' };
+  if (hasObfuscatedContactOrLink(without(text, names), names) || hasAutonomousActionDirective(text)) {
+    return { kind: 'none', code: 'LINK' };
+  }
   const problem = lineProblem(text, shown);
   return problem === null ? { kind: 'text', text } : { kind: 'none', code: problem };
 }

@@ -15,15 +15,19 @@ function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
 }
 
 // The panel, placed next to the trigger and never wider than the screen: 20rem from sm up, the screen less a 1rem gutter on a phone.
+// `container` lets callers inside a modal <dialog> (the phone drawer) portal inside the dialog's top layer.
 function PopoverContent({
   className,
+  container,
   align = "end",
   side = "bottom",
   sideOffset = 6,
   ...props
-}: PopoverPrimitive.Popup.Props & Pick<PopoverPrimitive.Positioner.Props, "align" | "side" | "sideOffset">) {
+}: PopoverPrimitive.Popup.Props &
+  Pick<PopoverPrimitive.Portal.Props, "container"> &
+  Pick<PopoverPrimitive.Positioner.Props, "align" | "side" | "sideOffset">) {
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Positioner className="isolate z-50 outline-none" positionMethod="fixed" align={align} side={side} sideOffset={sideOffset} collisionPadding={16}>
         <PopoverPrimitive.Popup
           data-slot="popover-content"

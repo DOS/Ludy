@@ -127,6 +127,8 @@ const SIGNALS = [
   'crm.signals.open_deals:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
+  // Step 1 of the two-step landing for #4493: internal company-grant batch visibility check called by projects.mcp.triage_summary via ctx.query; returns only { visibleIds } for org-visible published meetings inside text retention, never exposed as a public MCP tool. PR #4497 graduates it to REACHABLE.
+  'meetings.mcp.visible_ids:ludy.read',
 ];
 
 // The finance reads of the connected coworker (#3849, plan docs/plan/vy.md section 5 C2 and C3, owner decision 2026-11-18): the overview figures, the open receivables and payables per party, and one payment

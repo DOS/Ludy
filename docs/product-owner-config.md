@@ -371,6 +371,15 @@ naming the head it reviewed.
   up to 5 active sub-sessions + 1 PO session per line, superseding the
   2026-11-15 cap of 3 and Engage's 2026-11-08 cap of 4; local-resources
   discipline from 2026-11-17 still applies to every session)
+- po_labels: claude: po:claude, agy: po:agy (owner decision 2026-11-24 in
+  the Claude Platform PO chat with the popup answer "Chạy song song có nhãn,
+  Khuyên dùng": a Claude Code PO and an Antigravity PO may run the same line
+  at once with equal authority; each PO adds its own label to an issue before
+  it starts a sub-session on it and coordinates only issues that carry its
+  label; issues with neither label stay open to both; `sub_sessions_max`
+  counts each PO's own sub-sessions)
+- peer_po_cover_wait: 60 (minutes a peer PO's merge-ready PR waits before the
+  other runtime's PO may cover its acceptance gate and merge)
 
 A PO keeps its context small at natural breaks. With a warm cache, it uses
 `/compact` with a focus. After a long idle, such as overnight, it starts a
