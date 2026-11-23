@@ -3,7 +3,7 @@
 // response shapes (test/fixtures/zoom/) and a mocked transport. No test here may reach the network: the global fetch is replaced by a counter that must stay at zero.
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MeetingPlatformError, ZOOM_DOWNLOAD_SUFFIX, ZOOM_HOSTS, ZoomMeetingPlatform, meetingPlatformAdapters, zoomDownloadUrl, type Fetch, type MeetingPlatformCredential } from '../src/index.ts';
+import { MeetingPlatformError, ZOOM_DOWNLOAD_SUFFIX, ZOOM_HOSTS, ZoomMeetingPlatform, meetingPlatformAdapters, parseZoomNotice, zoomAccountKey, zoomDownloadUrl, type Fetch, type MeetingPlatformCredential } from '../src/index.ts';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/zoom/${name}.json`, import.meta.url), 'utf8')) as Record<string, unknown>;
 const CREDENTIAL: MeetingPlatformCredential = { accessToken: 'zoom-access-not-real-0001', refreshToken: 'zoom-refresh-not-real-0001' };
@@ -335,6 +335,17 @@ describe('ZoomMeetingPlatform connect (authorizeUrl and exchange)', () => {
     expect(account.externalAccount).toBe('abc123xyz');
     expect(JSON.parse(account.secret)).toEqual({ accessToken: 'a1', refreshToken: 'r1', expiresAt: new Date(NOW.getTime() + 3600 * 1000).toISOString() });
     expect(Object.fromEntries(new URLSearchParams(calls[0]?.body))).not.toHaveProperty('code_verifier');
+  });
+
+  it('keys the connection by the same account key the webhook reads a host id with, whatever the case Zoom writes (decision of #4011, point 2)', async () => {
+    const sent = ' ABC123xyz_-Q ';
+    const { adapter } = zoom([{ json: { access_token: 'a1', refresh_token: 'r1', expires_in: 3600 } }, { json: { id: sent, email: 'only@example.test' } }]);
+    const account = await adapter.exchange(GRANT);
+    const notice = parseZoomNotice(new TextEncoder().encode(JSON.stringify({ event: 'recording.completed', event_ts: 1, payload: { object: { host_id: sent.trim().toUpperCase(), uuid: 'u' } } })));
+    expect(account.externalAccount).toBe(zoomAccountKey(sent));
+    expect(account.externalAccount).toBe('abc123xyz_-q');
+    expect(notice).toMatchObject({ kind: 'recording', hostId: account.externalAccount });
+    expect(zoomAccountKey(' KdYkJnImT4 ')).toBe('kdykjnimt4');
   });
 
   it('refuses a code or an app Zoom does not accept, and an account with no address, with short codes and nothing stored', async () => {
