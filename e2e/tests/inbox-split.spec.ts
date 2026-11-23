@@ -104,7 +104,7 @@ test('at xl (1280px), the Inbox shows inline split preview, switches rows, appro
     await page.setViewportSize({ width: 1024, height: 768 });
     await expect(page.getByTestId('inbox-split-layout')).toHaveCount(0);
     await expect(links).toHaveCount(1);
-    await expect(page.getByRole('columnheader', { name: 'Ngày hóa đơn' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Ngày HĐ' })).toBeVisible();
   });
 
   await test.step('narrow phone view (< 640px) stacks rows without split preview or horizontal scroll', async () => {

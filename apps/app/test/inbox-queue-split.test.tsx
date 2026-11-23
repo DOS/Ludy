@@ -234,7 +234,7 @@ const fileEntry = (id: string, status: 'processing' | 'failed', filename: string
 
 function seedInboxBase() {
   const qc = state.qc;
-  qc.setQueryData(['org', 'get'], { role: 'owner', permissions: [], inboundAddress: 'hd@demo.ludy.vn' });
+  qc.setQueryData(['org', 'get'], { role: 'owner', permissions: [], inboundAddress: 'hd@example.com' });
   qc.setQueryData(['files', 'recent'], []);
   qc.setQueryData(['inbox', 'list', { status: 'pending' }], [pendingRow('p1', 'NCC Alpha'), pendingRow('p2', 'NCC Beta')]);
   qc.setQueryData(['inbox', 'get', { id: 'p1' }], pendingDetail('p1', 'NCC Alpha'));

@@ -248,8 +248,8 @@ export function InboxPage() {
     const currentIndex =
       focusedIndex >= 0
         ? focusedIndex
-        : split && activePreviewId
-          ? links.findIndex((link) => link.dataset.proposalId === activePreviewId)
+        : split && selectedPreviewId
+          ? links.findIndex((link) => link.dataset.proposalId === selectedPreviewId)
           : -1;
     const at = steppedIndex(currentIndex, links.length, step);
     if (at === null) return;
@@ -578,11 +578,11 @@ export function InboxPage() {
               >
                 <div className="overflow-hidden rounded-xl border bg-card">
                   <Table className="w-full [&_td]:whitespace-normal [&_th]:whitespace-normal">
-                    <TableHeader>
-                      <TableRow>
-                        {bulkEnabled && <TableHead className="w-9 px-3" />}
-                        <TableHead className="px-3">{t('columns.document')}</TableHead>
-                        <TableHead className="px-3 text-right">{t('columns.total')}</TableHead>
+                    <TableHeader className="bg-muted [&_th]:text-subtle-foreground">
+                      <TableRow className="hover:bg-transparent">
+                        {bulkEnabled && <TableHead className="w-9" />}
+                        <TableHead>{t('columns.document')}</TableHead>
+                        <TableHead className="text-right">{t('columns.total')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -600,8 +600,8 @@ export function InboxPage() {
                               setSelectedPreviewId(item.id);
                             }}
                           >
-                            {bulkEnabled && <TableCell className="w-9 px-3 py-3 align-top">{selectBox(item)}</TableCell>}
-                            <TableCell className="px-3 py-3 align-top">
+                            {bulkEnabled && <TableCell className="w-9 py-2 align-top">{selectBox(item)}</TableCell>}
+                            <TableCell className="py-2 align-top">
                               <Link
                                 data-proposal-link
                                 data-proposal-id={item.id}
@@ -624,7 +624,7 @@ export function InboxPage() {
                                 <ProposalBadges item={item} hideSignature={allUnverified} />
                               </div>
                             </TableCell>
-                            <TableCell className="px-3 py-3 text-right align-top">
+                            <TableCell className="py-2 text-right align-top">
                               <p className="font-medium text-foreground tabular-nums whitespace-nowrap">{f.money(item.total)}</p>
                               <div className="mt-1.5 flex justify-end">
                                 <Button
