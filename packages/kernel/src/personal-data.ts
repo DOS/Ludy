@@ -730,6 +730,11 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_record',
     reason: 'Counterparty name on post-signature contract obligation record preserved alongside executed agreement terms; purged on org deletion',
   },
+  'crove_sign.kyc_check.findings_json': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Sender-side KYC attachment verification findings (extracted tax IDs, CCCD numbers, or signer/entity names under Vietnam PDPL Law 91/2025/QH15): an erasure deletes any kyc_check row whose findings quote the value while leaving sealed agreement files intact, and a member may run the check again',
+  },
   'crove_sign.member_signature.signature_typed_text': {
     kind: 'other',
     handling: 'erase',
@@ -1589,6 +1594,13 @@ export const personalDataErase = defineCommand({
     const { rows: marketplaceNotices } = await sql<{ rows: number }>`
       SELECT crove_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('crove_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
+
+    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15): delete any kyc_check row in the org whose
+    // findings_json quotes the value (including 8/9-digit legacy CMND numbers and rows on attendees-only meeting_minutes
+    // envelopes via the owner-only definer); sealed agreement files stay untouched and checks can always be re-run.
+    const { rows: kycRows } = await sql<{ rows: number }>`
+      SELECT crove_sign.personal_data_erase_kyc_check(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('crove_sign.kyc_check.findings_json', Number(kycRows[0]?.rows ?? 0));
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value

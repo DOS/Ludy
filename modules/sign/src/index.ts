@@ -211,3 +211,23 @@ export {
   type SignPlaybookSource,
   type SignPlaybookSourceRule,
 } from './playbook.ts';
+export {
+  detectKycDocumentKind,
+  evaluateDeterministicKycAttachment,
+  extractVietnamNationalIds,
+  extractVietnamTaxCodes,
+  normalizeFoldedVi,
+  signKycCommands,
+  signKycConfirm,
+  signKycInspectComplete,
+  signKycInspectJobData,
+  signKycList,
+  signKycProposeAi,
+  signKycQueries,
+  signKycRunDeterministic,
+  signKycSource,
+  type DeterministicKycEvalInput,
+  type DeterministicKycEvalResult,
+  type SignKycInspectJobData,
+  type SignKycSource,
+} from './kyc.ts';
