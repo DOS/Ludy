@@ -812,6 +812,48 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     );
   });
 
+  it('blanks the live transcript preview of the meeting when it redacts, keeping where the preview has read, and leaves the preview of another meeting alone (#4557)', async () => {
+    const meetingId = await seedMeeting({ title: 'Họp 4557 xem trước' });
+    const other = await seedMeeting({ title: 'Họp 4557 khác' });
+    const line = (m: string, seq: number, text: string) =>
+      sqlAdmin(`INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [orgId, randomUUID(), m, seq, seq * 10, seq * 10 + 10, text]);
+    await line(meetingId, 0, `Gọi ${PHONE_PII} nhé`);
+    await line(meetingId, 1, '');
+    await line(meetingId, 2, `Email ${EMAIL_PII}`);
+    await line(other, 0, `Gọi ${PHONE_PII} nhé`);
+    await exec('recorder', 'meetings.summary.save', { meetingId, summary: `Liên hệ ${PHONE_PII}`, decisions: [] });
+
+    const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId });
+    expect(scan.candidates.length).toBeGreaterThanOrEqual(1);
+    // The preview is not a surface of the scan: no candidate names a live line.
+    expect(JSON.stringify(scan)).not.toContain('live_line');
+    const done = await exec<TranscriptRedacted>('recorder', 'meetings.transcript.redact', {
+      meetingId,
+      confirmed: true,
+      items: scan.candidates.map((c) => ({ surface: c.surface, targetId: c.targetId, decisionIndex: c.decisionIndex, kind: c.kind, startPos: c.startPos, version: c.version })),
+    });
+    expect(done.redactedCount).toBe(scan.candidates.length);
+
+    // Every line is a silent piece now, at the same seq and times: nothing of the text is left and the preview still reads on from its last line (seq 2), so the next window does not read the audio again.
+    const lines = await sqlAdmin<{ seq: number; start_seconds: number; end_seconds: number; text: string }>(
+      `SELECT seq, start_seconds, end_seconds, text FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2 ORDER BY seq`,
+      [orgId, meetingId],
+    );
+    expect(lines).toEqual([
+      { seq: 0, start_seconds: 0, end_seconds: 10, text: '' },
+      { seq: 1, start_seconds: 10, end_seconds: 20, text: '' },
+      { seq: 2, start_seconds: 20, end_seconds: 30, text: '' },
+    ]);
+    // The other meeting's preview is untouched, and the audit holds the count of lines that held text (never a word of them).
+    expect(await sqlAdmin<{ text: string }>(`SELECT text FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2`, [orgId, other])).toEqual([{ text: `Gọi ${PHONE_PII} nhé` }]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.transcript.redact' AND detail ->> 'meetingId' = $2 ORDER BY occurred_at DESC LIMIT 1`,
+      [orgId, meetingId],
+    );
+    expect(audit[0]?.detail).toMatchObject({ clearedLiveLines: 2 });
+    expect(JSON.stringify(audit)).not.toContain(PHONE_PII);
+  });
+
   it('fails closed with VY_RUN_BUSY on out-of-order concurrent Vy run creation and retries ascending new runs cleanly', async () => {
     const mRace = await seedMeeting({ readers: ['attendee'], title: 'Họp B2 concurrency' });
     const r1 = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', {
