@@ -413,4 +413,17 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
       await asWorker.end();
     }
   });
+  it('lets the worker login alone execute the definer that re-checks the meeting, which pins its search path and answers one boolean (#4536)', async () => {
+    const fn = 'crove_meetings.minutes_wake_open(uuid, uuid, timestamptz)';
+    await admin(async (c) => {
+      const { rows } = await auditRoleFunctionExecute(c, dbIds, fn, ['crove_worker']);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(row.ok, `${row.rolname} execute ${fn}`).toBe(row.expected);
+      expect((await rawQuery<{ ok: boolean }>(c, `SELECT pg_catalog.has_function_privilege('public', $1::regprocedure, 'EXECUTE') AS ok`, [dbIds.rewriteSql(fn)])).rows[0]?.ok).toBe(false);
+      const meta = (await c.query(`SELECT proconfig, prosecdef, prorettype::regtype::text AS ret FROM pg_catalog.pg_proc WHERE oid = $1::regprocedure`, [fn])).rows[0];
+      expect(meta.prosecdef).toBe(true);
+      expect(meta.ret).toBe('boolean');
+      expect(JSON.stringify(meta.proconfig)).toContain('search_path=pg_catalog, pg_temp');
+    });
+  });
 });
