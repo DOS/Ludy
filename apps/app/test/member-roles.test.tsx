@@ -4,11 +4,11 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { LegalEntity, MemberRoles } from '@ludy/kernel-contract';
+import { BUILTIN_ROLE_KEYS, type LegalEntity, type MemberRoles } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { catalog } from '../src/i18n/runtime.ts';
-import { assignableRoles, inviteRoleChoices, roleNeedsEntity } from '../src/lib/member-roles.ts';
+import { catalog, translatorFor } from '../src/i18n/runtime.ts';
+import { assignableRoles, inviteRoleChoices, roleHintKey, roleNeedsEntity } from '../src/lib/member-roles.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -39,8 +39,9 @@ const entities: LegalEntity[] = [
 const data: MemberRoles = {
   roles: [
     { key: 'finance.chief_accountant', scope: 'org', permissions: ['finance.period.unlock', 'finance.proposal.approve'] },
-    { key: 'finance.accountant', scope: 'org', permissions: [] },
-    { key: 'external_accountant', scope: 'legal_entity', permissions: [] },
+    { key: 'finance.accountant', scope: 'org', permissions: ['vy.use'] },
+    { key: 'social.marketer', scope: 'org', permissions: ['vy.use'] },
+    { key: 'external_accountant', scope: 'legal_entity', permissions: ['vy.use'] },
   ],
   assignments: [
     { id: '00000000-0000-7000-8000-0000000000b1', userId: member, roleKey: 'finance.chief_accountant', legalEntityId: null, grantedAt: at },
@@ -78,29 +79,53 @@ describe('MemberRolesRow', () => {
 describe('assignableRoles', () => {
   it('offers the roles not held yet, an entity role again, and no entity role to owners and admins', () => {
     const held = data.assignments;
-    expect(assignableRoles(data.roles, held, 'member').map((r) => r.key)).toEqual(['finance.accountant', 'external_accountant']);
-    expect(assignableRoles(data.roles, [], 'admin').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant']);
-    // A viewer never gets a role that grants a permission; a member limited to an entity gets no org-wide role.
-    expect(assignableRoles(data.roles, [], 'viewer').map((r) => r.key)).toEqual(['finance.accountant', 'external_accountant']);
+    expect(assignableRoles(data.roles, held, 'member').map((r) => r.key)).toEqual(['finance.accountant', 'social.marketer', 'external_accountant']);
+    expect(assignableRoles(data.roles, [], 'admin').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant', 'social.marketer']);
+    // A viewer gets presets whose only permission is vy.use (grantable_to_viewer), never one that grants more; a member limited to an entity gets no org-wide role.
+    expect(assignableRoles(data.roles, [], 'viewer').map((r) => r.key)).toEqual(['finance.accountant', 'social.marketer', 'external_accountant']);
     const limited = [{ roleKey: 'external_accountant' as const, legalEntityId: branch }];
     expect(assignableRoles(data.roles, limited, 'member').map((r) => r.key)).toEqual(['external_accountant']);
     expect(roleNeedsEntity({ scope: 'legal_entity' })).toBe(true);
     expect(roleNeedsEntity({ scope: 'org' })).toBe(false);
   });
 
-  it('offers an invite the org-wide department roles only, and a viewer none that grants a permission (#2611)', () => {
+  it('offers an invite the org-wide department roles only, and a viewer only roles granting at most vy.use (#2611, #2612)', () => {
     // An entity role is the entity toggle of the invite form, not a department pick.
-    expect(inviteRoleChoices(data.roles, 'member').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant']);
-    expect(inviteRoleChoices(data.roles, 'admin').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant']);
-    expect(inviteRoleChoices(data.roles, 'viewer').map((r) => r.key)).toEqual(['finance.accountant']);
+    expect(inviteRoleChoices(data.roles, 'member').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant', 'social.marketer']);
+    expect(inviteRoleChoices(data.roles, 'admin').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant', 'social.marketer']);
+    expect(inviteRoleChoices(data.roles, 'viewer').map((r) => r.key)).toEqual(['finance.accountant', 'social.marketer']);
     expect(inviteRoleChoices([], 'member')).toEqual([]);
   });
 
-  it('has a Vietnamese name and hint for every built-in role', () => {
+  it('has a Vietnamese and English name and hint for every built-in role', () => {
     for (const messages of [en, viMessages]) {
-      expect(Object.keys(messages.memberRoles.roles).sort()).toEqual(['crm', 'desk', 'external_accountant', 'finance', 'hr']);
-      expect(Object.keys(messages.memberRoles.hints).sort()).toEqual(['crm', 'desk', 'external_accountant', 'finance', 'hr']);
+      expect(Object.keys(messages.memberRoles.roles).sort()).toEqual(['crm', 'desk', 'external_accountant', 'finance', 'hr', 'social']);
+      expect(Object.keys(messages.memberRoles.hints).sort()).toEqual(['crm', 'desk', 'external_accountant', 'finance', 'hr', 'social']);
+    }
+    for (const locale of ['vi', 'en'] as const) {
+      const t = translatorFor(locale);
+      for (const key of BUILTIN_ROLE_KEYS) {
+        expect(t(`memberRoles.roles.${key}`), `${locale} role ${key}`).not.toBe('');
+        expect(t(`memberRoles.hints.${key}`), `${locale} hint ${key}`).not.toBe('');
+      }
     }
     expect(viMessages.memberRoles.roles.finance.chief_accountant).toBe('Kế toán trưởng');
+    expect(viMessages.memberRoles.roles.social.marketer).toBe('Marketing');
+    expect(en.memberRoles.roles.social.marketer).toBe('Marketing');
+  });
+
+  it('names ads in the Marketing hint only when the org runs ads, and never promises access the role does not grant (#2612)', () => {
+    expect(roleHintKey('social.marketer', ['social'])).toBe('social.marketer');
+    expect(roleHintKey('social.marketer', ['social', 'ads'])).toBe('social.marketerAds');
+    expect(roleHintKey('finance.accountant', ['social', 'ads'])).toBe('finance.accountant');
+    for (const locale of ['vi', 'en'] as const) {
+      const t = translatorFor(locale);
+      const plain = t('memberRoles.hints.social.marketer');
+      const withAds = t('memberRoles.hints.social.marketerAds');
+      expect(plain, locale).not.toMatch(/quảng cáo|\bads?\b/i);
+      expect(withAds, locale).toMatch(/quảng cáo|\bads\b/i);
+      expect(plain, locale).toMatch(/vai trò cơ bản|base role/);
+      expect(withAds, locale).toMatch(/vai trò cơ bản|base role/);
+    }
   });
 });

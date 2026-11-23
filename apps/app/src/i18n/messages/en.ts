@@ -7917,6 +7917,7 @@ export const en = {
   memberRoles: {
     roles: {
       finance: { chief_accountant: 'Chief accountant', accountant: 'Accountant', viewer: 'Accounting viewer', entity_chief_accountant: 'Entity chief accountant' },
+      social: { marketer: 'Marketing' },
       crm: { sales: 'Sales' },
       desk: { agent: 'Customer support' },
       hr: { manager: 'HR manager' },
@@ -7928,6 +7929,10 @@ export const en = {
         accountant: 'Says the member keeps the books. Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.',
         viewer: 'Says the member only follows the accounting figures. Adds no permission beyond the base role yet.',
         entity_chief_accountant: 'Unlocks the locked months and marks the VAT returns filed of the assigned legal entities only. Each assignment names one entity; you can add more. Approving posting proposals needs the org-wide chief accountant. If it is the only role of this person, give them Outside accountant for that entity before revoking it.',
+      },
+      social: {
+        marketer: 'For the person who publishes posts and replies to comments and messages; that access comes from the base role. Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.',
+        marketerAds: 'For the person who publishes posts, replies to comments and messages and runs ads; that access comes from the base role. Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.',
       },
       crm: { sales: 'Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.' },
       desk: { agent: 'Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.' },
