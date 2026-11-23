@@ -52,6 +52,7 @@ import { HrContractNd337Notice, HrContractSignHandoff } from '../components/hr-c
 import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { HrProbationPanel } from '../components/hr-probation-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
+import { HrAddendumPanel, HrAssetsPanel, HrCareerTimelinePanel, countUnreturnedAssets } from '../components/hr-stage6c-panels.tsx';
 import { HrOnboardingReviewQueue, HrOvertimeReviewQueue } from '../components/hr-stage5b-queues.tsx';
 import { HrStage6bApprovalQueues } from '../components/hr-stage6b-cards.tsx';
 import { signEnvelopePollMs, useSignAppEnabled } from '../components/quote-sign-handoff.tsx';
@@ -1826,11 +1827,15 @@ export function Detail({
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
+  const [assetOverrideNote, setAssetOverrideNote] = useState('');
   const [edit, setEdit] = useState<EditEmployeeDraft | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [severanceOpen, setSeveranceOpen] = useState(false);
   const [probationOpen, setProbationOpen] = useState(false);
+  const [addendumOpen, setAddendumOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [assetsOpen, setAssetsOpen] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
     onSuccess: async () => {
@@ -1853,7 +1858,23 @@ export function Detail({
     ),
   );
   const endDependent = useMutation(run((dependentId: string) => client.hr.payroll.dependents.end({ dependentId, endedOn: vietnamToday() })));
-  const endEmployee = useMutation(run(() => client.hr.payroll.employees.end({ employeeId, endedOn })));
+  const endEmployee = useMutation(
+    run(
+      () =>
+        client.hr.payroll.employees.end({
+          employeeId,
+          endedOn,
+          ...(assetOverrideNote.trim() ? { assetOverrideNote: assetOverrideNote.trim() } : {}),
+        }),
+      () => setAssetOverrideNote(''),
+    ),
+  );
+  const assetsQ = useQuery({
+    ...orpc.hr.assets.list.queryOptions({ input: { employeeId } }),
+    ...ONCE,
+    enabled: Boolean(q.data && q.data.endedOn === null),
+    gcTime: 0,
+  });
   const saveEdit = useMutation(
     run(
       (draft: EditEmployeeDraft) => client.hr.payroll.employees.edit(buildEditPayload(employeeId, draft)),
@@ -2196,22 +2217,94 @@ export function Detail({
             >
               {t('probation.toggle')}
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="max-md:min-h-11"
+              onClick={() => setAddendumOpen((v) => !v)}
+              data-testid="hr-addendum-toggle"
+            >
+              {t('addendum.toggle')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="max-md:min-h-11"
+              onClick={() => setTimelineOpen((v) => !v)}
+              data-testid="hr-timeline-toggle"
+            >
+              {t('timeline.toggle')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="max-md:min-h-11"
+              onClick={() => setAssetsOpen((v) => !v)}
+              data-testid="hr-assets-toggle"
+            >
+              {t('assets.toggle')}
+            </Button>
           </div>
           {leaveOpen && <LeaveBalancePanel employeeId={e.id} />}
           {severanceOpen && <SeveranceCalculatorPanel employeeId={e.id} employeeEndedOn={e.endedOn} />}
           {probationOpen && <HrProbationPanel employeeId={e.id} />}
+          {addendumOpen && (() => {
+            const addendumEmployerEntity = entities?.find((ent) => ent.id === e.legalEntityId);
+            return (
+              <HrAddendumPanel
+                employee={e}
+                signEnabled={signEnabled}
+                employer={
+                  addendumEmployerEntity
+                    ? { name: addendumEmployerEntity.name, taxCode: addendumEmployerEntity.taxCode ?? orgTaxCode ?? null, address: orgAddress ?? null }
+                    : orgName
+                      ? { name: orgName, taxCode: orgTaxCode ?? null, address: orgAddress ?? null }
+                      : null
+                }
+              />
+            );
+          })()}
+          {timelineOpen && <HrCareerTimelinePanel employeeId={e.id} />}
+          {assetsOpen && <HrAssetsPanel employeeId={e.id} active={active} />}
         </div>
       )}
 
       {active && (
-        <div className="mt-5 flex flex-wrap items-end gap-3 border-t pt-4">
-          <div className="space-y-1">
-            <Label htmlFor="hr-end-date">{t('endedOn')}</Label>
-            <Input id="hr-end-date" type="date" value={endedOn} onChange={(ev) => setEndedOn(ev.target.value)} />
+        <div className="mt-5 space-y-3 border-t pt-4">
+          {countUnreturnedAssets(assetsQ.data) > 0 && (
+            <p className="text-xs font-medium text-warning" data-testid="hr-end-unreturned-warning">
+              {t('endUnreturnedWarning', { count: f.number(countUnreturnedAssets(assetsQ.data)) })}
+            </p>
+          )}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="hr-end-date">{t('endedOn')}</Label>
+              <Input id="hr-end-date" type="date" className="max-md:min-h-11" value={endedOn} onChange={(ev) => setEndedOn(ev.target.value)} />
+            </div>
+            {(countUnreturnedAssets(assetsQ.data) > 0 || Boolean(endEmployee.error) || assetOverrideNote.length > 0) && (
+              <div className="min-w-[220px] flex-1 space-y-1">
+                <Label htmlFor="hr-end-asset-override">{t('endAssetOverrideLabel')}</Label>
+                <Input
+                  id="hr-end-asset-override"
+                  className="max-md:min-h-11"
+                  maxLength={500}
+                  placeholder={t('endAssetOverridePlaceholder')}
+                  value={assetOverrideNote}
+                  onChange={(ev) => setAssetOverrideNote(ev.target.value)}
+                  data-testid="hr-end-asset-override"
+                />
+              </div>
+            )}
+            <Button
+              variant="outline"
+              className="max-md:min-h-11"
+              loading={endEmployee.isPending}
+              onClick={() => endEmployee.mutate()}
+              data-testid="hr-employee-end"
+            >
+              {t('endEmployee')}
+            </Button>
           </div>
-          <Button variant="outline" loading={endEmployee.isPending} onClick={() => endEmployee.mutate()} data-testid="hr-employee-end">
-            {t('endEmployee')}
-          </Button>
         </div>
       )}
       {endEmployee.error && <ErrorText>{errorMessage(endEmployee.error)}</ErrorText>}

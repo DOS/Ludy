@@ -76,8 +76,10 @@ import {
 } from './attendance-coworker-ai.ts';
 import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
 import { askSelfHrPolicy, draftSelfHrRequest, hrSelfAi, type HrSelfAiPorts } from './hr-self-ai.ts';
+import { checkAddendumDraft, hrAddendumAi, type HrAddendumPorts } from './hr-addendum-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
 import type {
+  HrAddendumCheckSource,
   HrInviteDraftContext,
   HrLaborCheckSnapshot,
   HrProbationBriefSource,
@@ -589,6 +591,12 @@ export function createRpcHandler(
     suggestionBudget(),
     suggestionBudget(),
   );
+  const addendumAi = hrAddendumAi(
+    conversationReader?.hrAddendumCheck
+      ? { hrAddendumCheck: conversationReader.hrAddendumCheck.bind(conversationReader) }
+      : null,
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -851,6 +859,11 @@ export function createRpcHandler(
     searchPolicyNotes: (input) => runtime.query<HrSelfPolicySearchContext>('hr.self.policy_qa.search', input, { actor, orgId }),
     isAiStopped: async (includeNotes = false) =>
       (await runtime.query<{ aiStopped: boolean }>('hr.self.ai_status', { includeNotes }, { actor, orgId })).aiStopped,
+  });
+  const hrAddendumPorts = (orgId: string, actor: UserActor): HrAddendumPorts => ({
+    read: (input) => runtime.query<HrAddendumCheckSource>('hr.addendum.check.read', input, { actor, orgId }),
+    isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.addendum.ai_status', {}, { actor, orgId })).aiStopped,
+    record: (input) => runtime.execute('hr.addendum.check.audit', input, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1306,6 +1319,9 @@ export function createRpcHandler(
             ),
           ),
         ),
+        assets: {
+          list: os.hr.self.assets.list.handler(hrQuery('hr.self.assets.list')),
+        },
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
@@ -1361,6 +1377,36 @@ export function createRpcHandler(
         ),
         decide: os.hr.probation.decide.handler(hrCommand('hr.probation.decide')),
         list: os.hr.probation.list.handler(hrQuery('hr.probation.list')),
+      },
+      addendum: {
+        list: os.hr.addendum.list.handler(hrQuery('hr.addendum.list')),
+        create: os.hr.addendum.create.handler(hrCommand('hr.addendum.create')),
+        update: os.hr.addendum.update.handler(hrCommand('hr.addendum.update')),
+        issue: os.hr.addendum.issue.handler(hrCommand('hr.addendum.issue')),
+        void: os.hr.addendum.void.handler(hrCommand('hr.addendum.void')),
+        pdf: os.hr.addendum.pdf.handler(hrQuery('hr.addendum.pdf')),
+        check: os.hr.addendum.check.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            checkAddendumDraft(
+              addendumAi,
+              hrAddendumPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+      },
+      timeline: {
+        get: os.hr.timeline.get.handler(hrQuery('hr.timeline.get')),
+      },
+      assets: {
+        list: os.hr.assets.list.handler(hrQuery('hr.assets.list')),
+        assign: os.hr.assets.assign.handler(hrCommand('hr.assets.assign')),
+        updateStatus: os.hr.assets.updateStatus.handler(hrCommand('hr.assets.update_status')),
       },
       leaveRequests: {
         list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),

@@ -326,6 +326,10 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    hrAddendumCheck: async () => ({
+      output: { note: 'Phụ lục PL-2026-01 cho P1 đầy đủ ngày hiệu lực 01/12/2026 theo Điều 33.' },
+      usage: zeroUsage,
+    }),
   });
 
   return createCoworkerEvalRuntime(STUB_CONFIG, {

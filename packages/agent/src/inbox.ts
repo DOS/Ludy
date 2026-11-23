@@ -76,6 +76,14 @@ import {
   type HrSelfRequestDraftInput,
   type HrSelfRequestDraftResult,
 } from './hr-self.ts';
+import {
+  createHrAddendumCheckGenerator,
+  reviewAddendumDraft,
+  type HrAddendumCheckGenerator,
+  type HrAddendumCheckInput,
+  type HrAddendumCheckOutcome,
+  type ReviewAddendumOptions,
+} from './hr-addendum.ts';
 import { ORDER_FIELDS } from '@ludy/l10n-vn';
 import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
 import { checkMarketplaceProposalNote, marketplaceProposalNoteInstructions, marketplaceProposalNotePrompt, type MarketplaceProposalNoteFacts, type MarketplaceProposalNoteResult } from './marketplace-proposal-note.ts';
@@ -440,12 +448,13 @@ export class InboxReader {
   private readonly generateHrProbationSummary: HrProbationSummaryGenerator;
   private readonly generateHrRequestDraft: HrSelfRequestDraftGenerator;
   private readonly generateHrPolicyQa: HrSelfPolicyQaGenerator;
+  private readonly generateHrAddendumCheck: HrAddendumCheckGenerator;
   private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
   private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
@@ -455,6 +464,7 @@ export class InboxReader {
     this.generateHrProbationSummary = generators.hrProbationSummary ?? createHrProbationSummaryGenerator(config);
     this.generateHrRequestDraft = generators.hrRequestDraft ?? createHrRequestDraftGenerator(config);
     this.generateHrPolicyQa = generators.hrPolicyQa ?? createHrPolicyQaGenerator(config);
+    this.generateHrAddendumCheck = generators.hrAddendumCheck ?? createHrAddendumCheckGenerator(config);
     this.generateSignAcceptanceDraft = generators.signAcceptanceDraft ?? createSignAcceptanceDraftGenerator(config);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -851,6 +861,12 @@ export class InboxReader {
     options?: Omit<AnswerSelfHrPolicyOptions, 'generate'>,
   ): Promise<HrSelfPolicyQaResult> {
     return answerSelfHrPolicyWithLy(input, { ...options, generate: this.generateHrPolicyQa });
+  }
+  hrAddendumCheck(
+    input: HrAddendumCheckInput,
+    options?: Omit<ReviewAddendumOptions, 'generate'>,
+  ): Promise<HrAddendumCheckOutcome> {
+    return reviewAddendumDraft(input, { ...options, generate: this.generateHrAddendumCheck });
   }
   signAcceptanceDraft(request: SignAcceptanceDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<SignAcceptanceDraftOutcome> {
     return draftSignAcceptanceSummary(request, { generate: this.generateSignAcceptanceDraft, onUsage });
