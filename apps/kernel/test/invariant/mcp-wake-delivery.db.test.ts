@@ -219,6 +219,13 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       ['another grant\'s id', { ...good, grant: randomUUID() }, false],
       ['another event id', { ...good, id: randomUUID() }, false],
       ['an unknown type', { ...head, type: 'note.created', data: {} }, false],
+      // The instant of the event is required for every type (#4026): a missing key must fail closed, not pass because a test of its type is NULL.
+      ['a signal without created_at', (({ created_at: _omit, ...rest }) => ({ ...rest, data: { items: [itemOk] } }))(head), false],
+      ['a schedule without created_at', (({ created_at: _omit, ...rest }) => ({ ...rest, type: 'schedule.due', data: { date: '2026-11-12' } }))(head), false],
+      ['a ping without created_at', (({ created_at: _omit, ...rest }) => ({ ...rest, type: 'ping', data: {} }))(head), false],
+      ['a ping with a null created_at', { ...head, type: 'ping', created_at: null, data: {} }, false],
+      ['a ping with a numeric created_at', { ...head, type: 'ping', created_at: 1762916400, data: {} }, false],
+      ['a ping with a date-only created_at', { ...head, type: 'ping', created_at: '2026-11-12', data: {} }, false],
     ];
     for (const [name, body, ok] of bodies) {
       const type = (body as { type: string }).type;
@@ -242,6 +249,7 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       () => undefined,
     );
     const hostileMinutes: Array<[string, unknown]> = [
+      ['no created_at', (({ created_at: _omit, ...rest }) => ({ ...rest, data: minutesData }))(minutes)],
       ['a title beside the meeting id', { ...minutes, data: { ...minutesData, title: 'Nguyen Van A họp giá' } }],
       ['a summary in the minutes event', { ...minutes, data: { ...minutesData, summary: 'Hai khoản cần xem' } }],
       ['the camelCase keys', { ...minutes, data: { meetingId: minutesData.meeting_id, publishedAt: minutesData.published_at } }],
@@ -256,6 +264,16 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       ['another event id', { ...minutes, id: randomUUID(), data: minutesData }],
     ];
     for (const [name, body] of hostileMinutes) await expect(insertMinutes(body), name).rejects.toThrow();
+    // The function itself answers false, never NULL, for a body without created_at, for every type: the CHECK and the trigger treat NULL as a pass for a CHECK, so the answer must be a plain false (#4026).
+    const verdict = async (body: unknown, type: string) =>
+      (await admin((c) => c.query<{ ok: boolean | null }>(`SELECT crove_kernel.mcp_wake_body_ok($1::jsonb, $2::uuid, $3::uuid, $4::uuid, $5::text) AS ok`, [JSON.stringify(body), id, orgA, grant, type]))).rows[0]?.ok;
+    const { created_at: _omitted, ...noInstant } = head;
+    expect(await verdict({ ...noInstant, type: 'ping', data: {} }, 'ping')).toBe(false);
+    expect(await verdict({ ...noInstant, type: 'schedule.due', data: { date: '2026-11-12' } }, 'schedule.due')).toBe(false);
+    expect(await verdict({ ...noInstant, data: { items: [itemOk] } }, 'signal.fired')).toBe(false);
+    expect(await verdict({ ...noInstant, type: 'meetings.minutes_published', data: minutesData }, 'meetings.minutes_published')).toBe(false);
+    expect(await verdict({ ...noInstant, type: 'engage.zz_unregistered', data: {} }, 'engage.zz_unregistered')).toBe(false);
+    expect(await verdict({ ...head, type: 'ping', data: {} }, 'ping'), 'control: the same body with created_at').toBe(true);
     // The signal keys table holds only a rule's short name and ids.
     for (const key of ['Nguyen Van A', 'deal_without_invoice', 'deal_without_invoice:not-an-id', `Deal:${randomUUID()}`, 'x'.repeat(300)]) {
       await expect(admin((c) => c.query(`INSERT INTO crove_kernel.agent_wake_signal_seen (org_id, grant_id, key) VALUES ($1, $2, $3)`, [orgA, grant, key])), key).rejects.toThrow();
