@@ -22,6 +22,7 @@ import {
   checkProjectWeeklyStatus,
   checkRoadmapChangelogDraft,
   checkRoadmapDedupe,
+  checkRoadmapSignalMatch,
   checkSignClauseSummary,
   checkSignContractDraftClauses,
   checkSignKycOutput,
@@ -66,6 +67,7 @@ import {
   type ReorderRequest,
   type RoadmapChangelogDraftFacts,
   type RoadmapDedupeFacts,
+  type RoadmapSignalMatchFacts,
   type SignAcceptanceDraftRequest,
   type SignVersionDiffAiResult,
   type StockSurplusFacts,
@@ -955,11 +957,12 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     }
   });
 
-  it('projects.*: refuses injections across weekly_status, cycle_summary, roadmap_dedupe, roadmap_changelog_draft, tasks_from_note, tasks_from_source', async () => {
+  it('projects.*: refuses injections across weekly_status, cycle_summary, roadmap_dedupe, roadmap_changelog_draft, roadmap_signal_match, tasks_from_note, tasks_from_source', async () => {
     cover('projects.weekly_status');
     cover('projects.cycle_summary');
     cover('projects.roadmap_dedupe');
     cover('projects.roadmap_changelog_draft');
+    cover('projects.roadmap_signal_match');
     cover('projects.tasks_from_note');
     cover('projects.tasks_from_source');
 
@@ -1000,6 +1003,20 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       today: '2026-09-30',
       items: [{ id: 'item-1', publicTitle: 'Xuat Excel bao cao', publicSummary: null, category: null, tainted: false }],
     };
+    const signalMatchFacts: RoadmapSignalMatchFacts = {
+      language: 'vi',
+      boardTitle: 'Gop y san pham',
+      sourceType: 'crm.deal',
+      sourceTitle: 'Goi doanh nghiep',
+      sourceExcerpt: 'Khach hang can tinh nang xuat bao cao Excel hang loat.',
+      accountLabel: 'Cong ty Minh Anh',
+      dealValue: null,
+      dealCurrency: null,
+      items: [
+        { id: 'item-1', title: 'Xuat Excel bao cao', summary: 'Ho tro xuat file xlsx', stage: 'planned' },
+        { id: 'item-2', title: 'Dong bo ton kho', summary: null, stage: 'under_review' },
+      ],
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1010,12 +1027,40 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           usage: zeroUsage,
         }),
         roadmapChangelogDraft: async () => ({ output: { title: c.poisonedOutput, bodyMd: c.poisonedOutput }, usage: zeroUsage }),
+        roadmapSignalMatch: async () => ({
+          output: {
+            matches: [{ roadmapItemId: 'item-1', confidence: 'high', reason: c.poisonedOutput }],
+            newIdeaDraft: null,
+          },
+          usage: zeroUsage,
+        }),
       });
       expect((await reader.projectWeeklyStatus({ ...weeklyFacts, language: c.language })).kind, `weeklyStatus ${c.id}`).toBe('none');
       expect((await reader.projectCycleSummary({ ...cycleFacts, language: c.language })).kind, `cycleSummary ${c.id}`).toBe('none');
       const dedupeRes = await reader.roadmapDedupe({ ...dedupeFacts, language: c.language });
       expect(dedupeRes.kind === 'none' || dedupeRes.suggestions.length === 0, `roadmapDedupe ${c.id}`).toBe(true);
       expect((await reader.roadmapChangelogDraft({ ...changelogFacts, language: c.language })).kind, `changelog ${c.id}`).toBe('none');
+      expect((await reader.roadmapSignalMatch({ ...signalMatchFacts, language: c.language })).kind, `roadmapSignalMatch reason ${c.id}`).toBe('none');
+      expect(
+        checkRoadmapSignalMatch(
+          {
+            matches: [],
+            newIdeaDraft: { suggestedTitle: c.poisonedOutput, suggestedSummary: null },
+          },
+          { ...signalMatchFacts, language: c.language },
+        ).kind,
+        `roadmapSignalMatch draft title ${c.id}`,
+      ).toBe('none');
+      expect(
+        checkRoadmapSignalMatch(
+          {
+            matches: [],
+            newIdeaDraft: { suggestedTitle: 'Ho tro xuat bao cao', suggestedSummary: c.poisonedOutput },
+          },
+          { ...signalMatchFacts, language: c.language },
+        ).kind,
+        `roadmapSignalMatch draft summary ${c.id}`,
+      ).toBe('none');
 
       const tasksNote = checkProposedTasks(
         JSON.stringify({

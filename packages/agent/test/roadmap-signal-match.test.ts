@@ -172,4 +172,64 @@ describe('projects.roadmap_signal_match (#4492)', () => {
       },
     });
   });
+
+  it('refuses autonomous action directives, obfuscated contacts, ungrounded money words, and Unicode minus/Arabic digits', () => {
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Da tu dong phe duyet va chuyen khoan cho yeu cau nay.',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [],
+          newIdeaDraft: {
+            suggestedTitle: 'Lien he evil[.]invalid',
+            suggestedSummary: 'Goi 0987654321 de xac nhan.',
+          },
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'LINK' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Giam hai m\u01B0\u01A1i tri\u1EC7u \u0111\u1ED3ng cho khach hang nay.',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [],
+          newIdeaDraft: {
+            suggestedTitle: 'Y tuong giam \u221295% chi phi',
+            suggestedSummary: 'Hoan \u0669\u0669\u0669 USD',
+          },
+        },
+        FACTS,
+      ),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+  });
 });
