@@ -31,6 +31,9 @@ export default defineConfig({
       // with one worker (test:perf), so no other test competes for the CPU it measures.
       name: 'perf',
       testMatch: 'perf*.spec.ts',
+      // Allow Playwright --shard to split across individual tests (perf-fixtures.spec.ts + perf.spec.ts) while
+      // --workers=1 keeps each shard single-worker with no CPU contention.
+      fullyParallel: true,
       // No trace or screenshots: recording them runs in the throttled renderer and would add to what is measured.
       use: { ...devices['Desktop Chrome'], trace: 'off', screenshot: 'off' },
       timeout: 120_000,

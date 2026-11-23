@@ -64,11 +64,12 @@ async function throttle(cdp: CDPSession, profile: Profile): Promise<void> {
 }
 
 // Scrolls through the whole page a screen at a time, as a reader would, so a shift further down (a late image, a
-// section that grows when it plays) counts too.
+// section that grows when it plays) counts too. Uses instant scroll so globals.css's `scroll-behavior: smooth` does
+// not turn each 150 ms step into partial re-eased scrolls across long mobile pages.
 async function scrollThrough(page: Page): Promise<void> {
   for (let step = 0; step < 60; step++) {
     const done = await page.evaluate(() => {
-      window.scrollBy(0, Math.round(window.innerHeight * 0.8));
+      window.scrollBy({ top: Math.round(window.innerHeight * 0.8), behavior: 'instant' });
       return window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
     });
     await page.waitForTimeout(150);
@@ -80,7 +81,7 @@ async function scrollThrough(page: Page): Promise<void> {
 // Uses each interactive piece once: every visible button and FAQ question, the phone menu opened and closed again.
 // Returns the number of clicks.
 async function interact(page: Page): Promise<number> {
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
   const targets = page.locator('main summary, main button:not([disabled]), header button');
   let clicks = 0;
   for (const target of await targets.all()) {
