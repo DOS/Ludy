@@ -24,9 +24,20 @@ import { MANAGERS, userOf } from './employees.ts';
 import { assertL1Authority, assertNotSelfApprover, resolveSelfEmployee, selfNotLinked, STAFF_ROLES } from './leave-requests.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
-import { syncEmployeeDraftPayrollOvertime } from './payroll-run.ts';
+import { lockOvertimeRun, syncEmployeeDraftPayrollOvertime } from './payroll-run.ts';
 
 const OVERTIME = hrManifest.tables.crove_hr.overtime_request;
+const HR_OVERTIME_PHYSICAL_MONTH_MAX_HOURS = 744;
+
+async function lockOvertimeEmployeeMonth(
+  trx: QueryContext['trx'],
+  orgId: string,
+  employeeId: string,
+  month: string,
+): Promise<void> {
+  const key = `hr_ot_emp:${orgId.toLowerCase()}:${employeeId.toLowerCase()}:${month}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(trx);
+}
 
 const otNotFound = () =>
   new DomainError('HR_OVERTIME_NOT_FOUND', 404, 'Không tìm thấy đơn xin làm thêm giờ này');
@@ -206,6 +217,7 @@ export const selfOvertimeSubmit = defineCommand({
     }
 
     const month = input.workDate.slice(0, 7);
+    await lockOvertimeEmployeeMonth(ctx.trx, ctx.orgId, emp.id, month);
     const existingRows = await ctx.trx
       .selectFrom('crove_hr.overtime_request')
       .select('hours')
@@ -218,6 +230,9 @@ export const selfOvertimeSubmit = defineCommand({
     let totalHours = money(input.hours);
     for (const row of existingRows) {
       totalHours = totalHours.plus(money(row.hours));
+    }
+    if (totalHours.greaterThan(HR_OVERTIME_PHYSICAL_MONTH_MAX_HOURS)) {
+      throw new DomainError('VALIDATION', 422, 'Tổng số giờ làm thêm trong tháng không được vượt quá 744 giờ');
     }
 
     let initialStatus: 'pending_l1' | 'pending_final' = 'pending_final';
@@ -403,6 +418,49 @@ export const overtimeList = defineQuery({
   },
 });
 
+async function updatePendingL1WithGuard(
+  trx: QueryContext['trx'],
+  orgId: string,
+  requestId: string,
+  departmentId: string | null,
+  callerUserId: string,
+  requireDepartmentManager: boolean,
+  next: { status: 'pending_final' | 'rejected'; note: string | undefined; now: Date },
+): Promise<void> {
+  let updateQ = trx
+    .updateTable('crove_hr.overtime_request')
+    .set({
+      status: next.status,
+      l1_approver_user_id: callerUserId,
+      l1_acted_at: next.now,
+      ...(next.note !== undefined ? { decision_note: next.note } : {}),
+      updated_at: next.now,
+    })
+    .where('org_id', '=', orgId)
+    .where('id', '=', requestId)
+    .where('status', '=', 'pending_l1');
+  if (requireDepartmentManager) {
+    if (departmentId === null) {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ quản lý phòng ban được phân công hoặc quản trị viên mới duyệt được đơn này');
+    }
+    updateQ = updateQ.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('crove_hr.department')
+          .select('id')
+          .where('org_id', '=', orgId)
+          .where('id', '=', departmentId)
+          .where('archived_at', 'is', null)
+          .where('manager_user_id', '=', callerUserId),
+      ),
+    );
+  }
+  const updated = await updateQ.executeTakeFirst();
+  if (!updated || updated.numUpdatedRows === 0n) {
+    throw new DomainError('FORBIDDEN', 403, 'Chỉ quản lý phòng ban được phân công hoặc quản trị viên mới duyệt được đơn này');
+  }
+}
+
 export const overtimeApproveL1 = defineCommand({
   name: 'hr.overtime.approve_l1',
   input: zHrOvertimeDecide,
@@ -439,18 +497,15 @@ export const overtimeApproveL1 = defineCommand({
       throw invalidOtState('Chỉ duyệt cấp 1 được đơn đang ở trạng thái chờ cấp 1');
     }
 
-    await ctx.trx
-      .updateTable('crove_hr.overtime_request')
-      .set({
-        status: 'pending_final',
-        l1_approver_user_id: callerUserId,
-        l1_acted_at: ctx.now,
-        ...(input.note !== undefined ? { decision_note: input.note } : {}),
-        updated_at: ctx.now,
-      })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', existing.id)
-      .execute();
+    await updatePendingL1WithGuard(
+      ctx.trx,
+      ctx.orgId,
+      existing.id,
+      existing.department_id,
+      callerUserId,
+      authority === 'member',
+      { status: 'pending_final', note: input.note, now: ctx.now },
+    );
 
     const noted = input.note !== undefined;
     ctx.audit({
@@ -513,7 +568,7 @@ export const overtimeApproveFinal = defineCommand({
       .executeTakeFirst();
     if (!preRead) throw otNotFound();
 
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`hr_ot_run:${ctx.orgId}:${preRead.legal_entity_id}:${preRead.month}`}, 0))`.execute(ctx.trx);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, preRead.legal_entity_id, preRead.month);
 
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
     await assertEmployeeNotErasedForRequest(ctx.trx, ctx.orgId, preRead.id);
@@ -531,6 +586,22 @@ export const overtimeApproveFinal = defineCommand({
     if (!existing) throw otNotFound();
     if (existing.status !== 'pending_l1' && existing.status !== 'pending_final') {
       throw invalidOtState('Chỉ duyệt chốt được đơn làm thêm giờ đang chờ duyệt');
+    }
+
+    const approvedRows = await ctx.trx
+      .selectFrom('crove_hr.overtime_request')
+      .select('hours')
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', existing.employee_id)
+      .where('month', '=', existing.month)
+      .where('status', '=', 'approved')
+      .execute();
+    let approvedTotal = money(existing.hours);
+    for (const row of approvedRows) {
+      approvedTotal = approvedTotal.plus(money(row.hours));
+    }
+    if (approvedTotal.greaterThan(HR_OVERTIME_PHYSICAL_MONTH_MAX_HOURS)) {
+      throw new DomainError('VALIDATION', 422, 'Tổng số giờ làm thêm đã duyệt trong tháng không được vượt quá 744 giờ');
     }
 
     await ctx.trx
@@ -625,29 +696,30 @@ export const overtimeReject = defineCommand({
       authority = role;
     }
 
-    const patch =
-      authority === 'l1'
-        ? {
-            status: 'rejected' as const,
-            l1_approver_user_id: callerUserId,
-            l1_acted_at: ctx.now,
-            ...(input.note !== undefined ? { decision_note: input.note } : {}),
-            updated_at: ctx.now,
-          }
-        : {
-            status: 'rejected' as const,
-            final_acted_by: callerUserId,
-            final_acted_at: ctx.now,
-            ...(input.note !== undefined ? { decision_note: input.note } : {}),
-            updated_at: ctx.now,
-          };
-
-    await ctx.trx
-      .updateTable('crove_hr.overtime_request')
-      .set(patch)
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', existing.id)
-      .execute();
+    if (authority === 'l1') {
+      await updatePendingL1WithGuard(
+        ctx.trx,
+        ctx.orgId,
+        existing.id,
+        existing.department_id,
+        callerUserId,
+        true,
+        { status: 'rejected', note: input.note, now: ctx.now },
+      );
+    } else {
+      await ctx.trx
+        .updateTable('crove_hr.overtime_request')
+        .set({
+          status: 'rejected' as const,
+          final_acted_by: callerUserId,
+          final_acted_at: ctx.now,
+          ...(input.note !== undefined ? { decision_note: input.note } : {}),
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', existing.id)
+        .execute();
+    }
 
     const noted = input.note !== undefined;
     ctx.audit({

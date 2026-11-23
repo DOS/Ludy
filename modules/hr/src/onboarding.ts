@@ -42,6 +42,22 @@ const submissionNotFound = () =>
 const invalidOnboardingState = (message: string) =>
   new DomainError('HR_ONBOARDING_INVALID_STATE', 409, message);
 
+async function preReadAndLockEmployeeErasure(
+  trx: QueryContext['trx'],
+  orgId: string,
+  submissionId: string,
+): Promise<{ id: string; employee_id: string }> {
+  const preRead = await trx
+    .selectFrom('crove_hr.onboarding_submission')
+    .select(['id', 'employee_id'])
+    .where('org_id', '=', orgId)
+    .where('id', '=', submissionId)
+    .executeTakeFirst();
+  if (!preRead) throw submissionNotFound();
+  await lockEmployeeErasure(trx, orgId, preRead.employee_id);
+  return preRead;
+}
+
 interface RawOnboardingRow {
   id: string;
   legal_entity_id: string;
@@ -249,6 +265,9 @@ export const selfOnboardingSubmit = defineCommand({
     }
     if (input.bankCode !== undefined) {
       requireKnownBank(input.bankCode);
+      if (input.accountNumber === undefined) {
+        throw new DomainError('VALIDATION', 422, 'Khi cập nhật ngân hàng cần nhập kèm số tài khoản mới');
+      }
     }
 
     const subject = subjectOf(emp.id);
@@ -316,6 +335,8 @@ export const selfOnboardingCancel = defineCommand({
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     if (!emp) throw selfNotLinked();
+
+    await preReadAndLockEmployeeErasure(ctx.trx, ctx.orgId, input.submissionId);
 
     const existing = await ctx.trx
       .selectFrom('crove_hr.onboarding_submission')
@@ -391,15 +412,22 @@ export const onboardingApprove = defineCommand({
     const role = ctx.role;
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
 
-    const preRead = await ctx.trx
-      .selectFrom('crove_hr.onboarding_submission')
-      .select(['id', 'employee_id', 'status'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.submissionId)
-      .executeTakeFirst();
-    if (!preRead) throw submissionNotFound();
-
+    const preRead = await preReadAndLockEmployeeErasure(ctx.trx, ctx.orgId, input.submissionId);
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
+
+    const emp = await ctx.trx
+      .selectFrom('crove_hr.payroll_employee')
+      .select(['id', 'status', 'erased_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', preRead.employee_id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!emp || emp.erased_at !== null) {
+      throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã xóa theo yêu cầu, không thể áp dụng thay đổi');
+    }
+    if (emp.status !== 'active') {
+      throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên đã nghỉ việc, không thể cập nhật hồ sơ từ phiếu xác nhận');
+    }
 
     const existing = await ctx.trx
       .selectFrom('crove_hr.onboarding_submission')
@@ -424,21 +452,11 @@ export const onboardingApprove = defineCommand({
       throw invalidOnboardingState('Phiếu xác nhận này đã được xử lý trước đó');
     }
 
-    const emp = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'status', 'erased_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', existing.employee_id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!emp || emp.erased_at !== null) {
-      throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã xóa theo yêu cầu, không thể áp dụng thay đổi');
-    }
-    if (emp.status !== 'active') {
-      throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên đã nghỉ việc, không thể cập nhật hồ sơ từ phiếu xác nhận');
-    }
     if (existing.bank_code !== null) {
       requireKnownBank(existing.bank_code);
+      if (existing.bank_account_sealed === null) {
+        throw new DomainError('VALIDATION', 422, 'Không thể áp dụng mã ngân hàng mới khi chưa có số tài khoản đi kèm');
+      }
     }
 
     const empPatch: {
@@ -544,6 +562,8 @@ export const onboardingReject = defineCommand({
     const callerUserId = userOf(ctx.actor);
     const role = ctx.role;
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
+
+    await preReadAndLockEmployeeErasure(ctx.trx, ctx.orgId, input.submissionId);
 
     const existing = await ctx.trx
       .selectFrom('crove_hr.onboarding_submission')

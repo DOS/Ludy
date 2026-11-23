@@ -336,12 +336,35 @@ const DAY_KIND_ORDER: Record<HrOvertimeDayKind, number> = {
   holiday: 2,
 };
 
-function formatOvertimeHours(total: Decimal): string {
-  const normalized = total.toDecimalPlaces(2).toFixed();
-  if (total.isNegative() || total.greaterThan('999.99') || !/^\d{1,3}(\.\d{1,2})?$/.test(normalized)) {
-    throw new DomainError('HR_OVERTIME_HOURS_OUT_OF_RANGE', 422, 'Tổng số giờ làm thêm trong tháng vượt quá giới hạn định dạng (0 - 999.99)');
+const MAX_OVERTIME_ENTRY_HOURS = money('999.99');
+
+export async function lockOvertimeRun(
+  trx: QueryContext['trx'],
+  orgId: string,
+  legalEntityId: string,
+  month: string,
+): Promise<void> {
+  const key = `hr_ot_run:${orgId.toLowerCase()}:${legalEntityId.toLowerCase()}:${month}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(trx);
+}
+
+export function splitOvertimeHours(total: Decimal): string[] {
+  const normalized = total.toDecimalPlaces(2);
+  if (normalized.isNegative()) {
+    throw new DomainError('HR_OVERTIME_HOURS_OUT_OF_RANGE', 422, 'Tổng số giờ làm thêm trong tháng không được âm');
   }
-  return normalized.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  if (normalized.isZero()) return ['0'];
+  const chunks: string[] = [];
+  let remaining = normalized;
+  while (remaining.greaterThan(MAX_OVERTIME_ENTRY_HOURS)) {
+    chunks.push('999.99');
+    remaining = remaining.minus(MAX_OVERTIME_ENTRY_HOURS);
+  }
+  if (remaining.greaterThan(0)) {
+    const text = remaining.toDecimalPlaces(2).toFixed();
+    chunks.push(text.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1'));
+  }
+  return chunks;
 }
 
 export function sameOvertimeEntries(a: readonly PayrollOvertimeEntry[], b: readonly PayrollOvertimeEntry[]): boolean {
@@ -412,14 +435,16 @@ export async function loadApprovedOvertimeByEmployee(
     }
   }
   for (const [employeeId, buckets] of bucketsByEmp) {
-    const sorted = [...buckets.values()]
-      .sort((a, b) => DAY_KIND_ORDER[a.dayKind] - DAY_KIND_ORDER[b.dayKind] || Number(a.night) - Number(b.night))
-      .map((item) => ({
-        dayKind: item.dayKind,
-        night: item.night,
-        hours: formatOvertimeHours(item.hours),
-      }));
-    result.set(employeeId, sorted);
+    const sortedBuckets = [...buckets.values()].sort(
+      (a, b) => DAY_KIND_ORDER[a.dayKind] - DAY_KIND_ORDER[b.dayKind] || Number(a.night) - Number(b.night),
+    );
+    const entries: PayrollOvertimeEntry[] = [];
+    for (const item of sortedBuckets) {
+      for (const hours of splitOvertimeHours(item.hours)) {
+        entries.push({ dayKind: item.dayKind, night: item.night, hours });
+      }
+    }
+    result.set(employeeId, entries);
   }
   return result;
 }
@@ -496,7 +521,7 @@ export const runOpen = defineCommand({
       ? await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst()
       : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
     if (!entity) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của bảng lương');
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`hr_ot_run:${ctx.orgId}:${entity.id}:${input.month}`}, 0))`.execute(ctx.trx);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, entity.id, input.month);
     const exists = await ctx.trx
       .selectFrom('crove_hr.payroll_run')
       .select('id')
@@ -742,9 +767,7 @@ export const lineInputsSet = defineCommand({
     const overtime = input.inputs.overtime === undefined ? existing.overtime : input.inputs.overtime;
     const overtimeFromRequests =
       input.inputs.overtime === undefined || sameOvertimeEntries(input.inputs.overtime, existing.overtime)
-        ? (input.inputs.overtimeFromRequests === undefined
-            ? existing.overtimeFromRequests
-            : input.inputs.overtimeFromRequests)
+        ? existing.overtimeFromRequests
         : false;
     const nextInputs = zHrPayrollInputs.parse({
       ...input.inputs,

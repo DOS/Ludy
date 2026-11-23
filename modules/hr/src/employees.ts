@@ -753,7 +753,8 @@ export async function lockEmployeeErasure(
   orgId: string,
   employeeId: string,
 ): Promise<void> {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`hr_emp_erase:${orgId}:${employeeId}`}, 0))`.execute(trx);
+  const key = `hr_emp_erase:${orgId.toLowerCase()}:${employeeId.toLowerCase()}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(trx);
 }
 
 export const employeeErase = defineCommand({

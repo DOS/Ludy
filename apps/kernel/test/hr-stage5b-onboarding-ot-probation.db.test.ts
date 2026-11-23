@@ -821,6 +821,8 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
 
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empA, endedOn: '2026-11-10' }, asMfa(o.owner));
     const c = await adminPool.connect();
+    let cCommitted = false;
+    let cBroken = false;
     try {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
@@ -831,8 +833,16 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         [empA],
       );
       await c.query('COMMIT');
+      cCommitted = true;
+    } catch (err) {
+      if (!cCommitted) {
+        await c.query('ROLLBACK').catch(() => {
+          cBroken = true;
+        });
+      }
+      throw err;
     } finally {
-      c.release();
+      c.release(cBroken);
     }
     await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: empA }, asMfa(o.owner));
 
@@ -870,11 +880,15 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     // org_purge deletes all rows cleanly across all 3 Stage 5B tables.
     const dayMs = 24 * 60 * 60 * 1000;
     const pClient = await adminPool.connect();
+    let pInTx = false;
+    let pBroken = false;
     try {
       await pClient.query('BEGIN');
+      pInTx = true;
       await pClient.query('SET LOCAL session_replication_role = replica');
       await pClient.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
       await pClient.query('COMMIT');
+      pInTx = false;
       await pClient.query(
         `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, $2, 'user', $3, 'kernel.org.offboard', $4, 'ok', $5, '{}'),
@@ -889,8 +903,15 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
           randomUUID(),
         ],
       );
+    } catch (err) {
+      if (pInTx) {
+        await pClient.query('ROLLBACK').catch(() => {
+          pBroken = true;
+        });
+      }
+      throw err;
     } finally {
-      pClient.release();
+      pClient.release(pBroken);
     }
     const purged = await purgeOrg(workerRt, 30, { ref: o.orgId, reason: 'Stage 5B test cleanup' });
     expect(purged.kind).toBe('purged');
@@ -1157,5 +1178,164 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     expect(updatedLine?.inputs.contractTermMonths).toBe(12);
     expect(updatedLine?.inputs.overtimeFromRequests).toBe(true);
     expect(otHoursOnLine(updatedLine)).toBe(1.5);
+  });
+
+  it('enforces onboarding bank+account pairing, 744h OT cap, >999.99h batch splitting, server-only overtimeFromRequests, and L1 department guard (#4448)', async () => {
+    const o = await setupOrg();
+    const { departmentId: deptA } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      { name: 'Phòng Kiểm thử OT', code: 'OTQA', payFunction: 'admin' },
+      asMfa(o.owner),
+    );
+    await o.exec(
+      o.owner,
+      'hr.department.set_manager',
+      { departmentId: deptA, managerUserId: o.manager },
+      asMfa(o.owner),
+    );
+    const empA = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Trần Ngân Hàng',
+          departmentId: deptA,
+          bankCode: 'VCB',
+          accountNumber: '001100220033',
+          employment: { effectiveFrom: '2026-08-01', contractType: 'indefinite', region: 'I', baseWage: '18000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    const empB = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Lê Vượt Ngưỡng',
+          employment: { effectiveFrom: '2026-08-01', contractType: 'indefinite', region: 'I', baseWage: '16000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empA, userId: o.staffA }, asMfa(o.owner));
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empB, userId: o.staffB }, asMfa(o.owner));
+
+    // 1. Onboarding: bankCode without accountNumber is blocked 422 on submit and defensively on approve.
+    await expect(
+      o.exec(o.staffA, 'hr.self.onboarding.submit', {
+        bankConfirmed: true,
+        bankCode: 'TCB',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
+    const { rows: [badSub] } = await adminPool.query<{ id: string }>(
+      `INSERT INTO crove_hr.onboarding_submission (org_id, employee_id, status, bank_confirmed, bank_code, created_by)
+       VALUES ($1, $2, 'pending', true, 'TCB', $3)
+       RETURNING id`,
+      [o.orgId, empA, o.staffA],
+    );
+    await expect(
+      o.exec(o.owner, 'hr.onboarding.approve', { submissionId: badSub!.id }, asMfa(o.owner)),
+    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+    const empAfterBadApprove = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: empA });
+    expect(empAfterBadApprove).toMatchObject({ bankCode: 'VCB', accountNumber: '001100220033' });
+
+    // 2. Overtime physical monthly cap (744h) enforced on submit and final approve; L1 manager guard enforced atomically.
+    const l1TestOt = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-02',
+      hours: '5',
+      dayType: 'weekday',
+    });
+    expect(l1TestOt.status).toBe('pending_l1');
+
+    // Submit 30 * 24h (720h) + 19h (total 744h exact including 5h above), then 0.5h over 744h must fail 422.
+    for (let day = 1; day <= 30; day += 1) {
+      const dd = String(day).padStart(2, '0');
+      await o.exec(o.staffA, 'hr.self.overtime.submit', {
+        workDate: `2026-10-${dd}`,
+        hours: '24',
+        dayType: 'weekday',
+      });
+    }
+    await o.exec(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-31',
+      hours: '19',
+      dayType: 'weekday',
+    });
+    await expect(
+      o.exec(o.staffA, 'hr.self.overtime.submit', {
+        workDate: '2026-10-31',
+        hours: '0.5',
+        dayType: 'weekday',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
+    // Removing department manager blocks L1 approval (RLS + atomic guard prevent stale manager approval).
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptA, managerUserId: null }, asMfa(o.owner));
+    await expect(
+      o.exec(o.manager, 'hr.overtime.approve_l1', { requestId: l1TestOt.requestId }),
+    ).rejects.toMatchObject({ code: 'HR_OVERTIME_NOT_FOUND', status: 404 });
+
+    // Pending request for empB + 740h already-approved direct rows => final approval rejects past 744h.
+    const empBPending = await o.exec<HrSelfOvertimeSubmitResult>(o.staffB, 'hr.self.overtime.submit', {
+      workDate: '2026-10-05',
+      hours: '5',
+      dayType: 'weekday',
+    });
+    await adminPool.query(
+      `INSERT INTO crove_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
+       SELECT $1::uuid, $2::uuid, '2026-10', '2026-10-01'::date + ((g - 1) % 28), 24, 'weekday', 'approved', $3::uuid
+       FROM generate_series(1, 30) AS g
+       UNION ALL
+       SELECT $1::uuid, $2::uuid, '2026-10', '2026-10-29'::date, 20, 'weekday', 'approved', $3::uuid`,
+      [o.orgId, empB, o.owner],
+    );
+    await expect(
+      o.exec(o.owner, 'hr.overtime.approve_final', { requestId: empBPending.requestId }),
+    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
+    // 3. Direct/legacy approved OT totaling > 999.99h (740 + 340 = 1080h for empB) splits into 999.99 + 80.01
+    // without aborting batch run open, and empA (clean 5h approved) still receives payroll cleanly.
+    await o.exec(o.owner, 'hr.overtime.approve_final', { requestId: l1TestOt.requestId });
+    await adminPool.query(
+      `UPDATE crove_hr.overtime_request
+          SET status = 'cancelled'
+        WHERE org_id = $1 AND employee_id = $2 AND month = '2026-10' AND id <> $3`,
+      [o.orgId, empA, l1TestOt.requestId],
+    );
+    await adminPool.query(
+      `INSERT INTO crove_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
+       SELECT $1::uuid, $2::uuid, '2026-10', '2026-10-01'::date + ((g - 1) % 28), 24, 'weekday', 'approved', $3::uuid
+       FROM generate_series(1, 14) AS g
+       UNION ALL
+       SELECT $1::uuid, $2::uuid, '2026-10', '2026-10-30'::date, 4, 'weekday', 'approved', $3::uuid`,
+      [o.orgId, empB, o.owner],
+    );
+
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-10', workingDays: '26' }, asMfa(o.owner));
+    const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const lineA = sheet.lines.find((l) => l.employeeId === empA && l.kind === 'pay')!;
+    const lineB = sheet.lines.find((l) => l.employeeId === empB && l.kind === 'pay')!;
+    expect(lineA.inputs.overtime).toEqual([{ dayKind: 'normal_day', night: false, hours: '5' }]);
+    expect(lineB.inputs.overtime).toEqual([
+      { dayKind: 'normal_day', night: false, hours: '999.99' },
+      { dayKind: 'normal_day', night: false, hours: '80.01' },
+    ]);
+
+    // 4. Client-supplied overtimeFromRequests: true on hr.payroll.line.inputs.set is ignored by the server.
+    await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+      lineId: lineA.id,
+      inputs: { overtime: [{ dayKind: 'normal_day', night: false, hours: '1' }] },
+    });
+    await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+      lineId: lineA.id,
+      inputs: { bonus: '100000', overtimeFromRequests: true },
+    });
+    const afterClientAttempt = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const lineAAfter = afterClientAttempt.lines.find((l) => l.id === lineA.id)!;
+    expect(lineAAfter.inputs.overtimeFromRequests).toBe(false);
+    expect(lineAAfter.inputs.overtime).toEqual([{ dayKind: 'normal_day', night: false, hours: '1' }]);
   });
 });

@@ -440,10 +440,14 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
     expect(onHtml).toContain('Xây dựng API chấm công');
     expect(onHtml).toContain('data-testid="hr-probation-draft-ai"');
     expect(onHtml).toContain('min-h-11');
-    // No decision radio is pre-checked before human selection.
-    expect(onHtml).not.toMatch(/data-testid="hr-probation-decision-pass"[^>]*checked/);
-    expect(onHtml).not.toMatch(/data-testid="hr-probation-decision-extend"[^>]*checked/);
-    expect(onHtml).not.toMatch(/data-testid="hr-probation-decision-terminate"[^>]*checked/);
+    // No decision radio is pre-checked before human selection, regardless of attribute order.
+    for (const decision of ['pass', 'extend', 'terminate'] as const) {
+      const radioMatch = onHtml.match(
+        new RegExp(`<input\\b[^>]*\\bdata-testid="hr-probation-decision-${decision}"[^>]*>`),
+      );
+      expect(radioMatch?.[0]).toBeTruthy();
+      expect(radioMatch?.[0]).not.toMatch(/\bchecked(?:=|(?:\s|\/?>))/);
+    }
 
     cache.current.clear();
     cache.current.setQueryData(
