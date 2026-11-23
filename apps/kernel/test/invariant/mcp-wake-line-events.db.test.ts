@@ -259,9 +259,37 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
         ['a type of another line', { ...good, type: 'ads.pace' }, 'ads.pace'],
         ['a fixed type with line data', { ...good, type: 'ping' }, 'ping'],
         ['a type outside the line shape', { ...good, type: 'note.created' }, 'note.created'],
+        // The instant is required for a line's type as for every fixed type (#4026): a missing key fails closed.
+        ['no created_at', (({ created_at: _omit, ...rest }) => rest)(good)],
+        ['a null created_at', { ...good, created_at: null }],
+        ['a numeric created_at', { ...good, created_at: 1763521200 }],
       ];
       for (const [name, body, type] of bad) await expect(insert(body, type ?? TYPE), name).rejects.toThrow();
       expect(await stored(g)).toBe(0);
+    } finally {
+      await q(`DELETE FROM crove_kernel.mcp_wake_event_type WHERE type = $1`, [TYPE]);
+    }
+  });
+
+  it('re-checks a line body when the row\'s own ids change: an update of id, org_id or grant_id alone is refused, as an update of the body is (#4026)', async () => {
+    await q(`INSERT INTO crove_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES ($1, $2, $3::jsonb, 'ADR-0051')`, [TYPE, ENGAGE, JSON.stringify({ conversation_id: 'id', since: 'date', amount: 'amount', channel: ['facebook', 'zalo', 'email'] })]);
+    try {
+      const g = await grant(['ludy.read', ENGAGE]);
+      const other = await grant(['ludy.read', ENGAGE]);
+      const id = randomUUID();
+      const body = { id, type: TYPE, created_at: '2026-11-19T03:00:00.000Z', org: orgA, grant: g, data: DATA };
+      await q(`INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES ($1, $2, $3, $4, $5::jsonb)`, [orgA, id, g, TYPE, JSON.stringify(body)]);
+      // The trigger fires on the three columns beside body and type.
+      const trigger = await q<{ def: string }>(`SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgrelid = 'crove_kernel.agent_wake_delivery'::regclass AND tgname = 'agent_wake_delivery_line_body'`);
+      expect(trigger.rows[0]?.def).toMatch(/UPDATE OF id, org_id, grant_id, body, type/);
+      await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET id = $2 WHERE id = $1`, [id, randomUUID()]), 'a new id').rejects.toThrow(/does not fit the registered type/);
+      await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET grant_id = $2 WHERE id = $1`, [id, other]), 'another grant').rejects.toThrow(/does not fit the registered type/);
+      await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET org_id = $2 WHERE id = $1`, [id, randomUUID()]), 'another org').rejects.toThrow();
+      const row = await q<{ id: string; grant_id: string; org_id: string }>(`SELECT id, grant_id, org_id FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id]);
+      expect(row.rows).toEqual([{ id, grant_id: g, org_id: orgA }]);
+      // A status update that touches none of the five columns still passes (the sweep's own writes).
+      await q(`UPDATE crove_kernel.agent_wake_delivery SET status = 'failed', attempts = attempts + 1 WHERE id = $1`, [id]);
+      await q(`DELETE FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id]);
     } finally {
       await q(`DELETE FROM crove_kernel.mcp_wake_event_type WHERE type = $1`, [TYPE]);
     }

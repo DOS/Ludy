@@ -271,12 +271,15 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
     expect(await ids(company(randomUUID()), 'crove_kernel.conversation')).toEqual([]);
   });
 
-  it('lets the mail row of a conversation reply follow its thread for a grant, as it does for a person: a grant reads the reply row of a thread it may read and no other', async () => {
+  it('keeps the mail row of a conversation reply closed to a grant (#3956; mcp-mail-closed.db.test.ts pins every mail table), while a person still reads it through its thread', async () => {
     const mine = (ctx: Sealed) => asSealed(ctx, async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.mail_message WHERE source = 'kernel.conversation.reply'`)).rows.map((r) => r.id).sort());
-    expect(await mine(company(orgA))).toEqual([conv['mail:a1c'], conv['mail:a1d']].sort());
-    expect(await mine(member(orgA, 'plain'))).toEqual([conv['mail:a1c']]);
-    expect(await mine(member(orgA, 'plain'))).toEqual(await mine(person(orgA, 'plain')));
-    expect(await mine(company(orgB))).toEqual([conv['mail:b1d']]);
+    expect(await mine(company(orgA))).toEqual([]);
+    expect(await mine(member(orgA, 'plain'))).toEqual([]);
+    expect(await mine(company(orgB))).toEqual([]);
+    // The thread itself stays read by the grant (the conversation policies of #3941); only the mail it sent is closed.
+    expect(await ids(company(orgA), 'crove_kernel.conversation')).toEqual(sorted(A_ALL));
+    // A person keeps the rule from before: the reply row follows the thread's message.
+    expect(await mine(person(orgA, 'plain'))).toEqual([conv['mail:a1c']]);
   });
 
   it('keeps parity with the person for an entity-limited seal', async () => {
