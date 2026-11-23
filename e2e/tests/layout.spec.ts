@@ -28,24 +28,53 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   await signUp(page, newEmail('layout'));
   const slug = await createOrg(page, 'Công ty Màn hình nhỏ');
   const sidebar = page.getByRole('complementary');
+  const desktopSidebar = page.getByTestId('desktop-sidebar');
   const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
   await expect(account).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
-  // A new org opens on the overview, which belongs to no app: the rail shows, and no app menu, not even the Cộng tác one (#3588).
+  // A new org opens on the overview, which belongs to no app: the 64px rail shows with no 224px secondary panel (#3588, #4519).
+  const sidebarWidth = () => desktopSidebar.boundingBox().then((box) => Math.round(box?.width ?? 0));
+  await expect.poll(sidebarWidth).toBe(64);
+  await expect(sidebar.getByTestId('rail-search-btn')).toBeInViewport();
+  await expect(sidebar.getByTestId('sidebar-toggle-btn')).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' }).locator('[aria-current="true"]')).toHaveCount(0);
 
-  // A deep link opens with its app selected, and only that app's menu shows.
+  // A deep link opens with its app selected, and only that app's menu shows (288px expanded sidebar).
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   await page.goto(`/o/${slug}/journal`);
   await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toHaveAttribute('aria-current', 'true');
+  await expect.poll(sidebarWidth).toBe(288);
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
 
+  // Activating the collapse toggle keeps keyboard focus on the counterpart button and persists across reload (#4519).
+  const toggleBtn = sidebar.getByTestId('sidebar-toggle-btn');
+  await toggleBtn.focus();
+  await page.keyboard.press('Enter');
+  await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toHaveCount(0);
+  await expect.poll(sidebarWidth).toBe(64);
+  await expect(toggleBtn).toBeFocused();
+  await page.reload();
+  await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toBeVisible();
+  await expect.poll(sidebarWidth).toBe(64);
+  // `[` inside an input field does not toggle the sidebar.
+  await page.goto(`/o/${slug}/my-work`);
+  const quickInput = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
+  await quickInput.focus();
+  await page.keyboard.press('[');
+  await expect(quickInput).toHaveValue('[');
+  await expect.poll(sidebarWidth).toBe(64);
+  await quickInput.evaluate((el) => (el as HTMLElement).blur());
+  await page.keyboard.press('[');
+  await expect(desktopSidebar.getByRole('link', { name: 'Việc của tôi' })).toBeVisible();
+  await expect.poll(sidebarWidth).toBe(288);
+  await page.goto(`/o/${slug}/journal`);
+
   // On a 1366x768 laptop no app's menu scrolls.
   await page.setViewportSize({ width: 1366, height: 768 });
-  const menuScrolls = () => sidebar.locator('.overflow-y-auto').evaluate((el) => el.scrollHeight > el.clientHeight);
+  const menuScrolls = () => desktopSidebar.locator('.overflow-y-auto').evaluate((el) => el.scrollHeight > el.clientHeight);
   expect(await menuScrolls()).toBe(false);
 
   // Every screen of every app, each opened from a fresh document so the listener sees its first render.
@@ -53,10 +82,17 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   const appCount = await apps.getByRole('link').count();
   expect(appCount).toBeGreaterThan(1);
   for (let i = 0; i < appCount; i++) {
-    await apps.getByRole('link').nth(i).click();
+    const link = apps.getByRole('link').nth(i);
+    const href = (await link.getAttribute('href')) ?? '';
+    await link.click();
     await page.waitForLoadState('networkidle');
-    expect(await menuScrolls(), `app ${i}`).toBe(false);
-    for (const path of await sidebar.getByRole('link').evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).pathname))) links.add(path);
+    // Overview (first entry of the switcher) collapses to the 64px rail with no secondary menu (#4519).
+    if (href.endsWith('/overview')) {
+      await expect.poll(sidebarWidth).toBe(64);
+    } else {
+      expect(await menuScrolls(), `app ${i}`).toBe(false);
+    }
+    for (const path of await desktopSidebar.getByRole('link').evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).pathname))) links.add(path);
   }
   expect(links.size).toBeGreaterThan(5);
   await page.setViewportSize({ width: 1280, height: 600 });
