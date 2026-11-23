@@ -55,6 +55,7 @@ import {
   figuresOf,
   lockDraftLines,
   resolveDraftLineTarget,
+  sameOvertimeEntries,
 } from './payroll-run.ts';
 
 export const HALF_DAY_THRESHOLD_MINUTES = 360;
@@ -1225,6 +1226,9 @@ export const attendanceRollupToPayroll = defineCommand({
         unpaidLeaveDays: computed.unpaidLeaveDays,
         unpaidLeaveFromLedger: false,
         overtime: computed.overtime,
+        overtimeFromRequests: sameOvertimeEntries(computed.overtime, existing.overtime)
+          ? existing.overtimeFromRequests
+          : false,
         nightHours: computed.nightHours,
         ...(person.terms.payBasis === 'hourly' && computed.workedHours !== null ? { workedHours: computed.workedHours } : {}),
       });

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import { HR_PAY_FUNCTIONS, zHrEmployeeInitialEmployment, zHrEmploymentTerms } from '@ludy/kernel-contract';
-import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS } from '@ludy/l10n-vn';
+import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS, money } from '@ludy/l10n-vn';
+import { splitOvertimeHours } from '../src/payroll-run.ts';
 
 describe('the pay function of an employment (#2532)', () => {
   it('is the list the posting maps hold an expense account for, in both charts', () => {
@@ -44,5 +45,14 @@ describe('the pay function of an employment (#2532)', () => {
       pieceRate: '25000',
     });
     expect(piece.baseWage).toBe('0');
+  });
+
+  it('splits overtime bucket hours > 999.99 into valid <= 999.99 chunks and rejects negatives (#4448)', () => {
+    expect(splitOvertimeHours(money('0'))).toEqual(['0']);
+    expect(splitOvertimeHours(money('12.50'))).toEqual(['12.5']);
+    expect(splitOvertimeHours(money('999.99'))).toEqual(['999.99']);
+    expect(splitOvertimeHours(money('1080'))).toEqual(['999.99', '80.01']);
+    expect(splitOvertimeHours(money('1999.98'))).toEqual(['999.99', '999.99']);
+    expect(() => splitOvertimeHours(money('-0.5'))).toThrow(/HR_OVERTIME_HOURS_OUT_OF_RANGE|âm/);
   });
 });

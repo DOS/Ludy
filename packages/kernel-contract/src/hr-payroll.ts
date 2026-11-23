@@ -77,6 +77,7 @@ const zHrPayrollInputsObject = z.strictObject({
   maternityBhxhDays: zHrBhxhDays.default('0'),
   maternityBhxhFromLedger: z.boolean().nullable().default(null),
   overtime: z.array(zHrOvertimeEntry).max(30).default([]),
+  overtimeFromRequests: z.boolean().nullable().default(null),
   nightHours: zHrHours.default('0'),
   bonus: zHrWage.default('0'),
   advance: zHrWage.default('0'),
@@ -102,6 +103,8 @@ const zHrLineInputsEdit = zHrPayrollInputsObject
     sicknessBhxhFromLedger: z.boolean().nullable().optional(),
     maternityBhxhDays: zHrBhxhDays.optional(),
     maternityBhxhFromLedger: z.boolean().nullable().optional(),
+    overtime: z.array(zHrOvertimeEntry).max(30).optional(),
+    overtimeFromRequests: z.boolean().nullable().optional(),
   })
   .refine(
     (v) =>

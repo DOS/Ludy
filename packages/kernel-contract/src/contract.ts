@@ -364,6 +364,39 @@ import {
   zHrSelfAttendanceList,
   zHrSelfAttendanceListResult,
 } from './hr-attendance.ts';
+import {
+  zHrOnboardingApproveResult,
+  zHrOnboardingCancelResult,
+  zHrOnboardingDecide,
+  zHrOnboardingList,
+  zHrOnboardingRejectResult,
+  zHrOnboardingSubmissionRef,
+  zHrOnboardingSubmissionView,
+  zHrSelfOnboardingState,
+  zHrSelfOnboardingSubmit,
+  zHrSelfOnboardingSubmitResult,
+} from './hr-onboarding.ts';
+import {
+  zHrOvertimeActionResult,
+  zHrOvertimeDecide,
+  zHrOvertimeList,
+  zHrOvertimeRef,
+  zHrOvertimeRequestView,
+  zHrSelfOvertimeList,
+  zHrSelfOvertimeListResult,
+  zHrSelfOvertimeSubmit,
+  zHrSelfOvertimeSubmitResult,
+} from './hr-overtime.ts';
+import {
+  zHrProbationDecide,
+  zHrProbationDecideResult,
+  zHrProbationDraftAsk,
+  zHrProbationDraftResult,
+  zHrProbationList,
+  zHrProbationPreviewAsk,
+  zHrProbationPreviewResult,
+  zHrProbationReviewView,
+} from './hr-probation.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1324,6 +1357,16 @@ export const contract = {
         checkOut: oc.input(zHrSelfAttendanceCheckOut).output(zHrAttendanceLogView),
         list: oc.input(zHrSelfAttendanceList).output(zHrSelfAttendanceListResult),
       },
+      onboarding: {
+        get: oc.input(z.strictObject({})).output(zHrSelfOnboardingState),
+        submit: oc.input(zHrSelfOnboardingSubmit).output(zHrSelfOnboardingSubmitResult),
+        cancel: oc.input(zHrOnboardingSubmissionRef).output(zHrOnboardingCancelResult),
+      },
+      overtime: {
+        list: oc.input(zHrSelfOvertimeList).output(zHrSelfOvertimeListResult),
+        submit: oc.input(zHrSelfOvertimeSubmit).output(zHrSelfOvertimeSubmitResult),
+        cancel: oc.input(zHrOvertimeRef).output(zHrOvertimeActionResult),
+      },
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
@@ -1333,6 +1376,23 @@ export const contract = {
       },
       anomaliesBrief: oc.input(zHrAttendanceAnomaliesAsk).output(zHrAttendanceAnomaliesBrief),
       rollupToPayroll: oc.input(zHrAttendanceRollupToPayroll).output(zHrAttendanceRollupResult),
+    },
+    onboarding: {
+      list: oc.input(zHrOnboardingList).output(z.array(zHrOnboardingSubmissionView)),
+      approve: oc.input(zHrOnboardingDecide).output(zHrOnboardingApproveResult),
+      reject: oc.input(zHrOnboardingDecide).output(zHrOnboardingRejectResult),
+    },
+    overtimeRequests: {
+      list: oc.input(zHrOvertimeList).output(z.array(zHrOvertimeRequestView)),
+      approveL1: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+    },
+    probation: {
+      preview: oc.input(zHrProbationPreviewAsk).output(zHrProbationPreviewResult),
+      draftSummary: oc.input(zHrProbationDraftAsk).output(zHrProbationDraftResult),
+      decide: oc.input(zHrProbationDecide).output(zHrProbationDecideResult),
+      list: oc.input(zHrProbationList).output(z.array(zHrProbationReviewView)),
     },
     leaveRequests: {
       list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),
@@ -1376,6 +1436,7 @@ export const contract = {
         thirteenthMonthPreview: oc.input(zHrRunThirteenthMonthPreview).output(zHrThirteenthMonthPreviewResult),
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       // Annual leave ledger and statutory leave balance (#3394, #2540 slice 1c-2): owners and admins only, sensitive query for balance.

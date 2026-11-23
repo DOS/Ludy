@@ -23,6 +23,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { normalizeLeaveDaysInput } from '../components/hr-leave-panel.tsx';
+import { HrSelfOnboardingCard, HrSelfOvertimeCard } from '../components/hr-onboarding-ot-card.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -617,6 +618,9 @@ export function HrSelfServicePage() {
           {openLineId && <SelfPayslipDetail key={openLineId} lineId={openLineId} onClose={() => setOpenLineId(null)} />}
         </Card>
       )}
+
+      {profile && linked && <HrSelfOnboardingCard />}
+      {profile && (linked || managesTeam) && <HrSelfOvertimeCard linked={linked} />}
     </>
   );
 }

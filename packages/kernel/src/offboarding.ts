@@ -521,6 +521,12 @@ export const OWNER_RUN_EXPORT_TABLES = {
   // Employee leave requests with L1 -> final approval trail (#4300).
   'hr.leave_request': { from: 'crove_hr.leave_request', omit: [] },
   'hr.attendance_log': { from: 'crove_hr.attendance_log', omit: [] },
+  'hr.onboarding_submission': {
+    from: 'crove_hr.onboarding_submission',
+    omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed'],
+  },
+  'hr.overtime_request': { from: 'crove_hr.overtime_request', omit: [] },
+  'hr.probation_review': { from: 'crove_hr.probation_review', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'crove_hr.candidate', omit: [] },

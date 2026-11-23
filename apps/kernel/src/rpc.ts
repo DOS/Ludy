@@ -71,8 +71,14 @@ import {
   type AttendanceAnomaliesAi,
   type AttendanceAnomaliesPorts,
 } from './attendance-coworker-ai.ts';
+import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
-import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot, HrInviteDraftContext } from '@ludy/mod-hr';
+import type {
+  HrInviteDraftContext,
+  HrLaborCheckSnapshot,
+  HrProbationBriefSource,
+  HrRecruitingBriefSnapshot,
+} from '@ludy/mod-hr';
 import { buildEngageInviteDraftResult } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
@@ -558,6 +564,12 @@ export function createRpcHandler(
     reader: conversationReader?.attendanceAnomalies ? { attendanceAnomalies: conversationReader.attendanceAnomalies.bind(conversationReader) } : null,
     budget: suggestionBudget(),
   };
+  const probationAi = hrProbationAi(
+    conversationReader?.hrProbationSummary
+      ? { hrProbationSummary: conversationReader.hrProbationSummary.bind(conversationReader) }
+      : null,
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -802,6 +814,11 @@ export function createRpcHandler(
     read: (input) => runtime.query<HrAttendanceAnomaliesSnapshot>('hr.attendance.anomalies.read', input, { actor, orgId }),
     record: (month, legalEntityId, aiReason) =>
       runtime.execute('hr.attendance.anomalies.audit', { month, legalEntityId, aiReason }, { actor, orgId }),
+  });
+  const hrProbationPorts = (orgId: string, actor: UserActor): HrProbationPorts => ({
+    read: (input) => runtime.query<HrProbationBriefSource>('hr.probation.brief.read', input, { actor, orgId }),
+    isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.probation.ai_status', {}, { actor, orgId })).aiStopped,
+    record: (input) => runtime.execute('hr.probation.brief.audit', input, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1209,6 +1226,16 @@ export function createRpcHandler(
           checkOut: os.hr.self.attendance.checkOut.handler(hrCommand('hr.self.attendance.check_out')),
           list: os.hr.self.attendance.list.handler(hrQuery('hr.self.attendance.list')),
         },
+        onboarding: {
+          get: os.hr.self.onboarding.get.handler(hrQuery('hr.self.onboarding.get')),
+          submit: os.hr.self.onboarding.submit.handler(hrCommand('hr.self.onboarding.submit')),
+          cancel: os.hr.self.onboarding.cancel.handler(hrCommand('hr.self.onboarding.cancel')),
+        },
+        overtime: {
+          list: os.hr.self.overtime.list.handler(hrQuery('hr.self.overtime.list')),
+          submit: os.hr.self.overtime.submit.handler(hrCommand('hr.self.overtime.submit')),
+          cancel: os.hr.self.overtime.cancel.handler(hrCommand('hr.self.overtime.cancel')),
+        },
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
@@ -1222,6 +1249,36 @@ export function createRpcHandler(
           ),
         ),
         rollupToPayroll: os.hr.attendance.rollupToPayroll.handler(hrCommand('hr.attendance.rollup_to_payroll')),
+      },
+      onboarding: {
+        list: os.hr.onboarding.list.handler(hrQuery('hr.onboarding.list')),
+        approve: os.hr.onboarding.approve.handler(hrCommand('hr.onboarding.approve')),
+        reject: os.hr.onboarding.reject.handler(hrCommand('hr.onboarding.reject')),
+      },
+      overtimeRequests: {
+        list: os.hr.overtimeRequests.list.handler(hrQuery('hr.overtime.list')),
+        approveL1: os.hr.overtimeRequests.approveL1.handler(hrCommand('hr.overtime.approve_l1')),
+        approveFinal: os.hr.overtimeRequests.approveFinal.handler(hrCommand('hr.overtime.approve_final')),
+        reject: os.hr.overtimeRequests.reject.handler(hrCommand('hr.overtime.reject')),
+      },
+      probation: {
+        preview: os.hr.probation.preview.handler(hrQuery('hr.probation.preview')),
+        draftSummary: os.hr.probation.draftSummary.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            draftProbationSummary(
+              probationAi,
+              hrProbationPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        decide: os.hr.probation.decide.handler(hrCommand('hr.probation.decide')),
+        list: os.hr.probation.list.handler(hrQuery('hr.probation.list')),
       },
       leaveRequests: {
         list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),
@@ -1265,6 +1322,7 @@ export function createRpcHandler(
           thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
           applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
           syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
+          syncOvertime: os.hr.payroll.runs.syncOvertime.handler(hrCommand('hr.payroll.run.sync_overtime')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
         leave: {

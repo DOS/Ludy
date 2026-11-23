@@ -11,6 +11,9 @@ import { hrDepartmentCommands, hrDepartmentQueries } from './departments.ts';
 import { hrLeaveCommands, hrLeaveQueries } from './leave.ts';
 import { hrLeaveRequestCommands, hrLeaveRequestQueries } from './leave-requests.ts';
 import { hrAttendanceCommands, hrAttendanceQueries } from './attendance.ts';
+import { hrOnboardingCommands, hrOnboardingQueries } from './onboarding.ts';
+import { hrOvertimeCommands, hrOvertimeQueries } from './overtime.ts';
+import { hrProbationCommands, hrProbationQueries } from './probation.ts';
 import { hrRecruitingCommands, hrRecruitingQueries } from './recruiting.ts';
 import { hrTodayQueries } from './today.ts';
 import { hrRecruitingAnalyticsQueries } from './recruiting-analytics.ts';
@@ -35,6 +38,7 @@ export { declarationMonths, type HrLaborCheckFact, type HrLaborCheckSnapshot } f
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
-export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrRecruitingCommands, ...hrRecruitingIntakeCommands];
-export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrRecruitingQueries, ...hrTodayQueries, ...hrRecruitingAnalyticsQueries, ...hrRecruitingIntakeQueries];
+export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrOnboardingCommands, ...hrOvertimeCommands, ...hrProbationCommands, ...hrRecruitingCommands, ...hrRecruitingIntakeCommands];
+export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrOnboardingQueries, ...hrOvertimeQueries, ...hrProbationQueries, ...hrRecruitingQueries, ...hrTodayQueries, ...hrRecruitingAnalyticsQueries, ...hrRecruitingIntakeQueries];
+export type { HrProbationBriefSource } from './probation.ts';
 export { hrManifest } from './manifest.ts';

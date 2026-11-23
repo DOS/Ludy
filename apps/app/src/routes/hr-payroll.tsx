@@ -160,11 +160,42 @@ export function normalizePayrollNumericInput(raw: string): string {
   return raw.replaceAll(',', '.').replace(/[^\d.]/g, '');
 }
 
+export function overtimeEntriesEqual(
+  a: readonly InputsState['overtime'][number][],
+  b: readonly InputsState['overtime'][number][],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (entry, idx) =>
+      b[idx] !== undefined &&
+      entry.dayKind === b[idx].dayKind &&
+      entry.night === b[idx].night &&
+      entry.hours.trim() === b[idx].hours.trim(),
+  );
+}
+
+export function buildLineInputsUpdatePayload(
+  s: InputsState,
+  initialOvertime: readonly InputsState['overtime'][number][],
+): Omit<HrPayrollInputs, 'overtime'> & { overtime?: HrPayrollInputs['overtime'] } {
+  const full = inputsOf(s);
+  if (overtimeEntriesEqual(s.overtime, initialOvertime)) {
+    const { overtime: _overtime, ...rest } = full;
+    return rest;
+  }
+  return full;
+}
+
 export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) {
   const t = useTranslations('hrPayroll');
+  const [initialOvertime] = useState(() => stateOf(line.inputs).overtime);
   const [s, setS] = useState(() => stateOf(line.inputs));
   const save = useMutation({
-    mutationFn: () => client.hr.payroll.lines.setInputs({ lineId: line.id, inputs: inputsOf(s) }),
+    mutationFn: () =>
+      client.hr.payroll.lines.setInputs({
+        lineId: line.id,
+        inputs: buildLineInputsUpdatePayload(s, initialOvertime),
+      }),
     onSuccess: async () => {
       await refresh();
       onDone();
@@ -1088,6 +1119,15 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       await refresh();
     },
   });
+  const syncOvertime = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncOvertime({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
@@ -1115,6 +1155,16 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                 data-testid="hr-sync-leave"
               >
                 {t('syncLeave')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                loading={syncOvertime.isPending}
+                disabled={editing !== null || approve.isPending}
+                onClick={() => syncOvertime.mutate()}
+                data-testid="hr-sync-overtime"
+              >
+                {t('syncOvertime')}
               </Button>
               <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
                 {t('thirteenthMonth.toggle')}
@@ -1158,6 +1208,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
         />
       )}
       {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
+      {syncOvertime.error && <ErrorText>{errorMessage(syncOvertime.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -1233,7 +1284,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" disabled={syncLeave.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}
@@ -1271,15 +1322,23 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                 {t('acceptFlags')}
               </label>
             )}
-            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept)} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
+            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept) || syncOvertime.isPending} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
               {t('approve')}
             </Button>
             {approve.error &&
               (isStepUpRequired(approve.error) ? (
-                // Approving freezes the month, so it asks for a fresh second factor; once verified, the same request is repeated.
-                <div className="mt-3">
-                  <StepUpPrompt action={t('approve')} onVerified={() => approve.mutate(s.fingerprint)} onCancel={() => approve.reset()} />
-                </div>
+                syncOvertime.isPending ? null : (
+                  // Approving freezes the month, so it asks for a fresh second factor; once verified, the same request is repeated.
+                  <div className="mt-3">
+                    <StepUpPrompt
+                      action={t('approve')}
+                      onVerified={() => {
+                        if (!syncOvertime.isPending) approve.mutate(s.fingerprint);
+                      }}
+                      onCancel={() => approve.reset()}
+                    />
+                  </div>
+                )
               ) : (
                 <ErrorText>{errorMessage(approve.error)}</ErrorText>
               ))}

@@ -1301,6 +1301,39 @@ export type HrAttendanceQrConfigTable = Refine<
   { legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+export const HR_ONBOARDING_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type HrOnboardingStatus = (typeof HR_ONBOARDING_STATUSES)[number];
+export type HrOnboardingSubmissionTable = Refine<
+  G.HrOnboardingSubmissionTable,
+  {
+    status: Generated<HrOnboardingStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_OVERTIME_DAY_TYPES = ['weekday', 'weekend', 'holiday'] as const;
+export type HrOvertimeDayType = (typeof HR_OVERTIME_DAY_TYPES)[number];
+export const HR_OVERTIME_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrOvertimeStatus = (typeof HR_OVERTIME_STATUSES)[number];
+export type HrOvertimeRequestTable = Refine<
+  G.HrOvertimeRequestTable,
+  {
+    day_type: ColumnType<HrOvertimeDayType, HrOvertimeDayType, never>;
+    status: Generated<HrOvertimeStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_PROBATION_DECISIONS = ['pass', 'extend', 'terminate'] as const;
+export type HrProbationDecision = (typeof HR_PROBATION_DECISIONS)[number];
+export type HrProbationReviewTable = Refine<
+  G.HrProbationReviewTable,
+  {
+    decision: HrProbationDecision;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1692,12 +1725,15 @@ type Refined = Tables<{
   'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.leave_request': HrLeaveRequestTable;
+  'crove_hr.onboarding_submission': HrOnboardingSubmissionTable;
+  'crove_hr.overtime_request': HrOvertimeRequestTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
+  'crove_hr.probation_review': HrProbationReviewTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.capture_session': MeetingsCaptureSessionTable;
   'crove_meetings.chat_channel': MeetingsChatChannelTable;

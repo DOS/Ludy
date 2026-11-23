@@ -276,7 +276,7 @@ export async function resolveEntity(ctx: Pick<QueryContext, 'trx' | 'orgId'>, re
 }
 
 // A bank code of the list kept as data in @ludy/l10n-vn: a code that is not in it is refused, so the file cut by bank never meets a code nobody can name (#2897).
-function requireKnownBank(code: string | null | undefined): void {
+export function requireKnownBank(code: string | null | undefined): void {
   if (code !== null && code !== undefined && !isBankCode(code)) throw new DomainError('HR_BANK_UNKNOWN', 422, 'Ngân hàng này chưa có trong danh sách');
 }
 
@@ -748,6 +748,15 @@ export function retentionEnds(endedOn: string): string {
 // The erasure of an ended employee after the retention (plan 6.6): the name, the address, the birth date, the bank and the dependents' names are cleared, and the person's key is shredded, so the identity
 // number and the account number, which stay in their row byte for byte, can never be opened again. The employment rows stay: amounts that tie to no person. R3 for owners: it
 // cannot be undone, so it asks for a fresh second factor first; subject_key_shred itself asserts an owner.
+export async function lockEmployeeErasure(
+  trx: QueryContext['trx'],
+  orgId: string,
+  employeeId: string,
+): Promise<void> {
+  const key = `hr_emp_erase:${orgId.toLowerCase()}:${employeeId.toLowerCase()}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(trx);
+}
+
 export const employeeErase = defineCommand({
   name: 'hr.payroll.employee.erase',
   runsWhenOff: 'erases an ended employee\'s personal data after the retention, which the owner may still do while the app is off',
@@ -761,10 +770,14 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['status', 'reason', 'decision_note', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'attendance_log', ['note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'onboarding_submission', ['status', 'address', 'birth_date', 'national_id_sealed', 'bank_code', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'note', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'overtime_request', ['status', 'reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'probation_review', ['completed_tasks_snapshot', 'attendance_snapshot', 'review_note', 'ai_draft_note', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
   handler: async (ctx, input): Promise<HrEmployeeErased> => {
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, input.employeeId);
     const employee = await loadEmployee(ctx, input.employeeId);
     if (employee.status !== 'ended' || employee.ended_on === null) {
       throw new DomainError('HR_EMPLOYEE_NOT_ENDED', 409, 'Chỉ xóa được hồ sơ của nhân viên đã nghỉ việc');
@@ -781,14 +794,8 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .returning('id')
       .execute();
-    await ctx.trx
-      .updateTable('crove_hr.payroll_employee')
-      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, work_permit_expires_on: null, department_id: null, job_title: null, user_id: null, erased_at: ctx.now, updated_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.employeeId)
-      .execute();
-    // Cancel non-terminal requests first so their row locks serialize ahead of any concurrent L1 transition
-    // even when reason and decision_note start NULL, then wipe free-text PII notes across every request row.
+    // Cancel non-terminal requests first (ahead of erased_at so transition triggers allow cancellation cleanly),
+    // then mark payroll_employee erased_at and wipe free-text/sealed/snapshot PII across all HR tables.
     const cancelledRequests = await ctx.trx
       .updateTable('crove_hr.leave_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
@@ -796,6 +803,28 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .where('status', 'in', ['pending_l1', 'pending_final'])
       .returning('id')
+      .execute();
+    const cancelledOnboarding = await ctx.trx
+      .updateTable('crove_hr.onboarding_submission')
+      .set({ status: 'cancelled', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', '=', 'pending')
+      .returning('id')
+      .execute();
+    const cancelledOvertime = await ctx.trx
+      .updateTable('crove_hr.overtime_request')
+      .set({ status: 'cancelled', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', 'in', ['pending_l1', 'pending_final'])
+      .returning('id')
+      .execute();
+    await ctx.trx
+      .updateTable('crove_hr.payroll_employee')
+      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, work_permit_expires_on: null, department_id: null, job_title: null, user_id: null, erased_at: ctx.now, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.employeeId)
       .execute();
     await ctx.trx
       .updateTable('crove_hr.leave_request')
@@ -811,6 +840,60 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .where('note', 'is not', null)
       .execute();
+    const erasedOnboarding = await ctx.trx
+      .updateTable('crove_hr.onboarding_submission')
+      .set({
+        address: null,
+        birth_date: null,
+        national_id_sealed: null,
+        bank_code: null,
+        bank_account_sealed: null,
+        tax_code_sealed: null,
+        insurance_number_sealed: null,
+        note: null,
+        decision_note: null,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) =>
+        eb.or([
+          eb('address', 'is not', null),
+          eb('birth_date', 'is not', null),
+          eb('national_id_sealed', 'is not', null),
+          eb('bank_code', 'is not', null),
+          eb('bank_account_sealed', 'is not', null),
+          eb('tax_code_sealed', 'is not', null),
+          eb('insurance_number_sealed', 'is not', null),
+          eb('note', 'is not', null),
+          eb('decision_note', 'is not', null),
+        ]),
+      )
+      .returning('id')
+      .execute();
+    await ctx.trx
+      .updateTable('crove_hr.overtime_request')
+      .set({ reason: null, decision_note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
+      .execute();
+    const erasedProbation = await ctx.trx
+      .updateTable('crove_hr.probation_review')
+      .set({
+        completed_tasks_snapshot: '[]',
+        attendance_snapshot: '{}',
+        review_note: null,
+        ai_draft_note: null,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where(
+        sql<boolean>`(completed_tasks_snapshot <> '[]'::jsonb OR attendance_snapshot <> '{}'::jsonb OR review_note IS NOT NULL OR ai_draft_note IS NOT NULL)`,
+      )
+      .returning('id')
+      .execute();
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({
@@ -818,12 +901,30 @@ export const employeeErase = defineCommand({
       shreddedKeys,
       dependentsCleared: dependents.length,
       cancelledLeaveRequests: cancelledRequests.length,
+      cancelledOnboardingSubmissions: cancelledOnboarding.length,
+      cancelledOvertimeRequests: cancelledOvertime.length,
+      erasedOnboardingSubmissions: erasedOnboarding.length,
+      erasedProbationReviews: erasedProbation.length,
       retentionEnded: until,
     });
     return {
       employeeId: input.employeeId,
       shreddedKeys,
-      cleared: ['name', 'address', 'birth date', 'bank', 'work permit expiry', 'department', 'job title', 'dependents names', 'leave request notes', 'attendance log notes'],
+      cleared: [
+        'name',
+        'address',
+        'birth date',
+        'bank',
+        'work permit expiry',
+        'department',
+        'job title',
+        'dependents names',
+        'leave request notes',
+        'attendance log notes',
+        'onboarding submissions',
+        'overtime request notes',
+        'probation review snapshots and notes',
+      ],
       kept: [
         { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },

@@ -551,6 +551,17 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.leave_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's leave request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.attendance_log.note': { kind: 'other', handling: 'erase', reason: "An employee's or HR admin's free-text note on a daily attendance log; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.attendance_qr_config.qr_secret_hash': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Org/entity-scoped SHA-256 hash of the office attendance QR check-in token; identifies an office entity only, never an individual' },
+  'crove_hr.onboarding_submission.address': { kind: 'address', handling: 'erase', reason: "An employee's submitted onboarding address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.onboarding_submission.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's submitted onboarding birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.onboarding_submission.bank_code': { kind: 'other', handling: 'erase', reason: "An employee's submitted bank code; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.onboarding_submission.note': { kind: 'other', handling: 'erase', reason: "An employee's onboarding checklist note; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.onboarding_submission.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an onboarding submission; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.overtime_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text overtime reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.overtime_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's overtime request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.probation_review.completed_tasks_snapshot': { kind: 'other', handling: 'erase', reason: "Task evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
+  'crove_hr.probation_review.attendance_snapshot': { kind: 'other', handling: 'erase', reason: "Attendance evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
+  'crove_hr.probation_review.review_note': { kind: 'other', handling: 'erase', reason: "Human reviewer note on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.probation_review.ai_draft_note': { kind: 'other', handling: 'erase', reason: "Optional AI summary draft saved on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'crove_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
@@ -753,6 +764,22 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
   'crove_hr.payroll_employee.work_permit_number_sealed': {
     handling: 'shred',
     reason: "A foreign employee's work permit number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.onboarding_submission.national_id_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
+  },
+  'crove_hr.onboarding_submission.tax_code_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted personal tax code, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
+  },
+  'crove_hr.onboarding_submission.insurance_number_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted social insurance number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
+  },
+  'crove_hr.onboarding_submission.bank_account_sealed': {
+    handling: 'shred',
+    reason: "An employee's submitted bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
   },
   'crove_finance.supplier_bank_account.account_holder_sealed': {
     handling: 'shred',

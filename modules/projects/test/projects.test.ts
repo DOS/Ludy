@@ -76,7 +76,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 57 commands and 28 queries with consistent module prefix', () => {
+  it('exports all 57 commands and 29 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -144,6 +144,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.dependency.list',
       'projects.mcp.roadmap_demand_summary',
       'projects.mcp.roadmap_ideas',
+      'projects.member_completed_tasks',
       'projects.project.get',
       'projects.project.list',
       'projects.roadmap.ai_changelog_source',
