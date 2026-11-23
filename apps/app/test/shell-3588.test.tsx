@@ -12,11 +12,12 @@ import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
-import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps } from '../src/lib/apps.ts';
+import { ALL_NAV, NAV_KEYWORDS, SETTINGS_ITEMS, appOfPath, installedApps } from '../src/lib/apps.ts';
+import { installedItems } from '../src/lib/modules.ts';
 import { filterPalette, type PaletteItem } from '../src/lib/palette.ts';
 import { PHONE_TARGET } from '../src/lib/touch-target.ts';
 
-const state = vi.hoisted(() => ({ client: null as unknown as QueryClient, pathname: '/o/acme/overview' }));
+const state = vi.hoisted(() => ({ client: null as unknown as QueryClient, pathname: '/o/acme/overview', links: [] as Array<{ to: string; onClick?: unknown }> }));
 
 vi.mock('../src/lib/auth.ts', () => ({
   getConfig: () => ({ modules: Object.keys(MODULE_SCREENS), mcpEnabled: true }),
@@ -24,6 +25,7 @@ vi.mock('../src/lib/auth.ts', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ to, params, children, ...rest }: { to: string; params?: Record<string, string>; children: React.ReactNode } & Record<string, unknown>) => {
+    state.links.push({ to, onClick: rest.onClick });
     const { activeOptions: _a, ...anchor } = rest;
     return (
       <a href={to.replace('$slug', params?.slug ?? '')} {...anchor}>
@@ -74,47 +76,88 @@ function render(locale: 'vi' | 'en', node: React.ReactNode): string {
 
 const apps = installedApps(Object.keys(MODULE_SCREENS));
 const LONG_NAME = 'Công ty TNHH Thương mại và Dịch vụ Vận tải Quốc tế Sao Mai';
-const shell = (pathname: string, locale: 'vi' | 'en' = 'vi') => {
+const shell = (pathname: string, locale: 'vi' | 'en' = 'vi', modules?: readonly string[], onNavigate?: () => void) => {
   state.pathname = pathname;
+  state.links = [];
   return render(
     locale,
     <ShellNav
       slug="acme"
       apps={apps}
       app={appOfPath(pathname)}
+      {...(modules ? { settingsItems: installedItems(modules, SETTINGS_ITEMS) } : {})}
       badges={{}}
       orgs={[{ orgId: '1', slug: 'acme', name: LONG_NAME }]}
       email="chu.cong.ty@example.com"
       onOpenPalette={() => undefined}
       paletteKeys="Ctrl K"
+      {...(onNavigate ? { onNavigate } : {})}
     />,
   );
 };
 
 describe('SH-1: the org\'s own screens show no app menu', () => {
-  it.each(['/o/acme/overview', '/o/acme/notifications', '/o/acme/settings', '/o/acme/audit', '/o/acme/personal-data'])('%s belongs to no app', (path) => {
+  it.each(['/o/acme/overview', '/o/acme/notifications', '/o/acme/settings', '/o/acme/settings/members', '/o/acme/audit', '/o/acme/personal-data'])('%s belongs to no app', (path) => {
     expect(appOfPath(path)).toBeNull();
   });
 
-  it.each(['/o/acme/overview', '/o/acme/notifications', '/o/acme/settings', '/o/acme/audit', '/o/acme/personal-data'])('draws the rail and no app menu on %s, in both languages', (path) => {
+  it.each(['/o/acme/overview', '/o/acme/notifications', '/o/acme/audit', '/o/acme/personal-data'])('draws the rail and no app or Settings menu on %s, in both languages', (path) => {
     for (const locale of ['vi', 'en'] as const) {
       const html = shell(path, locale);
       // The rail is there: every app of the switcher, the overview, the bell and Settings.
       expect(html).toContain('aria-label="' + (locale === 'vi' ? 'Ứng dụng' : 'Apps') + '"');
-      // No app menu: not the Cộng tác one the shell used to start with, and not any other app's.
+      // No app or Settings menu: not the Cộng tác one the shell used to start with, and not any other app's or Settings'.
       expect(html).not.toContain('Việc nhóm');
       expect(html).not.toContain('Team tasks');
       expect(html).not.toContain('Cộng tác</p>');
-      expect(html).not.toMatch(/<section[^>]*aria-label="[^"]*(Cộng tác|Tài chính|Engage)/);
-      // And no app is marked as the one in use.
-      const switcher = html.slice(html.indexOf('<ul'), html.indexOf('</ul>'));
-      expect(switcher).not.toContain('aria-current="true"');
+      expect(html).not.toContain('Thành viên và quyền');
+      expect(html).not.toContain('Members and roles');
+      expect(html).not.toMatch(/<section[^>]*aria-label="[^"]*(Cộng tác|Tài chính|Engage|Cài đặt|Settings)/);
+      // And no app or Settings rail button is marked as active.
+      expect(html).not.toContain('aria-current="true"');
     }
   });
 
-  it('marks the rail entry of the screen itself (the overview, Settings)', () => {
+  it('marks the rail entry of Overview and Notifications with aria-current="page"', () => {
     expect(shell('/o/acme/overview')).toContain('aria-current="page"');
-    expect(shell('/o/acme/settings')).toContain('aria-current="page"');
+    expect(shell('/o/acme/notifications')).toContain('aria-current="page"');
+  });
+
+  it('renders the installed Settings sub-pages in the secondary sidebar, highlights the Cài đặt rail button with aria-current="true", and marks only the active sub-page (#4499)', () => {
+    for (const locale of ['vi', 'en'] as const) {
+      const html = shell('/o/acme/settings', locale);
+      const switcher = html.slice(html.indexOf('<ul'), html.indexOf('</ul>'));
+      expect(switcher).not.toContain('aria-current="true"');
+      const settingsLabel = locale === 'vi' ? 'Cài đặt' : 'Settings';
+      const orgLabel = locale === 'vi' ? 'Tổ chức' : 'Organization';
+      const membersLabel = locale === 'vi' ? 'Thành viên và quyền' : 'Members and roles';
+      expect(html).toContain(`<p class="px-3 pb-1.5 text-sm font-semibold text-foreground">${settingsLabel}</p>`);
+      expect(html).toContain(`aria-label="${settingsLabel}"`);
+      expect(html).toMatch(new RegExp(`href="/o/acme/settings"[^>]*aria-current="true"[^>]*>.*?<span>${settingsLabel}</span>`, 's'));
+      expect(html).toMatch(new RegExp(`href="/o/acme/settings"[^>]*aria-current="page"[^>]*>.*?<span[^>]*>${orgLabel}</span>`, 's'));
+      expect(html).toContain(membersLabel);
+      expect(html).not.toMatch(/href="\/o\/acme\/settings\/members"[^>]*aria-current="page"/);
+    }
+
+    const onNavigate = vi.fn();
+    const membersHtml = shell('/o/acme/settings/members', 'vi', undefined, onNavigate);
+    expect(membersHtml).toMatch(/href="\/o\/acme\/settings"[^>]*aria-current="true"[^>]*>.*?<span>Cài đặt<\/span>/s);
+    expect(membersHtml).toMatch(/href="\/o\/acme\/settings\/members"[^>]*aria-current="page"[^>]*>.*?<span[^>]*>Thành viên và quyền<\/span>/s);
+    expect(membersHtml).not.toMatch(/href="\/o\/acme\/settings"[^>]*aria-current="page"[^>]*>.*?<span[^>]*>Tổ chức<\/span>/s);
+    expect(membersHtml).toContain('min-h-11');
+    // Every Settings sub-page link calls onNavigate to close the mobile drawer, while the Cài đặt rail anchor stays outside <Link> and keeps it open.
+    const settingsLinks = state.links.filter((l) => l.to.startsWith('/o/$slug/settings'));
+    expect(settingsLinks).toHaveLength(11);
+    for (const link of settingsLinks) expect(link.onClick).toBe(onNavigate);
+
+    // Filtered by installed modules: without crm or finance, their Settings items are omitted.
+    const kernelOnlyHtml = shell('/o/acme/settings', 'vi', ['kernel']);
+    expect(kernelOnlyHtml).toContain('Tổ chức');
+    expect(kernelOnlyHtml).toContain('Thành viên và quyền');
+    expect(kernelOnlyHtml).not.toContain('Bán hàng');
+    expect(kernelOnlyHtml).not.toContain('Báo giá');
+    expect(kernelOnlyHtml).not.toContain('Kế toán và thuế');
+    expect(kernelOnlyHtml).not.toContain('Kết nối');
   });
 
   it('still shows the menu of the app a screen belongs to, and marks that app', () => {

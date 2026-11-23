@@ -20,10 +20,10 @@ export interface SettingsContext {
   modules: string[];
 }
 
-// The frame every tab of Settings shares: the title, the org read, and a one-column list of cards (ST-8: no two-column grid, so no card leaves half a row empty). The tab strip itself is
-// the shell's, drawn above the screen. "Cài đặt lịch hẹn" and "Tạo loại lịch hẹn" on Lịch hẹn, the quote and sales-process links and the like point at a card of a tab by its
-// #fragment (#3643). The cards come in as the reads answer (the org, the member, then the cards grow with their own lists), so the jump waits for the card, keeps it at the top while the page
-// settles, and lets go at the first touch, wheel or key of the person, or after five seconds.
+// The frame every Settings sub-page shares: the title, the org read, and a one-column list of cards (ST-8: no two-column grid, so no card leaves half a row empty). The Settings navigation
+// menu is rendered by the shell in the left sidebar (#4499). "Cài đặt lịch hẹn" and "Tạo loại lịch hẹn" on Lịch hẹn, the quote and sales-process links and the like point at a card of a
+// Settings page by its #fragment (#3643). The cards come in as the reads answer (the org, the member, then the cards grow with their own lists), so the jump waits for the card, keeps it at
+// the top while the page settles, and lets go at the first touch, wheel or key of the person, or after five seconds.
 export function SettingsFrame({ children }: { children: (context: SettingsContext) => ReactNode }) {
   // Re-renders when the org's apps change, so the cards of an app that was switched off or on come and go (the shell does not remount this screen: its switches keep their focus).
   useModulesVersion();

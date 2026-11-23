@@ -2,6 +2,8 @@
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
 import {
   SIGN_WEBHOOK_EVENT_TYPES,
+  type SignApiKeyRecord,
+  type SignApiKeyScope,
   type SignContractDraftVariables,
   type SignDiffCompareInput,
   type SignDiffCompareResult,
@@ -315,6 +317,7 @@ export interface PublicSignField {
   label: string | null;
   required: boolean;
   fontSizePt?: number | null | undefined;
+  valueText?: string | null | undefined;
   options?: readonly string[] | null | undefined;
   attachment?: PublicSignFieldAttachment | null | undefined;
 }
@@ -772,9 +775,19 @@ export const signApi = {
       ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
       idempotencyKey: crypto.randomUUID(),
     }),
+  listApiKeys: () => client.sign.api_keys.list({}),
+  createApiKey: (input: {
+    name: string;
+    scopes: SignApiKeyScope[];
+    expiresAt?: string | null;
+  }) => client.sign.api_keys.create(input),
+  revokeApiKey: (apiKeyId: string) =>
+    client.sign.api_keys.revoke({ apiKeyId, idempotencyKey: crypto.randomUUID() }),
 };
 
 export type {
+  SignApiKeyRecord,
+  SignApiKeyScope,
   SignEnvelopeObligationRecordContract,
   SignKycAttachmentSlotContract,
   SignKycListResultContract,
@@ -1110,6 +1123,7 @@ function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
     label: typeof raw.label === 'string' ? raw.label : null,
     required: typeof raw.required === 'boolean' ? raw.required : true,
     fontSizePt: typeof raw.fontSizePt === 'number' ? raw.fontSizePt : null,
+    valueText: typeof raw.valueText === 'string' ? raw.valueText : null,
     options: Array.isArray(raw.options)
       ? raw.options.filter((opt): opt is string => typeof opt === 'string')
       : null,

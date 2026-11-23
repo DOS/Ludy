@@ -222,6 +222,18 @@ import {
   runSignPublicHubList,
 } from './sign-public-hub.ts';
 import {
+  SIGN_API_V1_IP_PER_MINUTE,
+  SIGN_API_V1_KEY_DRAFT_PER_MINUTE,
+  SIGN_API_V1_KEY_READ_PER_MINUTE,
+  readSignApiV1ArtifactBytes,
+  resolveSignApiV1FileSource,
+  runSignApiV1EnvelopeGet,
+  runSignApiV1EnvelopesList,
+  runSignApiV1FromTemplate,
+  runSignApiV1TemplatesList,
+  type SignApiV1Outcome,
+} from './sign-api-v1.ts';
+import {
   ROADMAP_PUBLIC_IDEAS_PER_MINUTE,
   ROADMAP_PUBLIC_OTP_EMAIL_REQUESTS_PER_MINUTE,
   ROADMAP_PUBLIC_OTP_REQUESTS_PER_MINUTE,
@@ -468,6 +480,12 @@ export interface HttpDeps {
     actions: RateLimiter;
     templateActions: RateLimiter;
     emailOtpRequest: RateLimiter;
+  }>;
+  // Per-client and per-key-hash rate limiters for external /api/v1/sign/* API routes (#4441).
+  signApiV1Limits?: Partial<{
+    ip: RateLimiter;
+    keyRead: RateLimiter;
+    keyDraft: RateLimiter;
   }>;
   // Per-client and per-email rate limiters for Projects Public Roadmap public routes (#4399).
   roadmapLimits?: Partial<{
@@ -2080,6 +2098,187 @@ export function createHttpApp(deps: HttpDeps) {
           return c.json(res.result, 401);
         }
         return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // Scoped external REST API (/api/v1/sign/*, #4441, eSign Slice 5c):
+    // Bearer ludy_sk_... API key hashed via SHA-256, org_app_on + entitlement opaque 404,
+    // sign:read vs sign:draft scope checks, per-IP + per-key rate limits, Cache-Control: no-store,
+    // strict exclusion of hr_contract and meeting_minutes envelopes, and draft-only template creation.
+    const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
+    const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
+    const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
+
+    const signApiV1Guard: MiddlewareHandler = async (c, next) => {
+      setSignSecurityHeaders(c);
+      if (
+        c.req.query('token') !== undefined ||
+        c.req.query('api_key') !== undefined ||
+        c.req.query('apiKey') !== undefined ||
+        c.req.query('access_token') !== undefined ||
+        c.req.query('key') !== undefined
+      ) {
+        return c.json({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN', message: 'API keys must be sent in the Authorization: Bearer header' }, 400);
+      }
+      const decision = signApiV1IpLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Too many requests, please retry later', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const replySignApiV1NonOk = (c: Context, res: Exclude<SignApiV1Outcome<unknown>, { status: 'ok' }>) => {
+      if (res.status === 'unauthorized') {
+        c.header('www-authenticate', 'Bearer');
+        return c.json({ code: 'UNAUTHENTICATED', message: 'Invalid or expired API key' }, 401);
+      }
+      if (res.status === 'not_found') return signOpaqueNotFound(c);
+      if (res.status === 'forbidden') {
+        return c.json({ code: 'FORBIDDEN', message: `API key requires scope ${res.requiredScope}` }, 403);
+      }
+      return signRateLimited(c, res.retryAfterSeconds);
+    };
+
+    app.get('/api/v1/sign/envelopes', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1EnvelopesList(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          { status: c.req.query('status'), limit: c.req.query('limit') },
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1EnvelopeGet(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id/sealed', signApiV1Guard, async (c) => {
+      try {
+        const lookup = await resolveSignApiV1FileSource(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          'sealed',
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
+        const release = signPdfReads.tryAcquire('sign-api-v1');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
+        }
+        try {
+          const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': `attachment; filename="sealed-${lookup.data.envelopeId}.pdf"`,
+              'x-content-sha256': lookup.data.sha256,
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id/certificate', signApiV1Guard, async (c) => {
+      try {
+        const lookup = await resolveSignApiV1FileSource(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          'certificate',
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
+        const release = signPdfReads.tryAcquire('sign-api-v1');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
+        }
+        try {
+          const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/json; charset=utf-8',
+              'content-disposition': `attachment; filename="certificate-${lookup.data.envelopeId}.json"`,
+              'x-content-sha256': lookup.data.sha256,
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/templates', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1TemplatesList(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          { limit: c.req.query('limit') },
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/v1/sign/envelopes/from-template', signApiV1Guard, signBodyLimit(32 * 1024), async (c) => {
+      try {
+        const rawBody = await c.req.json().catch(() => null);
+        const res = await runSignApiV1FromTemplate(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          rawBody,
+          appUrl(config),
+          signMeta(c),
+          (hash) => signApiV1KeyDraftLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data, 201);
       } catch (error) {
         return problem(c, error);
       }

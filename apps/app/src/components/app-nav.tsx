@@ -15,7 +15,23 @@ import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
 import { APP_ICON, menuIcon } from '../lib/menu-icons.ts';
-import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, currentMenuItem, isHeadedGroup, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
+import {
+  ADMIN_ITEMS,
+  BELL_ITEM,
+  SETTINGS_ITEMS,
+  TOP_ITEMS,
+  currentMenuItem,
+  isHeadedGroup,
+  isSettingsPath,
+  type AppId,
+  type HeadedGroupId,
+  type InstalledApp,
+  type NavItem,
+  type NavLabel,
+  type SettingsNavItem,
+} from '../lib/apps.ts';
+import { installedItems } from '../lib/modules.ts';
+import { installedModules } from '../lib/org-modules.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { StatusLink } from './status-link.tsx';
 import { SupportLink } from './support-link.tsx';
@@ -30,9 +46,12 @@ const IN_MENU_LABEL: Partial<Record<NavLabel, 'socialPosts'>> = { social: 'socia
 export interface ShellNavProps {
   slug: string;
   // The installed apps (#1528) and the one whose menu shows: the app of the screen. On the org's own screens (Overview,
-  // Notifications, Settings, the activity log) `app` is null: no app is marked and no app menu shows (#3588), only the rail.
+  // Notifications, the activity log) `app` is null: no app is marked and no app menu shows (#3588), only the rail. On
+  // Settings screens `app` is null too, while the Settings rail button and secondary menu show (#4499).
   apps: readonly InstalledApp[];
   app: AppId | null;
+  // Installed Settings sub-pages (#4499); defaults from installedModules() when omitted in standalone component renders.
+  settingsItems?: readonly SettingsNavItem[];
   // The count shown on an item (pending proposals on the inbox, unread notifications); an app with a count gets a dot.
   badges: Partial<Record<string, string | number | null | undefined>>;
   orgs: readonly { orgId: string; slug: string; name: string }[];
@@ -44,13 +63,17 @@ export interface ShellNavProps {
   onNavigate?: () => void;
 }
 
+const railItemClass = (selected: boolean) =>
+  `relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`;
+
 // What the sidebar and the phone drawer both hold (#1245, #1528): the app switcher down the left edge, with the org's
-// own screens at its foot; beside it the org switch, the palette button, the current app's menu and the account menu.
+// own screens at its foot; beside it the org switch, the palette button, the current app or Settings menu and the account menu.
 // Every control is at least 44px tall in the phone drawer (below md) and 24px in the sidebar.
-export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, paletteKeys, onOpenQuickCapture, onNavigate }: ShellNavProps) {
+export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, onOpenPalette, paletteKeys, onOpenQuickCapture, onNavigate }: ShellNavProps) {
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
   const tmw = useTranslations('myWork');
+  const navigate = useNavigate();
   const groupIdBase = useId();
   const current = app === null ? undefined : apps.find((a) => a.id === app);
   const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]));
@@ -58,6 +81,21 @@ export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, 
   // The router's own fuzzy match would also mark Engage's Posts (`social`) on the Inbox (`social/inbox`), so it is turned off below.
   const { pathname } = useLocation();
   const currentTo = currentMenuItem(pathname);
+  const settingsSelected = current === undefined && isSettingsPath(pathname);
+  const menuTitle = current ? t(`appNames.${current.id}`) : settingsSelected ? t('settings') : null;
+  const menuGroups: ReadonlyArray<{ id: string; heading: HeadedGroupId | null; ariaLabel?: string; items: readonly (NavItem | SettingsNavItem)[] }> = current
+    ? current.groups.map((group) => {
+        const heading = isHeadedGroup(group.id) ? group.id : null;
+        return {
+          id: group.id,
+          heading,
+          ...(heading ? {} : { ariaLabel: group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) }),
+          items: group.items,
+        };
+      })
+    : settingsSelected
+      ? [{ id: 'settings', heading: null, ariaLabel: t('settings'), items: settingsItems ?? installedItems(installedModules(), SETTINGS_ITEMS) }]
+      : [];
   // The shell's own places in the switcher: the overview on top, the bell and Settings at the foot.
   const railLink = (item: NavItem, name: string, badge?: string | number | null) => (
     <li key={item.to}>
@@ -65,7 +103,7 @@ export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, 
         to={item.to}
         params={{ slug }}
         onClick={onNavigate}
-        className={`relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${item.to === currentTo ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+        className={railItemClass(item.to === currentTo)}
         activeOptions={{ exact: true }}
         {...(item.to === currentTo ? { 'aria-current': 'page' as const } : {})}
       >
@@ -94,7 +132,7 @@ export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, 
                     params={{ slug }}
                     // Switching apps keeps the phone drawer open, so the new app's menu is there to pick from.
                     aria-current={selected ? 'true' : undefined}
-                    className={`relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                    className={railItemClass(selected)}
                   >
                     <NavIcon name={APP_ICON[a.id]} className="size-5" />
                     <span>{t(`apps.${a.id}`)}</span>
@@ -106,7 +144,28 @@ export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, 
           </ul>
           <ul className="mt-auto flex flex-col items-center gap-1 pt-3">
             {BELL_ITEM && railLink(BELL_ITEM, t('bell'), badges[BELL_ITEM.label] as string | number | null | undefined)}
-            {ADMIN_ITEMS.map((item) => railLink(item, t(item.label)))}
+            {ADMIN_ITEMS.map((item) => {
+              if (item.to !== '/o/$slug/settings') return railLink(item, t(item.label));
+              // Use a plain anchor with router navigate so TanStack Router does not overwrite aria-current="true"
+              // to "page" on /o/<slug>/settings, and omit onNavigate so the phone drawer stays open (#4499).
+              return (
+                <li key={item.to}>
+                  <a
+                    href={`/o/${encodeURIComponent(slug)}/settings`}
+                    aria-current={settingsSelected ? 'true' : undefined}
+                    onClick={(event) => {
+                      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
+                      event.preventDefault();
+                      void navigate({ to: item.to, params: { slug } });
+                    }}
+                    className={railItemClass(settingsSelected)}
+                  >
+                    <NavIcon name={menuIcon(item.label)} className="size-5" />
+                    <span>{t(item.label)}</span>
+                  </a>
+                </li>
+              );
+            })}
           </ul>
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
@@ -147,26 +206,24 @@ export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, 
               </Button>
             )}
           </div>
-          {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. On the org's own screens
-              (no app) there is no menu, only the rail (#3588). On a phone the nav scrolls instead (above). */}
+          {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. On Overview,
+              Notifications, and Audit there is no menu, only the rail (#3588); Settings shows its sub-pages (#4499). On a phone the nav scrolls instead (above). */}
           <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto max-md:overflow-y-visible">
-            {current && (
-              <p className="px-3 pb-1.5 text-sm font-semibold text-foreground">{t(`appNames.${current.id}`)}</p>
+            {menuTitle && (
+              <p className="px-3 pb-1.5 text-sm font-semibold text-foreground">{menuTitle}</p>
             )}
-            {current?.groups.map((group, index) => {
+            {menuGroups.map((group, index) => {
               const labelId = `${groupIdBase}-${group.id}`;
-              // A group named by the app itself (the first of the other apps) needs no heading, and neither does the reports item.
-              const heading = isHeadedGroup(group.id) ? group.id : null;
               return (
                 <section
                   key={group.id}
                   className={index === 0 ? '' : 'mt-3 md:mt-2'}
-                  {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
+                  {...(group.heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.ariaLabel })}
                 >
-                  {heading && (
+                  {group.heading && (
                     // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
                     <p id={labelId} className="px-3 pb-1 text-xs font-medium text-subtle-foreground">
-                      {t(`groups.${heading}`)}
+                      {t(`groups.${group.heading}`)}
                     </p>
                   )}
                   <ul className="flex flex-col gap-0.5">
@@ -184,7 +241,7 @@ export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, 
                             {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
                           >
                             <NavIcon name={menuIcon(item.label)} />
-                            <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>
+                            <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label as NavLabel] ?? item.label)}</span>
                             {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
                           </Link>
                         </li>

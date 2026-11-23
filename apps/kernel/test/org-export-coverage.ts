@@ -38,6 +38,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_meetings.chat_channel_target': 'the sealed address of a meeting chat channel: a credential',
   'ludy_meetings.media_key': "the wrapped keys of a meeting's recording: key material",
   'ludy_meetings.member_hook': "a member's own webhook with its sealed secret: a credential, private to its member",
+  'ludy_sign.api_key': 'scoped external eSign REST API key hashes (key_sha256): definer-only credentials',
   'ludy_sign.ca_connection': 'sealed CA provider credentials (secret_envelope): definer-only credentials',
   'ludy_sign.webhook': 'outbound eSign webhook endpoints with broker-sealed HMAC secrets (secret_envelope): definer-only credentials',
   'ludy_sign.webhook_delivery': 'an outbound eSign webhook delivery queue and log row: runtime machinery',

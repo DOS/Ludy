@@ -707,6 +707,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_sign.template_role.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether template role signers require email OTP' },
   'ludy_sign.template_direct_link.require_email_otp': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Boolean flag configuring whether template direct signing links require email OTP' },
   'ludy_sign.template_direct_link.token_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of reusable template direct signing capability token' },
+  'ludy_sign.api_key.key_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of scoped org eSign REST API key' },
   'ludy_sign.ca_connection.secret_envelope': {
     kind: 'other',
     handling: 'keep_org',

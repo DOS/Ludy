@@ -1583,6 +1583,9 @@ export const KERNEL_ERROR_CODES = [
   // eSign Slice 5e signer KYC attachment verification (#4443).
   'SIGN_AI_DISABLED',
   'SIGN_FIELD_NOT_FOUND',
+  // eSign Slice 5c scoped org API keys (#4441).
+  'SIGN_API_KEY_LIMIT_REACHED',
+  'SIGN_API_KEY_NOT_FOUND',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

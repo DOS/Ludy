@@ -140,6 +140,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
+  'apps/kernel/src/sign-api-v1.ts': { modules: ['sign'], why: 'the orgless scoped /api/v1/sign/* external REST resolvers (crove_sign.api_key_* definers, #4441), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-direct-link.ts': { modules: ['sign'], why: 'the orgless public direct eSign link ceremony resolvers (crove_sign.public_direct_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-link.ts': { modules: ['sign'], why: 'the orgless public eSign link and verification resolvers (crove_sign.public_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-public-hub.ts': { modules: ['sign'], why: 'the orgless public self-service eSign template hub resolvers (crove_sign.public_hub_* definers), registered only when sign is installed (http.ts)' },

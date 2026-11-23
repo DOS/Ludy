@@ -14,7 +14,7 @@ import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { aiConnectionsVisible } from '../lib/agents.ts';
 import { orpc } from '../lib/api.ts';
-import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
+import { ALL_NAV, NAV_KEYWORDS, SETTINGS_ITEMS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
@@ -54,9 +54,9 @@ export function OrgLayout() {
   const modulesVersion = useModulesVersion();
   const allNav = useMemo(() => installedItems(installedModules(), ALL_NAV), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
   const allApps = useMemo(() => installedApps(installedModules()), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
-  // The app of the screen (#1528), from the URL so a deep link opens in its app. The org's own screens (Overview, Notifications,
-  // Settings, the activity log, Personal data) belong to no app: the shell shows the rail and no app menu there (#3588), never the
-  // menu of an app the owner did not open.
+  const settingsItems = useMemo(() => installedItems(installedModules(), SETTINGS_ITEMS), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  // The app of the screen (#1528), from the URL so a deep link opens in its app. Overview, Notifications, Audit and Personal data
+  // belong to no app: the shell shows the rail and no secondary menu there (#3588). Settings shows its own sub-page menu (#4499).
   const { pathname } = useLocation();
   const screenApp = appOfPath(pathname);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -309,6 +309,7 @@ export function OrgLayout() {
       slug={slug}
       apps={apps}
       app={screenApp}
+      settingsItems={settingsItems}
       // The pending count sits on the Documents item, whose first tab is "Chờ duyệt" (#3225).
       badges={{ documents: menuBadges.inbox, social: menuBadges.social, alerts: workUnread, socialNotifications: unread }}
       orgs={me.data?.orgs ?? []}

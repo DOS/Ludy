@@ -99,6 +99,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_sign_playbook.sql',
       // #4443 (eSign Slice 5e): the purge restatement that adds crove_sign.kyc_check restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_sign_kyc_check.sql',
+      // #4441 (eSign Slice 5c): the purge restatement that adds crove_sign.api_key restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_api_keys.sql',
     ]);
   });
 });

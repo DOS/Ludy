@@ -397,7 +397,7 @@ function parseStoredProposal(raw: unknown): SignObligationProposalContract | nul
   };
 }
 
-interface ObligationDbRow {
+export interface ObligationDbRow {
   org_id: string;
   id: string;
   envelope_id: string;
@@ -419,7 +419,7 @@ interface ObligationDbRow {
   updated_at: Date | string;
 }
 
-function toObligationRecord(row: ObligationDbRow): SignEnvelopeObligationRecordContract {
+export function toObligationRecord(row: ObligationDbRow): SignEnvelopeObligationRecordContract {
   const rawCurrency = typeof row.currency === 'string' ? row.currency.trim().toUpperCase() : '';
   return {
     id: row.id,
