@@ -198,7 +198,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
   it('leaves the delivery events of the follow-up mails out of the org export and keeps those of every other mail', async () => {
     const m = await seedSent({});
     const other = (await sqlAdmin<{ id: string }>(
-      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('c', 64), 's', '{\"keep\":true}', '<export-event@y.test>', 'sent') RETURNING id",
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('c', 64), 's', '{\"keep\":true}', '<export-event@y.test>', 'queued') RETURNING id",
       [orgId, m],
     )).rows[0]!.id;
     const followups = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, m])).rows.map((r) => r.id);
