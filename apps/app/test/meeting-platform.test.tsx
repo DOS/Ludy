@@ -382,7 +382,7 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, 'vi'))).toContain('Chỉ có bản hình, chưa nhập được');
   });
 
-  it('shows the already-recorded notice in vi and en with an accessible meeting link and hides Import when matchedMeeting is present', () => {
+  it('shows the already-recorded notice in vi and en with an accessible meeting link and keeps Import and Skip when matchedMeeting is present (#4537)', () => {
     for (const locale of ['vi', 'en'] as const) {
       reset();
       const words = locale === 'vi' ? viMessages : en;
@@ -396,7 +396,7 @@ describe('PlatformRecordings (Meetings tab)', () => {
       const matchedItems = html.split('data-testid="meeting-recording"').slice(1);
       expect(matchedItems).toHaveLength(3);
 
-      // Matched rows show the required notice and link to the meeting, offer no Import or blocked reason, and keep Skip.
+      // Matched rows show the notice as a hint and link to the meeting, and keep Import (or the blocked reason) and Skip: the match is a time overlap only.
       for (const [idx, expectedMeetingId, expectedTitle] of [
         [0, 'm-matched-1', 'Họp quý 4'],
         [1, 'm-matched-2', 'Video đã có'],
@@ -416,8 +416,9 @@ describe('PlatformRecordings (Meetings tab)', () => {
         expect(item).toContain('min-w-11');
         expect(item).toContain('focus-visible:ring-3');
         expect(item).toContain('text-link');
-        expect(item).not.toContain('meeting-recording-import');
-        expect(item).not.toContain('meeting-recording-blocked');
+        // The first can be imported, the second is a video-only file the import cannot take: each keeps what an unmatched row of its kind shows.
+        expect(item).toContain(idx === 0 ? 'data-testid="meeting-recording-import"' : 'data-testid="meeting-recording-blocked"');
+        expect(item).not.toContain(idx === 0 ? 'meeting-recording-blocked' : 'meeting-recording-import');
         expect(item).toContain(words.meetings.platform.recordings.dismiss);
       }
 
@@ -425,8 +426,8 @@ describe('PlatformRecordings (Meetings tab)', () => {
       expect(matchedItems[2]).toContain('data-testid="meeting-recording-import"');
       expect(matchedItems[2]).not.toContain('meeting-recording-matched');
     }
-    expect(viMessages.meetings.platform.recordings.alreadyRecorded).toBe('Ludy đã có bản ghi của cuộc họp này');
-    expect(en.meetings.platform.recordings.alreadyRecorded).toBe('Ludy already has a recording of this meeting');
+    expect(viMessages.meetings.platform.recordings.alreadyRecorded).toContain('có thể đã có bản ghi');
+    expect(en.meetings.platform.recordings.alreadyRecorded).toContain('may already have a recording');
   });
 
   it('shows each state in words: importing, processing, imported with a link to the meeting, failed with a retry', () => {

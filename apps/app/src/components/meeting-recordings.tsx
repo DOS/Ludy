@@ -218,39 +218,35 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {row.status === 'suggested' && matched !== null && (
+          {row.status === 'suggested' && (
             <>
-              <Link
-                to="/o/$slug/meetings/$id"
-                params={{ slug, id: matched.meetingId }}
-                aria-label={t('openMatchedOf', { title })}
-                className="inline-flex min-h-11 min-w-11 items-center rounded px-2 text-xs font-medium text-link underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-6 md:min-w-0 md:px-0"
-                data-testid="meeting-recording-matched-link"
-              >
-                {t('openMatched')}
-              </Link>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
-            </>
-          )}
-          {row.status === 'suggested' && matched === null && block === null && (
-            <>
-              {canImport ? (
-                <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
-                  {t('import')}
-                </Button>
+              {matched !== null && (
+                <Link
+                  to="/o/$slug/meetings/$id"
+                  params={{ slug, id: matched.meetingId }}
+                  aria-label={t('openMatchedOf', { title })}
+                  className="inline-flex min-h-11 min-w-11 items-center rounded px-2 text-xs font-medium text-link underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-6 md:min-w-0 md:px-0"
+                  data-testid="meeting-recording-matched-link"
+                >
+                  {t('openMatched')}
+                </Link>
+              )}
+              {/* The match is a time overlap only (#4537): it is a hint, never a reason to hide Import, which the server allows. */}
+              {block === null ? (
+                canImport ? (
+                  <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
+                    {t('import')}
+                  </Button>
+                ) : (
+                  <span className="text-xs text-muted-foreground" data-testid="meeting-recording-viewer">
+                    {t('viewerOnly')}
+                  </span>
+                )
               ) : (
-                <span className="text-xs text-muted-foreground" data-testid="meeting-recording-viewer">
-                  {t('viewerOnly')}
+                <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
+                  {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
                 </span>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
-            </>
-          )}
-          {row.status === 'suggested' && matched === null && block !== null && (
-            <>
-              <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
-                {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
-              </span>
               {quiet(t('dismiss'), t('dismissOf', { title }))}
             </>
           )}

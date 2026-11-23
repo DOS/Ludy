@@ -3815,7 +3815,7 @@ export const en = {
         processing: 'Processing...',
         stagedHint: 'The recording is downloaded and waiting to be received. Keep this page open; after 55 minutes you must import it again.',
         imported: 'Imported: open the meeting',
-        alreadyRecorded: 'Ludy already has a recording of this meeting',
+        alreadyRecorded: 'Ludy may already have a recording of this meeting (same time). If this is a different call, you can still import it.',
         openMatched: 'Open meeting',
         openMatchedOf: 'Open meeting for {title}',
         failed: 'Could not import: {reason}',

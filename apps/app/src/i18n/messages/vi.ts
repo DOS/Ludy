@@ -3812,7 +3812,7 @@ export const vi = {
         processing: 'Đang xử lý...',
         stagedHint: 'Bản ghi đã tải xong và chờ được nhận. Hãy giữ trang này mở; sau 55 phút bạn phải nhập lại.',
         imported: 'Đã nhập: mở cuộc họp',
-        alreadyRecorded: 'Ludy đã có bản ghi của cuộc họp này',
+        alreadyRecorded: 'Ludy có thể đã có bản ghi của cuộc họp này (cùng giờ). Nếu đây là cuộc gọi khác, bạn vẫn nhập được.',
         openMatched: 'Mở cuộc họp',
         openMatchedOf: 'Mở cuộc họp cho {title}',
         failed: 'Không nhập được: {reason}',
