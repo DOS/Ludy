@@ -1189,6 +1189,15 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
       expect(noBundle.status).toBe(1);
       expect(noBundle.out).toContain('(observed: no script bundle in HTML)');
+
+      const bareShaWithoutKey = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: SHA,
+        STUB_APP_BUNDLE_JS: `const COMMIT="${SHA}";`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(bareShaWithoutKey.status).toBe(1);
+      expect(bareShaWithoutKey.out).toContain('(observed: none)');
     });
 
     it('refuses invalid arguments with exit 2', () => {

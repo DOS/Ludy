@@ -287,10 +287,6 @@ check_app_build_probe() {
       return 1
     fi
 
-    if grep -qF -e "\"$expected\"" -e "'$expected'" -e "\`$expected\`" "$jsfile"; then
-      return 0
-    fi
-
     chunk_refs="$(grep -oE '(/|\./)?assets/[A-Za-z0-9._-]+\.js' "$jsfile" || true)"
     if [ -n "$chunk_refs" ]; then
       while IFS= read -r ref; do
