@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
@@ -107,6 +107,24 @@ export function ShellNav({
   const settingsSelected = current === undefined && isSettingsPath(pathname);
   const hasSecondary = hasSecondaryNav(app, apps, pathname);
   const railOnly = mode === 'sidebar' && (!hasSecondary || secondaryCollapsed);
+  const toggleBtnRef = useRef<HTMLButtonElement>(null);
+  const restoreToggleFocusRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!restoreToggleFocusRef.current) return;
+    restoreToggleFocusRef.current = false;
+    toggleBtnRef.current?.focus({ preventScroll: true });
+  }, [railOnly]);
+  const handleToggleSecondary = () => {
+    if (typeof document !== 'undefined' && document.activeElement === toggleBtnRef.current) {
+      restoreToggleFocusRef.current = true;
+    }
+    onToggleSecondary?.();
+  };
+  const handleToggleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === '[' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      restoreToggleFocusRef.current = true;
+    }
+  };
   const menuTitle = current ? t(`appNames.${current.id}`) : settingsSelected ? t('settings') : null;
   const menuGroups: ReadonlyArray<{ id: string; heading: HeadedGroupId | null; ariaLabel?: string; items: readonly (NavItem | SettingsNavItem)[] }> = current
     ? current.groups.map((group) => {
@@ -149,10 +167,12 @@ export function ShellNav({
           {railOnly && hasSecondary && onToggleSecondary && (
             <div className="mb-1 flex justify-center">
               <Button
+                ref={toggleBtnRef}
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                onClick={onToggleSecondary}
+                onClick={handleToggleSecondary}
+                onKeyDown={handleToggleKeyDown}
                 aria-label={t('expandSidebar')}
                 title={t('expandSidebar')}
                 aria-expanded={false}
@@ -195,9 +215,12 @@ export function ShellNav({
                   aria-label={`${tp('open')} (${paletteKeys})`}
                   title={`${tp('open')} (${paletteKeys})`}
                   data-testid="rail-search-btn"
-                  className="bg-background text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                  className={cn(
+                    'bg-background text-muted-foreground hover:bg-sidebar-accent hover:text-foreground',
+                    onOpenQuickCapture && 'size-[26px]',
+                  )}
                 >
-                  <NavIcon name="search" className="size-4" />
+                  <NavIcon name="search" className={onOpenQuickCapture ? 'size-3.5' : 'size-4'} />
                 </Button>
                 {onOpenQuickCapture && (
                   <Button
@@ -208,9 +231,9 @@ export function ShellNav({
                     aria-label={tmw('quickCaptureTrigger')}
                     title={tmw('quickCaptureTrigger')}
                     data-testid="shell-quick-capture-btn"
-                    className="bg-background text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                    className="size-[26px] bg-background text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
                   >
-                    <ProjectIcon name="plus" className="size-4" />
+                    <ProjectIcon name="plus" className="size-3.5" />
                   </Button>
                 )}
               </div>
@@ -249,10 +272,12 @@ export function ShellNav({
               <Logo />
               {mode === 'sidebar' && hasSecondary && onToggleSecondary && (
                 <Button
+                  ref={toggleBtnRef}
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  onClick={onToggleSecondary}
+                  onClick={handleToggleSecondary}
+                  onKeyDown={handleToggleKeyDown}
                   aria-label={t('collapseSidebar')}
                   title={t('collapseSidebar')}
                   aria-expanded={true}

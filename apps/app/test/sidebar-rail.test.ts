@@ -99,13 +99,21 @@ describe('sidebar-rail persistence & SSR safety (#4519)', () => {
     expect(storage.getItem(reloaded.SIDEBAR_COLLAPSED_STORAGE_KEY)).toBeNull();
   });
 
-  it('gracefully falls back to in-memory state when localStorage throws', async () => {
-    const rail = await load({ throwOnRead: true, throwOnWrite: true });
-    expect(rail.readSidebarCollapsed()).toBe(false);
-    expect(() => rail.setSidebarCollapsed(true)).not.toThrow();
-    expect(rail.readSidebarCollapsed()).toBe(true);
-    expect(() => rail.setSidebarCollapsed(false)).not.toThrow();
-    expect(rail.readSidebarCollapsed()).toBe(false);
+  it('gracefully falls back to in-memory state when localStorage throws on read and write or on write only', async () => {
+    const railBoth = await load({ throwOnRead: true, throwOnWrite: true });
+    expect(railBoth.readSidebarCollapsed()).toBe(false);
+    expect(() => railBoth.setSidebarCollapsed(true)).not.toThrow();
+    expect(railBoth.readSidebarCollapsed()).toBe(true);
+    expect(() => railBoth.setSidebarCollapsed(false)).not.toThrow();
+    expect(railBoth.readSidebarCollapsed()).toBe(false);
+
+    // QuotaExceededError case: getItem succeeds (returns null) while setItem throws.
+    const railWriteOnly = await load({ throwOnRead: false, throwOnWrite: true });
+    expect(railWriteOnly.readSidebarCollapsed()).toBe(false);
+    expect(() => railWriteOnly.setSidebarCollapsed(true)).not.toThrow();
+    expect(railWriteOnly.readSidebarCollapsed()).toBe(true);
+    expect(() => railWriteOnly.setSidebarCollapsed(false)).not.toThrow();
+    expect(railWriteOnly.readSidebarCollapsed()).toBe(false);
   });
 
   it('renders cleanly in SSR without window', async () => {

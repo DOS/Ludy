@@ -32,7 +32,8 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   await expect(account).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
   // A new org opens on the overview, which belongs to no app: the 64px rail shows with no 224px secondary panel (#3588, #4519).
-  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  const sidebarWidth = () => sidebar.boundingBox().then((box) => Math.round(box?.width ?? 0));
+  await expect.poll(sidebarWidth).toBe(64);
   await expect(sidebar.getByTestId('rail-search-btn')).toBeInViewport();
   await expect(sidebar.getByTestId('sidebar-toggle-btn')).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
@@ -43,28 +44,31 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   await page.goto(`/o/${slug}/journal`);
   await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toHaveAttribute('aria-current', 'true');
-  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(288);
+  await expect.poll(sidebarWidth).toBe(288);
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
 
-  // Clicking the collapse toggle or pressing `[` collapses/expands the secondary sidebar and persists across reload (#4519).
-  await sidebar.getByTestId('sidebar-toggle-btn').click();
-  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  // Activating the collapse toggle keeps keyboard focus on the counterpart button and persists across reload (#4519).
+  const toggleBtn = sidebar.getByTestId('sidebar-toggle-btn');
+  await toggleBtn.focus();
+  await page.keyboard.press('Enter');
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toHaveCount(0);
+  await expect.poll(sidebarWidth).toBe(64);
+  await expect(toggleBtn).toBeFocused();
   await page.reload();
   await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toBeVisible();
-  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  await expect.poll(sidebarWidth).toBe(64);
   // `[` inside an input field does not toggle the sidebar.
   await page.goto(`/o/${slug}/my-work`);
   const quickInput = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
   await quickInput.focus();
   await page.keyboard.press('[');
   await expect(quickInput).toHaveValue('[');
-  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  await expect.poll(sidebarWidth).toBe(64);
   await quickInput.evaluate((el) => (el as HTMLElement).blur());
   await page.keyboard.press('[');
-  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(288);
   await expect(sidebar.getByRole('link', { name: 'Việc của tôi' })).toBeVisible();
+  await expect.poll(sidebarWidth).toBe(288);
   await page.goto(`/o/${slug}/journal`);
 
   // On a 1366x768 laptop no app's menu scrolls.

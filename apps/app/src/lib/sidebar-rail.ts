@@ -9,6 +9,7 @@ export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'ludy-sidebar-collapsed';
 
 const listeners = new Set<() => void>();
 let memoryCollapsed = false;
+let storageWriteFailed = false;
 let stopStorageListener: (() => void) | null = null;
 
 function localStorageOrNull(): Storage | null {
@@ -24,6 +25,7 @@ function parseStoredCollapsed(value: string | null): boolean {
 }
 
 export function readSidebarCollapsed(): boolean {
+  if (storageWriteFailed) return memoryCollapsed;
   const store = localStorageOrNull();
   if (!store) return memoryCollapsed;
   try {
@@ -48,8 +50,11 @@ export function setSidebarCollapsed(next: boolean | ((prev: boolean) => boolean)
     try {
       if (resolved) store.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, '1');
       else store.removeItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
+      storageWriteFailed = false;
     } catch {
-      // Storage unavailable (private mode or blocked quota): keep in memory for this session.
+      // Storage unavailable (private mode or blocked quota): keep in memory for this session
+      // without letting readSidebarCollapsed overwrite it with stale localStorage.getItem values.
+      storageWriteFailed = true;
     }
   }
   notify();
@@ -61,6 +66,7 @@ function attachStorageSync(): void {
   const onStorage = (event: StorageEvent) => {
     if (event.key !== SIDEBAR_COLLAPSED_STORAGE_KEY && event.key !== null) return;
     if (event.storageArea && event.storageArea !== localStorageOrNull()) return;
+    storageWriteFailed = false;
     const prev = memoryCollapsed;
     const next = event.key === SIDEBAR_COLLAPSED_STORAGE_KEY ? parseStoredCollapsed(event.newValue) : readSidebarCollapsed();
     if (next !== prev) {
