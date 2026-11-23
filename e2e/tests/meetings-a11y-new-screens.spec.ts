@@ -49,6 +49,8 @@ async function ensureMorning(page: Page, slug: string, on: boolean): Promise<voi
   await expect.poll(stored).toBe(on ? 1 : 0);
   // Saved: the switch can be used again (it waits while the save is on its way).
   await expect(toggle).toBeEnabled();
+  // Toggling near the bottom scrolls earlier checkboxes behind sticky PhoneHeader; scan from the top like the initial visit.
+  await page.evaluate(() => window.scrollTo(0, 0));
 }
 
 // A user with a published meeting (a decision the weekly card lists) and a connected calendar with two events today, one of them recorded: the data the screens read. Each width runs in its own test

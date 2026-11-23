@@ -337,7 +337,7 @@ export function VoucherFormPanel({ slug, onClose, fromLine }: { slug: string; on
       </div>
 
       <div>
-        <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('form.lines')}</p>
+        <p className="text-xs font-medium text-subtle-foreground">{t('form.lines')}</p>
         <div className="mt-2 space-y-2">
           {lines.map((l, i) => {
             const lineField = `line:${l.key}` as const;
@@ -445,7 +445,7 @@ export function VoucherFormPanel({ slug, onClose, fromLine }: { slug: string; on
 
       {!problem && (
         <div>
-          <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('form.preview')}</p>
+          <p className="text-xs font-medium text-subtle-foreground">{t('form.preview')}</p>
           <table className="mt-2 w-full text-sm">
             <tbody className="divide-y">
               {journal.map((j, i) => (
