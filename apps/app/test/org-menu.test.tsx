@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The org menu at the top of the sidebar (#3579), rendered on the server: the trigger is a labelled button with the
-// current org's name (no native select, no separate "add" link under it), picking an org closes the phone drawer and then
-// opens the org's overview, and "Thêm tổ chức" reads the same in the menu and in the firm guide. The open menu itself
-// (its items, the keyboard, the phone drawer) is a client-side popup: e2e/tests/org-menu.spec.ts drives it.
+// The org menu inside the bottom account popover (#3579, #4502), rendered on the server: the trigger is a labelled button
+// with the current org's name (no native select, no separate "add" link under it), picking an org closes the popover and
+// phone drawer and then opens the org's overview, and "Thêm tổ chức" reads the same in the menu and in the firm guide.
+// The open menu itself (its items, the keyboard, the phone drawer) is a client-side popup: e2e/tests/org-menu.spec.ts drives it.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';

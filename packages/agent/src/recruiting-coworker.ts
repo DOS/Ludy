@@ -13,14 +13,20 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { evaluateCandidateReadiness, extractCvFieldsDeterministically, type CandidateReadinessResult, type RecruitingStage, type WageComparison } from '@ludy/l10n-vn';
-import { draftLinksOutside } from './conversation.ts';
+import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { statedFiguresProblem } from './overview.ts';
 import { PayrollPromptLeakError } from './payroll-coworker.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
-import { hasAddress } from './reminder.ts';
 
 export type RecruitingBriefAiReason = 'ok' | 'off' | 'budget' | 'rate_limited' | 'unavailable' | 'refused';
 
@@ -531,7 +537,7 @@ function verifyCandidateTextItem(
   const cleaned = oneLine(rawItem);
   if (cleaned === '' || Array.from(cleaned).length > maxChars) return null;
   if (maxSentences !== null && sentencesIn(cleaned) > maxSentences) return null;
-  if (HAS_UNTRUSTED_FENCE_TAG_RE.test(cleaned)) return null;
+  if (HAS_UNTRUSTED_FENCE_TAG_RE.test(cleaned) || hasPromptMarkupLeak(rawItem) || hasPromptMarkupLeak(cleaned)) return null;
   if (hasUnexpectedAlias(cleaned, trustedAliasSource)) return null;
   const bare = withoutCandidateAlias(cleaned);
   if (hasRecruitingAddress(bare)) return null;
@@ -997,9 +1003,9 @@ function isSafeCvTextField(value: string, maxChars: number): string | null {
   if (hasMarkdownNoise(value)) return null;
   const normalized = oneLine(value);
   if (normalized === '' || Array.from(normalized).length > maxChars) return null;
-  if (HAS_UNTRUSTED_CV_FENCE_TAG_RE.test(normalized) || HAS_UNTRUSTED_FENCE_TAG_RE.test(normalized)) return null;
-  if (draftLinksOutside(normalized, []).length > 0) return null;
-  if (hasAutonomousHireRejectDirective(normalized)) return null;
+  if (HAS_UNTRUSTED_CV_FENCE_TAG_RE.test(normalized) || HAS_UNTRUSTED_FENCE_TAG_RE.test(normalized) || hasPromptMarkupLeak(value) || hasPromptMarkupLeak(normalized)) return null;
+  if (draftLinksOutside(normalized, []).length > 0 || hasObfuscatedContactOrLink(normalized)) return null;
+  if (hasAutonomousHireRejectDirective(normalized) || hasAutonomousActionDirective(normalized)) return null;
   return normalized;
 }
 
@@ -1053,6 +1059,7 @@ function validateCvAiOutput(
   if (rawSummary !== null) {
     summary = isSafeCvTextField(rawSummary, 600);
     if (summary === null) return null;
+    if (hasAddress(summary) || draftFiguresOutside(summary, [cvText]).length > 0 || (hasUngroundedMoneyOrScaleWords(summary) && !hasUngroundedMoneyOrScaleWords(cvText))) return null;
   }
   const lowerCv = cvText.toLowerCase();
   const foldedCv = foldCvEvidence(cvText);

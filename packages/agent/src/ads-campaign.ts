@@ -15,6 +15,13 @@ import { generateText, NoObjectGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { metered } from './meter.ts';
 
 export const CAMPAIGN_OBJECTIVES = ['traffic', 'engagement', 'messenger'] as const;
@@ -139,8 +146,17 @@ export class AdsCampaignWriter {
     const trusted = [cut(request.brief, CAMPAIGN_BRIEF_CHARS)];
     // Every text the model wrote that ends up on the draft and the approval card: the name, the texts, the interests and the regions.
     const copy = [plan.data.name, ...plan.data.variants.flatMap((v) => [v.headline, v.primaryText]), ...plan.data.targeting.interests, ...plan.data.targeting.locations.map((l) => l.region ?? '')].join('\n');
+    const copyWithLink = [copy, plan.data.linkUrl ?? ''].join('\n');
+    if (hasStealthControls(copyWithLink) || hasPromptMarkupLeak(copyWithLink)) return { kind: 'none', code: 'INVALID' };
     if (draftFiguresOutside(copy, trusted).length > 0) return { kind: 'none', code: 'FIGURES' };
-    if (draftLinksOutside([copy, plan.data.linkUrl ?? ''].join('\n'), trusted).length > 0) return { kind: 'none', code: 'LINK' };
+    if (draftLinksOutside(copyWithLink, trusted).length > 0) return { kind: 'none', code: 'LINK' };
+    if (
+      hasObfuscatedContactOrLink(copyWithLink, trusted) ||
+      hasAutonomousActionDirective(copy) ||
+      (hasUngroundedMoneyOrScaleWords(copy) && trusted.every((t) => !hasUngroundedMoneyOrScaleWords(t)))
+    ) {
+      return { kind: 'none', code: 'LINK' };
+    }
     return { kind: 'draft', plan: plan.data };
   }
 }

@@ -15714,6 +15714,7 @@ export const vi = {
       REDACTION_PUBLISHED_IMMUTABLE: 'Nội dung cuộc họp đã phát hành không thể che lại ở bước nháp.',
       REDACTION_SPAN_MISMATCH: 'Mục đã chọn không còn khớp với dữ liệu nhạy cảm hiện tại. Hãy tải lại để kiểm tra.',
       REDACTION_STALE: 'Bản nháp vừa thay đổi sau khi bạn xem. Hãy tải lại và kiểm tra trước khi che.',
+      REDACTION_TOO_LONG: 'Khi chèn dấu che, một đoạn sẽ dài hơn mức cho phép. Hãy rút ngắn đoạn đó trước rồi che lại. Chưa có gì bị thay đổi.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
       CAPTURE_ALREADY_RUNNING: 'Cuộc họp này đang được ghi ở một nơi khác. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
       CONSENT_METHOD_NOT_ALLOWED: 'Tổ chức này chỉ nhận thông báo bằng văn bản: hãy chọn dán thông báo vào khung chat, ghi trong lời mời hoặc thông báo bằng văn bản.',
