@@ -161,6 +161,9 @@ describe('.github/workflows/deploy.yml release sync (#3580)', () => {
     expect(block).toContain("needs.target.outputs.environment == 'pilot'");
     expect(block).toContain("needs.deploy.outputs.deployed == 'true'");
     expect(block).toContain('actions/workflows/release-branch.yml/dispatches');
+    expect(block).toContain('X-GitHub-Api-Version: 2026-03-10');
+    expect(block).not.toContain('return_run_details');
+    expect(block).toContain('select(.id > $before)');
     expect(block).toContain('ref: "main"');
     expect(block).toContain('repos/$REPO/git/ref/heads/release');
     expect(block).toContain('bash tools/deploy/deploy.sh check-app-build "$APP_URL" "$SHA" "$PUBLIC_URL"');

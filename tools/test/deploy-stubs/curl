@@ -17,7 +17,7 @@
 set -euo pipefail
 
 printf '%s\n' "$*" >>"$STUB_LOG.argv"
-out='' url='' headers='' data='' form='' wout='' fail=0
+out='' url='' headers='' data='' form='' wout='' fail=0 location=0 max_redirs=''
 while (($# > 0)); do
   case "$1" in
     --output)
@@ -28,8 +28,23 @@ while (($# > 0)); do
       fail=1
       shift
       ;;
+    --location)
+      location=1
+      shift
+      ;;
+    --max-redirs)
+      max_redirs="$2"
+      shift 2
+      ;;
     --max-time | --request | --proto | --proto-redir)
       shift 2
+      ;;
+    --)
+      shift
+      if (($# > 0)); then
+        url="$1"
+        shift
+      fi
       ;;
     --write-out)
       wout="$2"
@@ -55,6 +70,13 @@ while (($# > 0)); do
   esac
 done
 printf 'curl %s\n' "$url" >>"$STUB_LOG"
+if [ -n "${STUB_APP_REDIRECT:-}" ]; then
+  if ((location)) && [ "$max_redirs" = '0' ]; then
+    echo 'curl: (47) Maximum (0) redirects followed' >&2
+    exit 47
+  fi
+  exit 0
+fi
 
 running="$(cat "$STUB_DEPLOY_DIR/docker-compose.override.yml" 2>/dev/null || true)"
 status=200 body=''

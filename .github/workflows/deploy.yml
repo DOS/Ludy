@@ -586,6 +586,9 @@ jobs:
           SHA: ${{ needs.target.outputs.sha }}
         run: |
           set -euo pipefail
+          before_id="$(gh api "repos/$REPO/actions/workflows/release-branch.yml/runs?event=workflow_dispatch&branch=main&per_page=1" \
+            --jq '.workflow_runs[0].id // 0' 2>/dev/null || echo 0)"
+          [[ "$before_id" =~ ^[0-9]+$ ]] || before_id=0
           dispatched_at="$(date -u -d '30 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
           response="$(jq -cn --arg tag "$TAG" '{ref: "main", inputs: {tag: $tag}}' \
             | gh api -X POST "repos/$REPO/actions/workflows/release-branch.yml/dispatches" \
@@ -598,8 +601,8 @@ jobs:
             echo 'No workflow_run_id in dispatch response; looking up the dispatched run...'
             lookup_deadline=$((SECONDS + 120))
             while :; do
-              row="$(gh api "repos/$REPO/actions/workflows/release-branch.yml/runs?event=workflow_dispatch&branch=main&created=>=$dispatched_at&per_page=10" \
-                --jq '.workflow_runs[0] | select(.) | [.id, .html_url] | @tsv' 2>/dev/null || true)"
+              row="$(gh api "repos/$REPO/actions/workflows/release-branch.yml/runs?event=workflow_dispatch&branch=main&created=>=$dispatched_at&per_page=10" 2>/dev/null \
+                | jq -r --argjson before "$before_id" '([.workflow_runs[] | select(.id > $before)] | first) // empty | "\(.id)\t\(.html_url)"' || true)"
               if [ -n "$row" ]; then
                 run_id="${row%%$'\t'*}"
                 run_url="${row#*$'\t'}"

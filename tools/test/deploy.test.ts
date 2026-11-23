@@ -1200,6 +1200,52 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(bareShaWithoutKey.out).toContain('(observed: none)');
     });
 
+    it('rejects traversal, query strings, curl globs, and 3xx redirects, and hardens curl flags', () => {
+      const unsafeHtml = [
+        '<div id="root"></div>',
+        '<script src="/assets/../../internal/foo.js"></script>',
+        '<script src="/assets/index.js?redirect=https://evil.example"></script>',
+        '<script src="/assets/a[1-99999].js"></script>',
+        '<script src="/assets/..foo.js"></script>',
+      ].join('');
+      const unsafeOnly = run(['check-app-build', APP, SHA], {
+        STUB_APP_HTML: unsafeHtml,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(unsafeOnly.status).toBe(1);
+      expect(unsafeOnly.out).toContain('(observed: no script bundle in HTML)');
+      expect(readFileSync(log, 'utf8')).toBe(`curl ${APP}/login\n`);
+
+      writeFileSync(log, '');
+      writeFileSync(`${log}.argv`, '');
+      const mixed = run(['check-app-build', APP, SHA], {
+        STUB_APP_HTML: `${unsafeHtml}<script type="module" src="/assets/index-abc123.js"></script>`,
+        STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(mixed.status, mixed.out).toBe(0);
+      expect(readFileSync(log, 'utf8')).toBe(`curl ${APP}/login\ncurl ${APP}/assets/index-abc123.js\n`);
+      const argv = readFileSync(`${log}.argv`, 'utf8').split('\n').filter(Boolean);
+      expect(argv[0]).toMatch(/^-q .*--globoff .*--location --max-redirs 0 --proto =http,https --proto-redir =http,https .* -- https:\/\/app\.example\.test\/login$/);
+
+      const redirect = run(['check-app-build', APP, SHA], {
+        STUB_APP_REDIRECT: '1',
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(redirect.status).toBe(1);
+      expect(redirect.out).toContain('(observed: request failed)');
+
+      const leadingZero = run(['check-app-build', APP, SHA], {
+        STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
+        CROVE_APP_BUILD_TIMEOUT: '08',
+        CROVE_APP_BUILD_POLL: '00',
+      });
+      expect(leadingZero.status, leadingZero.out).toBe(0);
+    });
+
     it('refuses invalid arguments with exit 2', () => {
       expect(run(['check-app-build', 'app.example.test', SHA]).status).toBe(2);
       expect(run(['check-app-build', APP, 'bad build']).status).toBe(2);

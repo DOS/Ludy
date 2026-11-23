@@ -222,8 +222,8 @@ smoke_version() {
 }
 
 smoke_get_nocache() {
-  curl --silent --show-error --fail --location --max-time 15 \
-    --header 'Cache-Control: no-cache' --header 'Pragma: no-cache' "$1"
+  curl -q --silent --show-error --fail --globoff --location --max-redirs 0 --proto '=http,https' --proto-redir '=http,https' --max-time 15 \
+    --header 'Cache-Control: no-cache' --header 'Pragma: no-cache' -- "$1"
 }
 
 CHECK_APP_OBSERVED='none'
@@ -242,7 +242,7 @@ check_app_build_probe() {
     return 1
   fi
 
-  raw_assets="$(printf '%s' "$page" | grep -oE '(src|href)=["'\'']/assets/[^"'\'' ]+\.js["'\'']' | sed -E 's/^(src|href)=["'\'']//; s/["'\'']$//' || true)"
+  raw_assets="$(printf '%s' "$page" | grep -oE '(src|href)=["'\'']/assets/[A-Za-z0-9._-]+\.js["'\'']' | sed -E 's/^(src|href)=["'\'']//; s/["'\'']$//' || true)"
   if [ -z "$raw_assets" ]; then
     CHECK_APP_OBSERVED='no script bundle in HTML'
     return 1
@@ -250,6 +250,7 @@ check_app_build_probe() {
 
   while IFS= read -r asset; do
     [ -n "$asset" ] || continue
+    [[ "$asset" =~ ^/assets/[A-Za-z0-9._-]+\.js$ ]] && [[ "$asset" != *..* ]] || continue
     if [ "$asset" = '/assets/theme-boot.js' ]; then
       boot_seen=1
       continue
@@ -259,11 +260,16 @@ check_app_build_probe() {
   if ((boot_seen)) && [ -z "$queued" ]; then
     queued='/assets/theme-boot.js'
   fi
+  if [ -z "$queued" ]; then
+    CHECK_APP_OBSERVED='no script bundle in HTML'
+    return 1
+  fi
 
   local key_re='VITE_BUILD["'\''`]?[[:space:]]*[:=][[:space:]]*["'\''`][^"'\''`]{0,64}["'\''`]'
   while [ -n "$queued" ] && ((count < 50)); do
     asset="${queued%% *}"
     if [ "$asset" = "$queued" ]; then queued=''; else queued="${queued#* }"; fi
+    [[ "$asset" =~ ^/assets/[A-Za-z0-9._-]+\.js$ ]] && [[ "$asset" != *..* ]] || continue
     case " $seen " in *" $asset "*) continue ;; esac
     seen="${seen:+$seen }$asset"
     count=$((count + 1))
@@ -293,6 +299,7 @@ check_app_build_probe() {
         [ -n "$ref" ] || continue
         ref="${ref#./}"
         ref="/${ref#/}"
+        [[ "$ref" =~ ^/assets/[A-Za-z0-9._-]+\.js$ ]] && [[ "$ref" != *..* ]] || continue
         case " $seen $queued " in *" $ref "*) ;; *) queued="${queued:+$queued }$ref" ;; esac
       done <<<"$chunk_refs"
     fi
@@ -312,12 +319,13 @@ check_app_build() {
     [[ "$api_url" =~ ^https?://[A-Za-z0-9.:-]+$ ]] || die "$EXIT_USAGE" "api url must be an http(s) origin: '$3'"
   fi
   [[ "$APP_BUILD_TIMEOUT" =~ ^[0-9]+$ && "$APP_BUILD_POLL" =~ ^[0-9]+$ ]] || die "$EXIT_USAGE" 'CROVE_APP_BUILD_TIMEOUT and CROVE_APP_BUILD_POLL must be non-negative integers'
+  local app_build_timeout=$((10#$APP_BUILD_TIMEOUT)) app_build_poll=$((10#$APP_BUILD_POLL))
 
   if [ -n "$api_url" ]; then
     smoke_version "$api_url" "$expected" || die "$EXIT_FAILED" "API at $api_url/version does not report build $expected"
   fi
 
-  local rc=1 deadline=$((SECONDS + APP_BUILD_TIMEOUT))
+  local rc=1 deadline=$((SECONDS + app_build_timeout))
   APP_BUILD_WORK="$(mktemp -d)" || die "$EXIT_FAILED" 'cannot make a temporary directory to check the web bundle'
   trap cleanup EXIT
   trap 'exit 130' INT
@@ -339,7 +347,7 @@ check_app_build() {
       break
     fi
     log "waiting for web app at $app_url to serve build $expected (observed: $CHECK_APP_OBSERVED)"
-    if ((APP_BUILD_POLL > 0)); then sleep "$APP_BUILD_POLL"; fi
+    if ((app_build_poll > 0)); then sleep "$app_build_poll"; fi
   done
   rm -rf "$APP_BUILD_WORK"
   APP_BUILD_WORK=''
