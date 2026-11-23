@@ -9,12 +9,13 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
 import { assertSignCaProviderAllowed } from '@ludy/mod-sign';
 import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
-import type { SignCaConnectionRecord, SignCaSettingsResult } from '@ludy/kernel-contract';
+import type { SignCaConnectionRecord, SignCaSettingsResult, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
+import { makeSignWebhookSecret } from './sign-hook.ts';
 import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
@@ -5151,6 +5152,111 @@ export function createRpcHandler(
               ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
             }),
           ),
+        ),
+      },
+      webhook: {
+        list: os.sign.webhook.list.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được webhook ký kết');
+            const listed = await runtime.query<SignWebhookListResult>('sign.webhook.list', input, { actor, orgId });
+            return {
+              ...listed,
+              brokerAvailable: Boolean(channels?.broker) && channels?.broker.id !== 'none',
+            };
+          }),
+        ),
+        deliveries: os.sign.webhook.deliveries.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được lịch sử gửi webhook ký kết');
+            return runtime.query<SignWebhookDeliveriesResult>('sign.webhook.deliveries', input, { actor, orgId });
+          }),
+        ),
+        create: os.sign.webhook.create.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tạo được webhook ký kết');
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            }
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const webhookId = randomUUID();
+            const made = makeSignWebhookSecret(broker, orgId, webhookId);
+            const webhook = await runtime.execute<SignWebhookRecord>(
+              'sign.webhook.create',
+              {
+                id: webhookId,
+                url: input.url,
+                events: input.events,
+                enabled: input.enabled,
+                keyId: made.credential.keyId,
+                secretEnvelope: made.credential.secretEnvelope,
+                secretHint: made.credential.secretHint,
+              },
+              { actor, orgId },
+            );
+            return {
+              webhook,
+              secret: webhook.secretHint === made.credential.secretHint ? made.secret : null,
+            };
+          }),
+        ),
+        update: os.sign.webhook.update.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cập nhật được webhook ký kết');
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute<SignWebhookRecord>(
+              'sign.webhook.update',
+              rest,
+              { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+            );
+          }),
+        ),
+        rotate_secret: os.sign.webhook.rotate_secret.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xoay được khóa bí mật webhook ký kết');
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            }
+            const made = makeSignWebhookSecret(broker, orgId, input.webhookId);
+            const webhook = await runtime.execute<SignWebhookRecord>(
+              'sign.webhook.rotate_secret',
+              {
+                webhookId: input.webhookId,
+                keyId: made.credential.keyId,
+                secretEnvelope: made.credential.secretEnvelope,
+                secretHint: made.credential.secretHint,
+              },
+              { actor, orgId },
+            );
+            return {
+              webhook,
+              secret: webhook.secretHint === made.credential.secretHint ? made.secret : null,
+            };
+          }),
+        ),
+        delete: os.sign.webhook.delete.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xóa được webhook ký kết');
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute<SignWebhookDeleteResult>(
+              'sign.webhook.delete',
+              rest,
+              { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+            );
+          }),
+        ),
+        ping: os.sign.webhook.ping.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới gửi thử được webhook ký kết');
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute<SignWebhookPingResult>(
+              'sign.webhook.ping',
+              rest,
+              { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+            );
+          }),
         ),
       },
     },

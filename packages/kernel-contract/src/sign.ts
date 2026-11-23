@@ -3,6 +3,7 @@
 // Screens belong in screens.ts (owned separately by #3325); keep only public route paths,
 // token patterns, PNG/input bounds, and request/response schemas here.
 import { z } from 'zod';
+import { zMcpWakeUrl } from './mcp.ts';
 import { zId } from './schemas.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
@@ -2149,3 +2150,268 @@ export const zSignVaultAskResult = z.strictObject({
   summary: zSignVaultAiSummary.nullable(),
 });
 export type SignVaultAskResult = z.infer<typeof zSignVaultAskResult>;
+
+// ---------------------------------------------------------------------------
+// Slice 5b (#4440): Signed HMAC outbound webhooks, dual-secret rotation, and safe-metadata delivery logs
+// ---------------------------------------------------------------------------
+export const SIGN_MAX_WEBHOOKS = 20;
+
+export const SIGN_WEBHOOK_EVENT_TYPES = [
+  'sign.envelope.sent',
+  'sign.signer.signed',
+  'sign.envelope.completed',
+  'sign.envelope.declined',
+  'sign.envelope.expired',
+] as const;
+export type SignWebhookEventType = (typeof SIGN_WEBHOOK_EVENT_TYPES)[number];
+export const zSignWebhookEventType = z.enum(SIGN_WEBHOOK_EVENT_TYPES);
+
+export const SIGN_WEBHOOK_DELIVERY_EVENT_TYPES = [...SIGN_WEBHOOK_EVENT_TYPES, 'ping'] as const;
+export type SignWebhookDeliveryEventType = (typeof SIGN_WEBHOOK_DELIVERY_EVENT_TYPES)[number];
+export const zSignWebhookDeliveryEventType = z.enum(SIGN_WEBHOOK_DELIVERY_EVENT_TYPES);
+
+export const SIGN_WEBHOOK_DELIVERY_STATUSES = ['queued', 'sent', 'failed', 'dropped'] as const;
+export type SignWebhookDeliveryStatus = (typeof SIGN_WEBHOOK_DELIVERY_STATUSES)[number];
+export const zSignWebhookDeliveryStatus = z.enum(SIGN_WEBHOOK_DELIVERY_STATUSES);
+
+export const SIGN_WEBHOOK_LAST_STATUSES = ['sent', 'failed'] as const;
+export type SignWebhookLastStatus = (typeof SIGN_WEBHOOK_LAST_STATUSES)[number];
+export const zSignWebhookLastStatus = z.enum(SIGN_WEBHOOK_LAST_STATUSES);
+
+export const SIGN_WEBHOOK_PAUSED_REASONS = ['failing'] as const;
+export type SignWebhookPausedReason = (typeof SIGN_WEBHOOK_PAUSED_REASONS)[number];
+export const zSignWebhookPausedReason = z.enum(SIGN_WEBHOOK_PAUSED_REASONS);
+
+export const SIGN_WEBHOOK_PAYLOAD_ENVELOPE_STATUSES = [
+  'sent',
+  'in_progress',
+  'completed',
+  'declined',
+  'expired',
+] as const;
+
+const zWebhookInstant = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/);
+const zWebhookHint = z.string().regex(/^whk_[0-9a-f]{8}$/);
+const zWebhookSignerRole = z.enum(['signer', 'approver']);
+const zWebhookSha256 = z.string().regex(/^[0-9a-f]{64}$/);
+
+export const zSignWebhookPingPayload = z.strictObject({
+  eventId: zId,
+  eventType: z.literal('ping'),
+  occurredAt: zWebhookInstant,
+  orgId: zId,
+  status: z.literal('ok'),
+});
+
+export const zSignWebhookEnvelopePayload = z.strictObject({
+  eventId: zId,
+  eventType: zSignWebhookEventType,
+  occurredAt: zWebhookInstant,
+  orgId: zId,
+  envelopeId: zId,
+  status: z.enum(SIGN_WEBHOOK_PAYLOAD_ENVELOPE_STATUSES),
+  signerId: zId.optional(),
+  signerRole: zWebhookSignerRole.optional(),
+  signedAt: zWebhookInstant.optional(),
+  completedAt: zWebhookInstant.optional(),
+  certificateCode: z.string().min(1).max(64).optional(),
+  sealedSha256: zWebhookSha256.optional(),
+});
+
+export const zSignWebhookPayload = z.union([zSignWebhookPingPayload, zSignWebhookEnvelopePayload]);
+export type SignWebhookPayload = z.infer<typeof zSignWebhookPayload>;
+
+// Rebuilds a validated webhook payload in canonical key order so signed bytes never depend on caller object order
+// and no PDF, signing token, OTP, document title, email, or phone can ever ride in any field (#4440).
+export function signWebhookPayload(input: unknown): SignWebhookPayload {
+  const parsed = zSignWebhookPayload.parse(input);
+  if (parsed.eventType === 'ping') {
+    return {
+      eventId: parsed.eventId,
+      eventType: 'ping',
+      occurredAt: parsed.occurredAt,
+      orgId: parsed.orgId,
+      status: 'ok',
+    };
+  }
+  return {
+    eventId: parsed.eventId,
+    eventType: parsed.eventType,
+    occurredAt: parsed.occurredAt,
+    orgId: parsed.orgId,
+    envelopeId: parsed.envelopeId,
+    status: parsed.status,
+    ...(parsed.signerId !== undefined ? { signerId: parsed.signerId } : {}),
+    ...(parsed.signerRole !== undefined ? { signerRole: parsed.signerRole } : {}),
+    ...(parsed.signedAt !== undefined ? { signedAt: parsed.signedAt } : {}),
+    ...(parsed.completedAt !== undefined ? { completedAt: parsed.completedAt } : {}),
+    ...(parsed.certificateCode !== undefined ? { certificateCode: parsed.certificateCode } : {}),
+    ...(parsed.sealedSha256 !== undefined ? { sealedSha256: parsed.sealedSha256 } : {}),
+  };
+}
+
+export function signWebhookBody(input: unknown): string {
+  return JSON.stringify(signWebhookPayload(input));
+}
+
+export const zSignWebhookSealedCredential = z.strictObject({
+  keyId: z.string().min(1).max(128),
+  secretEnvelope: z.string().min(16).max(16_384),
+  secretHint: zWebhookHint,
+});
+export type SignWebhookSealedCredential = z.infer<typeof zSignWebhookSealedCredential>;
+
+export const zSignWebhookRecord = z.strictObject({
+  id: zId,
+  url: z.string(),
+  events: z.array(zSignWebhookEventType),
+  enabled: z.boolean(),
+  secretHint: z.string(),
+  previousExpiresAt: z.string().nullable(),
+  consecutiveFailures: z.number().int().min(0),
+  failingSince: z.string().nullable(),
+  pausedReason: zSignWebhookPausedReason.nullable(),
+  lastDeliveryAt: z.string().nullable(),
+  lastStatus: zSignWebhookLastStatus.nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignWebhookRecord = z.infer<typeof zSignWebhookRecord>;
+
+export const zSignWebhookListInput = z.strictObject({});
+export type SignWebhookListInput = z.infer<typeof zSignWebhookListInput>;
+
+export const zSignWebhookListResult = z.strictObject({
+  items: z.array(zSignWebhookRecord),
+  brokerAvailable: z.boolean(),
+});
+export type SignWebhookListResult = z.infer<typeof zSignWebhookListResult>;
+
+export const zSignWebhookCreateInput = z.strictObject({
+  url: zMcpWakeUrl,
+  events: z.array(zSignWebhookEventType).min(1).max(SIGN_WEBHOOK_EVENT_TYPES.length),
+  enabled: z.boolean().default(true),
+});
+export type SignWebhookCreateInput = z.infer<typeof zSignWebhookCreateInput>;
+
+export const zSignWebhookCreateCommandInput = z.strictObject({
+  id: zId,
+  url: zMcpWakeUrl,
+  events: z.array(zSignWebhookEventType).min(1).max(SIGN_WEBHOOK_EVENT_TYPES.length),
+  enabled: z.boolean().default(true),
+  keyId: z.string().min(1).max(128),
+  secretEnvelope: z.string().min(16).max(16_384),
+  secretHint: zWebhookHint,
+});
+export type SignWebhookCreateCommandInput = z.infer<typeof zSignWebhookCreateCommandInput>;
+
+export const zSignWebhookWithSecretResult = z.strictObject({
+  webhook: zSignWebhookRecord,
+  secret: z.string().nullable(),
+});
+export type SignWebhookWithSecretResult = z.infer<typeof zSignWebhookWithSecretResult>;
+
+export const zSignWebhookUpdateInput = z.strictObject({
+  webhookId: zId,
+  url: zMcpWakeUrl,
+  events: z.array(zSignWebhookEventType).min(1).max(SIGN_WEBHOOK_EVENT_TYPES.length),
+  enabled: z.boolean(),
+  idempotencyKey: zId.optional(),
+});
+export type SignWebhookUpdateInput = z.infer<typeof zSignWebhookUpdateInput>;
+
+export const zSignWebhookRotateSecretInput = z.strictObject({
+  webhookId: zId,
+});
+export type SignWebhookRotateSecretInput = z.infer<typeof zSignWebhookRotateSecretInput>;
+
+export const zSignWebhookRotateSecretCommandInput = z.strictObject({
+  webhookId: zId,
+  keyId: z.string().min(1).max(128),
+  secretEnvelope: z.string().min(16).max(16_384),
+  secretHint: zWebhookHint,
+});
+export type SignWebhookRotateSecretCommandInput = z.infer<typeof zSignWebhookRotateSecretCommandInput>;
+
+export const zSignWebhookDeleteInput = z.strictObject({
+  webhookId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignWebhookDeleteInput = z.infer<typeof zSignWebhookDeleteInput>;
+
+export const zSignWebhookDeleteResult = z.strictObject({
+  webhookId: zId,
+  deleted: z.boolean(),
+});
+export type SignWebhookDeleteResult = z.infer<typeof zSignWebhookDeleteResult>;
+
+export const zSignWebhookPingInput = z.strictObject({
+  webhookId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignWebhookPingInput = z.infer<typeof zSignWebhookPingInput>;
+
+export const zSignWebhookPingResult = z.strictObject({
+  deliveryId: zId,
+  webhookId: zId,
+  eventType: z.literal('ping'),
+  status: z.literal('queued'),
+  createdAt: z.string(),
+});
+export type SignWebhookPingResult = z.infer<typeof zSignWebhookPingResult>;
+
+export const zSignWebhookDeliveriesInput = z.strictObject({
+  webhookId: zId.optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+export type SignWebhookDeliveriesInput = z.infer<typeof zSignWebhookDeliveriesInput>;
+
+export const zSignWebhookDeliveryRecord = z.strictObject({
+  id: zId,
+  webhookId: zId,
+  envelopeId: zId.nullable(),
+  eventType: zSignWebhookDeliveryEventType,
+  status: zSignWebhookDeliveryStatus,
+  attempts: z.number().int().min(0),
+  lastCode: z.number().int().nullable(),
+  handedAt: z.string().nullable(),
+  sentAt: z.string().nullable(),
+  createdAt: z.string(),
+  payload: zSignWebhookPayload.nullable(),
+});
+export type SignWebhookDeliveryRecord = z.infer<typeof zSignWebhookDeliveryRecord>;
+
+export const zSignWebhookDeliveriesResult = z.strictObject({
+  items: z.array(zSignWebhookDeliveryRecord),
+});
+export type SignWebhookDeliveriesResult = z.infer<typeof zSignWebhookDeliveriesResult>;
+
+// System-only worker queries & commands for sign-hook-sweep / sign-hook-deliver
+export const zSignHookEventRef = z.strictObject({
+  id: zId,
+});
+export const zSignHookTargetRef = z.strictObject({
+  webhookId: zId,
+});
+export const zSignHookRecordInput = z.strictObject({
+  id: zId,
+  outcome: z.enum(['sent', 'retry', 'failed', 'dropped', 'expired']),
+  code: z.number().int().min(100).max(599).optional(),
+});
+export interface SignHookDeliveryRow {
+  id: string;
+  webhookId: string;
+  envelopeId: string | null;
+  envelopeSourceKind: string | null;
+  eventType: SignWebhookDeliveryEventType;
+  payload: SignWebhookPayload | null;
+  status: SignWebhookDeliveryStatus;
+  attempts: number;
+}
+export interface SignHookTargetRow {
+  id: string;
+  url: string;
+  sealed: { keyId: string; envelope: string };
+  previous: { keyId: string; envelope: string } | null;
+}

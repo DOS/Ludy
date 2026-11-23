@@ -713,6 +713,18 @@ export const PERSONAL_DATA_COLUMNS = {
     machinery: true,
     reason: 'The sealed credentials of an org CA provider connection (sealed with CredentialBroker, bound to org, provider, and connection id); never readable by the tenant, wiped on disable, and deleted with the org',
   },
+  'ludy_sign.webhook.secret_envelope': {
+    kind: 'other',
+    handling: 'keep_org',
+    machinery: true,
+    reason: 'The sealed HMAC signing secret of an org eSign webhook endpoint (sealed with CredentialBroker, bound to org, provider, and webhook id); never readable by the tenant and deleted with the webhook or org',
+  },
+  'ludy_sign.webhook.previous_secret_envelope': {
+    kind: 'other',
+    handling: 'keep_org',
+    machinery: true,
+    reason: 'The previous sealed HMAC signing secret kept during a 24-hour rotation grace window (sealed with CredentialBroker, bound to org, provider, and webhook id); never readable by the tenant and deleted with the webhook or org',
+  },
   'ludy_sign.envelope_obligation.counterparty_name': {
     kind: 'name',
     handling: 'keep_record',

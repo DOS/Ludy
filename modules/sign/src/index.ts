@@ -185,3 +185,11 @@ export {
   type SignPreExpirySweepResult,
   type SignTodayEnvelopeRow,
 } from './today-and-reminders.ts';
+export {
+  WEBHOOK_DELIVERY_ENQUEUE_WRITE,
+  enqueueSignWebhookEvent,
+  isSignWebhookBrokerAvailable,
+  setSignWebhookBrokerAvailable,
+  signWebhookCommands,
+  signWebhookQueries,
+} from './webhooks.ts';

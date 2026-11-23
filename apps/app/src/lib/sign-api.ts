@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
-import type {
-  SignContractDraftVariables,
-  SignDiffCompareInput,
-  SignDiffCompareResult,
-  SignDrafterProposeInput,
-  SignDrafterProposeResult,
-  SignDrafterRenderPdfResult,
-  SignEnvelopeObligationRecordContract,
-  SignObligationProposalContract,
-  SignObligationRenewalListItem,
-  SignSharedKeyTerm,
-  SignSharedSummary,
-  SignVaultAskResult,
-  SignVaultMatchItem,
+import {
+  SIGN_WEBHOOK_EVENT_TYPES,
+  type SignContractDraftVariables,
+  type SignDiffCompareInput,
+  type SignDiffCompareResult,
+  type SignDrafterProposeInput,
+  type SignDrafterProposeResult,
+  type SignDrafterRenderPdfResult,
+  type SignEnvelopeObligationRecordContract,
+  type SignObligationProposalContract,
+  type SignObligationRenewalListItem,
+  type SignSharedKeyTerm,
+  type SignSharedSummary,
+  type SignVaultAskResult,
+  type SignVaultMatchItem,
+  type SignWebhookDeliveryRecord,
+  type SignWebhookEventType,
+  type SignWebhookListResult,
+  type SignWebhookRecord,
 } from '@ludy/kernel-contract';
 import { client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
@@ -30,6 +35,7 @@ import type {
   SignSignerStatus,
 } from './sign-fields.ts';
 
+export { SIGN_WEBHOOK_EVENT_TYPES };
 export type {
   SignContractDraftVariables,
   SignDiffCompareInput,
@@ -39,6 +45,10 @@ export type {
   SignDrafterRenderPdfResult,
   SignSharedKeyTerm,
   SignSharedSummary,
+  SignWebhookDeliveryRecord,
+  SignWebhookEventType,
+  SignWebhookListResult,
+  SignWebhookRecord,
 };
 
 export interface SignEnvelopeSummary {
@@ -645,6 +655,25 @@ export const signApi = {
     client.sign.vault.search(input),
   askVault: (input: { question: string; status?: SignEnvelopeStatus; limit?: number }) =>
     client.sign.vault.ask(input),
+  listWebhooks: () => client.sign.webhook.list({}),
+  listWebhookDeliveries: (input: { webhookId?: string; limit?: number } = {}) =>
+    client.sign.webhook.deliveries(input),
+  createWebhook: (input: {
+    url: string;
+    events: SignWebhookEventType[];
+    enabled?: boolean;
+  }) => client.sign.webhook.create({ enabled: true, ...input }),
+  updateWebhook: (input: {
+    webhookId: string;
+    url: string;
+    events: SignWebhookEventType[];
+    enabled: boolean;
+  }) => client.sign.webhook.update({ ...input, idempotencyKey: crypto.randomUUID() }),
+  rotateWebhookSecret: (webhookId: string) => client.sign.webhook.rotate_secret({ webhookId }),
+  deleteWebhook: (webhookId: string) =>
+    client.sign.webhook.delete({ webhookId, idempotencyKey: crypto.randomUUID() }),
+  pingWebhook: (webhookId: string) =>
+    client.sign.webhook.ping({ webhookId, idempotencyKey: crypto.randomUUID() }),
 };
 
 export type {

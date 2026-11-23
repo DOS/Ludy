@@ -39,7 +39,8 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
                 name === QUEUES.mcpWake ||
                 name === QUEUES.meetingHook ||
                 name === QUEUES.meetingChat ||
-                name === QUEUES.meetingsImport
+                name === QUEUES.meetingsImport ||
+                name === QUEUES.signHookDeliver
               ? 'stately'
               : 'standard',
         ]),

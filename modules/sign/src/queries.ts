@@ -901,6 +901,7 @@ import { signObligationQueries } from './obligations.ts';
 import { signProfileQueries } from './profiles.ts';
 import { signTemplateQueries } from './templates.ts';
 import { signToday } from './today-and-reminders.ts';
+import { signWebhookQueries } from './webhooks.ts';
 
 export interface SignDiffSourceResult {
   aiStopped: boolean;
@@ -998,4 +999,5 @@ export const signQueries = [
   ...signObligationQueries,
   ...signProfileQueries,
   ...signVaultQueries,
+  ...signWebhookQueries,
 ];

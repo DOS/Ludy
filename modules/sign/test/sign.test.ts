@@ -3,7 +3,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { decodePdfSealInput } from '@ludy/extract-contract';
-import { zSignDetectedTag, zSignTemplateRoleKey } from '@ludy/kernel-contract';
+import {
+  signWebhookBody,
+  signWebhookPayload,
+  zSignDetectedTag,
+  zSignTemplateRoleKey,
+} from '@ludy/kernel-contract';
 import {
   buildCanonicalCertificateArtifact,
   buildPdfSealCertificate,
@@ -376,6 +381,8 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'template_direct_link',
       'template_field',
       'template_role',
+      'webhook',
+      'webhook_delivery',
     ]);
   });
 
@@ -545,5 +552,58 @@ describe('sign sealing payloads and certificate artifacts', () => {
     const decoded = decodePdfSealInput(encoded);
     expect(decoded.fields).toEqual(mapped);
     expect(decoded.certificate.signers[0]?.attachments).toEqual(cert.signers[0]?.attachments);
+  });
+
+  it('serializes eSign webhook payloads in canonical key order and rejects PII/document keys (#4440)', () => {
+    const eventId = '00000000-0000-7000-8000-000000000099';
+    const raw = {
+      sealedSha256: SEALED_SHA,
+      certificateCode: 'CS-2026-TEST-4440',
+      completedAt: '2026-11-22T12:00:00.000Z',
+      status: 'completed',
+      envelopeId: ENVELOPE_ID,
+      orgId: ORG_ID,
+      occurredAt: '2026-11-22T12:00:01.000Z',
+      eventType: 'sign.envelope.completed',
+      eventId,
+    };
+    const body = signWebhookBody(raw);
+    expect(Object.keys(JSON.parse(body))).toEqual([
+      'eventId',
+      'eventType',
+      'occurredAt',
+      'orgId',
+      'envelopeId',
+      'status',
+      'completedAt',
+      'certificateCode',
+      'sealedSha256',
+    ]);
+    expect(
+      signWebhookPayload({
+        status: 'ok',
+        orgId: ORG_ID,
+        occurredAt: '2026-11-22T12:00:00.000Z',
+        eventType: 'ping',
+        eventId,
+      }),
+    ).toEqual({
+      eventId,
+      eventType: 'ping',
+      occurredAt: '2026-11-22T12:00:00.000Z',
+      orgId: ORG_ID,
+      status: 'ok',
+    });
+
+    for (const forbidden of [
+      { title: 'Hop dong lao dong' },
+      { email: 'signer@example.com' },
+      { phone: '+15550199' },
+      { token: 'secret-token' },
+      { otp: '123456' },
+      { pdfBase64: 'JVBERi0xLjQ=' },
+    ]) {
+      expect(() => signWebhookPayload({ ...raw, ...forbidden })).toThrow();
+    }
   });
 });
