@@ -377,7 +377,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
   });
   // The cap on the wake (#4535, from the security review of #3824): a recorder who saves and publishes a meeting's minutes in a loop costs nothing (no AI, no budget), and every publish would
   // store one signed delivery per company grant, each an agent run on the owner's spend. Per grant, over the last hour: at most 3 wakes for one meeting (so a second publish still wakes each grant
-  // once more, as the case above says) and at most 60 for all meetings. A wake over the cap stores nothing and answers false. These cases come last: they leave no delivery behind.
+  // once more, as the case above says) and at most 60 for all meetings. A wake over the cap stores nothing and answers false. These three cases come last and run in this order (the second continues the first); the last one clears the deliveries.
   it('wakes each grant at most three times an hour for one meeting, however many times its minutes are published, and sends no more than it stores', async () => {
     await reset();
     const meetingId = await seedMeeting('loop', 'org', true);
