@@ -23,6 +23,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   // Private to one member by row security (no owner or admin path): the snapshot reads as the system context, which would give the owner what the app never shows them.
   'ludy_kernel.notification': "private to its member: a member's own notifications are readable by that member alone",
   'ludy_kernel.notification_mute': "private to its member: a member's own mutes are readable by that member alone",
+  'ludy_kernel.push_subscription': 'private to its member: a browser push subscription (endpoint and keys)',
   'ludy_kernel.today_mail': "private to its member: a member's own daily mail setting is readable by that member alone",
   'ludy_kernel.calendar_connection': "private to its member: a member's own connected calendar account is readable by that member alone",
   'ludy_kernel.meeting_platform_connection': "private to its member: a member's own connected meeting platform account is readable by that member alone",

@@ -93,8 +93,6 @@ import {
   zSocialChannelOptions,
   zSocialNotificationKind,
   zSocialNotifications,
-  zSocialPushStatus,
-  zSocialPushSubscribe,
   zSocialAccountTrend,
   zSocialSnippet,
   zSocialSnippetCreate,
@@ -165,6 +163,8 @@ import {
   zSearchResult,
   zNotificationKind,
   zNotifications,
+  zPushStatus,
+  zPushSubscribe,
   zRaisedInboxItems,
   zOriginalNeededItems,
   zRole,
@@ -2333,14 +2333,6 @@ export const contract = {
       mute: oc.input(z.strictObject({ kind: zSocialNotificationKind, muted: z.boolean() })).output(z.object({ kind: zSocialNotificationKind, muted: z.boolean() })),
       // The viewer's Social emails on or off (#579).
       mail: oc.input(z.strictObject({ enabled: z.boolean() })).output(z.object({ enabled: z.boolean() })),
-      // Browser push (#1238), per device: whether the deployment offers it (VAPID keys set) with the key browsers
-      // subscribe with, the viewer's devices and whether the asking browser (its endpoint) is one; subscribe answers
-      // PUSH_DISABLED without the keys. Each member sees and changes only their own; no endpoint or key comes back.
-      push: {
-        status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zSocialPushStatus),
-        subscribe: oc.input(zSocialPushSubscribe).output(z.object({ id: zId })),
-        unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
-      },
     },
     // Account growth (#645): each channel's daily followers and reach over the last days.
     accounts: {
@@ -2711,6 +2703,13 @@ export const contract = {
     list: oc.input(z.object({})).output(zNotifications),
     read: oc.input(z.union([z.strictObject({ ids: z.array(zId).min(1).max(100) }), z.strictObject({ all: z.literal(true) })])).output(z.object({ read: z.number().int() })),
     mute: oc.input(z.strictObject({ kind: zNotificationKind, muted: z.boolean() })).output(z.object({ kind: zNotificationKind, muted: z.boolean() })),
+    // Browser push (#1238, the kernel's since #3736), per device: whether the deployment offers it (VAPID keys set) with the key browsers subscribe with, the viewer's devices and whether the asking browser
+    // (its endpoint) is one; subscribe answers PUSH_DISABLED without the keys. Each member sees and changes only their own; no endpoint or key comes back. One subscription serves every app's notices.
+    push: {
+      status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zPushStatus),
+      subscribe: oc.input(zPushSubscribe).output(z.object({ id: zId })),
+      unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
+    },
   },
   // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at
   // most 30 per member per scope. Members see their own and the shared ones; the owner changes and deletes a view, and
