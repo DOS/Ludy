@@ -286,10 +286,33 @@ jobs:
   # no Vietnamese on the English page but the allowed example names. Then its performance budget (#1655, DESIGN.md
   # §6.3): LCP, CLS and INP on a throttled phone and a desktop, fonts, raster images and client scripts, with the
   # planted faults the budget must catch. The image build downloads the fonts.
+  # Split into four parallel jobs (#4081): axe/language on its own runner and the single-worker performance budget
+  # across three shards, so each part finishes in ~4 to 6 minutes instead of running 17 to 19+ minutes against the
+  # 20-minute limit.
   web:
-    name: Marketing site (image, axe, language, performance)
+    name: Marketing site (${{ matrix.part.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part:
+          - name: axe and language
+            suite: a11y
+            shard: ''
+            artifact: a11y
+          - name: performance 1 of 3
+            suite: perf
+            shard: '1/3'
+            artifact: perf-1-of-3
+          - name: performance 2 of 3
+            suite: perf
+            shard: '2/3'
+            artifact: perf-2-of-3
+          - name: performance 3 of 3
+            suite: perf
+            shard: '3/3'
+            artifact: perf-3-of-3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -317,15 +340,18 @@ jobs:
         run: pnpm --filter @ludy/web exec playwright install --with-deps chromium
 
       - name: axe and language checks
+        if: matrix.part.suite == 'a11y'
         env:
           WEB_BASE_URL: http://127.0.0.1:3000
         run: pnpm --filter @ludy/web test:a11y
 
-      # After the axe run and with one worker, so nothing else competes for the CPU it measures.
+      # Each shard runs with one worker on its own runner, so nothing else competes for the CPU it measures.
       - name: Performance budget
+        if: matrix.part.suite == 'perf'
         env:
           WEB_BASE_URL: http://127.0.0.1:3000
-        run: pnpm --filter @ludy/web test:perf
+          PERF_SHARD: ${{ matrix.part.shard }}
+        run: pnpm --filter @ludy/web exec playwright test --project=perf --workers=1 --shard="$PERF_SHARD"
 
       - name: Server log
         if: failure()
@@ -335,7 +361,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: web-playwright-traces
+          name: web-playwright-traces-${{ matrix.part.artifact }}
           path: apps/web/test-results/
           retention-days: 7
           if-no-files-found: ignore
