@@ -355,7 +355,32 @@ export const mcpTriageSummary = defineQuery({
 
     const limit = input.limit ?? MCP_TRIAGE_DEFAULT;
 
-    const nowMs = Date.now();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowMs = now.getTime();
+    // Enforce meetings privacy in SQL too (defense-in-depth alongside mcp_company meeting_read RLS):
+    // never leak attendees-only, draft/unpublished, or text-expired meetings in counts or rows.
+    const meetingVisibilityGuard = sql<boolean>`(
+      pti.source_type <> 'meetings.meeting'
+      OR (
+        pti.source_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM crove_meetings.meeting m
+           WHERE m.org_id = pti.org_id
+             AND m.id = pti.source_id
+             AND m.visibility = 'org'
+             AND (m.text_retention_date IS NULL OR m.text_retention_date > (${nowIso}::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+             AND EXISTS (
+               SELECT 1
+                 FROM crove_meetings.meeting_result mr
+                WHERE mr.org_id = m.org_id
+                  AND mr.meeting_id = m.id
+                  AND mr.stage = 'published'
+             )
+        )
+      )
+    )`;
 
     const { rows: countRows } = await sql<{
       pending: string;
@@ -372,7 +397,7 @@ export const mcpTriageSummary = defineQuery({
         pg_catalog.count(*) FILTER (WHERE pti.status = 'accepted')::text AS accepted,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'merged')::text AS merged,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'declined')::text AS declined,
-        pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= pg_catalog.now())::text AS snooze_elapsed,
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= ${nowIso}::timestamptz)::text AS snooze_elapsed,
         pg_catalog.count(*) FILTER (WHERE pti.tainted)::text AS tainted_count
       FROM crove_projects.project_triage_item pti
       JOIN crove_projects.project p
@@ -382,6 +407,7 @@ export const mcpTriageSummary = defineQuery({
        AND p.is_template = false
        AND p.status <> 'archived'
        AND p.visibility <> 'private'
+       AND ${meetingVisibilityGuard}
        ${input.projectId !== undefined ? sql`AND p.id = ${input.projectId}::uuid` : sql``}`.execute(ctx.trx);
 
     const rowQuery = ctx.trx
@@ -408,6 +434,7 @@ export const mcpTriageSummary = defineQuery({
       .where('p.is_template', '=', false)
       .where('p.status', '<>', 'archived')
       .where('p.visibility', '<>', 'private')
+      .where(meetingVisibilityGuard)
       .$if(input.projectId !== undefined, (qb) => qb.where('pti.project_id', '=', input.projectId!))
       .$if(input.status !== undefined, (qb) => qb.where('pti.status', '=', input.status!))
       .orderBy('pti.created_at', 'desc')

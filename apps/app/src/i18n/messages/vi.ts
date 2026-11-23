@@ -12020,6 +12020,7 @@ export const vi = {
       projectFilterLabel: 'Lọc theo dự án',
       allProjects: 'Tất cả dự án',
       newManualItem: 'Thêm mục phân loại',
+      loadMore: 'Tải thêm',
       taintedBadge: 'Nguồn ngoài / Chưa kiểm chứng',
       taintedNotice: 'Mục này đến từ kênh ngoài hoặc nguồn chưa kiểm chứng. Hãy kiểm tra kỹ nội dung trước khi tạo việc hoặc hành động theo.',
       snoozeElapsedBadge: 'Đã tới giờ xem lại',

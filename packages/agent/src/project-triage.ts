@@ -167,15 +167,18 @@ export function checkTriageAssist(
   if (output.reason !== null && output.reason !== undefined) {
     const trimmed = output.reason.replace(/\s+/g, ' ').trim();
     if (trimmed.length > 0) {
+      const bounded = Array.from(trimmed).slice(0, PROJECT_TRIAGE_REASON_MAX).join('').trim();
       if (
         INVISIBLE_FORMAT.test(trimmed) ||
         HTML_TAG.test(trimmed) ||
         hasMarkdownNoise(trimmed) ||
-        draftLinksOutside(trimmed, allowedTexts).length > 0
+        draftLinksOutside(trimmed, allowedTexts).length > 0 ||
+        hasMarkdownNoise(bounded) ||
+        draftLinksOutside(bounded, allowedTexts).length > 0
       ) {
         return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
       }
-      cleanReason = Array.from(trimmed).slice(0, PROJECT_TRIAGE_REASON_MAX).join('');
+      cleanReason = bounded.length > 0 ? bounded : null;
     }
   }
 

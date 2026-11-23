@@ -15,8 +15,10 @@ import {
   PROJECT_TRIAGE_TITLE_MAX,
   type ProjectTriageAiState,
   type ProjectTriageAssistProposal,
+  type ProjectTriageCursor,
   type ProjectTriageItem,
   type ProjectTriagePriority,
+  type ProjectTriageProjectOption,
   type ProjectTriageSourceType,
   type ProjectTriageStatus,
 } from '@ludy/kernel-contract';
@@ -105,6 +107,16 @@ function toDatetimeLocalValue(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+export function mergeTriagePages(
+  baseItems: ReadonlyArray<ProjectTriageItem>,
+  loadedMore: { scopeKey: string; items: ReadonlyArray<ProjectTriageItem> } | null,
+  scopeKey: string,
+): ProjectTriageItem[] {
+  if (!loadedMore || loadedMore.scopeKey !== scopeKey) return [...baseItems];
+  const seen = new Set(baseItems.map((item) => item.id));
+  return [...baseItems, ...loadedMore.items.filter((item) => !seen.has(item.id))];
+}
+
 export function ProjectTriagePanel({
   orgSlug,
   projectId,
@@ -135,14 +147,28 @@ export function ProjectTriagePanel({
   const [mergeTargetTaskId, setMergeTargetTaskId] = useState('');
   const [snoozeCustomLocal, setSnoozeCustomLocal] = useState(() => toDatetimeLocalValue(tomorrowMorningIso()));
   const [declineDialogOpen, setDeclineDialogOpen] = useState(false);
+  const [declineTargetId, setDeclineTargetId] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState('');
 
-  // Manual create item dialog
+  // Manual create item dialog + draft-scoped idempotency key for safe retries
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createProjectId, setCreateProjectId] = useState(projectId ?? '');
   const [createTitle, setCreateTitle] = useState('');
   const [createDescription, setCreateDescription] = useState('');
   const [createPriority, setCreatePriority] = useState<ProjectTriagePriority>('medium');
+  const createIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
+
+  // Server-side filter & cursor pagination state
+  const activeProjectId = projectId ?? (projectFilterId !== 'all' ? projectFilterId : undefined);
+  const scopeKey = `${activeProjectId ?? 'all'}:${statusTab}`;
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+  const [loadedMore, setLoadedMore] = useState<{
+    scopeKey: string;
+    items: ProjectTriageItem[];
+    nextCursor: ProjectTriageCursor | null;
+  } | null>(null);
+  const [knownWorkspaceProjects, setKnownWorkspaceProjects] = useState<ProjectTriageProjectOption[]>([]);
 
   // Vy AI assist proposal cache per itemId
   const [assistState, setAssistState] = useState<{
@@ -154,14 +180,31 @@ export function ProjectTriagePanel({
   const listQuery = useQuery(
     orpc.projects.triage.list.queryOptions({
       input: {
-        ...(projectId ? { projectId } : {}),
+        ...(activeProjectId ? { projectId: activeProjectId } : {}),
         statuses: STATUS_TAB_VALUES[statusTab],
         limit: 100,
       },
     }),
   );
 
+  // Preserve full workspace project list when filtered to one project on the server.
+  const fallbackWorkspaceProjectsQuery = useQuery({
+    ...orpc.projects.triage.list.queryOptions({
+      input: {
+        statuses: STATUS_TAB_VALUES[statusTab],
+        limit: 1,
+      },
+    }),
+    enabled: Boolean(!projectId && activeProjectId && knownWorkspaceProjects.length === 0),
+  });
+
   const data = listQuery.data;
+  useEffect(() => {
+    if (!projectId && !activeProjectId && data?.projects) {
+      setKnownWorkspaceProjects(data.projects);
+    }
+  }, [projectId, activeProjectId, data?.projects]);
+
   const counts = data?.counts ?? {
     pending: 0,
     snoozed: 0,
@@ -170,14 +213,19 @@ export function ProjectTriagePanel({
     declined: 0,
     snoozeElapsed: 0,
   };
-  const projects = data?.projects ?? [];
+  const projects = useMemo(() => {
+    if (projectId) return data?.projects ?? [];
+    if (!activeProjectId) return data?.projects ?? [];
+    if (knownWorkspaceProjects.length > 0) return knownWorkspaceProjects;
+    return fallbackWorkspaceProjectsQuery.data?.projects ?? data?.projects ?? [];
+  }, [projectId, activeProjectId, data?.projects, knownWorkspaceProjects, fallbackWorkspaceProjectsQuery.data?.projects]);
   const writableProjects = useMemo(() => projects.filter((p) => p.canWrite), [projects]);
 
-  const filteredItems = useMemo(() => {
-    const items = data?.items ?? [];
-    if (projectId || projectFilterId === 'all') return items;
-    return items.filter((item) => item.projectId === projectFilterId);
-  }, [data?.items, projectId, projectFilterId]);
+  const filteredItems = useMemo(
+    () => mergeTriagePages(data?.items ?? [], loadedMore, scopeKey),
+    [data?.items, loadedMore, scopeKey],
+  );
+  const activeNextCursor = loadedMore?.scopeKey === scopeKey ? loadedMore.nextCursor : (data?.nextCursor ?? null);
 
   const selectedItem: ProjectTriageItem | null = useMemo(() => {
     if (filteredItems.length === 0) return null;
@@ -196,6 +244,22 @@ export function ProjectTriagePanel({
   );
   const canWriteSelected = activeProjectOption?.canWrite ?? false;
 
+  // Cross-project mode: fetch open tasks scoped specifically to selectedItem.projectId so the merge picker is never truncated by a workspace-wide 150-task cap.
+  const selectedProjectTasksQuery = useQuery({
+    ...orpc.projects.triage.list.queryOptions({
+      input: {
+        projectId: selectedItem?.projectId,
+        statuses: ['pending'],
+        limit: 1,
+      },
+    }),
+    enabled: Boolean(
+      !projectId &&
+        selectedItem?.projectId &&
+        (selectedItem.status === 'pending' || selectedItem.status === 'snoozed'),
+    ),
+  });
+
   const projectSeats = useMemo(() => {
     if (!selectedItem || !data?.seats) return [];
     return data.seats.filter((s) => s.projectIds.includes(selectedItem.projectId));
@@ -212,9 +276,27 @@ export function ProjectTriagePanel({
   }, [data?.cycles, selectedItem]);
 
   const projectOpenTasks = useMemo(() => {
-    if (!selectedItem || !data?.openTasks) return [];
+    if (!selectedItem) return [];
+    if (!projectId && selectedProjectTasksQuery.data?.openTasks) {
+      return selectedProjectTasksQuery.data.openTasks.filter((task) => task.projectId === selectedItem.projectId);
+    }
+    if (!data?.openTasks) return [];
     return data.openTasks.filter((task) => task.projectId === selectedItem.projectId);
-  }, [data?.openTasks, selectedItem]);
+  }, [projectId, selectedItem, selectedProjectTasksQuery.data?.openTasks, data?.openTasks]);
+
+  useEffect(() => {
+    if (projectOpenTasks.length === 0) {
+      if (mergeTargetTaskId !== '') setMergeTargetTaskId('');
+      return;
+    }
+    if (!projectOpenTasks.some((task) => task.id === mergeTargetTaskId)) {
+      setMergeTargetTaskId(projectOpenTasks[0]?.id ?? '');
+    }
+  }, [projectOpenTasks, mergeTargetTaskId]);
+
+  useEffect(() => {
+    createIdempotencyKeyRef.current = crypto.randomUUID();
+  }, [createProjectId, createTitle, createDescription, createPriority]);
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -243,9 +325,11 @@ export function ProjectTriagePanel({
   const createMutation = useMutation(
     orpc.projects.triage.create.mutationOptions({
       onSuccess: (res) => {
+        createIdempotencyKeyRef.current = crypto.randomUUID();
         setCreateDialogOpen(false);
         setCreateTitle('');
         setCreateDescription('');
+        setLoadedMore(null);
         setStatusTab('pending');
         setSelectedItemId(res.item.id);
         invalidateTriageQueries();
@@ -257,6 +341,7 @@ export function ProjectTriagePanel({
   const acceptMutation = useMutation(
     orpc.projects.triage.accept.mutationOptions({
       onSuccess: () => {
+        setLoadedMore(null);
         invalidateTriageQueries();
         toast(t('toast.accepted'), 'success');
       },
@@ -266,6 +351,7 @@ export function ProjectTriagePanel({
   const mergeMutation = useMutation(
     orpc.projects.triage.merge.mutationOptions({
       onSuccess: () => {
+        setLoadedMore(null);
         invalidateTriageQueries();
         toast(t('toast.merged'), 'success');
       },
@@ -275,6 +361,7 @@ export function ProjectTriagePanel({
   const snoozeMutation = useMutation(
     orpc.projects.triage.snooze.mutationOptions({
       onSuccess: () => {
+        setLoadedMore(null);
         invalidateTriageQueries();
         toast(t('toast.snoozed'), 'success');
       },
@@ -285,7 +372,9 @@ export function ProjectTriagePanel({
     orpc.projects.triage.decline.mutationOptions({
       onSuccess: () => {
         setDeclineDialogOpen(false);
+        setDeclineTargetId(null);
         setDeclineReason('');
+        setLoadedMore(null);
         invalidateTriageQueries();
         toast(t('toast.declined'), 'success');
       },
@@ -295,6 +384,7 @@ export function ProjectTriagePanel({
   const reopenMutation = useMutation(
     orpc.projects.triage.reopen.mutationOptions({
       onSuccess: (res) => {
+        setLoadedMore(null);
         setStatusTab('pending');
         setSelectedItemId(res.item.id);
         invalidateTriageQueries();
@@ -302,6 +392,33 @@ export function ProjectTriagePanel({
       },
     }),
   );
+
+  const loadMoreMutation = useMutation({
+    mutationFn: (vars: {
+      cursor: ProjectTriageCursor;
+      capturedScope: string;
+      capturedProjectId?: string;
+      capturedStatuses: ProjectTriageStatus[];
+    }) =>
+      client.projects.triage.list({
+        ...(vars.capturedProjectId ? { projectId: vars.capturedProjectId } : {}),
+        statuses: vars.capturedStatuses,
+        cursor: vars.cursor,
+        limit: 100,
+      }),
+    onSuccess: (res, vars) => {
+      if (scopeKeyRef.current !== vars.capturedScope) return;
+      setLoadedMore((prev) => {
+        const existing = prev?.scopeKey === vars.capturedScope ? prev.items : [];
+        const seen = new Set(existing.map((i) => i.id));
+        return {
+          scopeKey: vars.capturedScope,
+          items: [...existing, ...res.items.filter((i) => !seen.has(i.id))],
+          nextCursor: res.nextCursor,
+        };
+      });
+    },
+  });
 
   const assistMutation = useMutation({
     mutationFn: (itemId: string) => client.projects.triage.assist({ itemId, language: locale }),
@@ -318,6 +435,7 @@ export function ProjectTriagePanel({
     snoozeMutation.error ??
     declineMutation.error ??
     reopenMutation.error ??
+    loadMoreMutation.error ??
     assistMutation.error;
 
   const submitManualCreate = (e: FormEvent) => {
@@ -333,7 +451,7 @@ export function ProjectTriagePanel({
         ? createDescription.trim().slice(0, PROJECT_TRIAGE_DESCRIPTION_MAX)
         : null,
       tainted: false,
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: createIdempotencyKeyRef.current,
     });
   };
 
@@ -390,6 +508,7 @@ export function ProjectTriagePanel({
           value={statusTab}
           onValueChange={(next) => {
             setStatusTab(next as StatusTab);
+            setLoadedMore(null);
             setMobileDetailOpen(false);
           }}
           className="w-full min-w-0 sm:w-auto"
@@ -435,6 +554,7 @@ export function ProjectTriagePanel({
               value={projectFilterId}
               onChange={(e) => {
                 setProjectFilterId(e.target.value);
+                setLoadedMore(null);
                 setMobileDetailOpen(false);
               }}
               className="min-h-11 [&_select]:min-h-11"
@@ -454,7 +574,10 @@ export function ProjectTriagePanel({
               size="sm"
               variant="outline"
               className="min-h-11"
-              onClick={() => setCreateDialogOpen(true)}
+              onClick={() => {
+                createIdempotencyKeyRef.current = crypto.randomUUID();
+                setCreateDialogOpen(true);
+              }}
               data-testid="triage-new-manual-btn"
             >
               {t('newManualItem')}
@@ -518,6 +641,26 @@ export function ProjectTriagePanel({
                 </button>
               );
             })}
+            {activeNextCursor !== null && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11 w-full"
+                loading={loadMoreMutation.isPending}
+                onClick={() =>
+                  loadMoreMutation.mutate({
+                    cursor: activeNextCursor,
+                    capturedScope: scopeKey,
+                    ...(activeProjectId ? { capturedProjectId: activeProjectId } : {}),
+                    capturedStatuses: STATUS_TAB_VALUES[statusTab],
+                  })
+                }
+                data-testid="triage-load-more-btn"
+              >
+                {t('loadMore')}
+              </Button>
+            )}
           </div>
 
           {/* Detail / triage action pane */}
@@ -978,7 +1121,10 @@ export function ProjectTriagePanel({
                         type="button"
                         variant="outline"
                         className="min-h-11 text-destructive"
-                        onClick={() => setDeclineDialogOpen(true)}
+                        onClick={() => {
+                          setDeclineTargetId(selectedItem.id);
+                          setDeclineDialogOpen(true);
+                        }}
                         data-testid="triage-decline-open-btn"
                       >
                         {t('decline.openBtn')}
@@ -1028,7 +1174,13 @@ export function ProjectTriagePanel({
       )}
 
       {/* Decline Modal */}
-      <Dialog open={declineDialogOpen} onOpenChange={setDeclineDialogOpen}>
+      <Dialog
+        open={declineDialogOpen}
+        onOpenChange={(next) => {
+          setDeclineDialogOpen(next);
+          if (!next) setDeclineTargetId(null);
+        }}
+      >
         <DialogContent className="max-w-md" closeLabel={t('common.cancel')} data-testid="triage-decline-dialog">
           <DialogHeader>
             <DialogTitle>{t('decline.title')}</DialogTitle>
@@ -1054,10 +1206,14 @@ export function ProjectTriagePanel({
               variant="destructive"
               className="min-h-11"
               loading={declineMutation.isPending}
+              disabled={!declineTargetId}
               onClick={() => {
-                if (!selectedItem) return;
+                if (!declineTargetId) {
+                  setDeclineDialogOpen(false);
+                  return;
+                }
                 declineMutation.mutate({
-                  itemId: selectedItem.id,
+                  itemId: declineTargetId,
                   declineReason: declineReason.trim() || null,
                   idempotencyKey: crypto.randomUUID(),
                 });
@@ -1071,7 +1227,13 @@ export function ProjectTriagePanel({
       </Dialog>
 
       {/* Manual Create Modal */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(next) => {
+          if (next) createIdempotencyKeyRef.current = crypto.randomUUID();
+          setCreateDialogOpen(next);
+        }}
+      >
         <DialogContent className="max-w-lg" closeLabel={t('common.cancel')} data-testid="triage-create-dialog">
           <DialogHeader>
             <DialogTitle>{t('createDialog.title')}</DialogTitle>

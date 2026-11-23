@@ -552,6 +552,7 @@ export const projectTriageList = defineQuery({
     const truncated = rawRows.length > limit;
     const pageRows = truncated ? rawRows.slice(0, limit) : rawRows;
     const now = new Date();
+    const nowIso = now.toISOString();
     const items = await hydrateTriageItems(ctx.trx, ctx.orgId, pageRows, now);
     const lastItem = items.at(-1);
     const nextCursor = truncated && lastItem ? { createdAt: lastItem.createdAt, id: lastItem.id } : null;
@@ -575,7 +576,7 @@ export const projectTriageList = defineQuery({
         pg_catalog.count(*) FILTER (WHERE pti.status = 'accepted')::text AS accepted,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'merged')::text AS merged,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'declined')::text AS declined,
-        pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= pg_catalog.now())::text AS snooze_elapsed
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= ${nowIso}::timestamptz)::text AS snooze_elapsed
       FROM crove_projects.project_triage_item pti
       JOIN crove_projects.project p
         ON p.org_id = pti.org_id
@@ -680,11 +681,12 @@ export const projectTriageAccept = defineCommand({
     assertNotArchived(previewProject);
 
     const columns = await loadProjectColumns(ctx.trx, ctx.orgId, previewProject.id, false);
+    const normalizedColumnId = input.columnId != null ? input.columnId.toLowerCase() : null;
     let chosenColumnId: string | null = null;
     let effectiveStatus: 'todo' | 'in_progress' | 'waiting' | 'in_review' | 'done' = 'todo';
 
-    if (input.columnId !== undefined && input.columnId !== null) {
-      const col = columns.find((c) => c.id === input.columnId);
+    if (normalizedColumnId !== null) {
+      const col = columns.find((c) => c.id.toLowerCase() === normalizedColumnId);
       if (!col) {
         throw new DomainError('COLUMN_NOT_FOUND', 404, 'Không tìm thấy cột trên bảng dự án');
       }
@@ -734,8 +736,8 @@ export const projectTriageAccept = defineCommand({
     const lockedProject = await loadProject(ctx.trx, ctx.orgId, previewProject.id, 'share');
     assertNotArchived(lockedProject);
     const freshColumns = await loadProjectColumns(ctx.trx, ctx.orgId, lockedProject.id, false);
-    if (input.columnId !== undefined && input.columnId !== null) {
-      const freshCol = freshColumns.find((c) => c.id === input.columnId);
+    if (normalizedColumnId !== null) {
+      const freshCol = freshColumns.find((c) => c.id.toLowerCase() === normalizedColumnId);
       if (!freshCol) {
         throw new DomainError('COLUMN_NOT_FOUND', 404, 'Không tìm thấy cột trên bảng dự án');
       }

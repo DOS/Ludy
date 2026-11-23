@@ -12020,6 +12020,7 @@ export const en = {
       projectFilterLabel: 'Filter by project',
       allProjects: 'All projects',
       newManualItem: 'New triage item',
+      loadMore: 'Load more',
       taintedBadge: 'External / Tainted',
       taintedNotice: 'This item came from an external channel or unverified source. Review the text carefully before creating work or taking action.',
       snoozeElapsedBadge: 'Snooze elapsed',

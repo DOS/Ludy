@@ -7,8 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import type { ProjectTriageListResult } from '@ludy/kernel-contract';
-import { ProjectTriagePanel } from '../src/components/project-triage-panel.tsx';
-import { SendToTriageDialog } from '../src/components/send-to-triage-dialog.tsx';
+import { ProjectTriagePanel, mergeTriagePages } from '../src/components/project-triage-panel.tsx';
+import { SendToTriageDialog, resolveSendDialogProjectSelection } from '../src/components/send-to-triage-dialog.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -204,5 +204,67 @@ describe('Projects Triage Inbox SSR & accessibility (#4493)', () => {
     expect(html).toContain('data-testid="conversation-send-to-triage-btn"');
     expect(html).toContain(viMessages.projects.triage.sendDialog.trigger);
     expect(html).toContain('min-h-11');
+  });
+
+  it('renders Load more pagination button when nextCursor is present and deduplicates merged pages across scope switches', () => {
+    const pagedData: ProjectTriageListResult = {
+      ...TRIAGE_LIST_DATA,
+      nextCursor: { createdAt: '2026-11-20T09:00:00.000Z', id: ITEM_1 },
+    };
+    const htmlVi = renderWithIntl('vi', pagedData, <ProjectTriagePanel orgSlug="demo-org" projectId={PROJECT_1} />);
+    expect(htmlVi).toContain('data-testid="triage-load-more-btn"');
+    expect(htmlVi).toContain(viMessages.projects.triage.loadMore);
+
+    const htmlEn = renderWithIntl('en', pagedData, <ProjectTriagePanel orgSlug="demo-org" />);
+    expect(htmlEn).toContain('data-testid="triage-load-more-btn"');
+    expect(htmlEn).toContain(en.projects.triage.loadMore);
+
+    const htmlDone = renderWithIntl('vi', TRIAGE_LIST_DATA, <ProjectTriagePanel orgSlug="demo-org" projectId={PROJECT_1} />);
+    expect(htmlDone).not.toContain('data-testid="triage-load-more-btn"');
+
+    // Accumulated extra pages match same scopeKey and deduplicate overlapping IDs, while dropping on filter change.
+    const merged = mergeTriagePages(
+      [TRIAGE_LIST_DATA.items[0]!],
+      { scopeKey: `${PROJECT_1}:pending`, items: TRIAGE_LIST_DATA.items },
+      `${PROJECT_1}:pending`,
+    );
+    expect(merged.map((i) => i.id)).toEqual([ITEM_1, ITEM_2]);
+    const resetOnFilterChange = mergeTriagePages(
+      [TRIAGE_LIST_DATA.items[0]!],
+      { scopeKey: `${PROJECT_1}:pending`, items: TRIAGE_LIST_DATA.items },
+      'all:snoozed',
+    );
+    expect(resetOnFilterChange.map((i) => i.id)).toEqual([ITEM_1]);
+  });
+
+  it('preserves valid user-selected project in SendToTriageDialog across re-renders and refetches', () => {
+    const P1 = '00000000-0000-4000-8000-000000000011';
+    const P2 = '00000000-0000-4000-8000-000000000012';
+    // Initial open selects defaultProjectId.
+    const onOpen = resolveSendDialogProjectSelection({
+      initializedOnOpen: false,
+      projectId: '',
+      defaultProjectId: P1,
+      writableProjectIds: [P1, P2],
+    });
+    expect(onOpen).toEqual({ nextProjectId: P1, initializedOnOpen: true });
+
+    // User switches to P2; subsequent re-renders with defaultProjectId=P1 MUST preserve P2.
+    const afterUserSelect = resolveSendDialogProjectSelection({
+      initializedOnOpen: true,
+      projectId: P2,
+      defaultProjectId: P1,
+      writableProjectIds: [P1, P2],
+    });
+    expect(afterUserSelect).toEqual({ nextProjectId: P2, initializedOnOpen: true });
+
+    // If user's selection becomes archived/unwritable, safely falls back to valid project.
+    const afterRemoved = resolveSendDialogProjectSelection({
+      initializedOnOpen: true,
+      projectId: P2,
+      defaultProjectId: P1,
+      writableProjectIds: [P1],
+    });
+    expect(afterRemoved).toEqual({ nextProjectId: P1, initializedOnOpen: true });
   });
 });

@@ -3,7 +3,7 @@
 // used in Inbox Conversations, Meetings, and Public Roadmap moderation panels. Pre-selects active project for SMEs.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   PROJECT_TRIAGE_DESCRIPTION_MAX,
@@ -30,6 +30,35 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 
 export type SendToTriageSourceType = 'kernel.conversation' | 'meetings.meeting' | 'roadmap.item';
+
+/** Computes initial or fallback project selection for SendToTriageDialog without overwriting valid user choices. */
+export function resolveSendDialogProjectSelection(args: {
+  initializedOnOpen: boolean;
+  projectId: string;
+  defaultProjectId?: string | undefined;
+  writableProjectIds: readonly string[];
+}): { nextProjectId: string; initializedOnOpen: boolean } {
+  const { initializedOnOpen, projectId, defaultProjectId, writableProjectIds } = args;
+  if (writableProjectIds.length === 0) {
+    return { nextProjectId: projectId, initializedOnOpen };
+  }
+  const isCurrentValid = projectId !== '' && writableProjectIds.includes(projectId);
+  const preferredDefault =
+    defaultProjectId && writableProjectIds.includes(defaultProjectId)
+      ? defaultProjectId
+      : (writableProjectIds[0] ?? '');
+
+  if (!initializedOnOpen) {
+    return {
+      nextProjectId: defaultProjectId && writableProjectIds.includes(defaultProjectId) ? defaultProjectId : isCurrentValid ? projectId : preferredDefault,
+      initializedOnOpen: true,
+    };
+  }
+  if (!isCurrentValid) {
+    return { nextProjectId: preferredDefault, initializedOnOpen: true };
+  }
+  return { nextProjectId: projectId, initializedOnOpen: true };
+}
 
 export function SendToTriageDialog({
   slug,
@@ -61,6 +90,7 @@ export function SendToTriageDialog({
   const [description, setDescription] = useState(defaultDescription ?? '');
   const [priority, setPriority] = useState<ProjectTriagePriority>('medium');
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
+  const initializedOnOpenRef = useRef(false);
 
   const projectsQuery = useQuery({
     ...orpc.projects.list.queryOptions({ input: { status: ['active', 'on_hold'] } }),
@@ -68,13 +98,19 @@ export function SendToTriageDialog({
     staleTime: 30_000,
   });
 
-  const writableProjects =
-    projectsQuery.data?.canWrite === true
-      ? (projectsQuery.data.projects ?? []).filter((p) => p.status !== 'archived')
-      : [];
+  const writableProjects = useMemo(
+    () =>
+      projectsQuery.data?.canWrite === true
+        ? (projectsQuery.data.projects ?? []).filter((p) => p.status !== 'archived')
+        : [],
+    [projectsQuery.data],
+  );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initializedOnOpenRef.current = false;
+      return;
+    }
     setTitle(defaultTitle);
     setDescription(defaultDescription ?? '');
     setPriority('medium');
@@ -82,13 +118,20 @@ export function SendToTriageDialog({
   }, [open, defaultTitle, defaultDescription]);
 
   useEffect(() => {
-    if (!open || writableProjects.length === 0) return;
-    if (defaultProjectId && writableProjects.some((p) => p.id === defaultProjectId)) {
-      setProjectId(defaultProjectId);
+    if (!open) {
+      initializedOnOpenRef.current = false;
       return;
     }
-    if (!projectId || !writableProjects.some((p) => p.id === projectId)) {
-      setProjectId(writableProjects[0]?.id ?? '');
+    if (writableProjects.length === 0) return;
+    const resolution = resolveSendDialogProjectSelection({
+      initializedOnOpen: initializedOnOpenRef.current,
+      projectId,
+      defaultProjectId,
+      writableProjectIds: writableProjects.map((p) => p.id),
+    });
+    initializedOnOpenRef.current = resolution.initializedOnOpen;
+    if (resolution.nextProjectId !== projectId) {
+      setProjectId(resolution.nextProjectId);
     }
   }, [open, defaultProjectId, writableProjects, projectId]);
 

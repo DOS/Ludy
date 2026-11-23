@@ -203,5 +203,22 @@ describe('project triage Vy assistant (#4493)', () => {
     if (bounded.kind === 'ok') {
       expect(Array.from(bounded.proposal.reason ?? '').length).toBe(PROJECT_TRIAGE_REASON_MAX);
     }
+
+    // Truncation at PROJECT_TRIAGE_REASON_MAX must not cut a long trusted URL into an outside domain.
+    const nestedTrustedUrl = 'https://outside.example.trusted.example/path';
+    const untaintedWithNestedUrl: ProjectTriageAssistFacts = {
+      ...untaintedFacts,
+      item: { ...untaintedFacts.item, description: `Xem ${nestedTrustedUrl} khi xử lý.` },
+    };
+    const truncatedUrlReason = `${'a'.repeat(376)} ${nestedTrustedUrl}`;
+    expect(
+      checkTriageAssist(untaintedWithNestedUrl, {
+        recommendedPriority: 'medium',
+        suggestedAssigneePositionId: null,
+        suggestedCycleId: null,
+        duplicateTaskId: null,
+        reason: truncatedUrlReason,
+      }),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
   });
 });

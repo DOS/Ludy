@@ -335,6 +335,16 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
         { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
       )
     ).meetingId;
+    await runtime.execute(
+      'meetings.summary.save',
+      { meetingId: orgMeetingId, summary: 'Tóm tắt họp toàn công ty', decisions: ['Duyệt triage'] },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'meetings.result.publish',
+      { meetingId: orgMeetingId, confirmed: true },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
   }, 60_000);
 
   async function callAssistRpc(subject: string, email: string, itemId: string): Promise<{ status: number; body: ProjectTriageAssistResult }> {
@@ -440,6 +450,19 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     expect(rmTriage.item.tainted).toBe(true);
 
     // Assigning outsider seat (not in project_member) must fail with 422 and roll back atomically!
+    const beforeRejectCounts = await admin(async (c) => {
+      const pt = (
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, orgProjectId])
+      ).rows[0]!;
+      const lt = (
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref = $2::jsonb`, [
+          orgId,
+          JSON.stringify({ type: 'projects.roadmap_item', id: publicSubmissionItemId }),
+        ])
+      ).rows[0]!;
+      return { projectTasks: Number(pt.n), linkedTasks: Number(lt.n) };
+    });
+
     await expect(
       runtime.execute(
         'projects.triage.accept',
@@ -447,6 +470,28 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
         { actor: asMember(), orgId, idempotencyKey: randomUUID() },
       ),
     ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
+    await admin(async (c) => {
+      const pti = (
+        await c.query<{ status: string; accepted_task_id: string | null }>(
+          `SELECT status, accepted_task_id FROM crove_projects.project_triage_item WHERE org_id = $1 AND id = $2`,
+          [orgId, rmTriage.item.id],
+        )
+      ).rows[0]!;
+      expect(pti).toEqual({ status: 'pending', accepted_task_id: null });
+
+      const pt = (
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, orgProjectId])
+      ).rows[0]!;
+      const lt = (
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref = $2::jsonb`, [
+          orgId,
+          JSON.stringify({ type: 'projects.roadmap_item', id: publicSubmissionItemId }),
+        ])
+      ).rows[0]!;
+      expect(Number(pt.n)).toBe(beforeRejectCounts.projectTasks);
+      expect(Number(lt.n)).toBe(beforeRejectCounts.linkedTasks);
+    });
 
     // Valid accept with member seat + cycle.
     const accepted = await runtime.execute<ProjectTriageAcceptResult>(
@@ -572,7 +617,39 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     expect(reopened.item.snoozedUntil).toBeNull();
   });
 
-  it('enforces MCP company-grantor access, private-project exclusion, and decline_reason omission', async () => {
+  it('supports MCP triage_summary workflow, private-project exclusion, and decline_reason omission standalone', async () => {
+    // Self-contained seed so this test passes standalone (-t).
+    const mcpRm = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: orgProjectId, sourceType: 'roadmap.item', sourceId: publicSubmissionItemId, title: 'MCP roadmap item standalone', priority: 'high' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const mcpDeclined = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: orgProjectId, sourceType: 'manual', sourceId: null, title: 'MCP declined standalone' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.triage.decline',
+      { itemId: mcpDeclined.item.id, declineReason: 'Lý do nội bộ tuyệt đối không lộ qua MCP' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const mcpPrivate = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: privateProjectId, sourceType: 'manual', sourceId: null, title: 'MCP private project hidden' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const mcpOrgMeet = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: orgProjectId, sourceType: 'meetings.meeting', sourceId: orgMeetingId, title: 'MCP org published meeting' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const mcpAttMeet = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: orgProjectId, sourceType: 'meetings.meeting', sourceId: attendeesMeetingId, title: 'MCP attendees meeting hidden' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+
     const mcpCompanyActor = {
       type: 'user' as const,
       userId: ownerUserId,
@@ -601,10 +678,17 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
       items: Array<{ id: string; projectId: string; declineReason?: unknown; sourceTrust: string; tainted: boolean }>;
     }>('projects.mcp.triage_summary', {}, { actor: mcpCompanyActor, orgId });
 
-    expect(summary.items.length).toBeGreaterThan(0);
+    const returnedIds = new Set(summary.items.map((i) => i.id));
+    expect(returnedIds.has(mcpRm.item.id)).toBe(true);
+    expect(returnedIds.has(mcpDeclined.item.id)).toBe(true);
+    expect(returnedIds.has(mcpOrgMeet.item.id)).toBe(true);
+    expect(returnedIds.has(mcpPrivate.item.id)).toBe(false);
+    expect(returnedIds.has(mcpAttMeet.item.id)).toBe(false);
     expect(summary.items.every((i) => i.projectId !== privateProjectId)).toBe(true);
     expect(summary.items.every((i) => !('declineReason' in i))).toBe(true);
-    expect(summary.items.some((i) => i.tainted && i.sourceTrust === 'external')).toBe(true);
+    expect(JSON.stringify(summary)).not.toContain('Lý do nội bộ tuyệt đối không lộ qua MCP');
+    expect(summary.items.some((i) => i.id === mcpRm.item.id && i.tainted && i.sourceTrust === 'external')).toBe(true);
+    expect(summary.items.some((i) => i.id === mcpDeclined.item.id && !i.tainted && i.sourceTrust === 'internal')).toBe(true);
   });
 
   it('supports Vy AI triage_assist with AI-off parity, valid proposal, and unsafe/hallucinated refusal', async () => {
@@ -726,8 +810,9 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     expect(spyAssistCalls).toBe(baselineCalls + 2);
   });
 
-  it('covers PDPL find/erase, ADR-0047 offboarding export filtering, and org_purge cleanup', async () => {
+  it('covers PDPL find/erase (with accept lock-order parity), ADR-0047 offboarding export filtering, and org_purge cleanup standalone', async () => {
     const pdplEmail = 'minh.triage.pdpl@example.test';
+    const pdplAcceptEmail = 'accept.after.erase@example.test';
     // Decline one item mentioning a PDPL probe email so title, description, and decline_reason are exercised.
     const pdItem = await runtime.execute<{ item: ProjectTriageItem }>(
       'projects.triage.create',
@@ -743,6 +828,31 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     await runtime.execute(
       'projects.triage.decline',
       { itemId: pdItem.item.id, declineReason: `Yêu cầu từ ${pdplEmail} chuyển quý sau` },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Seed an item mentioning pdplAcceptEmail, erase it BEFORE accept, then accept and verify the created task carries NO erased PII!
+    const preEraseAcceptItem = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      {
+        projectId: orgProjectId,
+        sourceType: 'manual',
+        sourceId: null,
+        title: `Hồ sơ ${pdplAcceptEmail} cần duyệt`,
+        description: `Chi tiết liên hệ ${pdplAcceptEmail}`,
+      },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+
+    // Self-contained roadmap, conversation, org-meeting (exportable), and attendees-only meeting (excluded) rows.
+    await runtime.execute(
+      'projects.triage.create',
+      { projectId: orgProjectId, sourceType: 'roadmap.item', sourceId: publicSubmissionItemId, title: 'Roadmap export row standalone' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.triage.create',
+      { projectId: orgProjectId, sourceType: 'kernel.conversation', sourceId: dmConversationId, title: 'Conversation export row standalone' },
       { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
     );
 
@@ -785,6 +895,29 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     expect(erased.erased.some((e) => e.column === 'crove_projects.project_triage_item.title' && e.rows >= 1)).toBe(true);
     expect(erased.erased.some((e) => e.column === 'crove_projects.project_triage_item.description' && e.rows >= 1)).toBe(true);
     expect(erased.erased.some((e) => e.column === 'crove_projects.project_triage_item.decline_reason' && e.rows >= 1)).toBe(true);
+
+    // Erase pdplAcceptEmail before accepting preEraseAcceptItem -> subsequent projects.triage.accept creates a redacted task.
+    await runtime.execute(
+      'kernel.personal_data.erase',
+      { value: pdplAcceptEmail },
+      { actor: asOwnerMfa(), orgId, idempotencyKey: randomUUID() },
+    );
+    const acceptedAfterErase = await runtime.execute<ProjectTriageAcceptResult>(
+      'projects.triage.accept',
+      { itemId: preEraseAcceptItem.item.id },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await admin(async (c) => {
+      const taskRow = (
+        await c.query<{ title: string; description: string | null }>(
+          `SELECT title, description FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`,
+          [orgId, acceptedAfterErase.taskId],
+        )
+      ).rows[0]!;
+      expect(taskRow.title).not.toContain(pdplAcceptEmail);
+      expect(taskRow.description ?? '').not.toContain(pdplAcceptEmail);
+      expect(taskRow.title).toContain('[đã xóa]');
+    });
 
     // Offboarding snapshot stream includes projects.project_triage_item but excludes attendees-only meeting rows.
     const exportedRows: Array<{ id: string; source_type: string; source_id: string | null }> = [];

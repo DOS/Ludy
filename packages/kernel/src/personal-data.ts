@@ -1859,6 +1859,42 @@ export const personalDataErase = defineCommand({
          RETURNING c.id`.execute(ctx.trx);
       add('crove_finance.marketplace_column_check.preview', previewRows.length);
 
+      // Project triage items BEFORE tasks (#4493): preserves canonical lock order
+      // crove_projects.project_triage_item -> ludy_kernel.task -> crove_projects.project -> crove_projects.roadmap_item
+      // matching projectTriageAccept (zero deadlock) and closing both READ COMMITTED races:
+      // if projectTriageAccept locks pti first, erase waits for commit and then redacts the new task;
+      // if erase updates pti first, projectTriageAccept waits on FOR UPDATE and reads the already-redacted text.
+      const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
+      const triageDesc = freeTextMatch(probe, sql.ref('pti.description'));
+      const triageDecline = freeTextMatch(probe, sql.ref('pti.decline_reason'));
+      const { rows: triageRows } = await sql<{ title: boolean; description: boolean; decline_reason: boolean }>`
+        UPDATE crove_projects.project_triage_item pti
+           SET title = CASE
+                         WHEN ${triageTitle} THEN COALESCE(
+                           NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.title'), REDACTED_MARK)}, 300)), ''),
+                           ${REDACTED_MARK}
+                         )
+                         ELSE pti.title
+                       END,
+               description = CASE
+                               WHEN ${triageDesc} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.description'), REDACTED_MARK)}, 10000)
+                               ELSE pti.description
+                             END,
+               decline_reason = CASE
+                                  WHEN ${triageDecline} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.decline_reason'), REDACTED_MARK)}, 1000)
+                                  ELSE pti.decline_reason
+                                END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.project_triage_item o
+         WHERE o.org_id = pti.org_id AND o.id = pti.id AND pti.org_id = ${ctx.orgId}::uuid
+           AND (${triageTitle} OR coalesce(${triageDesc}, false) OR coalesce(${triageDecline}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.decline_reason'))}, false) AS decline_reason`.execute(ctx.trx);
+      add('crove_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
+      add('crove_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
+      add('crove_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
+
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and
       // updated_at moves to now). Through the command's own transaction: the tenant role may update tasks, so no definer
@@ -2090,38 +2126,6 @@ export const personalDataErase = defineCommand({
          WHERE o.org_id = te.org_id AND o.id = te.id AND te.org_id = ${ctx.orgId}::uuid AND ${timeEntryNote}
          RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
       add('crove_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
-
-      // Project triage items that quote the person (#4493): replace mentions in title, description, and decline_reason.
-      const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
-      const triageDesc = freeTextMatch(probe, sql.ref('pti.description'));
-      const triageDecline = freeTextMatch(probe, sql.ref('pti.decline_reason'));
-      const { rows: triageRows } = await sql<{ title: boolean; description: boolean; decline_reason: boolean }>`
-        UPDATE crove_projects.project_triage_item pti
-           SET title = CASE
-                         WHEN ${triageTitle} THEN COALESCE(
-                           NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.title'), REDACTED_MARK)}, 300)), ''),
-                           ${REDACTED_MARK}
-                         )
-                         ELSE pti.title
-                       END,
-               description = CASE
-                               WHEN ${triageDesc} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.description'), REDACTED_MARK)}, 10000)
-                               ELSE pti.description
-                             END,
-               decline_reason = CASE
-                                  WHEN ${triageDecline} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.decline_reason'), REDACTED_MARK)}, 1000)
-                                  ELSE pti.decline_reason
-                                END,
-               updated_at = ${ctx.now}
-          FROM crove_projects.project_triage_item o
-         WHERE o.org_id = pti.org_id AND o.id = pti.id AND pti.org_id = ${ctx.orgId}::uuid
-           AND (${triageTitle} OR coalesce(${triageDesc}, false) OR coalesce(${triageDecline}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
-                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
-                   coalesce(${freeTextMatch(probe, sql.ref('o.decline_reason'))}, false) AS decline_reason`.execute(ctx.trx);
-      add('crove_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
-      add('crove_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
-      add('crove_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));
