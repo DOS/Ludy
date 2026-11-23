@@ -31,7 +31,7 @@ const source = (lists: string[], deletes: string[] = [], partial: string[] = [])
 describe('the tables ludy_kernel.org_purge deletes (#1217)', () => {
   it('reads the lists and the DELETE statements of the newest definition, whole or in part', () => {
     const { whole, partial } = purgedTables(newestSource);
-    const hasTable = (set: Set<string>, table: string) => set.has(table) || set.has(table.replace(/^ludy_kernel\./, 'crove_kernel.'));
+    const hasTable = (set: Set<string>, table: string) => set.has(table) || set.has(table.replace(/^ludy_/, 'crove_'));
     // The append-only working rows are deleted whole, under the purge's own mark (#1032).
     for (const table of ['ludy_notes.link', 'ludy_kernel.inbox_item', 'ludy_crm.event_type', 'ludy_social.media_archive', 'ludy_kernel.tenant_member', 'ludy_kernel.task_comment', 'ludy_social.post_approval']) {
       expect(hasTable(whole, table), table).toBe(true);
