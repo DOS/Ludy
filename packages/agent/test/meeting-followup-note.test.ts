@@ -160,6 +160,8 @@ describe('the contact and link shapes of #4553', () => {
       'a_x.com',
       'abc . com',
       '05/12/2026, 090_123_4567',
+      'Mục 1\n090_123_4567',
+      'Phòng 5 - 090/123/4567',
     ]) {
       expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body: `Liên hệ ${shape} nhé.` }), facts(`Liên hệ ${shape}.`))), shape).toBe('FOLLOWUP_NOTE_REFUSED');
     }

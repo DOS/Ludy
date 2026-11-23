@@ -120,13 +120,13 @@ const SPACED_RUN_DIGITS_MIN = 9;
 const OTHER_DASHES = /[\u2010-\u2015\u2212]/gu;
 // A run that opens like a phone number (0, 84 or +country digit) and goes on through groups of two digits or more split by a hyphen, a slash or an underscore (spaces allowed around it),
 // a comma with no space after it, a single line break, or spaces: 090/123/4567, 090_123_4567, 090,123,4567, 090-123 - 4567, 090 on one line and 123 4567 on the next. A comma and a
-// space, and a group of one digit, are a list (01, 02, 03; 0/1/2), not a number. A run does not start in the middle of another (after a digit and a separator).
-const PHONE_LEAD_RUN = /(?<![\d.]|\d[ \t]*[-/_][ \t]*|\d,|\d[ \t]*\r?\n[ \t]*)(?:\+[ \t]?\d|0|84)\d*(?:(?:[ \t]*[-/_][ \t]*(?:\r?\n[ \t]*)?|,|[ \t]*\r?\n[ \t]*|[ \t]+)\d{2,})+/g;
+// space, and a group of one digit, are a list (01, 02, 03; 0/1/2), not a number. A run does not start inside a date or number (right after a digit and a hyphen or slash).
+const PHONE_LEAD_RUN = /(?<![\d.]|\d[-/])(?:\+[ \t]?\d|0|84)\d*(?:(?:[ \t]*[-/_][ \t]*(?:\r?\n[ \t]*)?|,|[ \t]*\r?\n[ \t]*|[ \t]+)\d{2,})+/g;
 // A run that does not open like a phone number but is short groups split by spaced hyphens and ends in a group of four digits: 90 - 123 - 4567, 415 - 555 - 2671. A range, or tiers
 // of figures (100 - 200 - 300), are not one.
-const PHONE_LEADLESS_RUN = /(?<![\d.]|\d[ \t]*[-/_][ \t]*|\d,|\d[ \t]*\r?\n[ \t]*)\d{1,3}(?:[ \t]+-[ \t]+\d{1,4})+[ \t]+-[ \t]+\d{4}(?!\d)/g;
+const PHONE_LEADLESS_RUN = /(?<![\d.]|\d[-/])\d{1,3}(?:[ \t]+-[ \t]+\d{1,4})+[ \t]+-[ \t]+\d{4}(?!\d)/g;
 // A day that opens a run (28/11/2026, 05 - 10 - 2026, 2026-11-28, or only a day and a month: 08/12) is a date. What follows it may still be a contact: see hasLoosePhone.
-const DATE_START = /^(?:\d{4}-\d{2}-\d{2}|(?:0?[1-9]|[12]\d|3[01])[ \t]*[-/.][ \t]*(?:0?[1-9]|1[0-2])(?:[ \t]*[-/.][ \t]*(?:19|20)\d{2})?(?!\d))/;
+const DATE_START = /^(?:\d{4}-\d{2}-\d{2}|(?:0?[1-9]|[12]\d|3[01])[ \t]*[-/.][ \t]*(?:0?[1-9]|1[0-2])(?:[ \t]*[-/.][ \t]*(?:19|20)\d{2})?(?!\d|[-/.]\d))/;
 
 // The phone shapes the run scan below does not join: other separators, a line break, a number typed without its leading 0. Nine digits or more, as a Vietnamese mobile has ten
 // (eleven with 84) and a time (0900 - 1700) or a day has eight. These only add refusals: the run scan still decides everything it decided before.

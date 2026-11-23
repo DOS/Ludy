@@ -156,6 +156,10 @@ describe('the contact and link shapes of #4553', () => {
       'Họp 05/12/2026, 090_123_4567',
       '05/12/2026 - 090/123/4567',
       'Ngày 05/12/2026\n090 123\n4567',
+      // A numbered line or item just before the phone does not hide it.
+      'Mục 1\n090_123_4567',
+      'Phòng 5 - 090/123/4567',
+      'Mục 1\n90 - 123 - 4567',
     ]) {
       expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
     }
@@ -178,6 +182,8 @@ describe('the contact and link shapes of #4553', () => {
       'Doanh số 845, 920, 1050 triệu',
       'Giao hàng các ngày 05/12, 12/12, 19/12',
       'Lịch 08/12 - 15/12 - 22/12',
+      'Ngày 15-05-2026 0900',
+      'Kỳ 12/08/2025\n0900 khách',
       'Phương án 0/1/2/3/4/5/6/7/8',
       'Gói 100 - 200 - 300 nghìn',
       '150 - 200 - 250 khách',
