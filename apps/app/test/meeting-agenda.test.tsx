@@ -16,7 +16,7 @@ const modules = vi.hoisted(() => ({ list: ['kernel', 'crm', 'meetings'] as strin
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
-  client.current = new QC();
+  client.current = new QC({ defaultOptions: { queries: { retryOnMount: false, retry: false } } });
   const node = (path: string[]): unknown =>
     new Proxy(() => undefined, {
       get: (_t, prop: string) => {
@@ -151,11 +151,19 @@ describe('TodayAgenda', () => {
     expect(off).not.toContain('meeting-agenda-event');
   });
 
-  it('draws nothing when no calendar can be connected, while loading, or without the meetings module', () => {
+  it('draws nothing when no calendar can be connected (unless showUnconfiguredHint is set), while loading, or without the meetings module; renders error alert on failure', () => {
     reset();
     client.current.setQueryData(['meetings', 'today', 'facts'], { enabled: false, totalMinutes: 0, items: [] });
     client.current.setQueryData(['calendar', 'providers'], []);
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toBe('');
+    const hintHtml = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" showUnconfiguredHint />));
+    expect(hintHtml).toContain('data-testid="meeting-agenda-unconfigured"');
+    expect(hintHtml).toContain(en.meetings.agenda.unconfiguredTitle);
+    reset();
+    client.current.getQueryCache().build(client.current, { queryKey: ['meetings', 'today', 'facts'] }).setState({ status: 'error', error: new Error('Cannot load today'), fetchStatus: 'idle', data: undefined });
+    const errHtml = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
+    expect(errHtml).toContain('role="alert"');
+    expect(errHtml).toContain('Cannot load today');
     reset();
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toBe('');
     reset();
@@ -233,16 +241,31 @@ describe('UpcomingAgenda', () => {
     expect(html).toContain('Họp Zoom ngày mai');
     expect(html.match(/data-testid="meeting-upcoming-join"/g)).toHaveLength(1);
     expect(html).toContain('href="https://meet.google.com/abc-defg-hij"');
-    expect(html).toContain('aria-describedby="upcoming-event-a1"');
-    expect(html).toContain('aria-describedby="upcoming-event-a2"');
     expect(html).toContain('data-testid="meeting-upcoming-record"');
     expect(html).toContain('data-testid="meeting-upcoming-recorded"');
     expect(html).not.toContain('http://zoom.us/j/unsafe');
     const visibleText = html.replace(/<[^>]*>/g, ' ');
     expect(visibleText).not.toContain('abc-defg-hij');
+
+    // Verify Join and Record/Recorded CTAs link via aria-describedby to a matching title <span id="..."> in the same row.
+    const rows = html.match(/<tr\b[^>]*data-testid="meeting-upcoming-event"[^>]*>[\s\S]*?<\/tr>/g) ?? [];
+    expect(rows).toHaveLength(2);
+    const describedTitles: string[] = [];
+    rows.forEach((row, idx) => {
+      const anchors = row.match(/<a\b[^>]*data-testid="meeting-upcoming-(?:join|record|recorded)"[^>]*>/g) ?? [];
+      expect(anchors).toHaveLength(idx === 0 ? 2 : 1);
+      const targetIds = anchors.map((tag) => /aria-describedby="([^"]+)"/.exec(tag)?.[1]);
+      expect(targetIds.every((id) => typeof id === 'string' && id.length > 0)).toBe(true);
+      expect(new Set(targetIds).size).toBe(1);
+      const targetId = targetIds[0] as string;
+      const titleMatch = new RegExp(`<span id="${targetId}"[^>]*>([^<]*)</span>`).exec(row);
+      expect(titleMatch?.[1]).toBeDefined();
+      describedTitles.push(titleMatch?.[1] as string);
+    });
+    expect(describedTitles).toEqual(['Họp với khách A', 'Họp Zoom ngày mai']);
   });
 
-  it('handles empty, disabled with providers, disabled without providers, loading, and module-off states', () => {
+  it('handles empty, disabled with providers, disabled without providers (with and without hint), error, loading, and module-off states', () => {
     reset();
     client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: true, events: [] });
     expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toContain('data-testid="meeting-upcoming-empty"');
@@ -258,6 +281,15 @@ describe('UpcomingAgenda', () => {
     client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: false, events: [] });
     client.current.setQueryData(['calendar', 'providers'], []);
     expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toBe('');
+    const unconfiguredHtml = renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" showUnconfiguredHint />));
+    expect(unconfiguredHtml).toContain('data-testid="meeting-upcoming-unconfigured"');
+    expect(unconfiguredHtml).toContain(en.meetings.agenda.unconfiguredTitle);
+
+    reset();
+    client.current.getQueryCache().build(client.current, { queryKey: ['meetings', 'agenda', 'list'] }).setState({ status: 'error', error: new Error('Cannot load upcoming'), fetchStatus: 'idle', data: undefined });
+    const errHtml = renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />));
+    expect(errHtml).toContain('role="alert"');
+    expect(errHtml).toContain('Cannot load upcoming');
 
     reset();
     expect(renderToStaticMarkup(wrap(<UpcomingAgenda slug="acme" />))).toBe('');

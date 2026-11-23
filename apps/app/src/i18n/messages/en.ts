@@ -3564,6 +3564,8 @@ export const en = {
       linkedFrom: 'From calendar event:',
       unlink: 'Remove link',
       join: 'Join',
+      unconfiguredTitle: 'No calendar connected yet',
+      unconfiguredHint: 'Google Calendar or Outlook is not enabled on this server yet. You can still record or upload meetings in Recorded.',
       upcoming: {
         title: 'Upcoming meetings in your calendar (7 days)',
         none: 'No meetings in your calendar over the next 7 days. If you just turned the switch on, the first read can take up to 15 minutes.',

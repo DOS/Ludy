@@ -3561,6 +3561,8 @@ export const vi = {
       linkedFrom: 'Từ sự kiện lịch:',
       unlink: 'Gỡ liên kết',
       join: 'Tham gia',
+      unconfiguredTitle: 'Chưa kết nối lịch làm việc',
+      unconfiguredHint: 'Máy chủ này chưa bật kết nối Google Calendar hoặc Outlook. Bạn vẫn có thể ghi âm hoặc tải bản ghi lên ở mục Cuộc họp đã ghi.',
       upcoming: {
         title: 'Cuộc họp sắp tới trong lịch (7 ngày)',
         none: 'Không có cuộc họp nào trong 7 ngày tới. Nếu bạn vừa bật công tắc, lần đọc đầu tiên có thể mất tới 15 phút.',

@@ -167,10 +167,12 @@ export function MeetingsPage() {
 
   const [activeTab, setActiveTab] = useState<MeetingsTab>('recorded');
   const [activeTool, setActiveTool] = useState<UtilityTool | null>(null);
+  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filter, setFilter] = useState<MeetingListFilter>(EMPTY_MEETING_FILTER);
   const [sort, setSort] = useState<MeetingSort>('started_desc');
   const [modalOpen, setModalOpen] = useState(false);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -215,19 +217,22 @@ export function MeetingsPage() {
   const activeFilterCount = countActiveMeetingFilters(filter);
   const filterOrSearchActive = hasActiveMeetingFilter(filter);
 
-  // Scoped J/K focus navigation across recorded meeting links without hijacking inputs, dialogs, or other tabs.
+  // Scoped J/K focus navigation inside the Recorded DataTable without hijacking global or input/dialog keys (WCAG 2.1.4).
   useEffect(() => {
     if (activeTab !== 'recorded' || modalOpen || settingsOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.repeat || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       const key = e.key.toLowerCase();
       if (key !== 'j' && key !== 'k') return;
+      const container = tableContainerRef.current;
       const active = document.activeElement;
+      if (!container || !container.contains(active)) return;
       const targetEl = e.target instanceof Element ? e.target : null;
-      const guardSelector = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [data-slot="popover-content"], [data-slot="sheet-content"]';
+      const guardSelector =
+        'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="alertdialog"], [data-slot="popover-content"], [data-slot="sheet-content"]';
       if ((active instanceof Element && active.closest(guardSelector)) || targetEl?.closest(guardSelector)) return;
-      if (document.querySelector('[role="dialog"], [data-slot="popover-content"]')) return;
-      const links = Array.from(document.querySelectorAll<HTMLElement>('[data-meeting-row-link]'));
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [data-slot="popover-content"], [data-slot="sheet-content"]')) return;
+      const links = Array.from(container.querySelectorAll<HTMLElement>('[data-meeting-row-link]'));
       if (links.length === 0) return;
       const idx = active instanceof HTMLElement ? links.indexOf(active) : -1;
       const nextIdx =
@@ -370,7 +375,15 @@ export function MeetingsPage() {
     });
   }
 
-  const toggleTool = (tool: UtilityTool) => setActiveTool((cur) => (cur === tool ? null : tool));
+  const toggleTool = (tool: UtilityTool) => {
+    setActiveTool((cur) => {
+      const next = cur === tool ? null : tool;
+      if (next !== null) {
+        setOpenedTools((prev) => (prev.has(next) ? prev : new Set([...prev, next])));
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -473,13 +486,13 @@ export function MeetingsPage() {
               </Button>
             </div>
             <div id="meetings-tool-panel-digest" hidden={activeTool !== 'digest'}>
-              {activeTool === 'digest' && <MeetingDigest slug={slug} />}
+              {openedTools.has('digest') && <MeetingDigest slug={slug} />}
             </div>
             <div id="meetings-tool-panel-ask" hidden={activeTool !== 'ask'} className="rounded-lg border border-border bg-card p-4">
-              {activeTool === 'ask' && <MeetingAsk slug={slug} />}
+              {openedTools.has('ask') && <MeetingAsk slug={slug} />}
             </div>
             <div id="meetings-tool-panel-search" hidden={activeTool !== 'search'} className="rounded-lg border border-border bg-card p-4">
-              {activeTool === 'search' && <MeetingSearch slug={slug} />}
+              {openedTools.has('search') && <MeetingSearch slug={slug} />}
             </div>
           </div>
 
@@ -620,7 +633,7 @@ export function MeetingsPage() {
               </NativeSelect>
             </div>
 
-            {filterOrSearchActive && meetingsQuery.data !== undefined && (
+            {activeChips.length > 0 && meetingsQuery.data !== undefined && (
               <div className="flex flex-wrap items-center gap-2">
                 {activeChips.map((chip) => (
                   <button
@@ -635,11 +648,17 @@ export function MeetingsPage() {
                     <span aria-hidden="true">×</span>
                   </button>
                 ))}
-                <p role="status" className="text-xs text-muted-foreground" data-testid="meetings-filtered-count">
-                  {t('filters.showingCount', { shown: f.number(filteredMeetings.length), total: f.number(allMeetings.length) })}
-                </p>
               </div>
             )}
+            <p
+              role="status"
+              className={filterOrSearchActive && meetingsQuery.data !== undefined ? 'text-xs text-muted-foreground' : 'sr-only'}
+              data-testid="meetings-filtered-count"
+            >
+              {filterOrSearchActive && meetingsQuery.data !== undefined
+                ? t('filters.showingCount', { shown: f.number(filteredMeetings.length), total: f.number(allMeetings.length) })
+                : ''}
+            </p>
           </div>
 
           {meetingsQuery.isPending && !meetingsQuery.error ? (
@@ -673,61 +692,63 @@ export function MeetingsPage() {
               }
             />
           ) : (
-            <DataTable
-              stacked
-              head={[t('table.colMeeting'), t('table.colWhen'), t('table.colSummary'), t('table.colRetention')]}
-            >
-              {filteredMeetings.map((m: MeetingSummary) => {
-                const duration = m.lengthSeconds === null ? null : formatMeetingDuration(m.lengthSeconds, durationLabels);
-                return (
-                  <TableRow key={m.id} data-testid="meeting-row">
-                    <TableCell data-label={t('table.colMeeting')} className="px-4 py-3">
-                      <div className="inline-flex flex-wrap items-center gap-2">
-                        <Link
-                          data-meeting-row-link
-                          to="/o/$slug/meetings/$id"
-                          params={{ slug, id: m.id }}
-                          className="inline-flex min-h-11 items-center rounded-sm font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:min-h-6"
-                        >
-                          <span className="min-w-0 break-words">{m.title}</span>
-                        </Link>
-                        <Badge variant={STATUS_VARIANTS[m.status] ?? 'outline'}>{t(`status.${m.status}`)}</Badge>
-                        {m.platform && <Badge variant="outline">{t(`agenda.service.${m.platform}`)}</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell data-label={t('table.colWhen')} className="px-4 py-3 text-xs text-muted-foreground">
-                      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="text-foreground">{f.dateTime(m.startedAt ?? m.createdAt)}</span>
-                        {duration && <span className="font-mono tabular-nums">{duration}</span>}
-                      </span>
-                    </TableCell>
-                    <TableCell data-label={t('table.colSummary')} className="px-4 py-3">
-                      <div className="inline-flex flex-wrap items-center gap-1.5">
-                        <Badge variant="outline">{m.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}</Badge>
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                          {t('table.readersCount', { count: m.readersCount })}
+            <div ref={tableContainerRef}>
+              <DataTable
+                stacked
+                head={[t('table.colMeeting'), t('table.colWhen'), t('table.colSummary'), t('table.colRetention')]}
+              >
+                {filteredMeetings.map((m: MeetingSummary) => {
+                  const duration = m.lengthSeconds === null ? null : formatMeetingDuration(m.lengthSeconds, durationLabels);
+                  return (
+                    <TableRow key={m.id} data-testid="meeting-row">
+                      <TableCell data-label={t('table.colMeeting')} className="px-4 py-3">
+                        <div className="inline-flex flex-wrap items-center gap-2">
+                          <Link
+                            data-meeting-row-link
+                            to="/o/$slug/meetings/$id"
+                            params={{ slug, id: m.id }}
+                            className="inline-flex max-md:min-h-11 items-center rounded-sm font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                          >
+                            <span className="min-w-0 break-words">{m.title}</span>
+                          </Link>
+                          <Badge variant={STATUS_VARIANTS[m.status] ?? 'outline'}>{t(`status.${m.status}`)}</Badge>
+                          {m.platform && <Badge variant="outline">{t(`agenda.service.${m.platform}`)}</Badge>}
+                        </div>
+                      </TableCell>
+                      <TableCell data-label={t('table.colWhen')} className="px-4 py-3 text-xs text-muted-foreground">
+                        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span className="text-foreground">{f.dateTime(m.startedAt ?? m.createdAt)}</span>
+                          {duration && <span className="font-mono tabular-nums">{duration}</span>}
                         </span>
-                        {m.hasAudio && <Badge variant="secondary">{t('badgeAudio')}</Badge>}
-                        {m.hasVideo && <Badge variant="secondary">{t('badgeVideo')}</Badge>}
-                        {m.hasTranscript && <Badge variant="secondary">{t('badgeTranscript')}</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell data-label={t('table.colRetention')} className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
-                      {f.date(m.audioRetentionDate)}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </DataTable>
+                      </TableCell>
+                      <TableCell data-label={t('table.colSummary')} className="px-4 py-3">
+                        <div className="inline-flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline">{m.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}</Badge>
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {t('table.readersCount', { count: m.readersCount })}
+                          </span>
+                          {m.hasAudio && <Badge variant="secondary">{t('badgeAudio')}</Badge>}
+                          {m.hasVideo && <Badge variant="secondary">{t('badgeVideo')}</Badge>}
+                          {m.hasTranscript && <Badge variant="secondary">{t('badgeTranscript')}</Badge>}
+                        </div>
+                      </TableCell>
+                      <TableCell data-label={t('table.colRetention')} className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
+                        {f.date(m.audioRetentionDate)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </DataTable>
+            </div>
           )}
         </TabsContent>
 
         <TabsContent value="today" className="pt-2">
-          <TodayAgenda slug={slug} />
+          <TodayAgenda slug={slug} showUnconfiguredHint />
         </TabsContent>
 
         <TabsContent value="upcoming" className="pt-2">
-          <UpcomingAgenda slug={slug} />
+          <UpcomingAgenda slug={slug} showUnconfiguredHint />
         </TabsContent>
       </Tabs>
 

@@ -12,7 +12,7 @@ import { joinServiceFromUrl, safeJoinUrl, type AgendaEvent } from '@ludy/kernel-
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
-import { DataTable, ErrorText } from './ui.tsx';
+import { DataTable, Empty, ErrorText } from './ui.tsx';
 import { meetingsInstalled } from './linked-meetings.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -67,23 +67,62 @@ function EventLine({ event, titleId, showJoin = false }: { event: AgendaEvent; t
   );
 }
 
-export function TodayAgenda({ slug }: { slug: string }) {
+function AgendaDisabledNotice({
+  slug,
+  providers,
+  providersPending,
+  providersError,
+  showUnconfiguredHint,
+  offTestId,
+  unconfiguredTestId,
+}: {
+  slug: string;
+  providers: readonly string[] | undefined;
+  providersPending: boolean;
+  providersError: unknown;
+  showUnconfiguredHint: boolean;
+  offTestId: string;
+  unconfiguredTestId: string;
+}) {
   const t = useTranslations('meetings.agenda');
-  const on = meetingsInstalled();
-  // The Today view (#3955): today's events with the facts of each one's brief, read as the member in one call (no model runs; Vy's sentences stay the brief's own click).
-  const agenda = useQuery({ ...orpc.meetings.today.facts.queryOptions({ input: {} }), enabled: on, staleTime: 60_000, refetchOnWindowFocus: false });
-  const providers = useQuery({ ...orpc.calendar.providers.queryOptions(), enabled: on, staleTime: 5 * 60_000 });
-  if (!on || !agenda.data) return null;
-  if (!agenda.data.enabled) {
-    // Only where a calendar (Google or Outlook) can be connected at all; otherwise there is nothing to switch on.
-    if ((providers.data ?? []).length === 0) return null;
+  if ((providers ?? []).length > 0) {
     return (
-      <p className="text-xs text-muted-foreground" data-testid="meeting-agenda-off">
+      <p className="text-xs text-muted-foreground" data-testid={offTestId}>
         {t('off')}{' '}
         <Link to="/o/$slug/settings/bookings" params={{ slug }} hash="booking-settings" className="font-medium text-foreground underline">
           {t('offLink')}
         </Link>
       </p>
+    );
+  }
+  if (!showUnconfiguredHint || (providersPending && !providersError)) return null;
+  return (
+    <div data-testid={unconfiguredTestId}>
+      <Empty title={t('unconfiguredTitle')} hint={t('unconfiguredHint')} />
+    </div>
+  );
+}
+
+export function TodayAgenda({ slug, showUnconfiguredHint = false }: { slug: string; showUnconfiguredHint?: boolean }) {
+  const t = useTranslations('meetings.agenda');
+  const on = meetingsInstalled();
+  // The Today view (#3955): today's events with the facts of each one's brief, read as the member in one call (no model runs; Vy's sentences stay the brief's own click).
+  const agenda = useQuery({ ...orpc.meetings.today.facts.queryOptions({ input: {} }), enabled: on, staleTime: 60_000, refetchOnWindowFocus: false });
+  const providers = useQuery({ ...orpc.calendar.providers.queryOptions(), enabled: on, staleTime: 5 * 60_000 });
+  if (!on) return null;
+  if (agenda.error) return <ErrorText>{errorMessage(agenda.error)}</ErrorText>;
+  if (!agenda.data) return null;
+  if (!agenda.data.enabled) {
+    return (
+      <AgendaDisabledNotice
+        slug={slug}
+        providers={providers.data}
+        providersPending={providers.isPending}
+        providersError={providers.error}
+        showUnconfiguredHint={showUnconfiguredHint}
+        offTestId="meeting-agenda-off"
+        unconfiguredTestId="meeting-agenda-unconfigured"
+      />
     );
   }
   const items = agenda.data.items;
@@ -150,7 +189,7 @@ export function TodayAgenda({ slug }: { slug: string }) {
 }
 
 // Next 7 days of calendar events for the caller alone (#4477); uses DataTable stacked for responsive mobile cards.
-export function UpcomingAgenda({ slug }: { slug: string }) {
+export function UpcomingAgenda({ slug, showUnconfiguredHint = false }: { slug: string; showUnconfiguredHint?: boolean }) {
   const t = useTranslations('meetings.agenda');
   const f = useFormat();
   const on = meetingsInstalled();
@@ -160,14 +199,16 @@ export function UpcomingAgenda({ slug }: { slug: string }) {
   if (agenda.error) return <ErrorText>{errorMessage(agenda.error)}</ErrorText>;
   if (!agenda.data) return null;
   if (!agenda.data.enabled) {
-    if ((providers.data ?? []).length === 0) return null;
     return (
-      <p className="text-xs text-muted-foreground" data-testid="meeting-upcoming-off">
-        {t('off')}{' '}
-        <Link to="/o/$slug/settings/bookings" params={{ slug }} hash="booking-settings" className="font-medium text-foreground underline">
-          {t('offLink')}
-        </Link>
-      </p>
+      <AgendaDisabledNotice
+        slug={slug}
+        providers={providers.data}
+        providersPending={providers.isPending}
+        providersError={providers.error}
+        showUnconfiguredHint={showUnconfiguredHint}
+        offTestId="meeting-upcoming-off"
+        unconfiguredTestId="meeting-upcoming-unconfigured"
+      />
     );
   }
   const events = agenda.data.events;

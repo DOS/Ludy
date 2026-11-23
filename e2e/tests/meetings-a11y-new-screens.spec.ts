@@ -151,6 +151,7 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
       ready: async (p) => {
         await p.getByTestId('meetings-settings-trigger').click();
         await expect(p.getByTestId('meetings-settings-sheet')).toBeVisible();
+        await expect(p.getByTestId('meeting-hook')).toBeVisible();
       },
     },
   ];

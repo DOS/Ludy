@@ -626,11 +626,23 @@ export const meetingRecordingNow = defineQuery({
   },
 });
 
+// Caller's active calendar events with event reading enabled, scoped by org, user, and calendar_agenda_read RLS.
+function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId: string) {
+  return trx
+    .selectFrom('crove_meetings.calendar_agenda as a')
+    .innerJoin('ludy_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
+    .where('a.org_id', '=', orgId)
+    .where('a.user_id', '=', userId)
+    .where('c.status', '=', 'active')
+    .where('c.read_events', '=', true);
+}
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
   access: READERS,
   handler: async (ctx, input): Promise<MeetingSummary[]> => {
+    const userId = userOf(ctx.actor);
     let query = ctx.trx
       .selectFrom('crove_meetings.meeting')
       .selectAll()
@@ -677,21 +689,23 @@ export const meetingList = defineQuery({
     const videoSet = new Set(videos.map((v) => v.meeting_id));
 
     // transcript_segment_read RESTRICTIVE RLS ensures recorders see drafts/published while readers only see published.
-    const transcriptMeetings = await ctx.trx
-      .selectFrom('crove_meetings.transcript_segment')
-      .select('meeting_id')
-      .distinct()
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', 'in', meetingIds)
-      .execute();
-    const transcriptSet = new Set(transcriptMeetings.map((t) => t.meeting_id));
+    // EXISTS stops at the first visible segment per meeting instead of evaluating RLS on every row.
+    const transcriptMeetings = await sql<{ meeting_id: string }>`
+      SELECT m.id AS meeting_id
+      FROM pg_catalog.unnest(${meetingIds}::uuid[]) AS m(id)
+      WHERE EXISTS (
+        SELECT 1
+        FROM crove_meetings.transcript_segment s
+        WHERE s.org_id = ${ctx.orgId}::uuid
+          AND s.meeting_id = m.id
+      )
+    `.execute(ctx.trx);
+    const transcriptSet = new Set(transcriptMeetings.rows.map((t) => t.meeting_id));
 
-    // calendar_agenda_read RESTRICTIVE RLS limits rows to the caller's own linked calendar events; map to platform code only.
-    const agendaPlatforms = await ctx.trx
-      .selectFrom('crove_meetings.calendar_agenda')
-      .select(['meeting_id', 'join_url'])
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', 'in', meetingIds)
+    // Active, readable caller calendar events only; mapped to platform code without exposing raw joinUrl.
+    const agendaPlatforms = await readableAgendaPlatforms(ctx.trx, ctx.orgId, userId)
+      .select(['a.meeting_id', 'a.join_url'])
+      .where('a.meeting_id', 'in', meetingIds)
       .execute();
     const platformMap = new Map<string, MeetingPlatform>();
     for (const row of agendaPlatforms) {
@@ -759,11 +773,10 @@ export const meetingGet = defineQuery({
       .limit(1)
       .executeTakeFirst();
 
-    const agendaPlatform = await ctx.trx
-      .selectFrom('crove_meetings.calendar_agenda')
-      .select(['join_url'])
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
+    const agendaPlatform = await readableAgendaPlatforms(ctx.trx, ctx.orgId, userId)
+      .select(['a.join_url'])
+      .where('a.meeting_id', '=', input.meetingId)
+      .limit(1)
       .executeTakeFirst();
 
     const videoRetentionDate = video?.video_retention_date

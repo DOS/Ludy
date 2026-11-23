@@ -28,7 +28,10 @@ describe('meeting-agenda contracts (#4477)', () => {
     expect(joinServiceFromUrl('javascript:alert(1)')).toBeNull();
     expect(joinServiceFromUrl('https://evil.example/meet.google.com')).toBeNull();
     expect(joinServiceFromUrl('https://user:pass@meet.google.com/abc-defg-hij')).toBeNull();
+    expect(joinServiceFromUrl('https://meet.google.com:8443/abc')).toBeNull();
     expect(joinServiceFromUrl('https://.zoom.us/j/1')).toBeNull();
+    expect(joinServiceFromUrl('https://a..zoom.us/j/1')).toBeNull();
+    expect(joinServiceFromUrl('https://foo..bar.zoom.us/j/1')).toBeNull();
     expect(joinServiceFromUrl('https://notzoom.us/j/1')).toBeNull();
     expect(joinServiceFromUrl('https://fake-teams.microsoft.com/x')).toBeNull();
     expect(joinServiceFromUrl('not-a-url')).toBeNull();
@@ -36,9 +39,13 @@ describe('meeting-agenda contracts (#4477)', () => {
     expect(joinServiceFromUrl(null)).toBeNull();
   });
 
-  it('returns trimmed URL from safeJoinUrl iff joinServiceFromUrl matches', () => {
+  it('returns canonical href from safeJoinUrl iff joinServiceFromUrl matches', () => {
     expect(safeJoinUrl('  https://meet.google.com/abc-defg-hij  ')).toBe('https://meet.google.com/abc-defg-hij');
+    expect(safeJoinUrl('https://MEET.GOOGLE.COM/abc-defg-hij')).toBe('https://meet.google.com/abc-defg-hij');
     expect(safeJoinUrl('https://us02web.zoom.us/j/999')).toBe('https://us02web.zoom.us/j/999');
+    expect(safeJoinUrl('https://meet.google.com:8443/abc')).toBeNull();
+    expect(safeJoinUrl('https://a..zoom.us/j/1')).toBeNull();
+    expect(safeJoinUrl('https://foo..bar.zoom.us/j/1')).toBeNull();
     expect(safeJoinUrl('http://zoom.us/j/999')).toBeNull();
     expect(safeJoinUrl('javascript:alert(1)')).toBeNull();
     expect(safeJoinUrl('https://evil.example/zoom.us')).toBeNull();

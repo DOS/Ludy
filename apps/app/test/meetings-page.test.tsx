@@ -137,6 +137,8 @@ describe('MeetingsPage (#4477)', () => {
     expect(html).toContain('data-testid="meetings-toolbar"');
     expect(html).toContain('data-testid="meetings-filter-trigger"');
     expect(html).toContain('id="meeting-sort"');
+    expect(html).toContain('role="status"');
+    expect(html).toContain('data-testid="meetings-filtered-count"');
 
     // DataTable rows and badges
     expect(html.match(/data-testid="meeting-row"/g)).toHaveLength(2);
@@ -151,10 +153,11 @@ describe('MeetingsPage (#4477)', () => {
     expect(html).toContain('3 readers');
     expect(html).toContain('1 reader');
     expect(html).toContain('d:2026-12-23');
-    expect(html).toContain(`data-label="${en.meetings.table.colMeeting}"`);
-    expect(html).toContain(`data-label="${en.meetings.table.colWhen}"`);
-    expect(html).toContain(`data-label="${en.meetings.table.colSummary.replace('&', '&amp;')}"`);
-    expect(html).toContain(`data-label="${en.meetings.table.colRetention}"`);
+    const escapeHtmlAttr = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+    expect(html).toContain(`data-label="${escapeHtmlAttr(en.meetings.table.colMeeting)}"`);
+    expect(html).toContain(`data-label="${escapeHtmlAttr(en.meetings.table.colWhen)}"`);
+    expect(html).toContain(`data-label="${escapeHtmlAttr(en.meetings.table.colSummary)}"`);
+    expect(html).toContain(`data-label="${escapeHtmlAttr(en.meetings.table.colRetention)}"`);
     // Settings drawer is closed on initial render, so settings cards are not mounted inline.
     expect(html).not.toContain('data-testid="meetings-settings-sheet"');
     expect(html).not.toContain('data-testid="meeting-digest"');

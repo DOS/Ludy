@@ -577,19 +577,24 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         await sweep(
           c,
           [
+            {
+              ...slot('multiday', -2, 9, 10),
+              endsAt: new Date(base + 13 * 3_600_000).toISOString(),
+            },
             slot('ended', 0, 9, 10),
             slot('running', 0, 11.5, 12.5),
             slot('later-today', 0, 15, 16),
             slot('tomorrow', 1, 9, 10),
             slot('day7', 7, 10, 11),
+            slot('day7-late', 7, 23 + 59 / 60, 24),
             slot('day8', 8, 10, 11),
           ],
-          -48 * 60,
+          -96 * 60,
         );
 
         const upcoming = await query<AgendaList>('lan', 'meetings.agenda.list', { range: 'upcoming' });
         expect(upcoming.enabled).toBe(true);
-        expect(upcoming.events.map((e) => e.title)).toEqual(['Họp running', 'Họp later-today', 'Họp tomorrow', 'Họp day7']);
+        expect(upcoming.events.map((e) => e.title)).toEqual(['Họp multiday', 'Họp running', 'Họp later-today', 'Họp tomorrow', 'Họp day7']);
 
         // Default {} and range: 'today' remain today-only (includes ended today, excludes tomorrow/day7).
         const todayDefault = await query<AgendaList>('lan', 'meetings.agenda.list');
@@ -657,6 +662,12 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       expect(namPubList.find((m) => m.id === mMeet)).toMatchObject({ hasTranscript: true, platform: null });
       const namPubDetail = await query<MeetingDetail>('nam', 'meetings.meeting.get', { meetingId: mMeet });
       expect(namPubDetail).toMatchObject({ hasTranscript: true, platform: null });
+
+      // Disabling read_events hides platform immediately on both list and get even before cache deletion.
+      await sqlAdmin('UPDATE ludy_kernel.calendar_connection SET read_events = false WHERE id = $1', [c]);
+      expect((await query<MeetingSummary[]>('lan', 'meetings.meeting.list', {})).find((m) => m.id === mMeet)?.platform).toBeNull();
+      expect((await query<MeetingDetail>('lan', 'meetings.meeting.get', { meetingId: mMeet })).platform).toBeNull();
+      await off('lan', c);
     });
   });
 });

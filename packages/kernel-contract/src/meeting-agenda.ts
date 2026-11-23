@@ -19,8 +19,7 @@ export const MEETING_PLATFORMS = ['meet', 'zoom', 'teams'] as const;
 export const zMeetingPlatform = z.enum(MEETING_PLATFORMS);
 export type MeetingPlatform = z.infer<typeof zMeetingPlatform>;
 
-/** Identifies the video call platform from an https join URL; refuses non-https or unrecognized hosts. */
-export function joinServiceFromUrl(url: string | null): MeetingPlatform | null {
+function parseSafeJoinUrl(url: string | null): { platform: MeetingPlatform; href: string } | null {
   if (!url) return null;
   const trimmed = url.trim();
   if (!trimmed) return null;
@@ -30,20 +29,24 @@ export function joinServiceFromUrl(url: string | null): MeetingPlatform | null {
   } catch {
     return null;
   }
-  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') return null;
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.port !== '') return null;
   const host = parsed.hostname.toLowerCase();
-  if (host === 'meet.google.com') return 'meet';
-  if (host === 'zoom.us' || (host.endsWith('.zoom.us') && host.length > '.zoom.us'.length && !host.startsWith('.'))) return 'zoom';
-  if (host === 'teams.microsoft.com' || host === 'teams.live.com') return 'teams';
-  return null;
+  if (host === '' || host.split('.').some((label) => label.length === 0)) return null;
+  let platform: MeetingPlatform | null = null;
+  if (host === 'meet.google.com') platform = 'meet';
+  else if (host === 'zoom.us' || host.endsWith('.zoom.us')) platform = 'zoom';
+  else if (host === 'teams.microsoft.com' || host === 'teams.live.com') platform = 'teams';
+  return platform === null ? null : { platform, href: parsed.href };
 }
 
-/** Returns the trimmed join URL only when it is a safe https Meet, Zoom, or Teams address. */
+/** Identifies the video call platform from an https join URL; refuses non-https, ports, embedded credentials, empty DNS labels, or unrecognized hosts. */
+export function joinServiceFromUrl(url: string | null): MeetingPlatform | null {
+  return parseSafeJoinUrl(url)?.platform ?? null;
+}
+
+/** Returns the canonical URL when it is a safe https Meet, Zoom, or Teams address. */
 export function safeJoinUrl(url: string | null): string | null {
-  if (!url) return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  return joinServiceFromUrl(trimmed) !== null ? trimmed : null;
+  return parseSafeJoinUrl(url)?.href ?? null;
 }
 
 // How far a meeting/recording interval may extend when matching against calendar events or existing Ludy meetings (B1 15-minute rule).

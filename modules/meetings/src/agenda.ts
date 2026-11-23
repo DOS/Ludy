@@ -86,7 +86,7 @@ async function hasReadableCalendar(trx: Trx, orgId: string, userId: string): Pro
   return enabled !== undefined;
 }
 
-// Today's or next 7 days' meetings (Vietnam time) of the member's own calendar, earliest first, with the ones already recorded marked by their meeting.
+// Today's (Vietnam time) or rolling next 7 days' meetings of the member's own calendar, earliest first, with the ones already recorded marked by their meeting.
 export const agendaList = defineQuery({
   name: 'meetings.agenda.list',
   input: zAgendaListInput,
@@ -111,14 +111,12 @@ export async function todaysAgenda(trx: Trx, orgId: string, userId: string): Pro
   return zAgendaList.parse({ enabled: true, events: rows.map(toEvent) });
 }
 
-// In-progress and upcoming meetings over the next AGENDA_UPCOMING_DAYS Vietnam calendar days (#4477).
+// In-progress and upcoming meetings over the next AGENDA_UPCOMING_DAYS rolling 24h window (#4477).
 export async function upcomingAgenda(trx: Trx, orgId: string, userId: string): Promise<AgendaList> {
   if (!(await hasReadableCalendar(trx, orgId, userId))) return zAgendaList.parse({ enabled: false, events: [] });
   const now = new Date();
-  const todayStartMs = Date.parse(vnDayStart(vnDay(now)));
   const rows = await agendaOf(trx, orgId, userId)
-    .where('a.starts_at', '>=', new Date(todayStartMs - DAY_MS))
-    .where('a.starts_at', '<', new Date(todayStartMs + (AGENDA_UPCOMING_DAYS + 1) * DAY_MS))
+    .where('a.starts_at', '<', new Date(now.getTime() + AGENDA_UPCOMING_DAYS * DAY_MS))
     .where('a.ends_at', '>', now)
     .orderBy('a.starts_at')
     .orderBy('a.id')
