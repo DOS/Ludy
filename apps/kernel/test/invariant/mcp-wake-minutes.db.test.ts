@@ -279,7 +279,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
       (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.minutes_targets' ORDER BY occurred_at DESC LIMIT 1`, [orgA])).rows[0]?.detail;
     const vnToday = () => new Date(Date.now() + 7 * HOUR).toISOString().slice(0, 10);
     const dayShift = (days: number) => new Date(Date.parse(`${vnToday()}T00:00:00Z`) + days * 24 * HOUR).toISOString().slice(0, 10);
-    const dropOf = async (key: string, change: (meetingId: string) => Promise<void>, reason: string) => {
+    const dropOf = async (key: string, change: (meetingId: string) => Promise<void>, cause: string) => {
       await reset();
       const meetingId = await seedMeeting(key, 'org', true);
       const [event] = await events(meetingId);
@@ -288,7 +288,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
       expect(result, key).toMatchObject({ dropped: true, stored: 0, handedOver: 0, off: false });
       expect(await deliveries(), key).toEqual([]);
       expect(sent, key).toEqual([]);
-      expect(await latestAudit(), key).toMatchObject({ eventId: (event as { id: string }).id, dropped: true, reason, grants: 0 });
+      expect(await latestAudit(), key).toMatchObject({ eventId: (event as { id: string }).id, dropped: true, cause, grants: 0 });
       return { meetingId, event: event as { id: string } };
     };
     // Narrowed to attendees only after the publish.

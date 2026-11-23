@@ -79,6 +79,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     modules: ['ads', 'crm', 'social'],
     why: "the Inbox card of an Engage proposal (E4 #3863) says what the proposal is about, read as the approver: a booking and its event type (crm), a quote and its customer (crm), a post and its variants (social) and a live ad launch with its draft and account (ads). The kernel cannot import a module and the card shows the thing to be changed, so it reads those rows by plain SQL, only for the commands of the twin list, in the approver's own context (RLS applies) and only for an owner or an admin",
   },
+  'packages/kernel/src/mcp-wake.ts': {
+    modules: ['meetings'],
+    why: "kernel.mcp.wake.minutes_targets asks the worker-only definer ludy_meetings.minutes_wake_open one boolean (#4536) when the wake job for a published minutes event runs: the meeting still exists, is still org-visible and its text period is open, so a meeting narrowed, deleted or shredded after the publish sends no id to the grants (the job runs only after meetings checked it is installed and on, apps_off)",
+  },
   'packages/kernel/src/meeting-platform.ts': {
     modules: ['meetings'],
     why: 'kernel.meeting_platform.recordings checks crove_meetings.meeting for a single overlapping visible meeting (#4123 Step 3) only when meetings is installed (ctx.installed) and enabled (apps_off), in the caller transaction under meeting_read RLS',

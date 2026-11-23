@@ -382,9 +382,9 @@ export const mcpWakeMinutesTargets = defineCommand({
     const grants = dropped
       ? []
       : (await sql<{ grant_id: string }>`SELECT grant_id FROM ludy_kernel.mcp_wake_company_targets(${ctx.orgId}::uuid, ${MINUTES_WAKE_GRANTS_MAX}::int)`.execute(ctx.trx)).rows.map((r) => r.grant_id);
-    // The event's id and what came of it: never a body. `reason` is a fixed word that says why a drop happened.
+    // The event's id and what came of it: never a body. `cause` is a fixed word that says why a drop happened.
     // `capped` says the list stopped at its limit, so a count equal to it is never read as the whole.
-    ctx.audit({ eventId: input.eventId, dropped, ...(stale ? { reason: 'stale' } : !open ? { reason: 'meeting_closed' } : {}), grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
+    ctx.audit({ eventId: input.eventId, dropped, ...(stale ? { cause: 'stale' } : !open ? { cause: 'meeting_closed' } : {}), grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
     return { meetingId: published.meetingId, publishedAt: published.publishedAt, grants, dropped };
   },
 });
