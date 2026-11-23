@@ -284,7 +284,7 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
       expect(trigger.rows[0]?.def).toMatch(/UPDATE OF id, org_id, grant_id, body, type/);
       await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET id = $2 WHERE id = $1`, [id, randomUUID()]), 'a new id').rejects.toThrow(/does not fit the registered type/);
       await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET grant_id = $2 WHERE id = $1`, [id, other]), 'another grant').rejects.toThrow(/does not fit the registered type/);
-      await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET org_id = $2 WHERE id = $1`, [id, randomUUID()]), 'another org').rejects.toThrow();
+      await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET org_id = $2 WHERE id = $1`, [id, randomUUID()]), 'another org').rejects.toThrow(/does not fit the registered type/);
       const row = await q<{ id: string; grant_id: string; org_id: string }>(`SELECT id, grant_id, org_id FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id]);
       expect(row.rows).toEqual([{ id, grant_id: g, org_id: orgA }]);
       // A status update that touches none of the five columns still passes (the sweep's own writes).
