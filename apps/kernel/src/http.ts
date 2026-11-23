@@ -3056,7 +3056,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
       const input = parsed.data;
       // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list. Ludy Desktop (#4515)
-      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and it may ask for no scope.
+      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and it must ask for no scope (the contract and the database refuse any).
       if (input.extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
