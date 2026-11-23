@@ -161,12 +161,13 @@ describe('I18nProvider', () => {
 
     const before = render();
     expect(before).toContain('vi|Hủy|1.980.000,5');
-    expect(before).toMatch(/value="vi" selected=""/);
+    expect(before).toContain('role="radiogroup"');
+    expect(before).toMatch(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*data-value="vi"/);
     expect(before).toContain('aria-label="Ngôn ngữ"');
     runtime.setActiveLocale('en');
     const after = render();
     expect(after).toContain('en|Cancel|₫1,980,000.5');
-    expect(after).toMatch(/value="en" selected=""/);
+    expect(after).toMatch(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*data-value="en"/);
     expect(after).toContain('aria-label="Language"');
   });
 });
