@@ -195,6 +195,31 @@ function transcribePriceProblem(env: Env): string | null {
   return isPositivePrice(value(env, 'AI_PRICE_AUDIO_PER_MIN') ?? '0') ? null : 'MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0: a transcription then costs nothing to the AI budget and its hard stop never refuses one; set the price of a minute of audio';
 }
 
+// With the switch on, the provider the worker calls must be named: without TRANSCRIBE_BASE_URL and TRANSCRIBE_MODEL the kernel treats transcription as off (`transcribeEnabled`), so the
+// redeploy of runbook step T2 would show no "Nhờ Vy ghi lời" button and nothing says why (#4524). The check reads names only: the provider's key is checked elsewhere as a secret, never printed.
+function transcribeProviderProblems(env: Env): (string | null)[] {
+  if (value(env, 'MEETINGS_TRANSCRIBE') !== 'on') return [];
+  const problems: (string | null)[] = [];
+  const base = value(env, 'TRANSCRIBE_BASE_URL');
+  if (base === undefined) {
+    problems.push('MEETINGS_TRANSCRIBE is on while TRANSCRIBE_BASE_URL is unset: transcription stays off and the meeting screen shows no "Nhờ Vy ghi lời" button; set the provider\'s https base URL');
+  } else if (!URL.canParse(base)) {
+    problems.push('TRANSCRIBE_BASE_URL is not a URL');
+  } else {
+    const url = new URL(base);
+    // The kernel accepts only http and https here (`z.url({ protocol: /^https?$/ })` in config.ts), so any other scheme would stop it from starting.
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') problems.push(`TRANSCRIBE_BASE_URL must start with https:// (it starts with ${url.protocol}//); the kernel refuses to start on it`);
+    // The kernel's own rule (config.ts): http only for localhost or 127.0.0.1, or any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1 on a private network.
+    else if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname) && value(env, 'TRANSCRIBE_ALLOW_INSECURE_HTTP') !== '1') {
+      problems.push(`TRANSCRIBE_BASE_URL is ${url.origin}: the audio and the key would travel in clear text and the kernel refuses to start on it; use https (TRANSCRIBE_ALLOW_INSECURE_HTTP=1 is for a provider on a private network only)`);
+    }
+  }
+  if (value(env, 'TRANSCRIBE_MODEL') === undefined) {
+    problems.push('MEETINGS_TRANSCRIBE is on while TRANSCRIBE_MODEL is unset: transcription stays off; set the provider\'s model name');
+  }
+  return problems;
+}
+
 // The per-org AI cost limit counts tokens at AI_PRICE_*; with both at 0 every call costs nothing to the cap.
 function aiCostProblem(env: Env): string | null {
   if (value(env, 'AI_API_KEY') === undefined) return null;
@@ -266,6 +291,14 @@ export function checkEnv(env: Env): CheckResult[] {
     add('Roles', [rolesProblem(env)], 'the API and the worker run as separate processes (api and worker), not as the all-in-one role');
     add('Modules', [modulesProblem(env)], modulesSummary);
     add('Transcription price', [transcribePriceProblem(env)], value(env, 'MEETINGS_TRANSCRIBE') === 'on' ? 'AI_PRICE_AUDIO_PER_MIN is set, so the AI budget counts transcription' : 'transcription is off');
+    const transcribeBase = value(env, 'TRANSCRIBE_BASE_URL');
+    add(
+      'Transcription provider',
+      transcribeProviderProblems(env),
+      value(env, 'MEETINGS_TRANSCRIBE') === 'on'
+        ? `TRANSCRIBE_BASE_URL (${transcribeBase !== undefined && URL.canParse(transcribeBase) ? new URL(transcribeBase).origin : 'unset'}) and TRANSCRIBE_MODEL are set, so transcription can start`
+        : 'transcription is off',
+    );
     add('AI cost cap', [aiCostProblem(env)], value(env, 'AI_API_KEY') === undefined ? 'no AI key is set: no AI call is made' : 'AI_PRICE_* is set, so ORG_LIMIT_AI_COST_PER_DAY counts the AI cost');
   }
 

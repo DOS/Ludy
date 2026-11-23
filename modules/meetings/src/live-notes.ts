@@ -27,7 +27,7 @@ import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-ru
 import { itemFlags } from './results.ts';
 import { matchAttendee, parseWhen } from './summary.ts';
 import { vnDay } from './retention.ts';
-import { ROLES, userOf } from './transcript.ts';
+import { ROLES, lockMeeting, userOf } from './transcript.ts';
 import { LIVE_NOTES_FEATURE, LIVE_SUMMARY_FEATURE, lastLineSeq, latestWindow, lockLive, openLiveMeeting, recordingEnded, startWindow } from './live-run.ts';
 
 export const liveTick = defineCommand({
@@ -42,6 +42,9 @@ export const liveTick = defineCommand({
   handler: async (ctx, input): Promise<LiveTicked> => {
     const userId = userOf(ctx.actor);
     await openLiveMeeting(ctx, input.meetingId, 'take its live notes');
+    // The meeting row first, then the recorder's live lock (the order translate.ts takes its meeting row and its lock in), and both before the private result is read: a
+    // redaction of the same meeting holds the row and drops the private results, so a tick that waits here reads them gone, never a result the redaction was about to drop (#4474, #4415).
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
     await lockLive(ctx.trx, ctx.orgId, userId);
     const latest = await latestWindow(ctx, input.meetingId);
     let copiedRunId: string | null = null;
@@ -238,6 +241,8 @@ export const liveNotesCopy = defineCommand({
   handler: async (ctx, input): Promise<LiveNotesDone> => {
     const userId = userOf(ctx.actor);
     await openLiveMeeting(ctx, input.meetingId, 'copy its running notes');
+    // The same order as the tick: the meeting row, then the live lock, then the private result and the draft rows it replaces (#4474, #4415).
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
     await lockLive(ctx.trx, ctx.orgId, userId);
     // The recorder's own result, read in the recorder's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
     const found = await ctx

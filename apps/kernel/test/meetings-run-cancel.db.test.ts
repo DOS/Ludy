@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The removal of a meeting cancels the recorder's Vy runs bound to it (#3951): a title run (#3947) and a commitments run (#3954) in flight at a deletion are cancelled with the code MEETING_REMOVED, one
+// The removal of a meeting cancels the recorder's Vy runs bound to it (#3951): a title run (#3947), a commitments run (#3954) and a follow-up note run (#4475, #4534) in flight at a deletion are cancelled with the code MEETING_REMOVED, one
 // audit row each names the run, the meeting and the feature (ids only), and their private result row is deleted with the meeting. Another meeting of the same recorder is unaffected.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -123,5 +123,22 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
     expect(await runRow(second.runId)).toMatchObject({ status: 'running' });
     expect(await runRow(third.runId)).toMatchObject({ status: 'running' });
     expect(await results(other)).toBe(2);
+  });
+  it('cancels a follow-up note run in flight when the meeting is removed, audits it by ids, and deletes its private result row (#4534)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const other = await seedMeeting('recorder');
+    const note = await runStart('recorder', 'meetings.followup_note', meetingId);
+    expect(await results(meetingId)).toBe(1);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    expect(await results(meetingId)).toBe(0);
+    expect(await runRow(note.runId)).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });
+    const rows = await audits('meetings.followup_note', meetingId);
+    expect(rows).toHaveLength(1);
+    // Ids and the reason only: no title, no text.
+    expect(rows[0]?.detail).toEqual({ runId: note.runId, meetingId, feature: 'meetings.followup_note', reason: 'MEETING_REMOVED' });
+    // The recorder's other meeting still stands, and a follow-up note run of its own starts and stays live.
+    const second = await runStart('recorder', 'meetings.followup_note', other);
+    expect(await runRow(second.runId)).toMatchObject({ status: 'running' });
+    expect(await results(other)).toBe(1);
   });
 });

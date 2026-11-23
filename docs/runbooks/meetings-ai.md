@@ -26,7 +26,7 @@ This is a production step. No team lead or worker runs it. The coordinator shows
 
 | # | Check | How | Who |
 |---|---|---|---|
-| P1 | The release that runs includes #2822's gates (#2950, #2955), #2946 and #2949 | `/version` answers a build at or after the merge of the last of them | coordinator |
+| P1 | The release that runs includes #2822's gates (#2950, #2955), #2946 and #2949. All four merged on 2026-11-10 (the last, #2955, at 06:02 UTC); the first release cut after them is `v0.3.1`, and `v0.3.0` (2026-11-08) predates all four | `/version` answers a build that is `v0.3.1` or descends from it: `git merge-base --is-ancestor v0.3.1 <the build id /version shows>` succeeds (the build id is the release commit, [deploy.md](deploy.md)) | coordinator |
 | P2 | The deployment's AI provider is set: `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` in the host's env file | `deploy.sh` config check; an existing AI feature (the Inbox suggestion) answers | coordinator |
 | P3 | Member Vy is allowed for the pilot org's members (`vy.use`) and the org's AI budget is set | Settings, AI: the budget shows a limit; a member can open Vy | owner or org owner |
 | P4 (transcription only) | `CREDENTIAL_KEY` (or a shared `CREDENTIAL_KEY_FILE`) is the same on `api` and `worker` ([credential-key.md](credential-key.md)) | the meeting screen offers "Nhờ Vy ghi lời" after step T2; without the key the status says off | coordinator |
@@ -47,9 +47,19 @@ This is a production step. No team lead or worker runs it. The coordinator shows
 
 | Step | Action | Check | Rollback |
 |---|---|---|---|
-| T1 | Put the provider key into the host's secret store as `TRANSCRIBE_API_KEY` (a person does this; the value never goes into a chat, an issue or the repository). Set `TRANSCRIBE_BASE_URL` (https), `TRANSCRIBE_MODEL`, `TRANSCRIBE_API_MODE` (see below) and `AI_PRICE_AUDIO_PER_MIN` | `docker compose config` shows the names set on both `api` and `worker`; the kernel refuses to start on an `http://` URL unless `TRANSCRIBE_ALLOW_INSECURE_HTTP=1`, which must stay `0` for a provider on the internet | remove the values |
+| T1 | Put the provider key into the host's secret store as `TRANSCRIBE_API_KEY` (a person does this; the value never goes into a chat, an issue or the repository). Set `TRANSCRIBE_BASE_URL` (https), `TRANSCRIBE_MODEL`, `TRANSCRIBE_API_MODE` (see below) and `AI_PRICE_AUDIO_PER_MIN` (its unit and value: see Cost) | `docker compose config` shows each name where the table under these steps says it must be, and empty where it says empty; the kernel refuses to start on an `http://` URL unless `TRANSCRIBE_ALLOW_INSECURE_HTTP=1`, which must stay `0` for a provider on the internet | remove the values |
 | T2 | Set `MEETINGS_TRANSCRIBE=on` on `api` and `worker`; redeploy as in S2 | the smoke test passes; the meeting screen offers "Nhờ Vy ghi lời" | set it to `off`, redeploy |
 | T3 | Smoke test with a two-minute Vietnamese test recording made for the purpose, with the consent step filled in | the run ends; "Chép vào bản nháp của tôi" fills a draft transcript with the review note; the meter shows the audio minutes | T2 rollback |
+
+Where each setting must show in `docker compose config` (the pilot layout runs `api` and `worker` as two services that both extend the default stack's single `crove` service, and `tools/deploy/compose.pilot.yml` resets three settings on `api` on purpose):
+
+| Setting | Default stack (`crove`) | Pilot layout, `api` | Pilot layout, `worker` |
+|---|---|---|---|
+| `MEETINGS_TRANSCRIBE`, `TRANSCRIBE_BASE_URL`, `TRANSCRIBE_MODEL`, `TRANSCRIBE_ALLOW_INSECURE_HTTP` | set | set (they decide whether the meeting screen offers "Nhờ Vy ghi lời") | set |
+| `TRANSCRIBE_API_KEY`, `TRANSCRIBE_API_MODE`, `AI_PRICE_AUDIO_PER_MIN` | set | **empty on purpose**: the API never calls the provider, never holds its key and never prices the run | set (the worker calls the provider, holds the key and prices each chunk) |
+| `CREDENTIAL_KEY` or `CREDENTIAL_KEY_FILE` | the key, or the file on the `keys` volume | the same key as the worker (P4) | the same key as the API (P4) |
+
+So on the pilot a key, mode or price that shows on `api` is a mistake to fix, and one that is missing on `worker` is why a run fails with `TRANSCRIBE_UNAVAILABLE` or counts no cost.
 
 The provider must speak an OpenAI-compatible API (AGENTS.md: AI calls go through an OpenAI-compatible endpoint). `TRANSCRIBE_API_MODE` says which request the adapter makes:
 
@@ -80,6 +90,7 @@ The `input_audio` part names the audio's format by the extension of its type (`w
 
 ## Cost (fill in before the owner approves)
 
-- **Summary:** about `<tokens per hour of meeting>` tokens per hour of meeting, at the deployment's AI price.
+- **Summary:** not measured yet. The tokens a summary of an hour of meeting takes are read from the AI meter during the first test runs (S3, S4) and written here; until then the cap is the budget (`AI_DEFAULT_MONTHLY_BUDGET`, or the org's own), not an estimate.
+- **Unit of every price.** A deployment has one unit for all of its AI prices and budgets: the currency `AI_PRICE_INPUT_PER_MTOK` and `AI_PRICE_OUTPUT_PER_MTOK` are written in (`.env.example` says "for example USD"). `AI_PRICE_AUDIO_PER_MIN`, `AI_DEFAULT_MONTHLY_BUDGET`, an org's own budget and `ORG_LIMIT_AI_COST_PER_DAY` all count in it. The coordinator reads which unit the host's current `AI_PRICE_*` use and the owner confirms it. In USD, the provider's price per minute below is the value to write as it stands (`AI_PRICE_AUDIO_PER_MIN=0.005`; the setting takes at most 6 decimals); in another currency, multiply by the rate of the day the owner approves and note the rate and the date here. A price of 0 counts the minutes but no cost, so a hard-stop budget never refuses (`pnpm pilot:check` fails that on a public deployment).
 - **Transcription:** `AI_PRICE_AUDIO_PER_MIN` × 60 per hour of audio, at the chosen provider's price. For Gemini 3.5 Transcribe, Google's page (read 2026-11-10, via web sources) lists $2 per million audio input tokens plus $12 per million text output tokens, about $0.005 per audio minute, so about $0.30 per hour of meeting; confirm it on the provider's price page before the owner approves. A request is limited to 15 minutes of audio with timestamps and speakers, and Ludy's 10-minute chunks fit.
 - **Limit:** the org's AI budget caps both; a spent budget refuses before the call.
