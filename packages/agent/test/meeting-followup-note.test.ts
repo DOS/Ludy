@@ -123,6 +123,7 @@ describe('checkFollowupPersonalNote', () => {
     for (const [body, source] of [
       ['Gọi số 090 - 123 - 4567 nhé.', 'Số liên hệ 090 - 123 - 4567.'],
       ['Gọi số +84 90 - 123 - 4567 nhé.', 'Số liên hệ +84 90 - 123 - 4567.'],
+      ['Gọi số 090. 123. 4567 nhé.', 'Số liên hệ 090. 123. 4567.'],
       ['Vào a,123.com nhé.', 'Trang a,123.com của khách.'],
       ['Vào 123。com nhé.', 'Trang 123。com của khách.'],
       ['Xem unit.test nhé.', 'Trang unit.test của khách.'],
@@ -132,6 +133,8 @@ describe('checkFollowupPersonalNote', () => {
     for (const [body, source] of [
       ['Hẹn gặp ngày 28.11.2026 nhé.', 'Hẹn ngày 28.11.2026.'],
       ['Ngân sách 1000 - 2000 USD nhé.', 'Ngân sách 1000 - 2000 USD.'],
+      ['Họp từ 08.30 - 11.30 nhé.', 'Họp từ 08.30 - 11.30.'],
+      ['Hẹn ngày 05 - 10 - 2026 nhé.', 'Hẹn ngày 05 - 10 - 2026.'],
     ] as const) {
       expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body }), facts(source))), body).toBeNull();
     }

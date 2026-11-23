@@ -85,7 +85,20 @@ describe('followupNoteProblem', () => {
   });
 
   it('reads a phone typed with spaced hyphens, keeps dot dates and figure ranges out of CONTACT, and sees a domain behind punctuation (#4479)', () => {
-    for (const phone of ['Số 090 - 123 - 4567', 'Gọi 090 - 1234567', 'Số +84 90 - 123 - 4567', 'Gọi 0901 - 234 - 567', 'Số 090.123.4567', 'Mã 09.12.4567']) {
+    for (const phone of [
+      'Số 090 - 123 - 4567',
+      'Gọi 090 - 1234567',
+      'Số +84 90 - 123 - 4567',
+      'Gọi 0901 - 234 - 567',
+      'Số 090.123.4567',
+      'Mã 09.12.4567',
+      // A dot followed by a space, as people type a number: still one run (the first version of this rule let these through).
+      'Số 090. 123. 4567',
+      'Gọi 0901. 234. 567 nhé',
+      'Số 090 . 123 . 4567',
+      'Số 090..123..4567',
+      'Số 090-123-45',
+    ]) {
       expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
     }
     expect(followupNoteProblem(followupClean('Số 090 - 123 - 4567', false))).toBe('CONTACT');
@@ -97,6 +110,19 @@ describe('followupNoteProblem', () => {
       'Ngân sách 1000 - 2000 USD',
       'Năm 2025 - 2026 - 2027',
       'Từ 2026-11 - 2026-12',
+      // Times, days and ranges that open with a 0 or 84 and have spaced hyphens: eight digits or fewer, or a dot, so not a contact.
+      'Họp từ 08.30 - 11.30',
+      'Ca 07.00 - 11.30 - 13.30',
+      'Ca 0700 - 1100',
+      'Họp 0900 - 1700 hằng ngày',
+      'Ngày 05 - 10 - 2026',
+      'Từ 01 - 12 - 2026 đến 05 - 12 - 2026',
+      'Từ 01.12 - 05.12.2026',
+      'Giá 0 - 15.000.000',
+      'Doanh thu 8400 - 9000',
+      'Mã 01 - 02 - 03 - 04',
+      'Số 09.12.2026',
+      'Họp ngày 28.11.2026. 30 người dự',
     ]) {
       expect(followupHasPhoneOrLongDigits(fine), fine).toBe(false);
     }
