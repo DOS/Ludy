@@ -105,6 +105,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_push_subscription.sql',
       // #4492 (Omnichannel Roadmap Signals): the purge restatement that adds crove_projects.roadmap_signal restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_projects_roadmap_signals.sql',
+      // #4527 (HR Stage 6B): the purge restatement that adds ludy_hr.salary_advance_request, ludy_hr.payroll_adjustment_item, and ludy_hr.business_trip_request restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_hr_stage6b.sql',
     ]);
   });
 });
