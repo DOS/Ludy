@@ -4,8 +4,15 @@
 // number outside its structured input (summaryNumbersOutside, #1237), invisible format characters, disallowed links or an
 // out-of-range sentence count refuses the entire summary so deterministic counts stand alone. Nothing is stored or sent.
 import { draftLinksOutside } from './conversation.ts';
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
-import { hasAddress, hasNumberWords } from './reminder.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasProjectWrittenCountWords,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { summaryNumbersOutside, type SummaryFigure, type SummaryRequest } from './summary.ts';
 import { sentencesOf } from './today.ts';
 
@@ -417,7 +424,11 @@ export function checkProjectWeeklyStatus(
   }
 
   const outside = summaryNumbersOutside(joined, summaryInput);
-  if (outside.length > 0 || hasNumberWords(untrustedRemainder)) {
+  if (
+    outside.length > 0 ||
+    hasUngroundedMoneyOrScaleWords(untrustedRemainder) ||
+    hasProjectWrittenCountWords(untrustedRemainder)
+  ) {
     return { kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: outside };
   }
 

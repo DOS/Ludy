@@ -8,9 +8,14 @@
 // Speaker names (#3502): when the caller hands over the attendees' names, the model may also suggest which attendee a speaker label is. The suggestion is only a
 // proposal too: code keeps it only when the label is one the transcript has, the name is exactly one of the attendees (and is then written as the attendee's own
 // spelling), and the line it cites is spoken by that label. The recorder accepts a suggestion with a click of their own; nothing is renamed by this run.
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from '../injection-guards.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
-import { hasNumberWords } from '../reminder.ts';
 import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -267,7 +272,7 @@ export function checkSummary(
   if (!isRecord(parsed)) throw new SummaryError('SUMMARY_UNPARSABLE');
   const transcriptText = segments.map((s) => s.text).join('\n');
   const known = new Set(segments.flatMap((s) => numbersIn(s.text)));
-  const transcriptHasNumberWords = hasNumberWords(transcriptText);
+  const transcriptHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(transcriptText);
   const foreign = (text: string): boolean => numbersIn(text).some((n) => !known.has(n));
   const bad = (text: string): boolean =>
     foreign(text) ||
@@ -275,7 +280,7 @@ export function checkSummary(
     hasStealthControls(text) ||
     hasPromptMarkupLeak(text) ||
     hasAutonomousActionDirective(text) ||
-    (!transcriptHasNumberWords && hasNumberWords(text));
+    (!transcriptHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(text));
   const clean = (rawText: string, max: number): string => {
     const clipped = oneLine(rawText, max);
     return glossary.length === 0 ? clipped : oneLine(spellGlossary(clipped, glossary), max);
@@ -361,7 +366,7 @@ export function checkSummary(
         hasPromptMarkupLeak(entry.title) ||
         hasPromptMarkupLeak(title) ||
         hasAutonomousActionDirective(title) ||
-        (!transcriptHasNumberWords && hasNumberWords(title)) ||
+        (!transcriptHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(title)) ||
         hasObfuscatedContactOrLink(titleWithoutPlainEmails, [], [transcriptText]) ||
         /(?:https?|hxxps?):\/\/|mailto:|tel:|www\./i.test(titleWithoutPlainEmails)
       ) {
@@ -578,7 +583,7 @@ export function checkEnhanced(raw: string, segments: readonly SummarySegment[], 
         }
         // Every line Vy adds rests on a real moment of the transcript, has no figure nobody said and no way to reach someone off the page.
         const real = typeof seconds === 'number' && Number.isInteger(seconds) && segments.some((s) => seconds >= Math.floor(s.startSeconds) && seconds <= Math.ceil(s.endSeconds));
-        if (!real || foreign(text) || hasContact(text) || hasStealthControls(text) || hasPromptMarkupLeak(text) || hasAutonomousActionDirective(text) || (!hasNumberWords(segments.map((s) => s.text).join('\n')) && hasNumberWords(text)) || addedCount >= ENHANCE_LIMITS.addedLines || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
+        if (!real || foreign(text) || hasContact(text) || hasStealthControls(text) || hasPromptMarkupLeak(text) || hasAutonomousActionDirective(text) || (!hasUngroundedMoneyOrScaleWords(segments.map((s) => s.text).join('\n')) && hasUngroundedMoneyOrScaleWords(text)) || addedCount >= ENHANCE_LIMITS.addedLines || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
           dropped += 1;
           continue;
         }

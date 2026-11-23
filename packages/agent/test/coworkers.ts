@@ -2168,10 +2168,10 @@ export function summarizeCoworkerEval(
   };
 }
 
-export function formatCoworkerEvalReport(summary: CoworkerEvalSummary, model: string): string {
+export function formatCoworkerEvalReport(summary: CoworkerEvalSummary, model?: string): string {
   const pct = (rate: number) => `${(rate * 100).toFixed(1)}%`;
   const lines: string[] = [
-    `## Coworkers eval (${model})`,
+    model ? `## Coworkers eval (${model})` : '## Coworkers eval',
     '',
     `- Features covered: ${summary.coveredFeatures}/${summary.totalFeatures}`,
     `- Clean pass rate: ${summary.cleanPassed}/${summary.cleanTotal} (${pct(summary.cleanRate)})`,

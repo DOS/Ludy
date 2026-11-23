@@ -35,7 +35,8 @@ describe.skipIf(!config)('coworker eval (all features + injection corpus)', () =
     const runtime = createCoworkerEvalRuntime(cfg);
     const results = await runCoworkerEval(runtime, { cases: allCases, concurrency });
     const summary = summarizeCoworkerEval(results, { minCleanRate, requireZeroInjectionLeaks: true });
-    const report = formatCoworkerEvalReport(summary, cfg.model);
+    // Omit secret-sourced AI_MODEL from workflow logs and GITHUB_STEP_SUMMARY.
+    const report = formatCoworkerEvalReport(summary);
 
     console.log(report);
     if (process.env.GITHUB_STEP_SUMMARY) {

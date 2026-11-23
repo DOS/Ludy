@@ -90,8 +90,12 @@ const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY_MS = 86_400_000;
 
-// Zero-width and bidi format controls (excluding C0 controls handled by stripTaskProposalControlChars).
-const STEALTH_FORMAT_CONTROL_RE = /[\u00AD\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/u;
+// Zero-width, bidi, and Unicode-tag format controls (excluding C0 controls handled by stripTaskProposalControlChars).
+const STEALTH_FORMAT_CONTROL_RE =
+  /[\u00AD\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]/u;
+
+// Cap raw candidate title length before running regex guards so adversarial oversized inputs stay O(1).
+const MAX_RAW_GUARD_TITLE_CHARS = 2_000;
 
 export function stripTaskProposalControlChars(raw: string): string {
   const withoutStealth = stripStealthControls(raw);
@@ -105,8 +109,9 @@ export function stripTaskProposalControlChars(raw: string): string {
 
 function sanitizeTitle(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
-  if (STEALTH_FORMAT_CONTROL_RE.test(raw) || hasPromptMarkupLeak(raw)) return null;
-  const cleaned = stripTaskProposalControlChars(raw).replace(/\s+/g, ' ').trim();
+  const bounded = raw.slice(0, MAX_RAW_GUARD_TITLE_CHARS);
+  if (STEALTH_FORMAT_CONTROL_RE.test(bounded) || hasPromptMarkupLeak(bounded)) return null;
+  const cleaned = stripTaskProposalControlChars(bounded).replace(/\s+/g, ' ').trim();
   if (cleaned.length === 0) return null;
   if (
     hasPromptMarkupLeak(cleaned) ||

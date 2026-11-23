@@ -22,8 +22,16 @@
 //   JSON list in the chat mode under a fixed line that says so. No terms, no change: the request is what it was.
 //
 // Nothing here logs or returns the audio, a transcript or a provider's body: errors carry a kind and an HTTP status only.
-import { stripStealthControls } from './injection-guards.ts';
+import {
+  TERM_CHARS_MAX,
+  TERMS_CHARS_MAX,
+  TERMS_MAX,
+  normalizeTerms,
+  tidyPlainText as tidy,
+} from './injection-guards.ts';
 import { metered, type AiUsageSink } from './meter.ts';
+
+export { TERM_CHARS_MAX, TERMS_CHARS_MAX, TERMS_MAX, normalizeTerms };
 
 // How one chunk is sent: `audio_transcriptions` (the default) posts the file to `/audio/transcriptions`; `chat_input_audio` posts
 // it to `/chat/completions` as an `input_audio` part, for a provider that offers no transcription endpoint.
@@ -85,60 +93,8 @@ const invalid = () => new TranscriptionError('invalid_response');
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const finite = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
-// A lone surrogate (half of an emoji a provider cut) is not valid text for the database: it becomes U+FFFD.
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-// What PostgreSQL refuses in text (NUL) and what has no place in a spoken line: the C0 controls (tab and newline are
-// whitespace, kept as a space) and DEL, and the bidirectional overrides and isolates that can reorder what a reader sees.
-function isDropped(code: number): boolean {
-  return (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) || code === 0x7f || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
-}
-// Tab, newline and carriage return are whitespace (collapsed to a space below), so they are kept here.
-function withoutControls(text: string): string {
-  let out = '';
-  for (const char of stripStealthControls(text)) if (!isDropped(char.codePointAt(0)!)) out += char;
-  return out;
-}
-const tidy = (text: string) => withoutControls(text).replace(LONE_SURROGATE, '\uFFFD').replace(/\s+/g, ' ').trim();
 // The latest second a transcript may name (the contract's bound for a segment).
 const TIMELINE_MAX = 86_400;
-
-// The term list's limits (#3499): at most this many terms, each at most this many characters (code points), and about this many characters in all (the terms
-// and the ", " between them). A name past the limit is not cut (half a name misleads the provider): it is left out.
-export const TERMS_MAX = 50;
-export const TERM_CHARS_MAX = 40;
-export const TERMS_CHARS_MAX = 1000;
-// A term holding this many digits is a phone number, a tax code or an amount that sits in a name field, never a name.
-const TERM_DIGITS_MAX = 4;
-
-// The names a provider may be sent for one meeting, from names a person typed (so hostile until proven otherwise): trimmed, control and format characters (bidirectional
-// overrides, zero width and tag characters included) and newlines gone, one space between words, in Unicode form C, each kept once whatever its case, in the order given, up to the limits above. Left out: anything that is not a
-// string, empty text, a term past TERM_CHARS_MAX, a term with no letter, a term that looks like an email address or a web address, and a term with more than TERM_DIGITS_MAX digits
-// (a heuristic for a number typed into a name field: the guarantee that no phone number, tax code or amount is sent is the columns the kernel reads, which hold names).
-// What is left is still text a person wrote, so it travels as data (see the two modes below), never as an instruction.
-export function normalizeTerms(raw: readonly unknown[] | null | undefined): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  let total = 0;
-  for (const item of raw ?? []) {
-    if (typeof item !== 'string') continue;
-    // A long string is refused before it is looked at: 10,000 characters of name is never a name.
-    if (item.length > TERM_CHARS_MAX * 4) continue;
-    // Beyond the controls tidy drops: the format characters (zero width, bidirectional marks, the Unicode tag characters that can hide text) and the C1 controls.
-    const term = tidy(item).replace(/[\p{Cf}\p{Cc}]/gu, '').replace(/\s+/g, ' ').trim().normalize('NFC');
-    if (term === '' || Array.from(term).length > TERM_CHARS_MAX) continue;
-    // The address checks look at the compatibility form, so a fullwidth "＠" or "．" is seen as the character it imitates.
-    const folded = term.normalize('NFKC');
-    if (!/\p{L}/u.test(term) || folded.includes('@') || /:\/\/|www\./i.test(folded)) continue;
-    if ((term.match(/\p{Nd}/gu) ?? []).length > TERM_DIGITS_MAX) continue;
-    const key = term.toLocaleLowerCase('vi');
-    if (seen.has(key)) continue;
-    if (out.length >= TERMS_MAX || total + term.length + (out.length === 0 ? 0 : 2) > TERMS_CHARS_MAX) break;
-    seen.add(key);
-    total += term.length + (out.length === 0 ? 0 : 2);
-    out.push(term);
-  }
-  return out;
-}
 
 // A speaker label is a short plain string; anything else is the default.
 export function speakerLabelOf(value: unknown): string {

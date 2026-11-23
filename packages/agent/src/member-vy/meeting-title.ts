@@ -4,9 +4,8 @@
 // than 80 characters, carries a link, an email address, a phone number, a run of 8 or more digits or a figure the transcript does not hold, or repeats another. The characters are cleaned first, with the class the
 // chapters' titles and the minutes templates' titles use (controls, bidi, zero-width and separators). Nothing here reads a database, names a table or command, or persists anything (the boundary test pins that):
 // the candidates go back to the recorder's browser as plain text and are not stored; the recorder's own click on one runs the rename command.
-import { hasAutonomousActionDirective, hasPromptMarkupLeak } from '../injection-guards.ts';
+import { hasAutonomousActionDirective, hasPromptMarkupLeak, hasUngroundedMoneyOrScaleWords } from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
-import { hasNumberWords } from '../reminder.ts';
 import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import { foldTitleText } from './meeting-chapters.ts';
 import type { BoundPorts } from './ports.ts';
@@ -72,7 +71,7 @@ export function checkTitles(raw: string, segments: readonly SummarySegment[], gl
   // The figures the meeting says (the speakers' words, not the clock of the lines).
   const transcriptText = segments.map((s) => s.text).join('\n');
   const known = new Set(numbersIn(transcriptText));
-  const transcriptHasNumberWords = hasNumberWords(transcriptText);
+  const transcriptHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(transcriptText);
   const seen = new Set<string>();
   const titles: string[] = [];
   let dropped = 0;
@@ -92,7 +91,7 @@ export function checkTitles(raw: string, segments: readonly SummarySegment[], gl
       hasPromptMarkupLeak(entry) ||
       hasPromptMarkupLeak(title) ||
       hasAutonomousActionDirective(title) ||
-      (!transcriptHasNumberWords && hasNumberWords(title)) ||
+      (!transcriptHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(title)) ||
       title.includes('@') ||
       digits >= 8 ||
       numbersIn(title).some((n) => !known.has(n)) ||

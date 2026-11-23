@@ -6,9 +6,14 @@
 // model has no tools, and every segment sits inside a JSON string between tags named with a random value of the run.
 // Nothing here reads a database, names a table or command, or persists anything (the boundary test pins that).
 import { createHash } from 'node:crypto';
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from '../injection-guards.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
-import { hasNumberWords } from '../reminder.ts';
 import { glossaryData, glossaryTerms, spellGlossary, termsInSource, writesTerm } from './glossary.ts';
 import { numbersIn } from './meeting-summary.ts';
 import type { BoundPorts } from './ports.ts';
@@ -325,9 +330,9 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   if (translated.some((token) => !held(token, original))) return refuse('INVENTED_NUMBER');
   const known = contactsIn(source.text);
   for (const contact of contactsIn(text)) if (!known.has(contact)) return refuse('CONTACT_ADDED');
-  if (!hasObfuscatedContactOrLink(source.text) && hasObfuscatedContactOrLink(text)) return refuse('CONTACT_ADDED');
-  if (!hasAutonomousActionDirective(source.text) && hasAutonomousActionDirective(text)) return refuse('CONTACT_ADDED');
-  if (!hasNumberWords(source.text) && hasNumberWords(text)) return refuse('INVENTED_NUMBER');
+  if (hasObfuscatedContactOrLink(text, [source.text])) return refuse('CONTACT_ADDED');
+  if (hasAutonomousActionDirective(text)) return refuse('CONTACT_ADDED');
+  if (!hasUngroundedMoneyOrScaleWords(source.text) && hasUngroundedMoneyOrScaleWords(text)) return refuse('INVENTED_NUMBER');
   const codes: TranslationCode[] = [];
   if (original.some((token) => !held(token, translated, true))) codes.push('NUMBER_DROPPED');
   if (!cjk) {

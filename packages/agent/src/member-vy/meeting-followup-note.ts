@@ -9,9 +9,9 @@ import {
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
   hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
 } from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
-import { hasNumberWords } from '../reminder.ts';
 import { figuresIn, hasBareLink, sameFigure } from './meeting-ask.ts';
 import { numbersIn } from './meeting-summary.ts';
 import type { BoundPorts } from './ports.ts';
@@ -263,7 +263,7 @@ export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts)
 
   // Exact figure & date grounding against source meeting facts (#1237 rule).
   const source = sourceTextOf(facts);
-  if (!hasNumberWords(source) && hasNumberWords(body)) {
+  if (!hasUngroundedMoneyOrScaleWords(source) && hasUngroundedMoneyOrScaleWords(body)) {
     throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
   }
   const sourceCurrencies = new Set(source.match(CURRENCY_RE) ?? []);

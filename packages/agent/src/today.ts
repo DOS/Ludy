@@ -9,9 +9,15 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
 import { draftLinksOutside } from './conversation.ts';
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
-import { hasAddress, hasNumberWords } from './reminder.ts';
 import { figureForms, formatFigure, numbersIn } from './summary.ts';
 
 // What the brief is written from: the Home list reduced to figures. Dates are calendar days in Vietnam time (YYYY-MM-DD).
@@ -97,7 +103,7 @@ export function checkedSentences(sentences: readonly string[], facts: BriefFacts
       !hasPromptMarkupLeak(sentence) &&
       numbersIn(sentence).every((n) => allowed.has(n)) &&
       !SCALED.test(text) &&
-      !hasNumberWords(text) &&
+      !hasUngroundedMoneyOrScaleWords(text) &&
       !hasAddress(text) &&
       !hasObfuscatedContactOrLink(text) &&
       !hasAutonomousActionDirective(text) &&

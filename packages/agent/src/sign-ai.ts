@@ -7,8 +7,9 @@ import { Decimal, isValidCalendarDate, toMoney, type DecimalValue } from '@ludy/
 import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
 import {
+  collectTrustedContactSets,
   hasAutonomousActionDirective,
-  hasObfuscatedContactOrLink,
+  hasObfuscatedContactOrLinkFromSets,
   hasPromptMarkupLeak,
   hasUngroundedMoneyOrIdToken,
   hasUngroundedMoneyOrScaleWords,
@@ -1527,13 +1528,17 @@ function hasUnsourcedLinkOrEmail(candidateText: string, sourceAddresses: Readonl
   return false;
 }
 
-function isUnsafeSignOutputText(text: string, trusted: readonly string[]): boolean {
-  const withoutTrusted = trusted.reduce<string>((acc, item) => (item ? acc.split(item).join(' ') : acc), text);
-  return (
-    hasPromptMarkupLeak(text) ||
-    hasAutonomousActionDirective(text) ||
-    hasObfuscatedContactOrLink(withoutTrusted, trusted)
-  );
+/** Precomputes trusted contact/domain sets once per validator call instead of re-scanning full PDF corpora per field. */
+function createSignOutputTextChecker(trusted: readonly string[]): (text: string) => boolean {
+  const contactSets = collectTrustedContactSets(trusted);
+  return (text: string): boolean => {
+    const withoutTrusted = trusted.reduce<string>((acc, item) => (item ? acc.split(item).join(' ') : acc), text);
+    return (
+      hasPromptMarkupLeak(text) ||
+      hasAutonomousActionDirective(text) ||
+      hasObfuscatedContactOrLinkFromSets(withoutTrusted, contactSets)
+    );
+  };
 }
 
 export function signFieldProposeInstructions(): string {
@@ -1620,6 +1625,7 @@ export function checkSignProposedFields(
   ].join('\n');
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedSourceRaw)));
   const sourceNumbers = buildSourceNumberContext(combinedSourceRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedSourceRaw]);
 
   const fields: SignProposedField[] = [];
   const seen = new Set<string>();
@@ -1659,7 +1665,7 @@ export function checkSignProposedFields(
         hasInventedNumbers(cleanLabel, sourceNumbers, request.pageCount) ||
         hasUngroundedMoneyOrScaleWords(cleanLabel) ||
         hasUngroundedMoneyOrIdToken(cleanLabel, []) ||
-        isUnsafeSignOutputText(cleanLabel, [combinedSourceRaw]))
+        isUnsafeText(cleanLabel))
     ) {
       droppedCount += 1;
       continue;
@@ -1714,6 +1720,7 @@ export function checkSignClauseSummary(
   const combinedSourceRaw = boundedPages.map((p) => p.text).join('\n');
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedSourceRaw)));
   const sourceNumbers = buildSourceNumberContext(combinedSourceRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedSourceRaw]);
 
   const riskClauses: SignRiskClause[] = [];
   let droppedClauseCount = 0;
@@ -1769,8 +1776,8 @@ export function checkSignClauseSummary(
       hasUnsourcedLinkOrEmail(explanation, sourceAddresses) ||
       hasInventedNumbers(title, sourceNumbers, request.pageCount) ||
       hasInventedNumbers(explanation, sourceNumbers, request.pageCount) ||
-      isUnsafeSignOutputText(title, [combinedSourceRaw]) ||
-      isUnsafeSignOutputText(explanation, [combinedSourceRaw])
+      isUnsafeText(title) ||
+      isUnsafeText(explanation)
     ) {
       droppedClauseCount += 1;
       continue;
@@ -1798,7 +1805,7 @@ export function checkSignClauseSummary(
         hasPromptMarkupLeak(raw.summaryText) ||
         hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) ||
         hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount) ||
-        isUnsafeSignOutputText(cleanedSummary, [combinedSourceRaw])
+        isUnsafeText(cleanedSummary)
       ) {
         summaryDropped = true;
       } else {
@@ -1918,6 +1925,7 @@ export function checkSignVersionDiffSummary(
   const maxPageCount = Math.max(request.pageCountV1, request.pageCountV2, 1);
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedSourceRaw)));
   const sourceNumbers = buildSourceNumberContext(combinedSourceRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedSourceRaw]);
 
   const resolvePageForQuote = (
     rawQuote: string | null | undefined,
@@ -1985,8 +1993,8 @@ export function checkSignVersionDiffSummary(
       hasUnsourcedLinkOrEmail(explanation, sourceAddresses) ||
       hasInventedNumbers(title, sourceNumbers, maxPageCount) ||
       hasInventedNumbers(explanation, sourceNumbers, maxPageCount) ||
-      isUnsafeSignOutputText(title, [combinedSourceRaw]) ||
-      isUnsafeSignOutputText(explanation, [combinedSourceRaw])
+      isUnsafeText(title) ||
+      isUnsafeText(explanation)
     ) {
       droppedDeltaCount += 1;
       continue;
@@ -2018,7 +2026,7 @@ export function checkSignVersionDiffSummary(
         hasPromptMarkupLeak(raw.summaryText) ||
         hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) ||
         hasInventedNumbers(cleanedSummary, sourceNumbers, maxPageCount) ||
-        isUnsafeSignOutputText(cleanedSummary, [combinedSourceRaw])
+        isUnsafeText(cleanedSummary)
       ) {
         summaryDropped = true;
       } else {
@@ -2111,6 +2119,7 @@ export function checkSignContractDraftClauses(
 
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(sourceRaw)));
   const sourceNumbers = buildSourceNumberContext(sourceRaw);
+  const isUnsafeText = createSignOutputTextChecker([sourceRaw]);
 
   const proposedClauses: SignProposedContractClause[] = [];
   let droppedCount = 0;
@@ -2140,9 +2149,9 @@ export function checkSignContractDraftClauses(
       hasInventedNumbers(heading, sourceNumbers, 15) ||
       hasInventedNumbers(body, sourceNumbers, 15) ||
       (rationale !== null && hasInventedNumbers(rationale, sourceNumbers, 15)) ||
-      isUnsafeSignOutputText(heading, [sourceRaw]) ||
-      isUnsafeSignOutputText(body, [sourceRaw]) ||
-      (rationale !== null && isUnsafeSignOutputText(rationale, [sourceRaw]))
+      isUnsafeText(heading) ||
+      isUnsafeText(body) ||
+      (rationale !== null && isUnsafeText(rationale))
     ) {
       droppedCount += 1;
       continue;
@@ -2170,7 +2179,7 @@ export function checkSignContractDraftClauses(
         hasPromptMarkupLeak(raw.summaryNote) ||
         hasUnsourcedLinkOrEmail(cleanedNote, sourceAddresses) ||
         hasInventedNumbers(cleanedNote, sourceNumbers, 15) ||
-        isUnsafeSignOutputText(cleanedNote, [sourceRaw])
+        isUnsafeText(cleanedNote)
       ) {
         noteDropped = true;
       } else {
@@ -2422,6 +2431,7 @@ export function checkSignObligationExtract(
   const combinedSourceRaw = boundedPages.map((p) => p.text).join('\n');
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedSourceRaw)));
   const sourceNumbers = buildSourceNumberContext(combinedSourceRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedSourceRaw]);
 
   let droppedCount = 0;
   const verifiedCitations = new Map<SignObligationCitationField, SignObligationCitation>();
@@ -2464,7 +2474,7 @@ export function checkSignObligationExtract(
       !hasPromptMarkupLeak(raw.counterpartyName) &&
       !hasUnsourcedLinkOrEmail(cleaned, sourceAddresses) &&
       !hasInventedNumbers(cleaned, sourceNumbers, request.pageCount) &&
-      !isUnsafeSignOutputText(cleaned, [combinedSourceRaw])
+      !isUnsafeText(cleaned)
     ) {
       counterpartyName = cleaned;
       keptCitations.push(cite);
@@ -2577,7 +2587,7 @@ export function checkSignObligationExtract(
       hasPromptMarkupLeak(item.title as string) ||
       hasUnsourcedLinkOrEmail(title, sourceAddresses) ||
       hasInventedNumbers(title, sourceNumbers, request.pageCount) ||
-      isUnsafeSignOutputText(title, [combinedSourceRaw])
+      isUnsafeText(title)
     ) {
       droppedCount += 1;
       continue;
@@ -2925,12 +2935,13 @@ export function checkSignVaultAnswer(
   const combinedCitedRaw = citedCorpora.join('\n');
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedCitedRaw)));
   const sourceNumbers = buildSourceNumberContext(combinedCitedRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedCitedRaw]);
 
   if (
     hasPromptMarkupLeak(raw.answer) ||
     hasUnsourcedLinkOrEmail(cleanedAnswer, sourceAddresses) ||
     hasInventedNumbers(cleanedAnswer, sourceNumbers, maxCitedPage) ||
-    isUnsafeSignOutputText(cleanedAnswer, [combinedCitedRaw])
+    isUnsafeText(cleanedAnswer)
   ) {
     return {
       kind: 'none',
@@ -3027,6 +3038,7 @@ export function checkSignPlaybookCheck(
   const combinedGroundingRaw = `${combinedPdfRaw}\n${combinedRulesRaw}`;
   const allowedAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedGroundingRaw)));
   const allowedNumbers = buildSourceNumberContext(combinedGroundingRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedGroundingRaw]);
 
   const findings: SignPlaybookProposedFinding[] = [];
   const seenRuleIds = new Set<string>();
@@ -3055,7 +3067,7 @@ export function checkSignPlaybookCheck(
       hasPromptMarkupLeak(item.rationale as string) ||
       hasUnsourcedLinkOrEmail(rawRationale, allowedAddresses) ||
       hasInventedNumbers(rawRationale, allowedNumbers, request.pageCount) ||
-      isUnsafeSignOutputText(rawRationale, [combinedGroundingRaw])
+      isUnsafeText(rawRationale)
     ) {
       droppedCount += 1;
       continue;
@@ -3094,7 +3106,7 @@ export function checkSignPlaybookCheck(
         !hasPromptMarkupLeak(item.suggestedRedline) &&
         !hasUnsourcedLinkOrEmail(cleanedRedline, allowedAddresses) &&
         !hasInventedNumbers(cleanedRedline, allowedNumbers, request.pageCount) &&
-        !isUnsafeSignOutputText(cleanedRedline, [combinedGroundingRaw])
+        !isUnsafeText(cleanedRedline)
       ) {
         suggestedRedline = cleanedRedline;
       } else {
@@ -3207,6 +3219,7 @@ export function checkSignKycOutput(
   ].join('\n');
   const sourceAddresses = new Set(extractAddressTokens(normalizeAddressText(combinedSourceRaw)));
   const sourceNumbers = buildSourceNumberContext(combinedSourceRaw);
+  const isUnsafeText = createSignOutputTextChecker([combinedSourceRaw]);
 
   let droppedCount = 0;
   const findings: SignKycAiFinding[] = [];
@@ -3240,7 +3253,7 @@ export function checkSignKycOutput(
       hasPromptMarkupLeak(item.explanation as string) ||
       hasUnsourcedLinkOrEmail(explanation, sourceAddresses) ||
       hasInventedNumbers(explanation, sourceNumbers, request.pageCount) ||
-      isUnsafeSignOutputText(explanation, [combinedSourceRaw])
+      isUnsafeText(explanation)
     ) {
       droppedCount += 1;
       continue;
@@ -3255,7 +3268,7 @@ export function checkSignKycOutput(
         hasPromptMarkupLeak(item.extractedValue) ||
         hasUnsourcedLinkOrEmail(cleanedExt, sourceAddresses) ||
         hasInventedNumbers(cleanedExt, sourceNumbers, request.pageCount) ||
-        isUnsafeSignOutputText(cleanedExt, [combinedSourceRaw])
+        isUnsafeText(cleanedExt)
       ) {
         droppedCount += 1;
         continue;
@@ -3271,7 +3284,7 @@ export function checkSignKycOutput(
         !hasPromptMarkupLeak(item.expectedValue) &&
         !hasUnsourcedLinkOrEmail(cleanedExp, sourceAddresses) &&
         !hasInventedNumbers(cleanedExp, sourceNumbers, request.pageCount) &&
-        !isUnsafeSignOutputText(cleanedExp, [combinedSourceRaw])
+        !isUnsafeText(cleanedExp)
       ) {
         expectedValue = cleanedExp;
       }
@@ -3304,7 +3317,7 @@ export function checkSignKycOutput(
       !hasPromptMarkupLeak(raw.summaryNote) &&
       !hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) &&
       !hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount) &&
-      !isUnsafeSignOutputText(cleanedSummary, [combinedSourceRaw])
+      !isUnsafeText(cleanedSummary)
     ) {
       summaryNote = cleanedSummary;
     } else {

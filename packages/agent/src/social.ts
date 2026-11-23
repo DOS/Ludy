@@ -6,16 +6,17 @@ import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
 import { draftLinksOutside } from './conversation.ts';
 import {
+  hasAddress,
   hasAutonomousActionDirective,
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
+  hasPromptTagOnlyLeak,
   hasStealthControls,
   hasUngroundedMoneyOrIdToken,
   hasUngroundedMoneyOrScaleWords,
 } from './injection-guards.ts';
 import { metered } from './meter.ts';
 import { ProofreadChangedError, proofreadChanges } from './proofread.ts';
-import { hasAddress } from './reminder.ts';
 import { SUMMARY_MAX, SummaryFigureError, summaryAsk, summaryNumbersOutside, type SummaryRequest } from './summary.ts';
 
 function withoutTrustedTexts(text: string, trusted: readonly string[]): string {
@@ -476,6 +477,15 @@ export class SocialWriter {
       if (hasStealthControls(next) || hasStealthControls(title ?? '')) throw new ProofreadChangedError(['wording']);
       const changed = proofreadChanges([text, request.title ?? ''], [next, title ?? '']);
       if (changed.length > 0) throw new ProofreadChangedError(changed);
+      const sourceJoined = [text, request.title ?? ''].join('\n');
+      const nextJoined = [next, title ?? ''].join('\n');
+      const trusted = [text, request.title ?? ''].filter(Boolean);
+      if (hasObfuscatedContactOrLink(nextJoined, trusted)) throw new ProofreadChangedError(['link']);
+      const addedFence =
+        (nextJoined.match(/<<<|>>>/g)?.length ?? 0) > (sourceJoined.match(/<<<|>>>/g)?.length ?? 0);
+      if (addedFence || hasPromptTagOnlyLeak(nextJoined) || hasAutonomousActionDirective(nextJoined)) {
+        throw new ProofreadChangedError(['wording']);
+      }
     } else {
       const trusted = [text, request.title ?? ''].filter(Boolean);
       if (isUnsafeSocialText([next, title ?? ''].join('\n'), trusted, trusted)) return null;

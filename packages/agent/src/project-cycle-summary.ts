@@ -4,13 +4,14 @@
 // Every output sentence is validated deterministically with summaryNumbersOutside and draftLinksOutside before return.
 import { draftLinksOutside } from './conversation.ts';
 import {
+  hasAddress,
   hasAutonomousActionDirective,
   hasObfuscatedContactOrLink,
+  hasProjectWrittenCountWords,
   hasPromptMarkupLeak,
   hasStealthControls,
   hasUngroundedMoneyOrScaleWords,
 } from './injection-guards.ts';
-import { hasAddress } from './reminder.ts';
 import {
   PROJECT_WEEKLY_STATUS_COMMENT_CHARS,
   PROJECT_WEEKLY_STATUS_SENTENCES_MAX,
@@ -29,9 +30,6 @@ import { sentencesOf } from './today.ts';
 export const PROJECT_CYCLE_SUMMARY_TASKS_MAX = 15;
 const PROJECT_CYCLE_GOAL_PROMPT_CHARS = 300;
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
-// Reject ungrounded tens/hundreds/scales/currencies and multi-word Vietnamese number phrases while leaving "one"/"two" English pronouns intact.
-const CYCLE_NUMBER_WORDS_RE =
-  /(?<![\p{L}])(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|trillion|dozen|half|grand|percent|dollars?|usd|euros?|eur|vnd|vnđ|trăm|nghìn|nghin|ngàn|ngan|triệu|trieu|tỷ|tỉ|vạn|mươi|muoi|nửa|phần\s+trăm)(?![\p{L}])|(?<![\p{L}])(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười)\s+(?:mươi|mốt|lăm|ngày|tuần|tháng|quý|năm|đồng|đô|giờ|phút|việc|điểm)(?![\p{L}])/iu;
 const oneLine = (value: string, max: number) => Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
 const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
 const INVISIBLE_FORMAT = /\p{Cf}/u;
@@ -228,7 +226,11 @@ export function checkProjectCycleSummary(
   }
 
   const outside = summaryNumbersOutside(joined, summaryInput);
-  if (outside.length > 0 || hasUngroundedMoneyOrScaleWords(untrustedRemainder) || CYCLE_NUMBER_WORDS_RE.test(untrustedRemainder.normalize('NFKC'))) {
+  if (
+    outside.length > 0 ||
+    hasUngroundedMoneyOrScaleWords(untrustedRemainder) ||
+    hasProjectWrittenCountWords(untrustedRemainder)
+  ) {
     return { kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: outside };
   }
 

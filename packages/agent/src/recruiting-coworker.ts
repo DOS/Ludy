@@ -16,12 +16,17 @@ import { evaluateCandidateReadiness, extractCvFieldsDeterministically, type Cand
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak } from './injection-guards.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { statedFiguresProblem } from './overview.ts';
 import { PayrollPromptLeakError } from './payroll-coworker.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
-import { hasAddress, hasNumberWords } from './reminder.ts';
 
 export type RecruitingBriefAiReason = 'ok' | 'off' | 'budget' | 'rate_limited' | 'unavailable' | 'refused';
 
@@ -1054,7 +1059,7 @@ function validateCvAiOutput(
   if (rawSummary !== null) {
     summary = isSafeCvTextField(rawSummary, 600);
     if (summary === null) return null;
-    if (hasAddress(summary) || draftFiguresOutside(summary, [cvText]).length > 0 || (hasNumberWords(summary) && !hasNumberWords(cvText))) return null;
+    if (hasAddress(summary) || draftFiguresOutside(summary, [cvText]).length > 0 || (hasUngroundedMoneyOrScaleWords(summary) && !hasUngroundedMoneyOrScaleWords(cvText))) return null;
   }
   const lowerCv = cvText.toLowerCase();
   const foldedCv = foldCvEvidence(cvText);

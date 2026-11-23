@@ -11,7 +11,7 @@
 //   termsInSource   the terms a source text mentions (case and marks folded), which a translation has to carry as the glossary writes them
 //
 // No terms, no change: every feature builds the call it always built.
-import { normalizeTerms } from '../transcribe.ts';
+import { normalizeTerms } from '../injection-guards.ts';
 
 export const GLOSSARY_LIMITS = {
   terms: 60,

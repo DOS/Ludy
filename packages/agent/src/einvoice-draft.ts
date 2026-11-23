@@ -18,12 +18,13 @@
 import { money, salesVatRatesOn, writtenVatRate } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import {
+  hasAddress,
   hasAutonomousActionDirective,
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
   hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
 } from './injection-guards.ts';
-import { hasAddress, hasNumberWords } from './reminder.ts';
 
 // How much one call reads and proposes: a bound on what one paid call sends and on what one answer may fill in.
 export const EINVOICE_DRAFT_TEXT_MAX = 2000;
@@ -165,10 +166,10 @@ function checkLine(line: EInvoiceDraftModelLine, source: string, figures: Readon
   const description = oneLine(line.description, DESCRIPTION_MAX).replace(/<<<|>>>/g, '');
   if (description === '') return 'LINE';
   const unit = line.unit === null ? null : oneLine(line.unit, UNIT_MAX) || null;
-  const sourceHasNumberWords = hasNumberWords(source);
+  const sourceHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(source);
   for (const text of [description, unit ?? '']) {
     if (addressIn(text, source) || hasObfuscatedContactOrLink(text, [source]) || hasAutonomousActionDirective(text)) return 'LINK';
-    if (draftFiguresOutside(text, [source]).length > 0 || (!sourceHasNumberWords && hasNumberWords(text))) return 'FIGURES';
+    if (draftFiguresOutside(text, [source]).length > 0 || (!sourceHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(text))) return 'FIGURES';
   }
   const quantity = plainDecimal(line.quantity);
   const unitPrice = plainDecimal(line.unitPrice);

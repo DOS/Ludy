@@ -6,9 +6,15 @@
 //    Deterministically refuses ungrounded numbers/metrics/dates (summaryNumbersOutside) and foreign URLs (draftLinksOutside).
 import { z } from 'zod';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
-import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
-import { hasAddress, hasNumberWords } from './reminder.ts';
 import { summaryNumbersOutside, type SummaryFigure, type SummaryRequest } from './summary.ts';
 
 export const ROADMAP_DEDUPE_MAX_SUGGESTIONS = 10;
@@ -131,7 +137,7 @@ export function checkRoadmapDedupe(
       hasObfuscatedContactOrLink(reasonUntrusted) ||
       hasAutonomousActionDirective(s.reason) ||
       draftFiguresOutside(s.reason, trustedTexts).length > 0 ||
-      hasNumberWords(reasonUntrusted)
+      hasUngroundedMoneyOrScaleWords(reasonUntrusted)
     ) {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
     }
@@ -281,7 +287,7 @@ export function checkRoadmapChangelogDraft(
   }
 
   const outside = summaryNumbersOutside(combinedChangelog, summaryInput);
-  if (outside.length > 0 || hasNumberWords(untrustedChangelog)) {
+  if (outside.length > 0 || hasUngroundedMoneyOrScaleWords(untrustedChangelog)) {
     return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
   }
 

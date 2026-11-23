@@ -19,12 +19,13 @@ import { money, normalizeVatRate } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { figuresOfText } from './einvoice-draft.ts';
 import {
+  hasAddress,
   hasAutonomousActionDirective,
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
   hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
 } from './injection-guards.ts';
-import { hasAddress, hasNumberWords } from './reminder.ts';
 
 // How much one call reads and proposes: a bound on what one paid call sends and on what one answer may fill in.
 export const QUOTE_SUGGEST_MESSAGES_MAX = 8;
@@ -142,7 +143,7 @@ export function checkQuoteLines(request: QuoteSuggestRequest, output: QuoteModel
   for (const l of earlier) if (!byDescription.has(key(l.description))) byDescription.set(key(l.description), l);
   const trusted = [...sourceText, ...earlier.map((l) => l.description), ...earlier.map((l) => l.unit ?? ''), dealAmount ?? ''];
   const lines: QuoteProposedLine[] = [];
-  const trustedHasNumberWords = hasNumberWords(trusted.join('\n'));
+  const trustedHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(trusted.join('\n'));
   const check = (line: QuoteModelLine): QuoteProposedLine | LineProblem => {
     if (hasStealthControls(line.description) || hasPromptMarkupLeak(line.description)) return 'LINK';
     if (line.unit !== null && (hasStealthControls(line.unit) || hasPromptMarkupLeak(line.unit))) return 'LINK';
@@ -160,7 +161,7 @@ export function checkQuoteLines(request: QuoteSuggestRequest, output: QuoteModel
       ) {
         return 'LINK';
       }
-      if (draftFiguresOutside(text, trusted).length > 0 || (!trustedHasNumberWords && hasNumberWords(text))) return 'FIGURES';
+      if (draftFiguresOutside(text, trusted).length > 0 || (!trustedHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(text))) return 'FIGURES';
     }
     let vatRate: string | null = null;
     if (line.vatRate !== null && line.vatRate.trim() !== '') {
