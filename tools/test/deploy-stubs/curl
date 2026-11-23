@@ -70,6 +70,7 @@ case "$url" in
   */version)
     build=dev
     if [[ "$running" =~ /crove@sha256:([0-9a-f]{12}) ]]; then build="${BASH_REMATCH[1]}"; fi
+    if [ -n "${STUB_VERSION_BUILD:-}" ]; then build="$STUB_VERSION_BUILD"; fi
     if [ -n "${STUB_STALE_DIGEST:-}" ] && [[ "$running" == *"$STUB_STALE_DIGEST"* ]]; then build=stale; fi
     missing='[]'
     if [ -n "${STUB_MIGRATION_MISSING:-}" ]; then missing='["20990101000000_crove_kernel_next.sql"]'; fi
@@ -121,13 +122,29 @@ case "$url" in
     else body='{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","kid":"k1"}]}'; fi
     ;;
   */login)
-    if [ -n "${STUB_NO_BUNDLE:-}" ] || { [ -n "${STUB_NO_BUNDLE_DIGEST:-}" ] && [[ "$running" == *"$STUB_NO_BUNDLE_DIGEST"* ]]; }; then
+    if [ -n "${STUB_APP_HTML+x}" ]; then
+      body="$STUB_APP_HTML"
+    elif [ -n "${STUB_NO_BUNDLE:-}" ] || { [ -n "${STUB_NO_BUNDLE_DIGEST:-}" ] && [[ "$running" == *"$STUB_NO_BUNDLE_DIGEST"* ]]; }; then
       body='<div id="root"></div>'
     else
       body='<div id="root"></div><script type="module" crossorigin src="/assets/index-abc123.js"></script>'
     fi
     ;;
-  */assets/index-abc123.js) body='console.log(1)' ;;
+  */assets/theme-boot.js) body='document.documentElement.dataset.theme="light";' ;;
+  */assets/index-abc123.js)
+    if [ -n "${STUB_APP_SWITCH_ON:-}" ] && [ -n "${STUB_APP_BUNDLE_NEXT:-}" ]; then
+      hits=0
+      if [ -f "$STUB_LOG.bundle_hits" ]; then hits="$(cat "$STUB_LOG.bundle_hits")"; fi
+      hits=$((hits + 1))
+      printf '%s\n' "$hits" >"$STUB_LOG.bundle_hits"
+      if ((hits >= STUB_APP_SWITCH_ON)); then body="$STUB_APP_BUNDLE_NEXT"; else body="${STUB_APP_BUNDLE_JS:-console.log(1)}"; fi
+    else
+      body="${STUB_APP_BUNDLE_JS:-console.log(1)}"
+    fi
+    ;;
+  */assets/router-xyz.js)
+    if [ -n "${STUB_APP_ROUTER_JS:-}" ]; then body="$STUB_APP_ROUTER_JS"; else status=404; fi
+    ;;
   */auth/v1/token\?grant_type=password)
     printf '%s' "$data" >"$STUB_LOG.signin"
     if [ -n "${STUB_SIGNIN_FAIL:-}" ]; then status=400 body='{"error":"invalid_grant"}'; else body='{"access_token":"stub-access-token","token_type":"bearer"}'; fi

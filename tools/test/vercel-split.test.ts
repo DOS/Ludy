@@ -148,3 +148,34 @@ describe('.github/workflows/release-branch.yml', () => {
     expect(workflow).toMatch(/uses: actions\/checkout@[0-9a-f]{40} # v/);
   });
 });
+
+describe('.github/workflows/deploy.yml release sync (#3580)', () => {
+  const workflow = readFileSync(root('.github/workflows/deploy.yml'), 'utf8').replaceAll('\r\n', '\n');
+
+  it('syncs the release branch only after a successful pilot v* tag deploy', () => {
+    expect(workflow).toContain('\n  release-branch:\n');
+    const block = workflow.slice(workflow.indexOf('\n  release-branch:\n'));
+    expect(block).toContain('needs: [target, deploy]');
+    expect(block).toContain("github.ref_type == 'tag'");
+    expect(block).toContain("needs.target.outputs.action == 'deploy'");
+    expect(block).toContain("needs.target.outputs.environment == 'pilot'");
+    expect(block).toContain("needs.deploy.outputs.deployed == 'true'");
+    expect(block).toContain('actions/workflows/release-branch.yml/dispatches');
+    expect(block).toContain('ref: "main"');
+    expect(block).toContain('repos/$REPO/git/ref/heads/release');
+    expect(block).toContain('bash tools/deploy/deploy.sh check-app-build "$APP_URL" "$SHA" "$PUBLIC_URL"');
+  });
+
+  it('keeps minimal permissions and pinned action SHAs across deploy.yml', () => {
+    const block = workflow.slice(workflow.indexOf('\n  release-branch:\n'));
+    expect(block).toContain('actions: write');
+    expect(block).toContain('contents: read');
+    expect(block).not.toContain('contents: write');
+    expect(block).not.toContain('packages: write');
+    const uses = [...workflow.matchAll(/uses:\s*([^\s]+)/g)].map((m) => m[1]);
+    expect(uses.length).toBeGreaterThanOrEqual(4);
+    for (const ref of uses) {
+      expect(ref).toMatch(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/);
+    }
+  });
+});

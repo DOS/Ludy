@@ -1085,6 +1085,119 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
     });
   });
+
+  describe('check-app-build (#3580)', () => {
+    const SHA = 'a8bebb273126a7df7e61535419a9b4063527caec';
+    const OLD = '74ce84f800000000000000000000000000000000';
+    const APP = 'https://app.example.test';
+    const API = 'https://api.example.test';
+
+    it('passes when the served bundle VITE_BUILD matches /version (backtick or quoted, skipping theme-boot.js)', () => {
+      const html = '<div id="root"></div><script src="/assets/theme-boot.js"></script><script type="module" crossorigin src="/assets/index-abc123.js"></script>';
+      const backtick = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: SHA,
+        STUB_APP_HTML: html,
+        STUB_APP_BUNDLE_JS: `const env={PROD:!0,VITE_BUILD:\`${SHA}\`};`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(backtick.status, backtick.out).toBe(0);
+      expect(backtick.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${API}/version (${SHA})`);
+
+      const quoted = run(['check-app-build', `${APP}/`, SHA], {
+        STUB_APP_HTML: html,
+        STUB_APP_BUNDLE_JS: `const env={"VITE_BUILD":"${SHA}"};`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(quoted.status, quoted.out).toBe(0);
+      expect(quoted.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${SHA}`);
+    });
+
+    it('follows dynamically imported asset chunks when VITE_BUILD lives in a split chunk', () => {
+      for (const ref of ['./assets/router-xyz.js', '/assets/router-xyz.js']) {
+        writeFileSync(log, '');
+        const ok = run(['check-app-build', APP, SHA, API], {
+          STUB_VERSION_BUILD: SHA,
+          STUB_APP_BUNDLE_JS: `navigator.serviceWorker?.register("/assets/sw.js");import("${ref}");`,
+          STUB_APP_ROUTER_JS: `const e={VITE_BUILD:\`${SHA}\`};`,
+          CROVE_APP_BUILD_TIMEOUT: '0',
+          CROVE_APP_BUILD_POLL: '0',
+        });
+        expect(ok.status, `${ref}: ${ok.out}`).toBe(0);
+        const curls = readFileSync(log, 'utf8');
+        expect(curls).toContain(`curl ${APP}/assets/router-xyz.js\n`);
+        expect(curls).not.toContain('//assets/');
+      }
+    });
+
+    it('retries while the static host still serves the older bundle and passes once updated', () => {
+      const res = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: SHA,
+        STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${OLD}\`};`,
+        STUB_APP_BUNDLE_NEXT: `const env={VITE_BUILD:\`${SHA}\`};`,
+        STUB_APP_SWITCH_ON: '2',
+        CROVE_APP_BUILD_TIMEOUT: '2',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain(`waiting for web app at ${APP} to serve build ${SHA} (observed: ${OLD})`);
+      expect(res.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${API}/version (${SHA})`);
+    });
+
+    it('fails loudly when bundle VITE_BUILD stays mismatched or empty, or when /version differs', () => {
+      const stale = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: SHA,
+        STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${OLD}\`};`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(stale.status).toBe(1);
+      expect(stale.out).toContain(`web app at ${APP} does not serve bundle build ${SHA} (observed: ${OLD}) matching ${API}/version`);
+
+      const staleQuoted = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: SHA,
+        STUB_APP_BUNDLE_JS: `const env={"VITE_BUILD":"${OLD}"};`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(staleQuoted.status).toBe(1);
+      expect(staleQuoted.out).toContain(`web app at ${APP} does not serve bundle build ${SHA} (observed: ${OLD}) matching ${API}/version`);
+
+      const empty = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: SHA,
+        STUB_APP_BUNDLE_JS: 'const env={VITE_BUILD:``};',
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(empty.status).toBe(1);
+      expect(empty.out).toContain('(observed: (empty))');
+
+      const apiMismatch = run(['check-app-build', APP, SHA, API], {
+        STUB_VERSION_BUILD: OLD,
+        STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(apiMismatch.status).toBe(1);
+      expect(apiMismatch.out).toContain(`API at ${API}/version does not report build ${SHA}`);
+
+      const noBundle = run(['check-app-build', APP, SHA], {
+        STUB_NO_BUNDLE: '1',
+        CROVE_APP_BUILD_TIMEOUT: '0',
+        CROVE_APP_BUILD_POLL: '0',
+      });
+      expect(noBundle.status).toBe(1);
+      expect(noBundle.out).toContain('(observed: no script bundle in HTML)');
+    });
+
+    it('refuses invalid arguments with exit 2', () => {
+      expect(run(['check-app-build', 'app.example.test', SHA]).status).toBe(2);
+      expect(run(['check-app-build', APP, 'bad build']).status).toBe(2);
+      expect(run(['check-app-build', APP, SHA, 'not-a-url']).status).toBe(2);
+      expect(run(['check-app-build', APP]).status).toBe(2);
+    });
+  });
   // #2704: the pilot's identity provider settings. With --auth-settings the deploy edits the host's env file (step 5 of
   // docs/runbooks/pilot-sign-in-remote-idp.md) after a dated private copy, and puts the copy back when the deploy fails or the
   // release is rolled back. Every value in these tests is made up (example.com, example.org).
