@@ -111,6 +111,24 @@ export async function loadProjectColumns(
   return rows.map((row) => toColumnView(row));
 }
 
+export async function loadColumnsForProjects(
+  trx: CommandContext['trx'],
+  orgId: string,
+  projectIds: ReadonlyArray<string>,
+): Promise<ProjectColumn[]> {
+  if (projectIds.length === 0) return [];
+  const rows = await trx
+    .selectFrom('crove_projects.project_column')
+    .select(['id', 'project_id', 'name', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'])
+    .where('org_id', '=', orgId)
+    .where('project_id', 'in', [...projectIds])
+    .orderBy('project_id', 'asc')
+    .orderBy('sort_key', 'asc')
+    .orderBy('id', 'asc')
+    .execute();
+  return rows.map((row) => toColumnView(row));
+}
+
 // Deterministic mapping for board reads and weekly status: keeps an explicit valid column_id when its
 // mapped canonical status matches ludy_kernel.task.status, otherwise falls back to the first ordered column
 // whose taskStatus matches task.status (handles agent/direct status changes without touching column_id).

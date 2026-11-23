@@ -5,13 +5,18 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  PROJECT_TRIAGE_STATUSES,
   ROADMAP_ITEM_MODERATION_STATUSES,
   ROADMAP_ITEM_STAGES,
   plainLine,
   zId,
+  type ProjectTriagePriority,
+  type ProjectTriageSourceType,
+  type ProjectTriageStatus,
 } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { loadProject } from './shared.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
 export const MCP_ROADMAP_DEFAULT = 25;
@@ -61,6 +66,22 @@ export const zMcpRoadmapDemandSummaryInput = z.strictObject({
     .describe('Maximum number of top-voted published ideas to include (1 to 20, default 10).'),
 });
 export type McpRoadmapDemandSummaryInput = z.infer<typeof zMcpRoadmapDemandSummaryInput>;
+
+export const MCP_TRIAGE_DEFAULT = 25;
+export const MCP_TRIAGE_MAX = 100;
+
+export const zMcpTriageSummaryInput = z.strictObject({
+  projectId: zId.optional().describe('Optional non-private project ID to scope the triage summary.'),
+  status: z.enum(PROJECT_TRIAGE_STATUSES).optional().describe('Filter items by status: pending, snoozed, accepted, merged, or declined.'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MCP_TRIAGE_MAX)
+    .optional()
+    .describe(`Maximum number of triage items to include (1 to ${MCP_TRIAGE_MAX}, default ${MCP_TRIAGE_DEFAULT}).`),
+});
+export type McpTriageSummaryInput = z.infer<typeof zMcpTriageSummaryInput>;
 
 function requireCompanyGrantor(ctx: QueryContext): void {
   if (!ctx.role || !GRANTORS.includes(ctx.role)) {
@@ -317,4 +338,118 @@ export const mcpRoadmapDemandSummary = defineQuery({
   },
 });
 
-export const roadmapMcpQueries = [mcpRoadmapIdeas, mcpRoadmapDemandSummary];
+export const mcpTriageSummary = defineQuery({
+  name: 'projects.mcp.triage_summary',
+  input: zMcpTriageSummaryInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input) => {
+    requireCompanyGrantor(ctx);
+
+    if (input.projectId !== undefined) {
+      const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+      if (project.visibility === 'private' || project.status === 'archived') {
+        throw new DomainError('PROJECT_NOT_FOUND', 404, 'Không tìm thấy dự án này');
+      }
+    }
+
+    const limit = input.limit ?? MCP_TRIAGE_DEFAULT;
+
+    const nowMs = Date.now();
+
+    const { rows: countRows } = await sql<{
+      pending: string;
+      snoozed: string;
+      accepted: string;
+      merged: string;
+      declined: string;
+      snooze_elapsed: string;
+      tainted_count: string;
+    }>`
+      SELECT
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'pending')::text AS pending,
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed')::text AS snoozed,
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'accepted')::text AS accepted,
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'merged')::text AS merged,
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'declined')::text AS declined,
+        pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= pg_catalog.now())::text AS snooze_elapsed,
+        pg_catalog.count(*) FILTER (WHERE pti.tainted)::text AS tainted_count
+      FROM crove_projects.project_triage_item pti
+      JOIN crove_projects.project p
+        ON p.org_id = pti.org_id
+       AND p.id = pti.project_id
+     WHERE pti.org_id = ${ctx.orgId}::uuid
+       AND p.is_template = false
+       AND p.status <> 'archived'
+       AND p.visibility <> 'private'
+       ${input.projectId !== undefined ? sql`AND p.id = ${input.projectId}::uuid` : sql``}`.execute(ctx.trx);
+
+    const rowQuery = ctx.trx
+      .selectFrom('crove_projects.project_triage_item as pti')
+      .innerJoin('crove_projects.project as p', (join) =>
+        join.onRef('p.org_id', '=', 'pti.org_id').onRef('p.id', '=', 'pti.project_id'),
+      )
+      .select([
+        'pti.id',
+        'pti.project_id',
+        'p.name as project_name',
+        'pti.source_type',
+        'pti.source_id',
+        'pti.status',
+        'pti.priority',
+        'pti.title',
+        'pti.tainted',
+        'pti.snoozed_until',
+        'pti.accepted_task_id',
+        'pti.merged_into_task_id',
+        'pti.created_at',
+      ])
+      .where('pti.org_id', '=', ctx.orgId)
+      .where('p.is_template', '=', false)
+      .where('p.status', '<>', 'archived')
+      .where('p.visibility', '<>', 'private')
+      .$if(input.projectId !== undefined, (qb) => qb.where('pti.project_id', '=', input.projectId!))
+      .$if(input.status !== undefined, (qb) => qb.where('pti.status', '=', input.status!))
+      .orderBy('pti.created_at', 'desc')
+      .orderBy('pti.id', 'desc')
+      .limit(limit);
+
+    const rows = await rowQuery.execute();
+    const c = countRows[0];
+
+    return {
+      counts: {
+        pending: Number(c?.pending ?? 0),
+        snoozed: Number(c?.snoozed ?? 0),
+        accepted: Number(c?.accepted ?? 0),
+        merged: Number(c?.merged ?? 0),
+        declined: Number(c?.declined ?? 0),
+        snoozeElapsed: Number(c?.snooze_elapsed ?? 0),
+        tainted: Number(c?.tainted_count ?? 0),
+      },
+      items: rows.map((r) => {
+        const snoozedUntilIso = r.snoozed_until ? new Date(r.snoozed_until).toISOString() : null;
+        return {
+          id: r.id,
+          projectId: r.project_id,
+          projectName: plainLine(r.project_name, NAME_MAX),
+          sourceType: r.source_type as ProjectTriageSourceType,
+          sourceId: r.source_id,
+          status: r.status as ProjectTriageStatus,
+          priority: r.priority as ProjectTriagePriority,
+          title: plainLine(r.title, TITLE_MAX),
+          tainted: r.tainted,
+          sourceTrust: r.tainted ? ('external' as const) : ('internal' as const),
+          snoozedUntil: snoozedUntilIso,
+          snoozeElapsed:
+            r.status === 'snoozed' && snoozedUntilIso !== null && new Date(snoozedUntilIso).getTime() <= nowMs,
+          acceptedTaskId: r.accepted_task_id,
+          mergedIntoTaskId: r.merged_into_task_id,
+          createdAt: new Date(r.created_at).toISOString(),
+        };
+      }),
+    };
+  },
+});
+
+export const roadmapMcpQueries = [mcpRoadmapIdeas, mcpRoadmapDemandSummary, mcpTriageSummary];

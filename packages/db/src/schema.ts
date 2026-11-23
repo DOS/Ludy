@@ -1485,6 +1485,24 @@ export type ProjectsProjectColumnTable = Refine<
   }
 >;
 
+export const PROJECT_TRIAGE_SOURCE_TYPES = ['roadmap.item', 'kernel.conversation', 'meetings.meeting', 'manual'] as const;
+export type ProjectTriageSourceType = (typeof PROJECT_TRIAGE_SOURCE_TYPES)[number];
+
+export const PROJECT_TRIAGE_STATUSES = ['pending', 'snoozed', 'accepted', 'merged', 'declined'] as const;
+export type ProjectTriageStatus = (typeof PROJECT_TRIAGE_STATUSES)[number];
+
+export const PROJECT_TRIAGE_PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'] as const;
+export type ProjectTriagePriority = (typeof PROJECT_TRIAGE_PRIORITIES)[number];
+
+export type ProjectsProjectTriageItemTable = Refine<
+  G.ProjectsProjectTriageItemTable,
+  {
+    source_type: ProjectTriageSourceType;
+    status: Generated<ProjectTriageStatus>;
+    priority: Generated<ProjectTriagePriority>;
+  }
+>;
+
 export const PROJECT_CYCLE_STATUSES = ['upcoming', 'active', 'completed'] as const;
 export type ProjectCycleStatus = (typeof PROJECT_CYCLE_STATUSES)[number];
 
@@ -1752,6 +1770,7 @@ type Refined = Tables<{
   'crove_projects.project': ProjectsProjectTable;
   'crove_projects.project_column': ProjectsProjectColumnTable;
   'crove_projects.project_cycle': ProjectsProjectCycleTable;
+  'crove_projects.project_triage_item': ProjectsProjectTriageItemTable;
   'crove_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'crove_projects.roadmap_item': ProjectsRoadmapItemTable;
   'crove_sign.ai_analysis': SignAiAnalysisTable;

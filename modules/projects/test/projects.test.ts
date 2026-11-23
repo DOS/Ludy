@@ -16,6 +16,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'project_cycle',
       'project_member',
       'project_task',
+      'project_triage_item',
       'roadmap_announcement',
       'roadmap_board',
       'roadmap_item',
@@ -66,6 +67,12 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.crove_projects.time_entry.note).toBe('pii');
     expect(projectsManifest.tables.crove_projects.time_entry.hourly_rate).toBe('internal');
     expect(projectsManifest.tables.crove_projects.time_entry.billable).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_triage_item.title).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project_triage_item.description).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project_triage_item.decline_reason).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project_triage_item.status).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_triage_item.priority).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_triage_item.tainted).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
@@ -133,6 +140,12 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.time.start',
       'projects.time.stop',
       'projects.time.update',
+      'projects.triage.accept',
+      'projects.triage.create',
+      'projects.triage.decline',
+      'projects.triage.merge',
+      'projects.triage.reopen',
+      'projects.triage.snooze',
       'projects.weekly_status.send_mail',
       'projects.weekly_status.share_note',
     ]);
@@ -144,6 +157,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.dependency.list',
       'projects.mcp.roadmap_demand_summary',
       'projects.mcp.roadmap_ideas',
+      'projects.mcp.triage_summary',
       'projects.member_completed_tasks',
       'projects.project.get',
       'projects.project.list',
@@ -164,6 +178,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.time.summary',
       'projects.timeline',
       'projects.today',
+      'projects.triage.list',
+      'projects.triage_assist_source',
       'projects.unassigned_tasks',
       'projects.weekly_status_source',
     ]);
@@ -185,6 +201,7 @@ describe('@ludy/mod-projects (#2591)', () => {
         command.name === 'projects.project.create_from_template' ||
         command.name === 'projects.recurring.advance' ||
         command.name === 'projects.roadmap.item.convert_to_task' ||
+        command.name === 'projects.triage.accept' ||
         command.name.startsWith('projects.tasks_from_note.') ||
         command.name.startsWith('projects.tasks_from_source.') ||
         command.name.startsWith('projects.weekly_status.')

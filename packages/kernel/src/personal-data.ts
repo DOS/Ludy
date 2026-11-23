@@ -663,6 +663,21 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'A project time entry note written by a member, which may name a person: mentions are replaced with a redaction marker',
   },
+  'crove_projects.project_triage_item.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item title (internal or external signal), which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.project_triage_item.description': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item description, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'crove_projects.project_triage_item.decline_reason': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
+  },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'crove_sign.signer.name': {
     kind: 'name',
@@ -1187,6 +1202,9 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_projects.roadmap_announcement.title',
   'crove_projects.roadmap_announcement.body_md',
   'crove_projects.time_entry.note',
+  'crove_projects.project_triage_item.title',
+  'crove_projects.project_triage_item.description',
+  'crove_projects.project_triage_item.decline_reason',
   'crove_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -2072,6 +2090,38 @@ export const personalDataErase = defineCommand({
          WHERE o.org_id = te.org_id AND o.id = te.id AND te.org_id = ${ctx.orgId}::uuid AND ${timeEntryNote}
          RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
       add('crove_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
+
+      // Project triage items that quote the person (#4493): replace mentions in title, description, and decline_reason.
+      const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
+      const triageDesc = freeTextMatch(probe, sql.ref('pti.description'));
+      const triageDecline = freeTextMatch(probe, sql.ref('pti.decline_reason'));
+      const { rows: triageRows } = await sql<{ title: boolean; description: boolean; decline_reason: boolean }>`
+        UPDATE crove_projects.project_triage_item pti
+           SET title = CASE
+                         WHEN ${triageTitle} THEN COALESCE(
+                           NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.title'), REDACTED_MARK)}, 300)), ''),
+                           ${REDACTED_MARK}
+                         )
+                         ELSE pti.title
+                       END,
+               description = CASE
+                               WHEN ${triageDesc} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.description'), REDACTED_MARK)}, 10000)
+                               ELSE pti.description
+                             END,
+               decline_reason = CASE
+                                  WHEN ${triageDecline} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.decline_reason'), REDACTED_MARK)}, 1000)
+                                  ELSE pti.decline_reason
+                                END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.project_triage_item o
+         WHERE o.org_id = pti.org_id AND o.id = pti.id AND pti.org_id = ${ctx.orgId}::uuid
+           AND (${triageTitle} OR coalesce(${triageDesc}, false) OR coalesce(${triageDecline}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.decline_reason'))}, false) AS decline_reason`.execute(ctx.trx);
+      add('crove_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
+      add('crove_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
+      add('crove_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));

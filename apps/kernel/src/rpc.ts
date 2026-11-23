@@ -54,7 +54,7 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
-import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
+import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -89,6 +89,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
 import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from './project-roadmap-ai.ts';
+import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
@@ -631,6 +632,10 @@ export function createRpcHandler(
           ...(conversationReader.roadmapChangelogDraft ? { roadmapChangelogDraft: conversationReader.roadmapChangelogDraft.bind(conversationReader) } : {}),
         }
       : null,
+    suggestionBudget(),
+  );
+  const projectTriageCoworker = projectTriageAi(
+    conversationReader?.projectTriageAssist ? { projectTriageAssist: conversationReader.projectTriageAssist.bind(conversationReader) } : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -4875,6 +4880,42 @@ export function createRpcHandler(
       deleteTimeEntry: os.projects.deleteTimeEntry.handler(projectsCommand('projects.time.delete')),
       timeSummary: os.projects.timeSummary.handler(projectsQuery('projects.time.summary')),
       exportTimeCsv: os.projects.exportTimeCsv.handler(projectsQuery('projects.time.export_csv')),
+      triage: {
+        create: os.projects.triage.create.handler(projectsCommand('projects.triage.create')),
+        list: os.projects.triage.list.handler(projectsQuery('projects.triage.list')),
+        accept: os.projects.triage.accept.handler(projectsCommand('projects.triage.accept')),
+        merge: os.projects.triage.merge.handler(projectsCommand('projects.triage.merge')),
+        snooze: os.projects.triage.snooze.handler(projectsCommand('projects.triage.snooze')),
+        decline: os.projects.triage.decline.handler(projectsCommand('projects.triage.decline')),
+        reopen: os.projects.triage.reopen.handler(projectsCommand('projects.triage.reopen')),
+        assist: os.projects.triage.assist.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectTriageAssistSource>(
+              'projects.triage_assist_source',
+              { itemId: input.itemId },
+              { actor, orgId },
+            );
+            let conversationAutoDraft = true;
+            if (source.item.sourceType === 'kernel.conversation') {
+              const { autoDraft } = await runtime.query<ConversationAutoDraft>(
+                'kernel.conversation.auto_draft',
+                {},
+                { actor, orgId },
+              );
+              if (!autoDraft) return { ai: 'off' as const, proposal: null };
+              conversationAutoDraft = autoDraft;
+            }
+            return prepareProjectTriageAssist(
+              projectTriageCoworker,
+              orgId,
+              actor.userId,
+              source,
+              input.language ?? 'vi',
+              { conversationAutoDraft },
+            );
+          }),
+        ),
+      },
     },
     sign: {
       envelope: {

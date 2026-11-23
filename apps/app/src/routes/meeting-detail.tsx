@@ -12,6 +12,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { AgendaAttach } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
+import { SendToTriageDialog } from '../components/send-to-triage-dialog.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingAdherence } from '../components/meeting-adherence.tsx';
@@ -455,6 +456,16 @@ export function MeetingDetailPage() {
       {/* The open items of the previous meeting of its series (#3542), and the recorder's way to put a meeting in a series */}
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} redactedEpoch={redactedEpoch} />}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <SendToTriageDialog
+          slug={slug}
+          sourceType="meetings.meeting"
+          sourceId={id}
+          defaultTitle={meeting.title}
+          canWrite={Boolean(orgQuery.data && orgQuery.data.role !== 'viewer')}
+          buttonTestId="meeting-send-to-triage-btn"
+        />
+      </div>
       <MeetingResults
         key={`results-${id}`}
         meetingId={id}

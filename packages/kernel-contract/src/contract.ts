@@ -784,6 +784,22 @@ import {
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
 } from './projects-roadmap.ts';
+import {
+  PROJECT_TRIAGE_SOURCE_PAIR_ISSUE,
+  validProjectTriageSourcePair,
+  zProjectTriageAcceptInput,
+  zProjectTriageAcceptResult,
+  zProjectTriageAssistInput,
+  zProjectTriageAssistResult,
+  zProjectTriageCreateFields,
+  zProjectTriageDeclineInput,
+  zProjectTriageListInput,
+  zProjectTriageListResult,
+  zProjectTriageMergeInput,
+  zProjectTriageMutateResult,
+  zProjectTriageReopenInput,
+  zProjectTriageSnoozeInput,
+} from './projects-triage.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -3762,6 +3778,32 @@ export const contract = {
       .output(zProjectTimeDeleteResult),
     timeSummary: oc.input(zProjectTimeSummaryInput).output(zProjectTimeSummaryResult),
     exportTimeCsv: oc.input(zProjectTimeExportCsvInput).output(zProjectTimeExportCsvResult),
+    triage: {
+      create: oc
+        .input(
+          zProjectTriageCreateFields
+            .extend({ idempotencyKey: zId })
+            .refine(validProjectTriageSourcePair, PROJECT_TRIAGE_SOURCE_PAIR_ISSUE),
+        )
+        .output(zProjectTriageMutateResult),
+      list: oc.input(zProjectTriageListInput).output(zProjectTriageListResult),
+      accept: oc
+        .input(zProjectTriageAcceptInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageAcceptResult),
+      merge: oc
+        .input(zProjectTriageMergeInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      snooze: oc
+        .input(zProjectTriageSnoozeInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      decline: oc
+        .input(zProjectTriageDeclineInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      reopen: oc
+        .input(zProjectTriageReopenInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      assist: oc.input(zProjectTriageAssistInput).output(zProjectTriageAssistResult),
+    },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {

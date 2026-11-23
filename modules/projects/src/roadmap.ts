@@ -1673,7 +1673,7 @@ export interface RoadmapAiChangelogSource {
   }>;
 }
 
-async function loadProjectsAiMeta(trx: Trx, orgId: string): Promise<{ todayVn: string; aiStopped: boolean; aiBudgetSpent: boolean }> {
+export async function loadProjectsAiMeta(trx: Trx, orgId: string): Promise<{ todayVn: string; aiStopped: boolean; aiBudgetSpent: boolean }> {
   const { rows } = await sql<{
     today_vn: string;
     ai_stopped: boolean;

@@ -139,6 +139,8 @@ export const AI_FEATURES = {
   'projects.roadmap_dedupe': 'projects',
   // Vy's release-note draft for shipped roadmap items (#4400): reads shipped item titles/summaries only, checked by summaryNumbersOutside, human edits & publishes.
   'projects.roadmap_changelog_draft': 'projects',
+  // Vy's triage proposal for one triage inbox item (#4493, ADR-0058): proposes priority, seat, cycle, or duplicate from allowlisted candidate IDs only; human accepts/merges/declines.
+  'projects.triage_assist': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.

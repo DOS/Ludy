@@ -76,6 +76,8 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
   let privateProjectId = '';
   let privateColumnId = '';
   let privateCycleId = '';
+  let orgTriageItemId = '';
+  let privateTriageItemId = '';
   let orgTaskId = '';
   let unlinkedOrgTaskId = '';
   let privateTaskId = '';
@@ -348,6 +350,21 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
     );
     privateCycleId = createdCycle.cycle.id;
 
+    orgTriageItemId = (
+      await appRt.execute<{ item: { id: string } }>(
+        'projects.triage.create',
+        { projectId: orgProjectId, sourceType: 'manual', sourceId: null, title: 'Mục phân loại công khai', priority: 'medium' },
+        { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
+      )
+    ).item.id;
+    privateTriageItemId = (
+      await appRt.execute<{ item: { id: string } }>(
+        'projects.triage.create',
+        { projectId: privateProjectId, sourceType: 'manual', sourceId: null, title: 'Mục phân loại bí mật', priority: 'high' },
+        { actor: asUser(users.creator), orgId, idempotencyKey: randomUUID() },
+      )
+    ).item.id;
+
     // Seed comments on both org task and private task.
     await appRt.execute(
       'kernel.task.comment',
@@ -535,6 +552,7 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
           'project_cycle',
           'project_member',
           'project_task',
+          'project_triage_item',
           'roadmap_board',
           'task_dependency',
           'time_entry',
@@ -706,10 +724,11 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         const columns = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project_column')).rows.map((r) => r.id);
         const cycles = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project_cycle')).rows.map((r) => r.id);
         const dependencies = (await dbClient.query<{ project_id: string }>('SELECT project_id FROM crove_projects.task_dependency')).rows.map((r) => r.project_id);
+        const triageItems = (await dbClient.query<{ id: string }>('SELECT id FROM crove_projects.project_triage_item')).rows.map((r) => r.id);
         const tasks = (await dbClient.query<{ id: string }>('SELECT id FROM crove_kernel.task')).rows.map((r) => r.id);
         const comments = (await dbClient.query<{ id: string }>('SELECT id FROM crove_kernel.task_comment')).rows.map((r) => r.id);
         const links = (await dbClient.query<{ id: string }>('SELECT id FROM crove_notes.link')).rows.map((r) => r.id);
-        return { projects, members, projectTasks, columns, cycles, dependencies, tasks, comments, links };
+        return { projects, members, projectTasks, columns, cycles, dependencies, triageItems, tasks, comments, links };
       });
 
       expect(seen.projects.includes(privateProjectId), `${c.actor.name}: project`).toBe(c.readsPrivateProject);
@@ -718,12 +737,14 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       expect(seen.columns.includes(privateColumnId), `${c.actor.name}: project_column`).toBe(c.readsPrivateProject);
       expect(seen.cycles.includes(privateCycleId), `${c.actor.name}: project_cycle`).toBe(c.readsPrivateProject);
       expect(seen.dependencies.includes(privateProjectId), `${c.actor.name}: task_dependency`).toBe(c.readsPrivateProject);
+      expect(seen.triageItems.includes(privateTriageItemId), `${c.actor.name}: private project_triage_item`).toBe(c.readsPrivateProject);
       expect(seen.tasks.includes(privateTaskId), `${c.actor.name}: human private task`).toBe(c.readsPrivateHumanTask);
       expect(seen.tasks.includes(agentPrivateTaskId), `${c.actor.name}: agent private task`).toBe(c.readsPrivateAgentTask);
       expect(seen.comments.includes(privateCommentId), `${c.actor.name}: private task_comment`).toBe(c.readsPrivateHumanTask);
 
       // Org project & its artifacts remain visible only within org.
       expect(seen.projects.includes(orgProjectId), `${c.actor.name}: org project`).toBe(c.readsOrgProject);
+      expect(seen.triageItems.includes(orgTriageItemId), `${c.actor.name}: org project_triage_item`).toBe(c.readsOrgProject);
       expect(seen.tasks.includes(orgTaskId), `${c.actor.name}: org task`).toBe(c.readsOrgProject);
       expect(seen.comments.includes(orgCommentId), `${c.actor.name}: org comment`).toBe(c.readsOrgProject);
 
@@ -803,6 +824,27 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
       );
       expect(insCycle).toMatchObject({ ok: false, code: '42501' });
       expect(await attemptSql(actor, `DELETE FROM crove_projects.project_cycle WHERE org_id = $1 AND project_id = $2`, [orgId, privateProjectId])).toEqual({ ok: true, rowCount: 0 });
+
+      const insTriage = await attemptSql(
+        actor,
+        `INSERT INTO crove_projects.project_triage_item (org_id, project_id, source_type, title, tainted, created_by) VALUES ($1, $2, 'manual', 'Hijack triage', false, $3)`,
+        [orgId, privateProjectId, targetUid],
+      );
+      expect(insTriage).toMatchObject({ ok: false, code: '42501' });
+      expect(
+        await attemptSql(
+          actor,
+          `UPDATE crove_projects.project_triage_item SET title = 'Hijacked' WHERE org_id = $1 AND id = $2`,
+          [orgId, privateTriageItemId],
+        ),
+      ).toEqual({ ok: true, rowCount: 0 });
+      expect(
+        await attemptSql(
+          actor,
+          `DELETE FROM crove_projects.project_triage_item WHERE org_id = $1 AND id = $2`,
+          [orgId, privateTriageItemId],
+        ),
+      ).toEqual({ ok: true, rowCount: 0 });
 
       // Cannot link a private project to roadmap_board directly via SQL either (blocked by trigger/RLS).
       const insBoard = await attemptSql(
@@ -941,6 +983,13 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         code: 'PROJECT_NOT_FOUND',
         status: 404,
       });
+      await expect(appRt.query('projects.triage.list', { projectId: privateProjectId }, { actor, orgId })).rejects.toMatchObject({
+        code: 'PROJECT_NOT_FOUND',
+        status: 404,
+      });
+      const crossTriage = await appRt.query<{ items: Array<{ id: string }> }>('projects.triage.list', {}, { actor, orgId });
+      expect(crossTriage.items.map((i) => i.id)).toContain(orgTriageItemId);
+      expect(crossTriage.items.map((i) => i.id)).not.toContain(privateTriageItemId);
       await expect(
         appRt.query('projects.cycle.metrics', { projectId: privateProjectId, cycleId: privateCycleId }, { actor, orgId }),
       ).rejects.toMatchObject({
@@ -1045,6 +1094,27 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
       ),
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
+    await expect(
+      appRt.execute(
+        'projects.triage.create',
+        { projectId: privateProjectId, sourceType: 'manual', sourceId: null, title: 'Steal triage' },
+        { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
+    await expect(
+      appRt.execute(
+        'projects.triage.accept',
+        { itemId: privateTriageItemId },
+        { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'TRIAGE_ITEM_NOT_FOUND', status: 404 });
+    await expect(
+      appRt.execute(
+        'projects.triage.decline',
+        { itemId: privateTriageItemId, declineReason: 'No' },
+        { actor: writerNonMember, orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'TRIAGE_ITEM_NOT_FOUND', status: 404 });
     await expect(
       appRt.execute(
         'kernel.task.comment',
