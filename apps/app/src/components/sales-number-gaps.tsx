@@ -45,16 +45,16 @@ export function SalesNumberGaps({ period, fromYear, legalEntityId, enabled = tru
       <DataTable numeric={[4]} head={[t('columns.series'), t('columns.year'), t('columns.missing'), t('columns.recorded'), t('columns.count')]}>
         {data.groups.map((group) => (
           <TableRow key={`${group.year}:${group.template ?? ''}:${group.series}`}>
-            <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{`${group.template ?? ''}${group.series}`}</TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground">{group.year}</TableCell>
-            <TableCell className="px-4 py-3 font-mono text-xs text-foreground">
+            <TableCell className="font-mono text-xs text-foreground">{`${group.template ?? ''}${group.series}`}</TableCell>
+            <TableCell className="text-muted-foreground tabular-nums">{group.year}</TableCell>
+            <TableCell className="font-mono text-xs text-foreground">
               {group.ranges.map(gapRunLabel).join(', ')}
               {group.truncated ? ` ${t('more')}` : ''}
             </TableCell>
-            <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+            <TableCell className="text-xs text-muted-foreground">
               {t('recordedRange', { first: group.firstNumber, last: group.lastNumber, recorded: f.number(group.recorded) })}
             </TableCell>
-            <TableCell className="px-4 py-3 text-right tabular-nums text-foreground">{f.number(group.missingCount)}</TableCell>
+            <TableCell className="text-right tabular-nums text-foreground">{f.number(group.missingCount)}</TableCell>
           </TableRow>
         ))}
       </DataTable>

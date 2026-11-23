@@ -703,13 +703,13 @@ export function HrAttendancePage() {
               >
                 {rollupResult.rows.map((r) => (
                   <TableRow key={r.lineId}>
-                    <TableCell className="px-4 py-2 font-medium">{r.employeeName}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{r.workedDays}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{r.paidLeaveDays}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{r.unpaidLeaveDays}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{r.workedHours ?? '-'}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{r.overtimeHours}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{r.nightHours}</TableCell>
+                    <TableCell className="font-medium">{r.employeeName}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.workedDays}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.paidLeaveDays}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.unpaidLeaveDays}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.workedHours ?? '-'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.overtimeHours}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.nightHours}</TableCell>
                   </TableRow>
                 ))}
               </DataTable>
@@ -905,13 +905,13 @@ export function HrAttendancePage() {
           >
             {logs.map((row) => (
               <TableRow key={row.id} data-testid={`hr-attendance-row-${row.id}`}>
-                <TableCell className="px-4 py-2 font-medium">{row.employeeName}</TableCell>
-                <TableCell className="px-4 py-2 tabular-nums">{row.workDate}</TableCell>
-                <TableCell className="px-4 py-2 tabular-nums">{formatVietnamTime(row.checkedInAt)}</TableCell>
-                <TableCell className="px-4 py-2 tabular-nums">{formatVietnamTime(row.checkedOutAt)}</TableCell>
-                <TableCell className="px-4 py-2 tabular-nums">{formatMinutesLabel(row.workedMinutes)}</TableCell>
-                <TableCell className="px-4 py-2">{ta(`methods.${row.checkInMethod}`)}</TableCell>
-                <TableCell className="px-4 py-2">
+                <TableCell className="font-medium">{row.employeeName}</TableCell>
+                <TableCell className="tabular-nums">{row.workDate}</TableCell>
+                <TableCell className="tabular-nums">{formatVietnamTime(row.checkedInAt)}</TableCell>
+                <TableCell className="tabular-nums">{formatVietnamTime(row.checkedOutAt)}</TableCell>
+                <TableCell className="tabular-nums">{formatMinutesLabel(row.workedMinutes)}</TableCell>
+                <TableCell>{ta(`methods.${row.checkInMethod}`)}</TableCell>
+                <TableCell>
                   <div className="flex flex-wrap gap-1">
                     <Badge
                       variant={
@@ -931,8 +931,8 @@ export function HrAttendancePage() {
                     ))}
                   </div>
                 </TableCell>
-                <TableCell className="px-4 py-2 text-sm text-muted-foreground">{row.note ?? ''}</TableCell>
-                <TableCell className="px-4 py-2">
+                <TableCell className="text-sm text-muted-foreground">{row.note ?? ''}</TableCell>
+                <TableCell>
                   <Button
                     type="button"
                     size="sm"

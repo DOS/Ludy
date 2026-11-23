@@ -211,19 +211,19 @@ function DueRow({ due, severalEntities, chosen }: { due: TaxDueView; severalEnti
   });
   return (
     <TableRow>
-      <TableCell className="px-4 py-3">
+      <TableCell data-label={tt('columns.due')}>
         <DueWhen due={due} />
       </TableCell>
-      <TableCell className="px-4 py-3" title={due.legalBasis}>
+      <TableCell data-label={tt('columns.obligation')} title={due.legalBasis}>
         {tt(`obligations.${due.obligation}`)}
       </TableCell>
-      <TableCell className="px-4 py-3 text-muted-foreground">
+      <TableCell data-label={tt('columns.period')} className="text-muted-foreground">
         {periodLabel(due.period)}
         {severalEntities && due.openEntities.length > 0 && (
           <span className="block text-xs text-subtle-foreground">{tt('openEntities', { names: due.openEntities.map((e) => e.name).join(', ') })}</span>
         )}
       </TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="text-right">
         {markFor && (
           <Button loading={done.isPending} size="sm" variant="outline" onClick={() => done.mutate()}>
             {severalEntities ? tt('markDoneFor', { entity: markName }) : tt('markDone')}
@@ -352,13 +352,11 @@ export function OverviewPage() {
           (dues.length === 0 ? (
             <Empty title={tt('empty')} hint={noFilingPeriod ? tcl('noFilingPeriod') : tt('emptyHint')} action={noFilingPeriod ? chooseVat : undefined} />
           ) : (
-            <div className="overflow-x-auto">
-              <DataTable head={[tt('columns.due'), tt('columns.obligation'), tt('columns.period'), '']}>
-                {dues.map((d) => (
-                  <DueRow key={`${d.obligation}:${d.period}`} due={d} severalEntities={books.entities.length > 1} chosen={books.entityId} />
-                ))}
-              </DataTable>
-            </div>
+            <DataTable stacked head={[tt('columns.due'), tt('columns.obligation'), tt('columns.period'), '']}>
+              {dues.map((d) => (
+                <DueRow key={`${d.obligation}:${d.period}`} due={d} severalEntities={books.entities.length > 1} chosen={books.entityId} />
+              ))}
+            </DataTable>
           ))}
         <p className="mt-3 text-xs text-subtle-foreground">{tt('unconfirmed')}</p>
       </section>

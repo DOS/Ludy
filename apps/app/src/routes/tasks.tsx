@@ -258,7 +258,7 @@ export function TasksPage() {
               const project = projectsActive ? projectByTask.get(task.id) : undefined;
               return (
                 <TableRow key={task.id} data-testid="task-row" data-task-id={task.id} data-selected={selected === task.id ? 'true' : undefined} className={selected === task.id ? 'bg-muted/60' : undefined}>
-                  <TableCell className="px-4">
+                  <TableCell>
                     <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
                       {taskTitleText(task)}
                     </Link>
@@ -275,7 +275,7 @@ export function TasksPage() {
                     )}
                   </TableCell>
                   {projectsActive && (
-                    <TableCell className="px-4" data-testid="task-project-cell">
+                    <TableCell data-testid="task-project-cell">
                       {project ? (
                         <Link
                           to="/o/$slug/projects/$id"
@@ -296,13 +296,13 @@ export function TasksPage() {
                       )}
                     </TableCell>
                   )}
-                  <TableCell className="px-4 text-sm text-muted-foreground">{positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}</TableCell>
-                  <TableCell className="px-4">
+                  <TableCell className="text-sm text-muted-foreground">{positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}</TableCell>
+                  <TableCell>
                     <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>
                   </TableCell>
-                  <TableCell className="px-4 text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground tabular-nums">{f.dateTime(task.createdAt)}</TableCell>
                   {perms.tasks && (
-                    <TableCell className="px-4">
+                    <TableCell>
                       <Button type="button" variant="ghost" size="sm" aria-label={t('editRow', { title: taskTitleText(task) })} onClick={() => setPanel({ kind: 'edit', id: task.id })}>
                         {t('edit')}
                       </Button>

@@ -19184,6 +19184,16 @@ export const en = {
       renewals: 'Renewals & obligations',
       closed: 'Voided / Declined',
     },
+    columns: {
+      title: 'Envelope',
+      status: 'Status',
+      progress: 'Progress',
+      createdAt: 'Created',
+      counterparty: 'Counterparty',
+      contractValue: 'Contract value',
+      expiryDate: 'Expiry date',
+      nextObligation: 'Next obligation',
+    },
     statuses: {
       draft: 'Draft',
       sent: 'Sent',

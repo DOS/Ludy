@@ -17,7 +17,7 @@ import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
 
 // A sensitive read leaves an audit row each time: the panel queries once per (run, year) and again only after an apply.
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const WORKED_MONTHS_RE = /^(?:1[01](?:\.\d{1,2})?|12(?:\.0{1,2})?|[0-9](?:\.\d{1,2})?)$/;
 
 export function defaultThirteenthMonthYear(month: string): number {
@@ -165,7 +165,7 @@ export function ThirteenthMonthPanel({
             foot={
               <TableRow>
                 <TableCell />
-                <TableCell colSpan={4} className="px-4 py-3 font-medium">
+                <TableCell colSpan={4} className="font-medium">
                   {t('thirteenthMonth.total')}
                 </TableCell>
                 <TableCell className={`${NUM} font-medium`} data-testid="hr-13th-month-total">
@@ -178,7 +178,7 @@ export function ThirteenthMonthPanel({
           >
             {rows.map((r) => (
               <TableRow key={r.lineId} data-testid="hr-13th-month-row">
-                <TableCell className="px-4 py-3">
+                <TableCell>
                   <input
                     type="checkbox"
                     aria-label={r.employeeName}
@@ -187,12 +187,12 @@ export function ThirteenthMonthPanel({
                     data-testid="hr-13th-month-select"
                   />
                 </TableCell>
-                <TableCell className="px-4 py-3 font-medium">{r.employeeName}</TableCell>
-                <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+                <TableCell className="font-medium">{r.employeeName}</TableCell>
+                <TableCell className="text-xs text-muted-foreground tabular-nums">
                   {f.date(r.hireDate)} - {r.endedOn ? f.date(r.endedOn) : t('thirteenthMonth.activeStatus')}
                 </TableCell>
                 <TableCell className={NUM}>{f.money(r.baseWage, 'VND')}</TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell>
                   <Input
                     aria-label={`${t('thirteenthMonth.colWorkedMonths')}: ${r.employeeName}`}
                     className="w-20 text-right tabular-nums"

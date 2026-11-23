@@ -215,13 +215,13 @@ export function TableSkeleton({ columns = 4, rows = 5 }: { columns?: number; row
   return (
     <div aria-busy="true" className="overflow-hidden rounded-xl border bg-card">
       <span className="sr-only">{t('loading')}</span>
-      <div className="flex h-10 items-center gap-6 bg-muted px-4">
+      <div className="flex h-9 items-center gap-6 bg-muted px-3">
         {cells.map((i) => (
           <Skeleton key={i} className="h-3 flex-1 bg-background/70" />
         ))}
       </div>
       {Array.from({ length: rows }, (_, r) => (
-        <div key={r} className="flex h-12 items-center gap-6 border-t px-4">
+        <div key={r} className="flex h-9 items-center gap-6 border-t px-3">
           {cells.map((i) => (
             // The first column holds a name, the others shorter values: the bars follow that shape.
             <Skeleton key={i} className={cn('h-3.5', i === 0 ? 'flex-[2]' : 'flex-1')} />
@@ -370,10 +370,11 @@ const STACKED =
   'max-sm:min-w-0 max-sm:[&_thead]:hidden max-sm:[&_tbody]:block max-sm:[&_tbody]:space-y-2 max-sm:[&_tbody]:p-2 ' +
   'max-sm:[&_tr]:block max-sm:[&_tr]:rounded-lg max-sm:[&_tr]:border max-sm:[&_tbody_tr:last-child]:border-b ' +
   'max-sm:[&_td]:block max-sm:[&_td]:px-0 max-sm:[&_td]:py-1 max-sm:[&_td]:text-left max-sm:[&_td:empty]:hidden max-sm:[&_tr]:p-3 ' +
+  'max-sm:[&_th:first-child:not([colspan])]:static! max-sm:[&_td:first-child:not([colspan])]:static! max-sm:[&_td:first-child:not([colspan])]:bg-transparent! max-sm:[&_td:first-child:not([colspan])]:shadow-none! ' +
   'max-sm:[&_td[data-label]:not(:empty)]:before:mr-1 max-sm:[&_td[data-label]:not(:empty)]:before:text-xs max-sm:[&_td[data-label]:not(:empty)]:before:text-subtle-foreground max-sm:[&_td[data-label]:not(:empty)]:before:content-[attr(data-label)] ' +
   'max-sm:[&_td:not([colspan])_button]:min-h-11 max-sm:[&_td:not([colspan])_select]:min-h-11 max-sm:[&_td:not([colspan])>a]:inline-flex max-sm:[&_td:not([colspan])>a]:min-h-11 max-sm:[&_td:not([colspan])>a]:items-center';
 
-export function DataTable({ head, numeric = [], foot, stacked = false, children }: { head: string[]; numeric?: number[]; foot?: ReactNode; stacked?: boolean; children: ReactNode }) {
+export function DataTable({ head, numeric = [], foot, stacked = false, stickyFirstCol = false, children }: { head: string[]; numeric?: number[]; foot?: ReactNode; stacked?: boolean; stickyFirstCol?: boolean; children: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
   // The header row is pinned inside the scroll box: a row the keyboard focuses stops below it (#1575).
   const header = useRef<HTMLTableSectionElement>(null);
@@ -392,6 +393,7 @@ export function DataTable({ head, numeric = [], foot, stacked = false, children 
   return (
     <div className={cn('overflow-hidden rounded-xl border bg-card print:overflow-visible', stacked && 'max-sm:border-0 max-sm:bg-transparent')}>
       <Table
+        stickyFirstCol={stickyFirstCol}
         className={cn('min-w-[640px] [&_td]:whitespace-normal print:min-w-0', stacked && STACKED)}
         container={{ ref: scroller, className: cn('max-h-[max(24rem,calc(100dvh-10rem))] overflow-y-auto print:max-h-none print:overflow-visible', stacked && 'max-sm:max-h-none max-sm:overflow-visible'), tabIndex: scrolls ? 0 : undefined }}
       >
@@ -399,7 +401,7 @@ export function DataTable({ head, numeric = [], foot, stacked = false, children 
         <TableHeader ref={header} className="sticky top-0 z-10 bg-muted [&_th]:bg-muted [&_th]:shadow-[inset_0_-1px_0_var(--color-border)] [&_tr]:border-b-0">
           <TableRow className="hover:bg-transparent">
             {head.map((h, i) => (
-              <TableHead key={i} className={cn('px-4 text-xs font-medium text-subtle-foreground', numeric.includes(i) && 'text-right')}>
+              <TableHead key={i} className={cn('text-subtle-foreground', numeric.includes(i) && 'text-right')}>
                 {h}
               </TableHead>
             ))}

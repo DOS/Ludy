@@ -225,8 +225,8 @@ export function SocialImportPage() {
               const noComment = r.firstComment ? r.connectionIds.map((id) => byId.get(id)).filter((ch) => ch && !takesComment(ch.provider)) : [];
               return (
                 <TableRow key={r.row}>
-                  <TableCell className="px-4 py-3 align-top font-mono text-xs tabular-nums">{r.row}</TableCell>
-                  <TableCell className="max-w-80 px-4 py-3 align-top">
+                  <TableCell className="align-top font-mono text-xs tabular-nums">{r.row}</TableCell>
+                  <TableCell className="max-w-80 align-top">
                     {r.title && <p className="text-sm font-medium text-foreground">{r.title}</p>}
                     <p className="line-clamp-3 text-sm [overflow-wrap:anywhere] text-foreground">{r.body}</p>
                     {r.link && <p className="truncate font-mono text-xs text-subtle-foreground">{r.link}</p>}
@@ -241,7 +241,7 @@ export function SocialImportPage() {
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="px-4 py-3 align-top">
+                  <TableCell className="align-top">
                     <div className="flex flex-wrap gap-1">
                       {r.connectionIds.map((id) => (
                         <Badge key={id} variant="outline">
@@ -250,7 +250,7 @@ export function SocialImportPage() {
                       ))}
                     </div>
                   </TableCell>
-                  <TableCell className="px-4 py-3 align-top">
+                  <TableCell className="align-top">
                     {r.media.length === 0 ? (
                       <span className="text-xs text-subtle-foreground">-</span>
                     ) : (
@@ -264,8 +264,8 @@ export function SocialImportPage() {
                     )}
                     {r.media.length > 0 && <p className="mt-1 text-xs text-subtle-foreground tabular-nums">{t('import.mediaCount', { found: c.files.length, total: r.media.length })}</p>}
                   </TableCell>
-                  <TableCell className="px-4 py-3 align-top text-xs">{r.plannedAt ? f.dateTime(r.plannedAt) : '-'}</TableCell>
-                  <TableCell className="px-4 py-3 align-top text-xs">
+                  <TableCell className="align-top text-xs tabular-nums">{r.plannedAt ? f.dateTime(r.plannedAt) : '-'}</TableCell>
+                  <TableCell className="align-top text-xs">
                     {c.problems.length === 0 && !c.pending && issues.length === 0 && <span className="text-success">{t('import.ok')}</span>}
                     {c.pending && c.problems.length === 0 && <span className="text-muted-foreground">{t('import.checkingRow')}</span>}
                     {c.problems.map((p, i) => (

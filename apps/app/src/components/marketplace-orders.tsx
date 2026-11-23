@@ -17,7 +17,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { SuggestBar, SuggestionChip, useMarketplaceSuggestions, type Suggestion } from './stock-ai.tsx';
 import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 // An assignment moves stock, so the items and their on-hand figures refresh with the marketplace lists.
 const refresh = async () => {
@@ -36,20 +36,20 @@ function UnassignedRow({ line, items, canWrite, suggestion, asked }: { line: Mar
   const id = `mkt-unassigned-${line.lineId}`;
   return (
     <TableRow data-testid="marketplace-unassigned-line">
-      <TableCell className="px-4 py-3">
+      <TableCell>
         <div>{line.orderNo}</div>
         <div className="text-xs text-subtle-foreground">
           {t(`marketplace.platforms.${line.platform}`)}
           {line.orderedAt ? ` · ${f.date(line.orderedAt)}` : ''} · {t(`marketplace.stages.${line.stage}`)}
         </div>
       </TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         {line.sku ?? line.itemName ?? t('marketplace.noSku')}
         {/* The coworker's proposal (#2686): only fills the picker below; the person's assign is the write. */}
         {canWrite && <div className="mt-2"><SuggestionChip suggestion={suggestion} asked={asked} items={choices} onUse={() => setItemId(suggestion?.itemId ?? '')} testId="marketplace-suggestion" /></div>}
       </TableCell>
       <TableCell className={NUM}>{line.quantity}</TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         {canWrite ? (
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1">
@@ -209,15 +209,15 @@ export function MarketplaceOrders({ legalEntityId, ready, canWrite }: { legalEnt
         <DataTable head={[t('marketplace.order'), t('marketplace.platform'), t('marketplace.stage'), t('marketplace.lines')]}>
           {list.map((o) => (
             <TableRow key={o.id} data-testid="marketplace-order">
-              <TableCell className="px-4 py-3">
+              <TableCell>
                 <div>{o.orderNo}</div>
                 {o.orderedAt && <div className="text-xs text-subtle-foreground">{f.date(o.orderedAt)}</div>}
               </TableCell>
-              <TableCell className="px-4 py-3">{t(`marketplace.platforms.${o.platform}`)}</TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell>{t(`marketplace.platforms.${o.platform}`)}</TableCell>
+              <TableCell>
                 <Badge variant={o.stage === 'cancelled' || o.stage === 'returned' ? 'secondary' : 'default'}>{t(`marketplace.stages.${o.stage}`)}</Badge>
               </TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell>
                 <ul className="space-y-0.5 text-sm">
                   {o.lines.map((l) => (
                     <li key={l.id}>

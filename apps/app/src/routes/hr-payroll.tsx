@@ -44,7 +44,7 @@ import { cashAccountChoices } from '../lib/vouchers.ts';
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const amountOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
 const signedOk = (v: string) => /^-?\d{1,16}(\.\d{1,2})?$/.test(v);
 
@@ -1032,30 +1032,30 @@ export function PayrollDiffPanel({
       {visibleRows.length === 0 ? (
         <Empty title={t('diff.emptyChanged')} hint={t('diff.emptyHint')} />
       ) : (
-        <Table className="[&_td]:whitespace-normal" data-testid="hr-diff-table">
-          <TableHeader>
+        <Table stickyFirstCol className="[&_td]:whitespace-normal" data-testid="hr-diff-table">
+          <TableHeader className="bg-muted [&_th]:bg-muted [&_th]:shadow-[inset_0_-1px_0_var(--color-border)] [&_tr]:border-b-0">
             <TableRow>
-              <TableHead scope="col" className="px-4 py-3">{t('diff.colEmployee')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3">{t('diff.colReasons')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colPriorNet')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colCurrentNet')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colNetDelta')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colGrossDelta')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colDeductionDelta')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colEmployerCostDelta')}</TableHead>
+              <TableHead scope="col">{t('diff.colEmployee')}</TableHead>
+              <TableHead scope="col">{t('diff.colReasons')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colPriorNet')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colCurrentNet')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colNetDelta')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colGrossDelta')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colDeductionDelta')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colEmployerCostDelta')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {visibleRows.map((row) => (
               <TableRow key={row.employeeId} data-testid="hr-diff-row">
-                <TableCell className="px-4 py-3 font-medium">
+                <TableCell className="font-medium">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span>{row.employeeName}</span>
                     {row.hasRefused && <Badge variant="destructive">{t('diff.refusedTag')}</Badge>}
                     {!row.hasRefused && row.hasFlags && <Badge variant="warning">{t('diff.flaggedTag')}</Badge>}
                   </div>
                 </TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell>
                   <div className="flex flex-wrap gap-1">
                     {row.reasons.map((reason) => (
                       <Badge key={reason} variant={REASON_BADGE_VARIANT[reason]}>
@@ -1075,7 +1075,7 @@ export function PayrollDiffPanel({
           </TableBody>
           <TableFooter className={`${TOTAL_RULE} [&_tr]:hover:bg-transparent`}>
             <TableRow>
-              <TableCell className="px-4 py-3" colSpan={2}>{t('diff.totalRow', { count: diff.totals.headcount })}</TableCell>
+              <TableCell colSpan={2}>{t('diff.totalRow', { count: diff.totals.headcount })}</TableCell>
               <TableCell className={`${NUM} whitespace-nowrap`}>{diff.priorTotals ? f.money(diff.priorTotals.net, 'VND') : f.money('0', 'VND')}</TableCell>
               <TableCell className={`${NUM} whitespace-nowrap`}>{f.money(diff.totals.net, 'VND')}</TableCell>
               <TableCell className={`${NUM} whitespace-nowrap font-semibold`}>{formatSignedMoney(f, diff.deltas.netDelta)}</TableCell>
@@ -1213,11 +1213,12 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
       <DataTable
+        stickyFirstCol
         head={[t('employee'), t('gross'), t('employeeInsurance'), t('pit'), t('net'), t('employerCost'), '']}
         numeric={[1, 2, 3, 4, 5]}
         foot={
           <TableRow>
-            <TableCell className="px-4 py-3 font-medium">{t('totals')}</TableCell>
+            <TableCell className="font-medium">{t('totals')}</TableCell>
             <TableCell className={NUM}>{f.money(s.totals.gross, 'VND')}</TableCell>
             <TableCell className={NUM}>{f.money(s.totals.employeeInsurance, 'VND')}</TableCell>
             <TableCell className={NUM}>{f.money(s.totals.pit, 'VND')}</TableCell>
@@ -1233,7 +1234,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
           const open = shown === l.id;
           const rows = [
             <TableRow key={l.id} data-testid="hr-line-row">
-              <TableCell className="px-4 py-3">
+              <TableCell>
                 {l.employeeName}
                 {l.kind === 'adjustment' && (
                   <Badge className="ml-2" variant="secondary">
@@ -1254,8 +1255,8 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.pit, 'VND') : '-'}</TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.net, 'VND') : '-'}</TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.employerCost, 'VND') : '-'}</TableCell>
-              <TableCell className="px-4 py-3 text-right">
-                <Button variant="ghost" size="sm" onClick={() => setShown(open ? null : l.id)} data-testid="hr-line-open">
+              <TableCell className="text-right">
+                <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => setShown(open ? null : l.id)} data-testid="hr-line-open">
                   {open ? t('close') : t('detail')}
                 </Button>
               </TableCell>
@@ -1264,7 +1265,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
           if (open) {
             rows.push(
               <TableRow key={`${l.id}-detail`}>
-                <TableCell colSpan={7} className="px-4 py-3">
+                <TableCell colSpan={7} className="py-3">
                   {l.kind === 'adjustment' ? <p className="text-sm">{l.note}</p> : <Breakdown line={l} money={f.money} />}
                   {l.checks.filter((c) => !c.ok).map((c) => (
                     <p key={c.id} className="mt-2 text-xs text-destructive">
@@ -1415,13 +1416,13 @@ export function HrPayrollPage() {
             <DataTable head={[t('month'), t('statusLabel'), t('people'), t('net'), '']} numeric={[2, 3]}>
               {rows.map((r) => (
                 <TableRow key={r.id} data-testid="hr-run-row">
-                  <TableCell className="px-4 py-3">{r.month}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell>{r.month}</TableCell>
+                  <TableCell>
                     <Badge variant={r.status === 'draft' ? 'secondary' : 'brand'}>{t(`status.${r.status}`)}</Badge>
                   </TableCell>
                   <TableCell className={NUM}>{r.lines}</TableCell>
                   <TableCell className={NUM}>{f.money(r.totals.net, 'VND')}</TableCell>
-                  <TableCell className="px-4 py-3 text-right">
+                  <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)} data-testid="hr-run-view">
                       {t('open')}
                     </Button>

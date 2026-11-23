@@ -46,7 +46,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const WAGE_RE = /^\d{1,16}(\.\d{1,2})?$/;
 export const CANDIDATE_PAGE_SIZE = HR_CANDIDATE_PAGE_MAX;
 
@@ -1510,7 +1510,7 @@ export function HrRecruitingPage() {
                       : '-';
               return (
                 <TableRow key={o.id} data-testid="hr-opening-row">
-                  <TableCell className="px-4 py-3 font-medium">
+                  <TableCell className="font-medium">
                     <button
                       type="button"
                       className="text-left hover:underline"
@@ -1524,10 +1524,10 @@ export function HrRecruitingPage() {
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="px-4 py-3">{o.departmentName ?? '-'}</TableCell>
+                  <TableCell>{o.departmentName ?? '-'}</TableCell>
                   <TableCell className={NUM}>{band}</TableCell>
                   <TableCell className={NUM}>{o.candidateCount}</TableCell>
-                  <TableCell className="space-x-1 px-4 py-3 text-right">
+                  <TableCell className="space-x-1 text-right">
                     <Button variant="ghost" size="sm" onClick={() => setEditingOpening(o)}>
                       {t('edit')}
                     </Button>
@@ -1589,16 +1589,16 @@ export function HrRecruitingPage() {
             <DataTable head={[t('fields.candidateName'), t('fields.opening'), t('sourceLabel'), t('fields.stage'), t('fields.expectedWage'), t('fields.interview'), '']} numeric={[4]}>
               {candidates.map((c) => (
                 <TableRow key={c.id} data-testid="hr-candidate-row">
-                  <TableCell className="px-4 py-3 font-medium">{c.displayName}</TableCell>
-                  <TableCell className="px-4 py-3">{c.openingTitle ?? '-'}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell className="font-medium">{c.displayName}</TableCell>
+                  <TableCell>{c.openingTitle ?? '-'}</TableCell>
+                  <TableCell>
                     <Badge variant="outline">{t(`sources.${c.source}`)}</Badge>
                   </TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell>
                     <Badge variant="outline">{t(`stages.${c.stage}`)}</Badge>
                   </TableCell>
                   <TableCell className={NUM}>{c.agreedWage ? f.money(c.agreedWage, 'VND') : c.expectedWage ? f.money(c.expectedWage, 'VND') : '-'}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell>
                     {c.interviewStartsAt ? (
                       <div>
                         <span>{f.dateTime(c.interviewStartsAt)}</span>
@@ -1608,7 +1608,7 @@ export function HrRecruitingPage() {
                       '-'
                     )}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right">
+                  <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => setOpenCandidateId(c.id)} data-testid="hr-candidate-open">
                       {t('open')}
                     </Button>

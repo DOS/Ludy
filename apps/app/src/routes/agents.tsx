@@ -669,12 +669,12 @@ export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templa
   };
   return (
     <TableRow data-testid="agent-row">
-      <TableCell className="px-4">
+      <TableCell>
         <span className="font-medium text-foreground">{agent.displayName}</span>{' '}
         <Badge variant="secondary">{t('aiBadge')}</Badge>
       </TableCell>
-      <TableCell className="px-4 text-xs text-muted-foreground">{resolveTpl(agent.templateKey, templateTitle)}</TableCell>
-      <TableCell className="px-4">
+      <TableCell className="text-xs text-muted-foreground">{resolveTpl(agent.templateKey, templateTitle)}</TableCell>
+      <TableCell>
         {editable ? (
           <NativeSelect size="sm" aria-label={t('colStatus')} value={status} disabled={locked} onChange={(e) => {
               setStatus(e.target.value as typeof status);
@@ -691,7 +691,7 @@ export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templa
         )}
         {editable && status === 'retired' && agent.status !== 'retired' && <p className="mt-1 text-xs text-warning">{t('retireHint')}</p>}
       </TableCell>
-      <TableCell className="px-4">
+      <TableCell>
         {editable ? (
           <NativeSelect size="sm" aria-label={t('colMaxRisk')} value={maxRisk} disabled={locked} onChange={(e) => setMaxRisk(e.target.value as typeof maxRisk)}>
             {RISKS.map((r) => (
@@ -704,14 +704,14 @@ export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templa
           agent.maxRisk
         )}
       </TableCell>
-      <TableCell className="px-4">
+      <TableCell>
         {editable ? (
           <Input aria-label={t('colDailyCap')} type="number" min={1} max={10000} value={cap} disabled={locked} onChange={(e) => setCap(e.target.value)} className="w-24" />
         ) : (
           agent.dailyRunCap
         )}
       </TableCell>
-      <TableCell className="px-4">
+      <TableCell>
         {editable && !confirmRetire && (
           <Button size="sm" disabled={!changed || !capValid || update.isPending || locked} onClick={() => (retiring ? setConfirmRetire(true) : send())}>
             {t('save')}
@@ -1014,12 +1014,12 @@ export function AiUse({ agents }: { agents: Agent[] }) {
             <DataTable head={[t('colFeature'), t('colCalls'), t('colTokens'), t('colCost')]}>
               {report.data.byFeature.map((row) => (
                 <TableRow key={row.feature} data-testid="ai-use-feature">
-                  <TableCell className="px-4">{feature(row.feature)}</TableCell>
-                  <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
-                  <TableCell className="px-4 tabular-nums">
+                  <TableCell>{feature(row.feature)}</TableCell>
+                  <TableCell className="tabular-nums">{f.number(row.calls)}</TableCell>
+                  <TableCell className="tabular-nums">
                     {f.number(row.inputTokens)} / {f.number(row.outputTokens)}
                   </TableCell>
-                  <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                  <TableCell className="tabular-nums">{f.aiAmount(row.cost)}</TableCell>
                 </TableRow>
               ))}
             </DataTable>
@@ -1030,9 +1030,9 @@ export function AiUse({ agents }: { agents: Agent[] }) {
               <DataTable head={[t('colAiAgent'), t('colCalls'), t('colCost')]}>
                 {report.data.byAgent.map((row) => (
                   <TableRow key={row.agentId} data-testid="ai-use-agent">
-                    <TableCell className="px-4">{agents.find((a) => a.id === row.agentId)?.displayName ?? row.name ?? row.agentId}</TableCell>
-                    <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
-                    <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                    <TableCell>{agents.find((a) => a.id === row.agentId)?.displayName ?? row.name ?? row.agentId}</TableCell>
+                    <TableCell className="tabular-nums">{f.number(row.calls)}</TableCell>
+                    <TableCell className="tabular-nums">{f.aiAmount(row.cost)}</TableCell>
                   </TableRow>
                 ))}
               </DataTable>
@@ -1067,12 +1067,12 @@ export function Budgets({ agents, perms }: { agents: Agent[]; perms: AgentPermis
             const usage = budgetUsage(b.spent, b.monthlyLimit, b.warnPercent);
             return (
               <TableRow key={b.id} data-testid="budget-row">
-                <TableCell className="px-4">{targetText(b.scope, b.target)}</TableCell>
-                <TableCell className="px-4 tabular-nums">
+                <TableCell>{targetText(b.scope, b.target)}</TableCell>
+                <TableCell className="tabular-nums">
                   {f.aiAmount(b.monthlyLimit)} <span className="text-xs text-subtle-foreground">({b.hardStop ? t('hardStop') : t('softLimit')})</span>
                 </TableCell>
-                <TableCell className="px-4 tabular-nums">{f.aiAmount(b.spent)}</TableCell>
-                <TableCell className="px-4">
+                <TableCell className="tabular-nums">{f.aiAmount(b.spent)}</TableCell>
+                <TableCell>
                   <Badge variant={usage.state === 'spent' ? 'destructive' : usage.state === 'warn' ? 'warning' : 'success'}>
                     {t('usage', { percent: String(usage.percent) })} {t(`usageState.${usage.state}`)}
                   </Badge>

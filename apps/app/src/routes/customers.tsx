@@ -18,7 +18,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { nextCustomerCursor } from '../lib/parties.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 function CustomerRow({
   customer,
@@ -43,18 +43,18 @@ function CustomerRow({
   return (
     <>
       <TableRow>
-        <TableCell className="min-w-48 px-4 py-3">
+        <TableCell className="min-w-48">
           <p className="font-medium text-foreground">{customer.name}</p>
           {customer.address && <p className="text-xs text-subtle-foreground">{customer.address}</p>}
           {contact && <p className="text-xs text-subtle-foreground">{contact}</p>}
           <PartyDuplicates party={customer} canManage={canManage} ns="customers" />
         </TableCell>
-        <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{customer.taxCode ?? ''}</TableCell>
+        <TableCell className="font-mono text-xs text-muted-foreground">{customer.taxCode ?? ''}</TableCell>
         <TableCell className={`${NUM} text-muted-foreground`}>{f.number(customer.invoiceCount)}</TableCell>
-        <TableCell className="px-4 py-3 text-muted-foreground">{customer.lastInvoiceDate ? f.date(customer.lastInvoiceDate) : t('noInvoice')}</TableCell>
+        <TableCell className="text-muted-foreground tabular-nums">{customer.lastInvoiceDate ? f.date(customer.lastInvoiceDate) : t('noInvoice')}</TableCell>
         <TableCell className={`${NUM} font-medium text-foreground`}>{f.money(customer.receivable)}</TableCell>
         {canEdit && (
-          <TableCell className="px-4 py-3 text-right">
+          <TableCell className="text-right">
             {!editing && (
               <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: customer.name })}>
                 {t('edit')}
@@ -71,7 +71,7 @@ function CustomerRow({
       </TableRow>
       {editing && (
         <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
+          <TableCell colSpan={columns} className="py-3">
             <EditParty party={customer} ns="customers" onDone={() => setEditing(false)} />
             {canManage && (
               <div className="mt-4 border-t pt-3">
@@ -83,7 +83,7 @@ function CustomerRow({
       )}
       {notesOpen && (
         <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
+          <TableCell colSpan={columns} className="py-3">
             <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: customer.id }} headingId={`notes-${customer.id}`} label={tn('panel.toggleOf', { name: customer.name })} />
           </TableCell>
         </TableRow>
