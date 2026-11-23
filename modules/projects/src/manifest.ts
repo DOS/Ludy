@@ -97,6 +97,24 @@ export const projectsManifest = defineModule({
         ['org_id', 'id', 'board_id', 'email_hash', 'ip_hash', 'expires_at', 'attempts', 'verified_at', 'invalidated_at', 'created_at'],
         { email: 'contact', otp_sha256: 'sensitive', claim_sha256: 'sensitive' },
       ),
+      roadmap_signal: columns(
+        [
+          'org_id',
+          'id',
+          'board_id',
+          'roadmap_item_id',
+          'source_type',
+          'source_id',
+          'source_party_id',
+          'deal_value',
+          'deal_currency',
+          'tainted',
+          'created_by',
+          'created_at',
+          'updated_at',
+        ],
+        { account_label: 'pii', quote_excerpt: 'pii' },
+      ),
       roadmap_subscriber: columns(
         ['org_id', 'id', 'board_id', 'voter_email_hash', 'mail_hash', 'notify_on_ship', 'unsubscribed_at', 'created_at', 'updated_at'],
         { email_sealed: 'contact', unsubscribe_token_sha256: 'sensitive', unsub_token_sealed: 'sensitive' },
@@ -138,6 +156,7 @@ export const projectsManifest = defineModule({
     { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
     { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
     { type: 'projects.roadmap_item', table: 'roadmap_item', legalEntityScoped: false, audit: 'command' },
+    { type: 'projects.roadmap_signal', table: 'roadmap_signal', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.projects,
 });

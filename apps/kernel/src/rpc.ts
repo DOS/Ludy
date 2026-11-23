@@ -55,7 +55,9 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
-import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
+import type { MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
+import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
+import { enrichMeetingSignalMatchSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -89,7 +91,7 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
-import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from './project-roadmap-ai.ts';
+import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
@@ -632,6 +634,7 @@ export function createRpcHandler(
       ? {
           ...(conversationReader.roadmapDedupe ? { roadmapDedupe: conversationReader.roadmapDedupe.bind(conversationReader) } : {}),
           ...(conversationReader.roadmapChangelogDraft ? { roadmapChangelogDraft: conversationReader.roadmapChangelogDraft.bind(conversationReader) } : {}),
+          ...(conversationReader.roadmapSignalMatch ? { roadmapSignalMatch: conversationReader.roadmapSignalMatch.bind(conversationReader) } : {}),
         }
       : null,
     suggestionBudget(),
@@ -4871,6 +4874,106 @@ export function createRpcHandler(
               { actor, orgId },
             );
             return prepareRoadmapChangelogDraft(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
+        signalList: os.projects.roadmap.signalList.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) =>
+            runtime.query('projects.roadmap.signal.list', input, { actor, orgId }),
+          ),
+        ),
+        signalRollup: os.projects.roadmap.signalRollup.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) =>
+            runtime.query('projects.roadmap.signal.rollup', input, { actor, orgId }),
+          ),
+        ),
+        signalCreate: os.projects.roadmap.signalCreate.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.roadmap.signal.create', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        signalDelete: os.projects.roadmap.signalDelete.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.roadmap.signal.delete', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        signalMatchSuggest: os.projects.roadmap.signalMatchSuggest.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const aiReaderEnabled = Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch);
+            let source = await runtime.query<RoadmapAiSignalMatchSource>(
+              'projects.roadmap.ai_signal_match_source',
+              { ...input, aiReaderEnabled },
+              { actor, orgId },
+            );
+            if (!aiReaderEnabled || source.conversationAutoDraftOff) {
+              return { ai: 'off' as const, suggestions: [], newIdeaDraft: null, inspectedCount: 0, truncated: false };
+            }
+            if (
+              source.sourceType === 'meetings.meeting' &&
+              Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch) &&
+              !source.aiStopped &&
+              !source.aiBudgetSpent
+            ) {
+              const optionalQuery = async <T>(fn: () => Promise<T>): Promise<T | null> => {
+                try {
+                  return await fn();
+                } catch (err) {
+                  if (err instanceof DomainError && (err.status === 403 || err.status === 404)) {
+                    return null;
+                  }
+                  throw err;
+                }
+              };
+              const [resultsSettled, notesSettled] = await Promise.allSettled([
+                optionalQuery(() =>
+                  runtime.query<MeetingResults>('meetings.result.get', { meetingId: input.sourceId }, { actor, orgId }),
+                ),
+                source.sourceIsRecorder
+                  ? optionalQuery(() =>
+                      runtime.query<Notes>('meetings.notes.get', { meetingId: input.sourceId }, { actor, orgId }),
+                    )
+                  : Promise.resolve(null),
+              ]);
+              if (resultsSettled.status === 'rejected') {
+                throw resultsSettled.reason;
+              }
+              const results = resultsSettled.value;
+              const notes = notesSettled.status === 'fulfilled' ? notesSettled.value : null;
+              const primaryResult =
+                results?.draft !== null &&
+                results?.draft !== undefined &&
+                (results.draft.summary.trim().length > 0 || results.draft.decisions.some((d) => d.trim().length > 0))
+                  ? results.draft
+                  : results?.published;
+              const hasUsableResult =
+                Boolean(
+                  primaryResult &&
+                    (primaryResult.summary.trim().length > 0 ||
+                      primaryResult.decisions.some((d) => d.trim().length > 0)),
+                ) || Boolean(results?.items.some((i) => i.title.trim().length > 0));
+              if (notesSettled.status === 'rejected') {
+                const notesErr = notesSettled.reason;
+                const isAuthError =
+                  notesErr instanceof DomainError &&
+                  (notesErr.status === 401 || notesErr.code === 'AUTH_UNAVAILABLE');
+                if (isAuthError || !hasUsableResult) {
+                  throw notesErr;
+                }
+                console.error(
+                  '[project-roadmap-ai] optional notes.get failed, falling back to result',
+                  notesErr instanceof Error ? notesErr.name : typeof notesErr,
+                );
+              }
+              const hasUsableContent = hasUsableResult || Boolean(notes?.body.trim());
+              const transcript = hasUsableContent
+                ? null
+                : await optionalQuery(() =>
+                    runtime.query<Transcript>('meetings.transcript.get', { meetingId: input.sourceId }, { actor, orgId }),
+                  );
+              source = enrichMeetingSignalMatchSource(source, { results, transcript, notes });
+            }
+            return prepareRoadmapSignalMatch(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
           }),
         ),
       },

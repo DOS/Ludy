@@ -20,6 +20,7 @@ describe('@ludy/mod-projects (#2591)', () => {
       'roadmap_board',
       'roadmap_item',
       'roadmap_otp',
+      'roadmap_signal',
       'roadmap_subscriber',
       'roadmap_vote',
       'task_dependency',
@@ -71,12 +72,13 @@ describe('@ludy/mod-projects (#2591)', () => {
       { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
       { type: 'projects.roadmap_item', table: 'roadmap_item', legalEntityScoped: false, audit: 'command' },
+      { type: 'projects.roadmap_signal', table: 'roadmap_signal', legalEntityScoped: false, audit: 'command' },
     ]);
     expect(projectsManifest.routes).toEqual(MODULE_SCREENS.projects.routes);
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 57 commands and 29 queries with consistent module prefix', () => {
+  it('exports all 59 commands and 32 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.column.create',
       'projects.column.delete',
@@ -112,6 +114,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.roadmap.item.moderate',
       'projects.roadmap.item.sync_stage',
       'projects.roadmap.otp_mail_data',
+      'projects.roadmap.signal.create',
+      'projects.roadmap.signal.delete',
       'projects.task.add',
       'projects.task.create',
       'projects.task.move_column',
@@ -149,10 +153,13 @@ describe('@ludy/mod-projects (#2591)', () => {
       'projects.project.list',
       'projects.roadmap.ai_changelog_source',
       'projects.roadmap.ai_dedupe_source',
+      'projects.roadmap.ai_signal_match_source',
       'projects.roadmap.announcement_from_event',
       'projects.roadmap.board.get',
       'projects.roadmap.boards',
       'projects.roadmap.shipped_mail_data',
+      'projects.roadmap.signal.list',
+      'projects.roadmap.signal.rollup',
       'projects.task.recurrence.get',
       'projects.task_projects',
       'projects.tasks_from_note.seats',

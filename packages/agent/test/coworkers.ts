@@ -52,6 +52,7 @@ import {
   type ReorderRequest,
   type RoadmapChangelogDraftFacts,
   type RoadmapDedupeFacts,
+  type RoadmapSignalMatchFacts,
   type SignAcceptanceDraftRequest,
   type StockSurplusFacts,
   type SupplierPayableLineFacts,
@@ -1428,6 +1429,20 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     today: '2026-09-30',
     items: [{ id: 'item-1', publicTitle: 'Xuat Excel bao cao', publicSummary: null, category: null, tainted: false }],
   };
+  const signalMatchFacts: RoadmapSignalMatchFacts = {
+    language: 'vi',
+    boardTitle: 'Gop y san pham',
+    sourceType: 'crm.deal',
+    sourceTitle: 'Goi doanh nghiep',
+    sourceExcerpt: 'Khach hang can tinh nang xuat bao cao Excel hang loat.',
+    accountLabel: 'Cong ty Minh Anh',
+    dealValue: null,
+    dealCurrency: null,
+    items: [
+      { id: 'item-1', title: 'Xuat Excel bao cao', summary: 'Ho tro xuat file xlsx', stage: 'planned', tainted: false },
+      { id: 'item-2', title: 'Dong bo ton kho', summary: null, stage: 'under_review', tainted: false },
+    ],
+  };
   cases.push(
     cleanCase('projects.weekly_status.clean', 'projects.weekly_status', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.inbox.projectWeeklyStatus(projectWeeklyFacts)), isKindNotNone, 'projects.weekly_status'),
@@ -1481,6 +1496,27 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
             ...changelogFacts,
             language: 'en',
             items: [{ ...changelogFacts.items[0]!, publicSummary: corpusAt(9).untrustedInput, tainted: true }],
+          }),
+        ),
+      ),
+    ),
+    cleanCase('projects.roadmap_signal_match.clean', 'projects.roadmap_signal_match', 'vi', (rt) =>
+      runCleanChecked(
+        () => unmetered(() => rt.inbox.roadmapSignalMatch(signalMatchFacts)),
+        (out) =>
+          isRecord(out) &&
+          out.kind === 'ok' &&
+          Array.isArray(out.suggestions) &&
+          out.suggestions.some((s) => isRecord(s) && s.roadmapItemId === 'item-1'),
+        'projects.roadmap_signal_match',
+      ),
+    ),
+    injCase('projects.roadmap_signal_match.inj.7', 'projects.roadmap_signal_match', 'vi', (rt) =>
+      runInjectionSafe(() =>
+        unmetered(() =>
+          rt.inbox.roadmapSignalMatch({
+            ...signalMatchFacts,
+            sourceExcerpt: corpusAt(7).untrustedInput,
           }),
         ),
       ),

@@ -783,6 +783,16 @@ import {
   zRoadmapItemMergeInput,
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
+  zRoadmapSignalCreateInput,
+  zRoadmapSignalCreateResult,
+  zRoadmapSignalDeleteInput,
+  zRoadmapSignalDeleteResult,
+  zRoadmapSignalListInput,
+  zRoadmapSignalListResult,
+  zRoadmapSignalMatchInput,
+  zRoadmapSignalMatchResult,
+  zRoadmapSignalRollupInput,
+  zRoadmapSignalRollupResult,
 } from './projects-roadmap.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
@@ -3780,6 +3790,15 @@ export const contract = {
         .output(zRoadmapAnnouncementSendNotificationsResult),
       dedupeSuggest: oc.input(zRoadmapDedupeInput).output(zRoadmapDedupeResult),
       changelogDraft: oc.input(zRoadmapChangelogDraftInput).output(zRoadmapChangelogDraftResult),
+      signalList: oc.input(zRoadmapSignalListInput).output(zRoadmapSignalListResult),
+      signalRollup: oc.input(zRoadmapSignalRollupInput).output(zRoadmapSignalRollupResult),
+      signalCreate: oc
+        .input(zRoadmapSignalCreateInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapSignalCreateResult),
+      signalDelete: oc
+        .input(zRoadmapSignalDeleteInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapSignalDeleteResult),
+      signalMatchSuggest: oc.input(zRoadmapSignalMatchInput).output(zRoadmapSignalMatchResult),
     },
     startTime: oc
       .input(zProjectTimeStartInput.extend({ idempotencyKey: zId }))

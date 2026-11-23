@@ -288,6 +288,7 @@ export const EXPORT_TABLES = {
   'projects.project_task': { from: 'ludy_projects.project_task', omit: [] },
   'projects.roadmap_board': { from: 'ludy_projects.roadmap_board', omit: [] },
   'projects.roadmap_item': { from: 'ludy_projects.roadmap_item', omit: [] },
+  'projects.roadmap_signal': { from: 'ludy_projects.roadmap_signal', omit: [] },
   'projects.roadmap_announcement': { from: 'ludy_projects.roadmap_announcement', omit: [] },
   'projects.roadmap_vote': { from: 'ludy_projects.roadmap_vote', omit: ['voter_email_hash'] },
   'projects.task_dependency': { from: 'ludy_projects.task_dependency', omit: [] },
@@ -490,10 +491,13 @@ export const exportSnapshot = defineQuery({
       const omit = spec.omit as readonly string[];
       // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
       // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
+      // For projects.roadmap_signal (#4492, ADR-0047), omit quote_excerpt on attendees-only meetings not exported by meeting_export_rows().
       const scrub =
         table === 'kernel.audit_event'
           ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
-          : sql``;
+          : table === 'projects.roadmap_signal'
+            ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
+            : sql``;
       // spec.from is one of the constant names above, never input.
       await sql`
         DECLARE crove_org_export NO SCROLL CURSOR FOR

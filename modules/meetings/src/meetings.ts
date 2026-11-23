@@ -77,6 +77,7 @@ import {
   zMeetingReaderAdd,
   zMeetingReaderRemove,
   zMeetingRef,
+  zMeetingVisibleIdsInput,
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
@@ -812,6 +813,24 @@ export const meetingGet = defineQuery({
   },
 });
 
+export const meetingVisibleIds = defineQuery({
+  name: 'meetings.meeting.visible_ids',
+  input: zMeetingVisibleIdsInput,
+  access: READERS,
+  handler: async (ctx, input): Promise<{ visibleIds: string[] }> => {
+    userOf(ctx.actor);
+    if (input.meetingIds.length === 0) return { visibleIds: [] };
+    const rows = await ctx.trx
+      .selectFrom('ludy_meetings.meeting')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', input.meetingIds)
+      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(new Date()))]))
+      .execute();
+    return { visibleIds: rows.map((r) => r.id) };
+  },
+});
+
 // What the Ludy extension may read of a meeting (#2582, ADR-0047 point 10): its status, whether its audio and video arrived
 // and its length, never its title, readers, transcript or media. A token reaches only the meetings it created, and the
 // recorder of one (an owner or admin included) no other; every other case is the same 404. Each read leaves an audit
@@ -1136,6 +1155,7 @@ export const meetingsCommands = [
 export const meetingsQueries = [
   meetingList,
   meetingGet,
+  meetingVisibleIds,
   meetingExtensionStatus,
   meetingRecordingNow,
   meetingAudioRead,
