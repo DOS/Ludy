@@ -33,7 +33,7 @@ export async function build(version) {
   }
   await writeFile(
     join(stage, 'package.json'),
-    `${JSON.stringify({ name: 'ludy-desktop', productName: 'Ludy Desktop', version: version ?? pkg.version, description: pkg.description, main: 'dist/main.js', type: 'module', license: pkg.license }, null, 2)}\n`,
+    `${JSON.stringify({ name: 'ludy-desktop', productName: 'Ludy Desktop', version: version ?? pkg.version, description: pkg.description, author: 'Ludy', main: 'dist/main.js', type: 'module', license: pkg.license }, null, 2)}\n`,
   );
   return { stage, version: version ?? pkg.version };
 }
