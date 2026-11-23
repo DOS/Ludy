@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The tabs of Settings (ST-1, #3589; the notifications tab, #3592). Each tab is a screen with its own address, drawn as a strip by the shell (TAB_GROUPS in lib/apps.ts), so a card can be linked and a phone
-// does not scroll a 10000 px page. The first tab keeps the address `settings`, which every old link names; the others are `settings/<tab>`.
-// A tab holds what fits a screen: at 1440 wide the title and the cards of each stay under 1200 px (e2e/tests/settings-tabs.spec.ts measures them), which is why the booking, quote and sales cards
-// of Engage have tabs of their own, the tax profile sits with the org and the meeting platforms with the person's own devices. Later issues drop their cards into a tab here (the wording of #3590); the notification preferences of #3592 are the tab "Thông báo của tôi", with the person's own checks: a new card is one entry in that tab's page, nothing else.
+// The sub-pages of Settings (ST-1, #3589; the notifications page, #3592; moved into the left sidebar in #4499). Each page is a screen with its own address, drawn in the secondary sidebar by the shell (`SETTINGS_ITEMS` in lib/apps.ts), so a card can be linked and a phone
+// does not scroll a 10000 px page. The first page keeps the address `settings`, which every old link names; the others are `settings/<tab>`.
+// A page holds what fits a screen: at 1440 wide the title and the cards of each stay under 1200 px (e2e/tests/settings-tabs.spec.ts measures them), which is why the booking, quote and sales cards
+// of Engage have pages of their own, the tax profile sits with the org and the meeting platforms with the person's own devices. Later issues drop their cards into a page here (the wording of #3590); the notification preferences of #3592 are the page "Thông báo của tôi", with the person's own checks: a new card is one entry in that page, nothing else.
 export const SETTINGS_TABS = ['org', 'members', 'apps', 'bookings', 'sales', 'quotes', 'accounting', 'connections', 'notifications', 'security', 'data'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 

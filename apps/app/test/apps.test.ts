@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ADMIN_ITEMS, ALL_NAV, BELL_ITEM, APPS, TAB_GROUPS, TOP_ITEMS, appOfPath, currentMenuItem, installedApps, tabGroupOfPath } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, ALL_NAV, BELL_ITEM, APPS, SETTINGS_ITEMS, TAB_GROUPS, TOP_ITEMS, appOfPath, currentMenuItem, installedApps, isSettingsPath, tabGroupOfPath } from '../src/lib/apps.ts';
 import { installedItems, screenInstalled } from '../src/lib/modules.ts';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -156,5 +156,17 @@ describe('apps of the shell (#1528, #3225)', () => {
     expect(currentMenuItem('/o/acme/documents')).toBe('/o/$slug/inbox');
     expect(currentMenuItem('/o/acme/nowhere')).toBeNull();
     expect(currentMenuItem('/clients')).toBeNull();
+
+    // Settings sub-pages each light only themselves (never both `settings` and `settings/members`).
+    for (const item of SETTINGS_ITEMS) {
+      const path = screenOf(item.to);
+      expect(isSettingsPath(`/o/acme/${path}`), path).toBe(true);
+      expect(currentMenuItem(`/o/acme/${path}`), path).toBe(item.to);
+      expect(currentMenuItem(`/o/acme/${path.toUpperCase()}/`), path).toBe(item.to);
+    }
+    expect(isSettingsPath('/o/acme/overview')).toBe(false);
+    expect(isSettingsPath('/o/acme/notifications')).toBe(false);
+    expect(isSettingsPath('/o/acme/audit')).toBe(false);
+    expect(isSettingsPath('/o/acme/settings-other')).toBe(false);
   });
 });
