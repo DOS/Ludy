@@ -271,7 +271,15 @@ export function OrgMenu({ slug, orgs, onNavigate }: { slug: string; orgs: readon
   const current = orgs.find((o) => o.slug === slug);
   return (
     <div ref={host}>
-      <DropdownMenu>
+      <DropdownMenu
+        onOpenChange={(open, details) => {
+          // Restore focus to the trigger immediately on Escape before MenuPopup unmounts, so a parent
+          // PopoverPopup (restoreFocus="popup") never sees a transient document.body focus and steal focus.
+          if (!open && details.reason === 'escape-key') {
+            host.current?.querySelector<HTMLButtonElement>('[data-testid="org-menu"]')?.focus({ preventScroll: true });
+          }
+        }}
+      >
         <DropdownMenuTrigger
           data-testid="org-menu"
           className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-field-border bg-transparent px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-sidebar-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent md:min-h-8 md:py-1 dark:bg-input/30"

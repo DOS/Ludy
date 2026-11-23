@@ -76,12 +76,14 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
 export async function signOut(page: Page): Promise<void> {
   const sidebar = page.getByRole('complementary');
   const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
-  if ((await account.count()) > 0) {
+  const direct = page.getByRole('button', { name: 'Đăng xuất', exact: true });
+  await expect(account.or(direct).first()).toBeVisible();
+  if (await account.isVisible()) {
     await account.click();
     await sidebar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
     return;
   }
-  await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+  await direct.click();
 }
 
 export async function createOrg(page: Page, name: string): Promise<string> {
