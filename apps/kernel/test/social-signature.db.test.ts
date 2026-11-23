@@ -330,14 +330,14 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
       expect(end).toBeGreaterThan(start);
       return rewriteHistoricalCoreSql(text.slice(start, end + 3));
     };
-    const planPage = previous('20261023233000_crove_social_plan_review_link.sql', 'ludy_social.review_plan_page');
-    const linkView = previous('20261028150000_crove_social_report_branding.sql', 'ludy_social.review_link_view');
+    const planPage = previous('20261023233000_crove_social_plan_review_link.sql', 'crove_social.review_plan_page');
+    const linkView = previous('20261028150000_crove_social_report_branding.sql', 'crove_social.review_link_view');
     const pages = await admin(async (c) => {
       const read = async (token: string) => (await c.query<{ page: string }>('SELECT ludy_social.review_link_view($1)::text AS page', [token])).rows[0]?.page as string;
       await c.query('BEGIN');
       try {
-        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'ludy_social.review_plan_page'));
-        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'ludy_social.review_link_view'));
+        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'crove_social.review_plan_page'));
+        await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'crove_social.review_link_view'));
         const now = [await read(single), await read(plan)];
         await c.query(planPage);
         await c.query(linkView);

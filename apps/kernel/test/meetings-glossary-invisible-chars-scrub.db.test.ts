@@ -16,7 +16,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
-import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
+import { createPreCutoverClient, createPreCutoverPool, rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -158,7 +158,7 @@ suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)'
     ).rows[0];
     expect(con).toEqual({ convalidated: true, def: 'CHECK (ludy_meetings.glossary_term_ok(term))' });
     // Running the migration SQL directly a second time in one transaction is idempotent, and migrate skips applied files.
-    const migrationSql = readFileSync(join(MIGRATIONS, `${VERSION}_crove_meetings_glossary_invisible_chars.sql`), 'utf8');
+    const migrationSql = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, `${VERSION}_crove_meetings_glossary_invisible_chars.sql`), 'utf8'));
     await admin(async (c) => {
       await c.query('BEGIN');
       try {
