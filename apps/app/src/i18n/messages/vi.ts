@@ -2497,10 +2497,10 @@ export const vi = {
     checkinNoteLabel: 'Ghi chú check-in',
     checkinNotePlaceholder: 'Nêu ngắn gọn kết quả đạt được hoặc vướng mắc cần hỗ trợ...',
     saveCheckin: 'Lưu check-in',
-    draftAiBtn: 'Ly nháp ghi chú (Đề xuất)',
+    draftAiBtn: '{finance} nháp ghi chú (Đề xuất)',
     useDeterministicBtn: 'Dùng tóm tắt số liệu',
     aiStates: {
-      used: 'Bản nháp đề xuất từ Ly (người dùng xem lại và chỉnh sửa trước khi lưu)',
+      used: 'Bản nháp đề xuất từ {finance} (người dùng xem lại và chỉnh sửa trước khi lưu)',
       off: 'AI đang tắt hoặc tạm dừng; có thể dùng nhanh tóm tắt số liệu bên dưới.',
       busy: 'AI đang bận; dùng tóm tắt số liệu hoặc tự viết ghi chú.',
       budget: 'Đã hết hạn mức AI; dùng tóm tắt số liệu hoặc tự viết ghi chú.',
@@ -18166,6 +18166,28 @@ export const vi = {
         approve_l1: 'Duyệt cấp 1 cho đơn xin nghỉ phép của nhân viên',
         list: 'Xem danh sách đơn xin nghỉ phép trong tổ chức để duyệt',
         reject: 'Từ chối đơn xin nghỉ phép của nhân viên',
+      },
+      okr: {
+        ai_status: 'Kiểm tra trạng thái AI trước khi tạo bản nháp check-in OKR',
+        draft: {
+          audit: 'Ghi nhận một lần cộng sự AI tóm tắt check-in OKR (chỉ lưu tiến độ, không lưu ghi chú)',
+          read: 'Đọc số liệu OKR và công việc Công tác để soạn bản nháp check-in',
+        },
+        kr: {
+          add: 'Thêm kết quả then chốt vào mục tiêu OKR',
+          checkin: 'Lưu check-in tiến độ và ghi chú kết quả then chốt OKR',
+          remove: 'Xóa kết quả then chốt khỏi mục tiêu OKR',
+          sync_projects: 'Đồng bộ số công việc hoàn thành từ Ludy Công tác vào kết quả then chốt',
+          update: 'Cập nhật mục tiêu hoặc liên kết Công tác của kết quả then chốt OKR',
+        },
+        objective: {
+          create: 'Tạo mục tiêu OKR quý mới',
+          set_status: 'Đổi trạng thái mục tiêu OKR',
+          update: 'Cập nhật thông tin hoặc mục tiêu cha của mục tiêu OKR',
+        },
+        project_options: 'Xem danh sách dự án Ludy Công tác khả dụng để gắn vào OKR',
+        project_tasks: 'Xem danh sách công việc trong dự án Ludy Công tác để liên kết OKR',
+        tree: 'Xem cây mục tiêu OKR theo quý và tiến độ kết quả then chốt',
       },
       onboarding: {
         approve: 'Duyệt phiếu xác nhận thông tin nhận việc và cập nhật hồ sơ nhân viên',

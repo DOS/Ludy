@@ -78,15 +78,16 @@ export interface SummarizeOkrCheckinOptions {
 
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 const OKR_ALIAS_RE = /(?<![\p{L}\p{N}])P1(?![\p{L}\p{N}])/giu;
-const OTHER_ALIAS_RE = /(?<![\p{L}\p{N}])(?:P(?:0|[2-9]|\d{2,})|C\d+|E\d+)(?![\p{L}\p{N}])/giu;
-const FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_OKR_DATA\s*\]/iu;
-const FENCE_TAGS_GLOBAL_RE = /\[\/?\s*UNTRUSTED_OKR_DATA\s*\]/giu;
+const OTHER_ALIAS_RE = /(?<![\p{L}\p{N}])(?:P(?:0|[2-9]|\d{2,6})|C\d{1,6}|E\d{1,6})(?![\p{L}\p{N}])/giu;
+const FENCE_TAG_RE = /\[\/?\s{0,4}UNTRUSTED_OKR_DATA\s{0,4}\]/iu;
+const FENCE_TAGS_GLOBAL_RE = /\[\/?\s{0,4}UNTRUSTED_OKR_DATA\s{0,4}\]/giu;
 
 // Reject subjective evaluation, scoring, grading, ranking, or employment/pay decisions (AI Law 134/2025/QH15).
+// Uses finite bounded whitespace quantifiers without overlapping optional spaces to avoid polynomial backtracking.
 const OKR_SCORING_OR_ACTION_EN_RE =
-  /(?<![\p{L}\p{N}])(?:(?:score|rating|grade|rank(?:ing)?)\s*(?::|is|of|=)?\s*\d+|(?:top|bottom)\s+\d+%?|(?:score|rating|grade|rank(?:ing)?)\s*(?::|is|of|=)?\s*\d+(?:\.\d+)?\s*\/\s*(?:5|10)\b|(?:should|must|recommend|suggest|advise)\s+(?:to\s+)?(?:promote|demote|bonus|reward|penalize|terminate|fire|dismiss|pip|warn))\b(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:(?:score|rating|grade|rank(?:ing)?)(?:\s{0,4}[:=]\s{0,4}|\s{1,4}(?:is|of)\s{1,4}|\s{1,4})\d{1,6}|(?:top|bottom)\s{1,4}\d{1,3}%?|(?:should|must|recommend|suggest|advise)\s{1,4}(?:to\s{1,4})?(?:promote|demote|bonus|reward|penalize|terminate|fire|dismiss|pip|warn))(?![\p{L}\p{N}])/iu;
 const OKR_SCORING_OR_ACTION_VI_RE =
-  /(?<![\p{L}\p{N}])(?:(?:chấm\s+điểm|xếp\s+loại|xếp\s+hạng|điểm\s+đánh\s+giá|đánh\s+giá\s+năng\s+lực)|(?:nên|cần|đề\s+nghị|đề\s+xuất)\s+(?:thưởng|khen\s+thưởng|tăng\s+lương|thăng\s+chức|giáng\s+chức|kỷ\s+luật|sa\s+thải|cho\s+nghỉ|chấm\s+dứt))(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:(?:chấm\s{1,4}điểm|xếp\s{1,4}loại|xếp\s{1,4}hạng|điểm\s{1,4}đánh\s{1,4}giá|đánh\s{1,4}giá\s{1,4}năng\s{1,4}lực)|(?:nên|cần|đề\s{1,4}nghị|đề\s{1,4}xuất)\s{1,4}(?:thưởng|khen\s{1,4}thưởng|tăng\s{1,4}lương|thăng\s{1,4}chức|giáng\s{1,4}chức|kỷ\s{1,4}luật|sa\s{1,4}thải|cho\s{1,4}nghỉ|chấm\s{1,4}dứt))(?![\p{L}\p{N}])/iu;
 
 function cleanUntrusted(value: string | null | undefined, forbidden: readonly string[]): string {
   if (!value) return '';

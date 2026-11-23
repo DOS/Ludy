@@ -2500,10 +2500,10 @@ export const en = {
     checkinNoteLabel: 'Check-in note',
     checkinNotePlaceholder: 'Briefly note outcomes achieved or blockers needing help...',
     saveCheckin: 'Save check-in',
-    draftAiBtn: 'Ly draft note (Proposal)',
+    draftAiBtn: '{finance} draft note (Proposal)',
     useDeterministicBtn: 'Use data summary',
     aiStates: {
-      used: 'Proposal draft from Ly (review and edit before saving)',
+      used: 'Proposal draft from {finance} (review and edit before saving)',
       off: 'AI is off or paused; insert the deterministic summary below or write your own note.',
       busy: 'AI is busy; insert the deterministic summary or write your note directly.',
       budget: 'AI budget reached; insert the deterministic summary or write your note directly.',
@@ -18167,6 +18167,28 @@ export const en = {
         approve_l1: 'Give level-1 manager approval to a leave request',
         list: 'List employee leave requests in the organization for approval',
         reject: 'Reject an employee leave request',
+      },
+      okr: {
+        ai_status: 'Check AI status before drafting an OKR check-in note',
+        draft: {
+          audit: 'Record an AI coworker OKR check-in draft call (progress counts only, no personal note text)',
+          read: 'Read OKR metrics and caller-scoped Projects tasks to prepare a check-in draft',
+        },
+        kr: {
+          add: 'Add a key result to a quarterly OKR objective',
+          checkin: 'Save a quarterly OKR key result progress and check-in note',
+          remove: 'Remove a key result from a quarterly OKR objective',
+          sync_projects: 'Sync completed tasks count from Ludy Projects into a key result',
+          update: 'Update a key result target or Ludy Projects linkage',
+        },
+        objective: {
+          create: 'Create a new quarterly OKR objective',
+          set_status: 'Update quarterly OKR objective lifecycle status',
+          update: 'Update quarterly OKR objective details or parent alignment',
+        },
+        project_options: 'List caller-accessible Ludy Projects to link with OKRs',
+        project_tasks: 'List tasks in a Ludy Projects project for OKR linkage',
+        tree: 'View quarterly OKR hierarchy and key result progress',
       },
       onboarding: {
         approve: 'Approve an employee onboarding confirmation and apply profile updates',
