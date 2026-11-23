@@ -27,7 +27,7 @@ import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-ru
 import { itemFlags } from './results.ts';
 import { matchAttendee, parseWhen } from './summary.ts';
 import { vnDay } from './retention.ts';
-import { ROLES, userOf } from './transcript.ts';
+import { ROLES, lockMeeting, userOf } from './transcript.ts';
 import { LIVE_NOTES_FEATURE, LIVE_SUMMARY_FEATURE, lastLineSeq, latestWindow, lockLive, openLiveMeeting, recordingEnded, startWindow } from './live-run.ts';
 
 export const liveTick = defineCommand({
@@ -239,6 +239,10 @@ export const liveNotesCopy = defineCommand({
     const userId = userOf(ctx.actor);
     await openLiveMeeting(ctx, input.meetingId, 'copy its running notes');
     await lockLive(ctx.trx, ctx.orgId, userId);
+    // The meeting row is held next (after the member's live lock, which no command takes while it holds the row: the order every other path has), before the private result is
+    // read, so a redaction, a save, a publish and an erase of the same meeting serialize with this copy: a redaction that runs first drops the result before it can be read,
+    // and the copy cannot bring the redacted text back into the draft (#4541, as #4415 did for the transcript, the summary and the chapters).
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The recorder's own result, read in the recorder's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
     const found = await ctx
       .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId: input.runId })

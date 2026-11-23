@@ -1041,6 +1041,28 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
         expectedCode: 'SUMMARY_RESULT_NOT_FOUND',
       });
 
+      // The copy of the running live notes (meetings.live.notes_copy, #4541) takes the meeting lock before it reads the result too: it waits for the redaction, finds the result gone and writes nothing.
+      await assertBlockedUntilRedactDrops({
+        seedDraft: async () => {
+          await sqlAdmin(`UPDATE ludy_meetings.meeting SET live_notes = true WHERE org_id = $1 AND id = $2`, [orgId, mRaceCopy]);
+          await exec('recorder', 'meetings.summary.save', {
+            meetingId: mRaceCopy,
+            summary: `Nháp ${PHONE_PII}`,
+            decisions: [],
+          });
+        },
+        feature: 'meetings.live_summary',
+        resultBody: JSON.stringify({ template: 'general', summary: `Tóm tắt trực tiếp ${PHONE_PII}`, decisions: [], items: [], dropped: 0 }),
+        copyCommand: 'meetings.live.notes_copy',
+        expectedCode: 'LIVE_NOTES_NOT_FOUND',
+      });
+      // Nothing of the copy reached the draft: the summary is the redacted one, and no row came from the run.
+      const liveCopied = await sqlAdmin<{ c: string }>(
+        `SELECT count(*)::text AS c FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND tainted = true`,
+        [orgId, mRaceCopy],
+      );
+      expect(Number(liveCopied[0]?.c)).toBe(0);
+
       // All draft surfaces stay redacted and zero private Vy results remain.
       const segRows = await sqlAdmin<{ text: string }>(
         `SELECT text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`,
