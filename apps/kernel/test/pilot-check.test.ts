@@ -355,6 +355,12 @@ describe('pilot-check settings', () => {
       expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://stt.example.com:8000/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([expect.stringMatching(/clear text/)]);
       expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://stt.example.com:8000/v1', TRANSCRIBE_MODEL: 'm', TRANSCRIBE_ALLOW_INSECURE_HTTP: '1' })).toEqual([]);
       expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://127.0.0.1:8000/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://localhost:8000/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'HTTPS://stt.example.com/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([]);
+      // Any other scheme stops the kernel from starting, with or without the insecure opt-in, and is reported as that and not as clear text.
+      for (const allow of [undefined, '1']) {
+        expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'ftp://stt.lan/v1', TRANSCRIBE_MODEL: 'm', TRANSCRIBE_ALLOW_INSECURE_HTTP: allow })).toEqual([expect.stringMatching(/must start with https:\/\/ \(it starts with ftp:\/\/\)/)]);
+      }
       // Only the origin is ever shown: a path or credentials in the URL may carry a secret.
       const shown = checkEnv({ ...priced, TRANSCRIBE_BASE_URL: 'https://user:hunter2@stt.example.com/v1/tok-abc', TRANSCRIBE_MODEL: 'm' }).find((r) => r.item === 'Transcription provider')?.message ?? '';
       expect(shown).not.toMatch(/hunter2|tok-abc|user/);

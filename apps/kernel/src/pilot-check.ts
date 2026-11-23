@@ -207,8 +207,10 @@ function transcribeProviderProblems(env: Env): (string | null)[] {
     problems.push('TRANSCRIBE_BASE_URL is not a URL');
   } else {
     const url = new URL(base);
+    // The kernel accepts only http and https here (`z.url({ protocol: /^https?$/ })` in config.ts), so any other scheme would stop it from starting.
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') problems.push(`TRANSCRIBE_BASE_URL must start with https:// (it starts with ${url.protocol}//); the kernel refuses to start on it`);
     // The kernel's own rule (config.ts): http only for localhost or 127.0.0.1, or any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1 on a private network.
-    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname) && value(env, 'TRANSCRIBE_ALLOW_INSECURE_HTTP') !== '1') {
+    else if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname) && value(env, 'TRANSCRIBE_ALLOW_INSECURE_HTTP') !== '1') {
       problems.push(`TRANSCRIBE_BASE_URL is ${url.origin}: the audio and the key would travel in clear text and the kernel refuses to start on it; use https (TRANSCRIBE_ALLOW_INSECURE_HTTP=1 is for a provider on a private network only)`);
     }
   }
