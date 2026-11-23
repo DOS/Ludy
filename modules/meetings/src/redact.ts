@@ -448,23 +448,26 @@ export const transcriptRedactCandidates = defineQuery({
 });
 
 // Builds the redaction commands, taking the delete-only draft-translation helper from translate.ts so this file stays isolated from that table.
-// Blanks the text of the meeting's live preview lines: each line that holds text is deleted and written again at the same seq, start and end with no text (a silent piece), in the caller's
-// transaction. Returns how many lines held text. Only the recorder reaches it (redaction is recorder-only, and the table's row security lets only the recorder read, write and delete a line).
+// Blanks the text of the meeting's live preview lines: each line that holds text is deleted and written again with the same seq, start, end, run and creation time and no text (a silent piece), in the
+// caller's transaction, so the taint's source, the 30-day expiry clock and the "already copied" check by run all stay as they were. Returns how many lines held text. Only the recorder reaches it
+// (redaction is recorder-only, and the table's row security lets only the recorder read, write and delete a line).
 async function clearLiveLines(trx: Trx, orgId: string, meetingId: string): Promise<number> {
-  const { rows } = await sql<{ seq: number; start_seconds: number; end_seconds: number }>`
-    SELECT seq, start_seconds, end_seconds FROM ludy_meetings.live_line
+  const { rows } = await sql<{ seq: number; start_seconds: number; end_seconds: number; source_run_id: string | null; created_at: Date }>`
+    SELECT seq, start_seconds, end_seconds, source_run_id, created_at FROM ludy_meetings.live_line
     WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND text <> ''
     ORDER BY seq`.execute(trx);
   if (rows.length === 0) return 0;
   await sql`DELETE FROM ludy_meetings.live_line WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND text <> ''`.execute(trx);
   await sql`
-    INSERT INTO ludy_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text)
-    SELECT ${orgId}::uuid, ${meetingId}::uuid, u.seq, u.start_seconds, u.end_seconds, ''
+    INSERT INTO ludy_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text, source_run_id, created_at)
+    SELECT ${orgId}::uuid, ${meetingId}::uuid, u.seq, u.start_seconds, u.end_seconds, '', u.source_run_id, u.created_at
     FROM ROWS FROM (
       pg_catalog.unnest(${sql.val(rows.map((r) => r.seq))}::int[]),
       pg_catalog.unnest(${sql.val(rows.map((r) => r.start_seconds))}::int[]),
-      pg_catalog.unnest(${sql.val(rows.map((r) => r.end_seconds))}::int[])
-    ) AS u(seq, start_seconds, end_seconds)`.execute(trx);
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.end_seconds))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.source_run_id))}::uuid[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => new Date(r.created_at).toISOString()))}::timestamptz[])
+    ) AS u(seq, start_seconds, end_seconds, source_run_id, created_at)`.execute(trx);
   return rows.length;
 }
 
@@ -746,7 +749,8 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
     // The recorder's live transcript preview (live_line, #4557) is not a surface they review or select from, so no candidate is listed for it, yet it is the model's transcription of the same audio and it
     // feeds the next live notes run: a number redacted from the draft would come back through it. A redaction therefore clears the text of the preview whole, as it drops the private Vy results. A line
     // is not deleted but blanked (deleted and written again as a silent piece, '' at the same seq): the preview's progress is the highest seq it holds, so the next window must still start after it
-    // and not read the audio again. A silent piece is never shown and never read as text. The meeting row is held (above), so a tick or a copy of the running notes waits for this redaction.
+    // and not read the audio again. A silent piece is never shown and never read as text. The meeting row is held (above); a tick that copies a window of new audio at the same moment adds text of its own,
+    // which is new audio and not redacted text coming back.
     const clearedLiveLines = await clearLiveLines(ctx.trx, ctx.orgId, input.meetingId);
 
     if (nextMeetingTitle !== null) {

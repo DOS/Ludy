@@ -815,9 +815,13 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
   it('blanks the live transcript preview of the meeting when it redacts, keeping where the preview has read, and leaves the preview of another meeting alone (#4557)', async () => {
     const meetingId = await seedMeeting({ title: 'Họp 4557 xem trước' });
     const other = await seedMeeting({ title: 'Họp 4557 khác' });
-    const line = (m: string, seq: number, text: string) =>
-      sqlAdmin(`INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [orgId, randomUUID(), m, seq, seq * 10, seq * 10 + 10, text]);
-    await line(meetingId, 0, `Gọi ${PHONE_PII} nhé`);
+    const runId = randomUUID();
+    const line = (m: string, seq: number, text: string, source: string | null = null) =>
+      sqlAdmin(
+        `INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text, source_run_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() - interval '2 days')`,
+        [orgId, randomUUID(), m, seq, seq * 10, seq * 10 + 10, text, source],
+      );
+    await line(meetingId, 0, `Gọi ${PHONE_PII} nhé`, runId);
     await line(meetingId, 1, '');
     await line(meetingId, 2, `Email ${EMAIL_PII}`);
     await line(other, 0, `Gọi ${PHONE_PII} nhé`);
@@ -835,14 +839,15 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(done.redactedCount).toBe(scan.candidates.length);
 
     // Every line is a silent piece now, at the same seq and times: nothing of the text is left and the preview still reads on from its last line (seq 2), so the next window does not read the audio again.
-    const lines = await sqlAdmin<{ seq: number; start_seconds: number; end_seconds: number; text: string }>(
-      `SELECT seq, start_seconds, end_seconds, text FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2 ORDER BY seq`,
+    const lines = await sqlAdmin<{ seq: number; start_seconds: number; end_seconds: number; text: string; source_run_id: string | null; old: boolean }>(
+      `SELECT seq, start_seconds, end_seconds, text, source_run_id, created_at < now() - interval '1 day' AS old FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2 ORDER BY seq`,
       [orgId, meetingId],
     );
+    // The run the line came from and the day it was written stay as they were (the taint's source and the expiry clock), only the text is gone.
     expect(lines).toEqual([
-      { seq: 0, start_seconds: 0, end_seconds: 10, text: '' },
-      { seq: 1, start_seconds: 10, end_seconds: 20, text: '' },
-      { seq: 2, start_seconds: 20, end_seconds: 30, text: '' },
+      { seq: 0, start_seconds: 0, end_seconds: 10, text: '', source_run_id: runId, old: true },
+      { seq: 1, start_seconds: 10, end_seconds: 20, text: '', source_run_id: null, old: true },
+      { seq: 2, start_seconds: 20, end_seconds: 30, text: '', source_run_id: null, old: true },
     ]);
     // The other meeting's preview is untouched, and the audit holds the count of lines that held text (never a word of them).
     expect(await sqlAdmin<{ text: string }>(`SELECT text FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2`, [orgId, other])).toEqual([{ text: `Gọi ${PHONE_PII} nhé` }]);
