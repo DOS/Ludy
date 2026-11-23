@@ -244,18 +244,18 @@ function AuditLog({ search }: { search: AuditSearch }) {
           <DataTable head={[t('columns.at'), t('columns.actor'), t('columns.what'), t('columns.outcome'), t('columns.target'), t('columns.detail')]}>
             {rows.map((r) => (
               <TableRow key={r.id}>
-                <TableCell className="px-4 py-3 whitespace-nowrap text-muted-foreground">{f.dateTime(r.at)}</TableCell>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="whitespace-nowrap text-muted-foreground tabular-nums">{f.dateTime(r.at)}</TableCell>
+                <TableCell className="text-foreground">
                   {actorOf(r)}
                   {r.via && r.actorType === 'user' && r.actorName && <p className="text-xs text-subtle-foreground">{t('viaMcpOf', { name: r.actorName })}</p>}
                   {r.via && <p className="text-xs text-subtle-foreground">{t('viaMcpNote')}</p>}
                   {r.actorType === 'agent' && <p className="text-xs text-subtle-foreground">{t('agent')}</p>}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-foreground">{sentence(r)}</TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell className="text-foreground">{sentence(r)}</TableCell>
+                <TableCell>
                   <Badge variant={OUTCOME_BADGE[r.outcome]}>{t(`outcomes.${r.outcome}`)}</Badge>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+                <TableCell className="text-xs text-muted-foreground">
                   {objectName(r.targetType) ?? (r.targetId ? t('target.generic') : null)}
                   {r.targetId && (
                     <button
@@ -272,7 +272,7 @@ function AuditLog({ search }: { search: AuditSearch }) {
                     </button>
                   )}
                 </TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell>
                   <Button variant="ghost" size="sm" aria-label={`${t('detail.open')}: ${sentence(r)}`} onClick={() => setOpened(r)}>
                     {t('detail.open')}
                   </Button>

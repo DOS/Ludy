@@ -124,9 +124,9 @@ export function SalesPanel({ slug }: { slug: string }) {
           <DataTable head={[t('stage'), t('deals'), t('amount')]} numeric={[1, 2]}>
             {columns.map((column) => (
               <TableRow key={column.stage.id}>
-                <TableCell className="px-4 text-sm">{column.stage.name}</TableCell>
-                <TableCell className="px-4 text-right text-sm tabular-nums">{f.number(column.count)}</TableCell>
-                <TableCell className="px-4 text-right text-sm tabular-nums">{f.money(column.total)}</TableCell>
+                <TableCell className="text-sm">{column.stage.name}</TableCell>
+                <TableCell className="text-right text-sm tabular-nums">{f.number(column.count)}</TableCell>
+                <TableCell className="text-right text-sm tabular-nums">{f.money(column.total)}</TableCell>
               </TableRow>
             ))}
           </DataTable>
@@ -198,9 +198,9 @@ export function QuotesPanel({ slug }: { slug: string }) {
           <DataTable head={[t('status'), t('quotes'), t('amount')]} numeric={[1, 2]}>
             {report.data.byStatus.map((s) => (
               <TableRow key={s.status}>
-                <TableCell className="px-4 text-sm">{t(`statuses.${s.status}`)}</TableCell>
-                <TableCell className="px-4 text-right text-sm tabular-nums">{f.number(s.count)}</TableCell>
-                <TableCell className="px-4 text-right text-sm tabular-nums">{f.money(s.total)}</TableCell>
+                <TableCell className="text-sm">{t(`statuses.${s.status}`)}</TableCell>
+                <TableCell className="text-right text-sm tabular-nums">{f.number(s.count)}</TableCell>
+                <TableCell className="text-right text-sm tabular-nums">{f.money(s.total)}</TableCell>
               </TableRow>
             ))}
           </DataTable>
@@ -282,20 +282,20 @@ function AdsRow({ account }: { account: AdAccountView }) {
   const summary = useQuery({ ...orpc.ads.summary.queryOptions({ input: { adAccountId: account.id, from: days.from, to: days.to } }), enabled: ready });
   const currency = account.currency ?? '';
   const total = summary.data?.total;
-  const cell = (value: ReactNode) => <TableCell className="px-4 text-right text-sm tabular-nums">{value}</TableCell>;
+  const cell = (value: ReactNode) => <TableCell className="text-right text-sm tabular-nums">{value}</TableCell>;
   return (
     <TableRow>
-      <TableCell className="px-4 text-sm font-medium text-foreground">{account.name}</TableCell>
+      <TableCell className="text-sm font-medium text-foreground">{account.name}</TableCell>
       {!ready ? (
-        <TableCell colSpan={4} className="px-4 text-sm text-muted-foreground">
+        <TableCell colSpan={4} className="text-sm text-muted-foreground">
           {t('noFigures')}
         </TableCell>
       ) : summary.error ? (
-        <TableCell colSpan={4} className="px-4 text-sm text-destructive">
+        <TableCell colSpan={4} className="text-sm text-destructive">
           {errorMessage(summary.error)}
         </TableCell>
       ) : !total ? (
-        <TableCell colSpan={4} className="px-4 text-sm text-muted-foreground">
+        <TableCell colSpan={4} className="text-sm text-muted-foreground">
           …
         </TableCell>
       ) : (

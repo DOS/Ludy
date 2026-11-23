@@ -103,19 +103,19 @@ function VendorRow({
   return (
     <>
       <TableRow>
-        <TableCell className="px-4 py-3">
+        <TableCell>
           <p className="font-medium text-foreground">{vendor.name}</p>
           {(vendor.email || vendor.phone) && <p className="text-xs text-subtle-foreground">{[vendor.phone, vendor.email].filter(Boolean).join(' · ')}</p>}
           <PartyDuplicates party={vendor} canManage={canManage} ns="vendors" />
         </TableCell>
-        <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{vendor.taxCode}</TableCell>
-        <TableCell className="px-4 py-3 text-subtle-foreground">{vendor.address}</TableCell>
-        <TableCell className="px-4 py-3 text-muted-foreground tabular-nums">{f.number(vendor.documentCount)}</TableCell>
-        <TableCell className="px-4 py-3 text-muted-foreground">
+        <TableCell className="font-mono text-xs text-muted-foreground">{vendor.taxCode}</TableCell>
+        <TableCell className="text-subtle-foreground">{vendor.address}</TableCell>
+        <TableCell className="text-muted-foreground tabular-nums">{f.number(vendor.documentCount)}</TableCell>
+        <TableCell className="text-muted-foreground">
           <DefaultAccount vendor={vendor} accounts={accounts} canManage={canManage} />
         </TableCell>
         {canEdit && (
-          <TableCell className="px-4 py-3 text-right">
+          <TableCell className="text-right">
             {!editing && (
               <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: vendor.name })}>
                 {t('edit')}
@@ -138,7 +138,7 @@ function VendorRow({
       </TableRow>
       {editing && (
         <TableRow>
-          <TableCell colSpan={6} className="px-4 py-3">
+          <TableCell colSpan={6} className="py-3">
             <EditParty party={vendor} ns="vendors" onDone={() => setEditing(false)} />
             {canManage && (
               <div className="mt-4 border-t pt-3">
@@ -150,14 +150,14 @@ function VendorRow({
       )}
       {bankOpen && canManage && (
         <TableRow>
-          <TableCell colSpan={6} className="px-4 py-3">
+          <TableCell colSpan={6} className="py-3">
             <SupplierBankPanel partyId={vendor.id} canErase={isOwner} />
           </TableCell>
         </TableRow>
       )}
       {notesOpen && (
         <TableRow>
-          <TableCell colSpan={6} className="px-4 py-3">
+          <TableCell colSpan={6} className="py-3">
             <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: vendor.id }} headingId={`notes-${vendor.id}`} label={tn('panel.toggleOf', { name: vendor.name })} />
           </TableCell>
         </TableRow>

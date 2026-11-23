@@ -19186,6 +19186,16 @@ export const vi = {
       renewals: 'Sắp gia hạn / Nghĩa vụ',
       closed: 'Đã hủy / Từ chối',
     },
+    columns: {
+      title: 'Tên hồ sơ',
+      status: 'Trạng thái',
+      progress: 'Tiến độ ký',
+      createdAt: 'Ngày tạo',
+      counterparty: 'Đối tác',
+      contractValue: 'Giá trị hợp đồng',
+      expiryDate: 'Ngày hết hạn',
+      nextObligation: 'Hạn nghĩa vụ kế tiếp',
+    },
     statuses: {
       draft: 'Bản nháp',
       sent: 'Đã gửi',

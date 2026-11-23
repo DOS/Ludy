@@ -30,7 +30,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, extractRecruitingCv, orpc } from '../lib/api.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 function isForbiddenQueryError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -223,8 +223,8 @@ export function FunnelAnalyticsSection({
               >
                 {data.funnel.map((step) => (
                   <TableRow key={`${step.fromStage}-${step.toStage}`} data-testid="hr-analytics-funnel-row">
-                    <TableCell className="px-4 py-2">{t(`stages.${step.fromStage}`)}</TableCell>
-                    <TableCell className="px-4 py-2">{t(`stages.${step.toStage}`)}</TableCell>
+                    <TableCell>{t(`stages.${step.fromStage}`)}</TableCell>
+                    <TableCell>{t(`stages.${step.toStage}`)}</TableCell>
                     <TableCell className={NUM}>{step.enteredFromCount}</TableCell>
                     <TableCell className={NUM}>{step.reachedToCount}</TableCell>
                     <TableCell className={NUM}>{step.conversionPct !== null ? `${step.conversionPct}%` : t('analytics.noData')}</TableCell>
@@ -248,7 +248,7 @@ export function FunnelAnalyticsSection({
               >
                 {data.sources.map((src) => (
                   <TableRow key={src.source} data-testid="hr-analytics-source-row">
-                    <TableCell className="px-4 py-2 font-medium">{t(`sources.${src.source}`)}</TableCell>
+                    <TableCell className="font-medium">{t(`sources.${src.source}`)}</TableCell>
                     <TableCell className={NUM}>{src.totalCount}</TableCell>
                     <TableCell className={NUM}>{src.hiredCount}</TableCell>
                     <TableCell className={NUM}>{src.hireRatePct !== null ? `${src.hireRatePct}%` : t('analytics.noData')}</TableCell>

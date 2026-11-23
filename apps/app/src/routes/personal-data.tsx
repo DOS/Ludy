@@ -234,12 +234,12 @@ export function PersonalDataPage() {
             <DataTable head={[t('columns.where'), t('columns.handling'), t('columns.reason'), t('columns.row')]}>
               {found.data.matches.map((m, i) => (
                 <TableRow key={`${m.column}-${m.rowId ?? i}`}>
-                  <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{m.column}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell className="font-mono text-xs text-foreground">{m.column}</TableCell>
+                  <TableCell>
                     <Badge variant={HANDLING_BADGE[m.handling]}>{t(`handling.${m.handling}`)}</Badge>
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-xs text-muted-foreground">{m.reason}</TableCell>
-                  <TableCell className="px-4 py-3 font-mono text-xs text-subtle-foreground">{m.rowId ?? '-'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{m.reason}</TableCell>
+                  <TableCell className="font-mono text-xs text-subtle-foreground">{m.rowId ?? '-'}</TableCell>
                 </TableRow>
               ))}
             </DataTable>
