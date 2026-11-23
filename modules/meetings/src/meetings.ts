@@ -59,6 +59,7 @@ import {
 } from './retention.ts';
 import {
   auditValue,
+  joinServiceFromUrl,
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
   zMeetingExtensionStatus,
@@ -79,6 +80,7 @@ import {
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
+  type MeetingPlatform,
   type MeetingRecordingStoppedDone,
   type RecordingStopReason,
   type MeetingLanguage,
@@ -178,7 +180,14 @@ interface MeetingRow {
   updated_at: Date | string;
 }
 
-function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVideo: boolean): MeetingSummary {
+function toSummary(
+  r: MeetingRow,
+  readersCount: number,
+  hasAudio: boolean,
+  hasVideo: boolean,
+  hasTranscript: boolean,
+  platform: MeetingPlatform | null,
+): MeetingSummary {
   return {
     id: r.id,
     recorderUserId: r.recorder_user_id,
@@ -196,6 +205,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
     hasVideo,
+    hasTranscript,
+    platform,
     readersCount,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
@@ -615,11 +626,23 @@ export const meetingRecordingNow = defineQuery({
   },
 });
 
+// Caller's active calendar events with event reading enabled, scoped by org, user, and calendar_agenda_read RLS.
+function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId: string) {
+  return trx
+    .selectFrom('crove_meetings.calendar_agenda as a')
+    .innerJoin('ludy_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
+    .where('a.org_id', '=', orgId)
+    .where('a.user_id', '=', userId)
+    .where('c.status', '=', 'active')
+    .where('c.read_events', '=', true);
+}
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
   access: READERS,
   handler: async (ctx, input): Promise<MeetingSummary[]> => {
+    const userId = userOf(ctx.actor);
     let query = ctx.trx
       .selectFrom('crove_meetings.meeting')
       .selectAll()
@@ -665,8 +688,41 @@ export const meetingList = defineQuery({
       .execute();
     const videoSet = new Set(videos.map((v) => v.meeting_id));
 
+    // transcript_segment_read RESTRICTIVE RLS ensures recorders see drafts/published while readers only see published.
+    // EXISTS stops at the first visible segment per meeting instead of evaluating RLS on every row.
+    const transcriptMeetings = await sql<{ meeting_id: string }>`
+      SELECT m.id AS meeting_id
+      FROM pg_catalog.unnest(${meetingIds}::uuid[]) AS m(id)
+      WHERE EXISTS (
+        SELECT 1
+        FROM crove_meetings.transcript_segment s
+        WHERE s.org_id = ${ctx.orgId}::uuid
+          AND s.meeting_id = m.id
+      )
+    `.execute(ctx.trx);
+    const transcriptSet = new Set(transcriptMeetings.rows.map((t) => t.meeting_id));
+
+    // Active, readable caller calendar events only; mapped to platform code without exposing raw joinUrl.
+    const agendaPlatforms = await readableAgendaPlatforms(ctx.trx, ctx.orgId, userId)
+      .select(['a.meeting_id', 'a.join_url'])
+      .where('a.meeting_id', 'in', meetingIds)
+      .execute();
+    const platformMap = new Map<string, MeetingPlatform>();
+    for (const row of agendaPlatforms) {
+      if (!row.meeting_id) continue;
+      const platform = joinServiceFromUrl(row.join_url);
+      if (platform !== null) platformMap.set(row.meeting_id, platform);
+    }
+
     return rows.map((r) =>
-      toSummary(r, readersMap.get(r.id) ?? 0, audioSet.has(r.id), videoSet.has(r.id)),
+      toSummary(
+        r,
+        readersMap.get(r.id) ?? 0,
+        audioSet.has(r.id),
+        videoSet.has(r.id),
+        transcriptSet.has(r.id),
+        platformMap.get(r.id) ?? null,
+      ),
     );
   },
 });
@@ -709,13 +765,34 @@ export const meetingGet = defineQuery({
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
 
+    const transcriptSegment = await ctx.trx
+      .selectFrom('crove_meetings.transcript_segment')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .limit(1)
+      .executeTakeFirst();
+
+    const agendaPlatform = await readableAgendaPlatforms(ctx.trx, ctx.orgId, userId)
+      .select(['a.join_url'])
+      .where('a.meeting_id', '=', input.meetingId)
+      .limit(1)
+      .executeTakeFirst();
+
     const videoRetentionDate = video?.video_retention_date
       ? typeof video.video_retention_date === 'string'
         ? video.video_retention_date.slice(0, 10)
         : new Date(video.video_retention_date).toISOString().slice(0, 10)
       : null;
 
-    const summary = toSummary(meeting, readerIds.length, audioSegment !== undefined, video !== undefined);
+    const summary = toSummary(
+      meeting,
+      readerIds.length,
+      audioSegment !== undefined,
+      video !== undefined,
+      transcriptSegment !== undefined,
+      joinServiceFromUrl(agendaPlatform?.join_url ?? null),
+    );
     return {
       ...summary,
       consentMethod: meeting.consent_method,

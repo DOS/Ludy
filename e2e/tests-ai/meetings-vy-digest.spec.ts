@@ -26,6 +26,7 @@ test('Vy recaps the week on a click: nothing runs before it, the checks keep the
 
   await test.step('the facts are listed from code, and opening the page runs nothing', async () => {
     await page.goto(`/o/${slug}/meetings`);
+    await page.getByTestId('meetings-tool-digest').click();
     await expect(card).toBeVisible();
     await expect(page.getByTestId('digest-meeting')).toHaveCount(1);
     await expect(page.getByTestId('digest-fact')).toHaveCount(2);
