@@ -196,4 +196,20 @@ describe('brand on the landing page (#1683)', () => {
       ['Ludy AI', ''],
     ]);
   });
+
+  it('keeps home summary cards in plain business language without statutory or protocol codes (#4518)', () => {
+    const jargon = /\b(?:B01|B02|911|4212|D02-LT|05\/KK-TNCN|05\/QTT-TNCN|01\/PLI|PAdES-LTV|SHA-256|HTKK|MCP|Referrer-Policy)\b/;
+    for (const dict of [vi, en]) {
+      const summaryEntries = [...strings(dict.appCards, 'appCards'), ...strings(dict.modules, 'modules')];
+      const hits = summaryEntries.filter(([, text]) => jargon.test(text));
+      expect(hits, dict.lang).toEqual([]);
+    }
+    // Detailed compliance and protocol info stays on the dedicated module pages.
+    expect(JSON.stringify(accountingVi)).toContain('B01-DNN');
+    expect(JSON.stringify(accountingVi)).toContain('911 và 4212');
+    expect(JSON.stringify(hrmVi)).toContain('D02-LT');
+    expect(JSON.stringify(hrmVi)).toContain('01/PLI');
+    expect(JSON.stringify(esignVi)).toContain('PAdES-LTV');
+    expect(JSON.stringify(esignVi)).toContain('SHA-256');
+  });
 });
