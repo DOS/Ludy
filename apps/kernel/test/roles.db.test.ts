@@ -8,13 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { MemberRoles } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { socialCommands, socialQueries } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { MemberRoles } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { adsCommands, adsManifest, adsQueries } from '@ludy/mod-ads';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
@@ -71,9 +71,9 @@ suite('Marketing preset role social.marketer (#2612)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const out = await c.query<{ held: boolean; vy: boolean }>(
-        'SELECT crove_kernel.ctx_has_permission($1) AS held, crove_kernel.ctx_vy_use() AS vy',
+        'SELECT ludy_kernel.ctx_has_permission($1) AS held, ludy_kernel.ctx_vy_use() AS vy',
         [permission],
       );
       return out.rows[0] as { held: boolean; vy: boolean };
@@ -92,9 +92,9 @@ suite('Marketing preset role social.marketer (#2612)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw', crove_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: appUrl, max: 4 });
@@ -115,7 +115,7 @@ suite('Marketing preset role social.marketer (#2612)', () => {
     orgId = (await createOrg(socialRuntime, asUser(owner.id), 'Công ty Marketing')).orgId;
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')",
+        "INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')",
         [orgId, adminUser.id, memberUser.id],
       ),
     );
@@ -123,7 +123,7 @@ suite('Marketing preset role social.marketer (#2612)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            "INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', 'branch', $2) RETURNING id",
+            "INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Đà Nẵng', 'branch', $2) RETURNING id",
             [orgId, owner.id],
           )
         ).rows[0]?.id as string,
@@ -170,7 +170,7 @@ suite('Marketing preset role social.marketer (#2612)', () => {
   it('enforces owner + MFA and org scope, grants a viewer vy.use alone, honors an owner deny, and revokes cleanly', async () => {
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer.id]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer.id]),
     );
 
     const orgForViewer = () => socialRuntime.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(viewer.id), orgId });
