@@ -1974,22 +1974,8 @@ describe('Envelope link rotation and void RBAC (#3428 L3)', () => {
     expect(canManageEnvelopeLinksAndVoid({ role: 'admin', userId: otherMemberId, createdBy: creatorId })).toBe(true);
     expect(canManageEnvelopeLinksAndVoid({ role: 'member', userId: creatorId, createdBy: creatorId })).toBe(true);
     expect(canManageEnvelopeLinksAndVoid({ role: 'member', userId: otherMemberId, createdBy: creatorId })).toBe(false);
-    expect(
-      canManageEnvelopeLinksAndVoid({
-        role: 'member',
-        userId: otherMemberId,
-        createdBy: creatorId,
-        sourceKind: 'meeting_minutes',
-      }),
-    ).toBe(true);
-    expect(
-      canManageEnvelopeLinksAndVoid({
-        role: 'viewer',
-        userId: creatorId,
-        createdBy: creatorId,
-        sourceKind: 'meeting_minutes',
-      }),
-    ).toBe(false);
+    // A meeting-minutes envelope is no exception any more (#4530): a member who is not its creator does not manage its links.
+    expect(canManageEnvelopeLinksAndVoid({ role: 'member', userId: otherMemberId, createdBy: creatorId })).toBe(false);
     expect(canManageEnvelopeLinksAndVoid({ role: 'viewer', userId: creatorId, createdBy: creatorId })).toBe(false);
     expect(canManageEnvelopeLinksAndVoid({ role: null, userId: creatorId, createdBy: creatorId })).toBe(false);
 

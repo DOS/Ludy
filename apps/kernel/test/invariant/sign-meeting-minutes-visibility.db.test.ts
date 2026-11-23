@@ -748,6 +748,20 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     );
     expect(tplFileRead.id).toBe(tplPdf);
 
+    // #4530: a permitted attendee READS the recorder's draft but does not change or send it: 403 SIGN_FORBIDDEN (not 404, the attendee reads the envelope), before the draft is checked at all.
+    // Only the envelope's creator, an owner or an admin acts on a meeting-minutes envelope, like a standalone one.
+    const attendeeDraftAttempts: Array<[string, Record<string, unknown>]> = [
+      ['sign.envelope.update', { envelopeId: recEnv.envelopeId, title: 'Tamper by attendee' }],
+      ['sign.signer.add', { envelopeId: recEnv.envelopeId, roleLabel: 'Spy', name: 'Spy', deliveryMode: 'link' }],
+      ['sign.signer.remove', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }],
+      ['sign.signer.reorder', { envelopeId: recEnv.envelopeId, orders: [{ signerId: addedSigner.signerId, routingOrder: 1 }] }],
+      ['sign.field.set', { envelopeId: recEnv.envelopeId, fields: [] }],
+      ['sign.envelope.send', { envelopeId: recEnv.envelopeId }],
+    ];
+    for (const [command, input] of attendeeDraftAttempts) {
+      await expect(runtime.execute(command, input, { actor: asUser(attendeeId), orgId }), `attendee ${command}`).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    }
+
     // 5. Send envelope, verify active-envelope mutations (create_link, remind, void) return 404 to non-reader owner/admin,
     // complete public signing ceremony + worker sealing, and verify sealed/certificate file downloads!
     const sent = await runtime.execute<{
@@ -858,7 +872,8 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       activeProbeClient.release();
     }
 
-    // Permitted attendee CAN start an in-person session AND rotate link on active meeting_minutes envelope.
+    // Permitted attendee CAN start an in-person session on an active meeting_minutes envelope, but can NOT issue or rotate a signing link (#4530): 403 for a reader who is not the creator, an owner or an
+    // admin; the recorder, who created the envelope, can.
     const inPersonStarted = await runtime.execute<{
       hostUserId: string;
       token: string;
@@ -871,10 +886,13 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     expect(inPersonStarted.hostUserId).toBe(attendeeId);
     expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
 
+    await expect(
+      runtime.execute('sign.signer.create_link', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
     const rotated = await runtime.execute<{ token: string }>(
       'sign.signer.create_link',
       { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-      { actor: asUser(attendeeId), orgId },
+      { actor: asUser(recorderId), orgId },
     );
     const activeToken = rotated.token || rawSigningToken;
 

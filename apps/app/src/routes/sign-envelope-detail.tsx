@@ -109,18 +109,15 @@ export function fromDatetimeLocalValue(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+// Issuing or rotating a link and voiding are for the envelope's creator, an owner or an admin, whatever the kind (#4530: a meeting-minutes envelope is no longer an exception).
 export function canManageEnvelopeLinksAndVoid(input: {
   role: string | null | undefined;
   userId: string | null | undefined;
   createdBy: string | null | undefined;
-  sourceKind?: string | null | undefined;
 }): boolean {
   if (!input.role) return false;
   if (input.role === 'owner' || input.role === 'admin') return true;
-  if (input.role === 'member') {
-    if (input.sourceKind === 'meeting_minutes') return true;
-    if (input.userId && input.createdBy === input.userId) return true;
-  }
+  if (input.role === 'member' && input.userId && input.createdBy === input.userId) return true;
   return false;
 }
 
@@ -242,11 +239,12 @@ export function SignEnvelopeDetailPage() {
         role: roleHere,
         userId: currentUserId,
         createdBy: envelope?.createdBy,
-        sourceKind: envelope?.sourceKind,
       })
     : orgQuery.data
       ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin'
       : false;
+  // The draft of a meeting-minutes envelope is read by every reader of the meeting but changed and sent only by its creator, an owner or an admin (#4530); the server refuses the others with 403.
+  const canChangeDraft = envelope?.sourceKind !== 'meeting_minutes' || canManageLinksAndVoid;
   const canRemind = meQuery.data
     ? Boolean(roleHere && roleHere !== 'viewer')
     : orgQuery.data
@@ -999,7 +997,7 @@ export function SignEnvelopeDetailPage() {
         subtitle={`${t(`routing.${envelope.routingMode}`)} - ${t('fieldsCount', { count: String(draftFields.length) })}`}
         actions={
           <div className="flex flex-wrap gap-2">
-            {isDraft ? (
+            {isDraft && canChangeDraft ? (
               <>
                 <Button
                   type="button"
@@ -1105,6 +1103,7 @@ export function SignEnvelopeDetailPage() {
         <div className="space-y-4">
           <SignerPanel
             envelopeStatus={envelope.status}
+            canEditDraft={canChangeDraft}
             routingMode={envelope.routingMode}
             signers={signers}
             activeSignerId={activeSignerId}

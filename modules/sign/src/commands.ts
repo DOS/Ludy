@@ -141,6 +141,15 @@ async function lockEnvelope(ctx: CommandContext, envelopeId: string) {
   return row;
 }
 
+// Who may act on an envelope is narrower than who may read it for a meeting-minutes envelope (#4530): every reader of the meeting reads it, but only its creator, an owner or an admin edits its
+// draft, sends it or issues a signing link. The check runs after lockEnvelope, so a caller who cannot read the envelope still gets the 404 and learns nothing of its existence; one who can read it
+// but not act gets a 403. An hr_contract envelope needs no second check: only an owner, an admin or its creator reads it at all (hr-visibility.ts).
+function assertCanActOnEnvelope(ctx: CommandContext, row: { source_kind: string; created_by: string | null }, userId: string): void {
+  if (row.source_kind !== 'meeting_minutes') return;
+  if (row.created_by === userId || ctx.role === 'owner' || ctx.role === 'admin') return;
+  throw new DomainError('SIGN_FORBIDDEN', 403, 'Only the envelope creator, owner, or admin can change or send a meeting-minutes envelope');
+}
+
 function assertDraft(status: string): void {
   if (status !== 'draft') {
     throw new DomainError('SIGN_ENVELOPE_NOT_DRAFT', 409, 'Envelope can no longer be edited once sent');
@@ -469,6 +478,7 @@ export const envelopeUpdate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnEnvelope(ctx, row, userId);
     assertDraft(row.status);
     if (input.expectedVersion !== undefined && row.version !== input.expectedVersion) {
       throw new DomainError('SIGN_VERSION_CONFLICT', 409, 'Envelope was modified concurrently', { version: row.version });
@@ -575,6 +585,7 @@ export const signerAdd = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnEnvelope(ctx, row, userId);
     assertDraft(row.status);
     const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
     if ((input.deliveryMode === 'email' || input.requireEmailOtp) && !normalizedEmail) {
@@ -672,6 +683,7 @@ export const signerRemove = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnEnvelope(ctx, row, userId);
     assertDraft(row.status);
     const existing = await ctx.trx
       .selectFrom('ludy_sign.signer')
@@ -744,6 +756,7 @@ export const signerReorder = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnEnvelope(ctx, row, userId);
     assertDraft(row.status);
 
     const seenIds = new Set<string>();
@@ -883,6 +896,7 @@ export const fieldSet = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnEnvelope(ctx, row, userId);
     assertDraft(row.status);
     if (row.inspect_status === 'failed') {
       throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Cannot place fields on a document whose PDF inspection failed');
@@ -1019,6 +1033,7 @@ export const envelopeSend = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnEnvelope(ctx, row, userId);
     assertDraft(row.status);
 
     const signers = await ctx.trx
@@ -1058,12 +1073,7 @@ export const signerCreateLink = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
-    if (
-      row.source_kind !== 'meeting_minutes' &&
-      row.created_by !== userId &&
-      ctx.role !== 'owner' &&
-      ctx.role !== 'admin'
-    ) {
+    if (row.created_by !== userId && ctx.role !== 'owner' && ctx.role !== 'admin') {
       throw new DomainError(
         'SIGN_FORBIDDEN',
         403,
