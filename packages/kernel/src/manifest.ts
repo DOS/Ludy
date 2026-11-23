@@ -108,6 +108,7 @@ export const kernelManifest = defineModule({
       prober_alert_state: columns(['id', 'problem', 'started_at', 'notified_at', 'updated_at']),
       proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id', 'requested_by_grant', 'mcp_client_name', 'mcp_client_host', 'approvers_told_at'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
       proposal_policy: columns(['org_id', 'id', 'remind_after_days', 'escalate_after_days', 'updated_by', 'created_at', 'updated_at', 'expire_after_days']),
+      push_subscription: columns(['org_id', 'id', 'user_id', 'failure_count', 'created_at', 'last_used_at'], { endpoint: 'sensitive', p256dh: 'sensitive', auth: 'sensitive', user_agent: 'pii' }),
       record_le: columns(['org_id', 'id', 'record_type', 'record_id', 'legal_entity_id', 'created_by', 'created_at']),
       refusal_tally: columns(['org_id', 'window_start', 'actor_key', 'command', 'code', 'refusals', 'audited', 'first_at', 'last_at']),
       role: columns(['key', 'module', 'scope']),

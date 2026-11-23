@@ -30,7 +30,7 @@ function signOutHere(): void {
   forgetInvite();
   // A recording in the app is saved first (#3197), then this tab signs out.
   void stopAndSave({ quiet: true })
-    .then(() => forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint })))
+    .then(() => forgetPushDevice((endpoint) => client.notifications.push.unsubscribe({ endpoint })))
     .finally(() => void auth().signOut({ scope: 'local' }));
 }
 

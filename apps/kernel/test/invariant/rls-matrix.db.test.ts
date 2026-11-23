@@ -136,7 +136,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  'crove_kernel.push_subscription',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',
@@ -3196,7 +3195,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #676: per-org reminder and escalation settings for pending proposals (one row per org).
   'crove_kernel.proposal_policy': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), remind_after_days: 3, escalate_after_days: 7, updated_by: o.owner } }) },
-  // A member's browser push subscription on one device, for every kernel notification of a pushed kind (generic web push, #3736, step 1 of 2: its factory lands before the table, so PENDING_TABLES holds it until the migration of step 2).
+  // A member's browser push subscription on one device, for every kernel notification of a pushed kind (generic web push, #3736, step 1 of 2: its factory landed before the table; the table's migration is step 2).
   // It is Social's `push_subscription` (#1238) moved to the kernel: under a restrictive policy like the mutes, each member sees and changes only their own. One endpoint per member, so every row gets its own; the keys are a P-256
   // point and a 16-byte secret, base64url.
   'crove_kernel.push_subscription': {

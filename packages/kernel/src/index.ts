@@ -8,6 +8,7 @@ export * from './today-since.ts';
 export * from './invites.ts';
 export * from './mail.ts';
 export * from './notifications.ts';
+export * from './push.ts';
 export * from './inbox-items.ts';
 export * from './saved-views.ts';
 export * from './today-mail.ts';

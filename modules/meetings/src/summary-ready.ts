@@ -8,13 +8,14 @@
 //                                 its own): checks the caller is the recorder of a meeting they read and writes one outbox event with ids and the language only. A failed run never calls it.
 // meetings.summary.ready_notice   the worker's dispatch of that event, in the system's context (the API's role cannot write a notification for a person): reads the event itself, never
 //                                 the job's copy, and writes one notice to the recorder, keyed by the run (one per finished run). A person who turned the kind off gets neither the in-app
-//                                 line nor the mail: the mail is queued only when the in-app notice was written, so the one switch (the notification settings) covers both, and a second
+//                                 line nor the mail: the mail is queued only when the in-app notice was written, so the one switch (the notification settings) covers both (and the push), and a second
 //                                 dispatch for the same run writes and sends nothing.
 //
 // meetings.summary.ready trusts the runId it is given: it is reached only from the API's own port (member-vy-ports.ts), never from an RPC route. If it is ever exposed, it must first check that the runId is a
 // finished summary run of this meeting by this recorder.
 //
-// Push is not part of this slice: the browser push of the app belongs to Social (its own subscription table and sender), so a Meetings notice has no push path yet (follow-up).
+// Browser push (#3736): the kind is listed in the kernel's PUSH_KINDS (packages/kernel/src/push.ts), so after this command ran the worker pushes the notice to the recorder's subscribed devices (a fixed line and the meeting's path, no
+// text); a person who turned the kind off has no notice, so nothing is pushed: the one switch covers the in-app line, the mail and the push.
 import { sql } from 'kysely';
 import { createMailMessage, notifyMembers, outboxEvent, uploaderEntity } from '@ludy/kernel';
 import { SUMMARY_READY_EVENT, SUMMARY_READY_KIND, SUMMARY_READY_MAIL_SOURCE, SUMMARY_READY_MAIL_TEMPLATE, zSummaryReadyDispatch, zSummaryReadyEvent, zSummaryReadyMail, zSummaryReadyRef } from '@ludy/kernel-contract';
