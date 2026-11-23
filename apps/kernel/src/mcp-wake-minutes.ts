@@ -10,7 +10,8 @@
 //      and the store is skipped; any other failure for one grant (a deadlock, a lost connection) never stops the others, and is thrown after them so the job retries: the derived ids make the retry
 //      store only what is missing.
 // Dedupe: the delivery's id is derived from the outbox event's id and the grant's id (a name-based UUID), so a retry of the same event stores nothing new and sends nothing new, while a second publish is
-// a second event and sends one more.
+// a second event and sends one more, up to a cap: per grant, over the last hour, at most 3 wakes for one meeting and 60 for all (the database, `mcp_wake_enqueue`, #4535; a wake over the cap
+// stores nothing and answers `stored: false`, so a recorder who publishes a meeting's minutes in a loop cannot wake every agent once per publish).
 import { createHash } from 'node:crypto';
 import { MINUTES_WAKE_TYPE } from '@ludy/kernel-contract';
 import type { McpWakeMinutesTargets } from '@ludy/kernel';

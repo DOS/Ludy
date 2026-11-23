@@ -4,7 +4,7 @@
 //   after the grant was made wakes nothing); never a member-bound grant (the 2026-11-13 hold: member grants get no signals and no minutes event, and the database refuses the type for one), never
 //   another org's grant;
 // - when: one event per publish of a RESULT of a meeting whose visibility is 'org'; an attendees-only meeting, a draft, a publish of items alone and a refused publish send nothing, a retry of the
-//   same event sends nothing new, a second publish sends one more, an event older than 24 hours when it would be sent is dropped and audited by its id, and nothing is sent while Meetings is off (the
+//   same event sends nothing new, a second publish sends one more (up to 3 an hour for one meeting and 60 an hour for one grant, #4535), an event older than 24 hours when it would be sent is dropped and audited by its id, and nothing is sent while Meetings is off (the
 //   relay does not park Meetings' events, so such an event is not released later);
 // - what: a body of ids and instants only, exactly the six top-level keys and the two data keys `meeting_id` and `published_at`; a title and a summary seeded with canary strings are in no stored
 //   row, not in the outbox event and not in any body;
@@ -375,4 +375,65 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
       await asWorker.end();
     }
   });
+  // The cap on the wake (#4535, from the security review of #3824): a recorder who saves and publishes a meeting's minutes in a loop costs nothing (no AI, no budget), and every publish would
+  // store one signed delivery per company grant, each an agent run on the owner's spend. Per grant, over the last hour: at most 3 wakes for one meeting (so a second publish still wakes each grant
+  // once more, as the case above says) and at most 60 for all meetings. A wake over the cap stores nothing and answers false. These cases come last: they leave no delivery behind.
+  it('wakes each grant at most three times an hour for one meeting, however many times its minutes are published, and sends no more than it stores', async () => {
+    await reset();
+    const meetingId = await seedMeeting('loop', 'org', true);
+    for (let i = 1; i < 8; i += 1) {
+      await exec('recorderA', 'meetings.summary.save', { meetingId, summary: `${CANARY_SUMMARY} loop ${i}`, decisions: [] });
+      await exec('recorderA', 'meetings.result.publish', { meetingId, confirmed: true });
+    }
+    const published = await events(meetingId);
+    expect(published).toHaveLength(8);
+    const stored: number[] = [];
+    for (const event of published) stored.push((await wake(event.id)).stored);
+    // The two company grants that stand are woken for the first three publishes and for no later one.
+    expect(stored).toEqual([2, 2, 2, 0, 0, 0, 0, 0]);
+    const rows = await deliveries();
+    expect(rows).toHaveLength(6);
+    for (const grantId of [ids.gOwner, ids.gAdmin]) expect(rows.filter((r) => r.grant_id === grantId)).toHaveLength(3);
+    expect(sent).toHaveLength(6);
+    // A retry of a capped event is still nothing, and another meeting's first publish is not held back by this one's.
+    expect((await wake((published[7] as { id: string }).id)).stored).toBe(0);
+    const other = await seedMeeting('loopOther', 'org', true);
+    expect((await wake(((await events(other))[0] as { id: string }).id)).stored).toBe(2);
+    expect(await deliveries()).toHaveLength(8);
+  }, 120_000);
+
+  it('frees the places of a grant as the hour passes, for one meeting and for all of them', async () => {
+    const meetingId = ids.loop as string;
+    await sqlAdmin(`UPDATE crove_kernel.agent_wake_delivery SET created_at = now() - interval '61 minutes' WHERE org_id = $1 AND type = $2`, [orgA, TYPE]);
+    await exec('recorderA', 'meetings.summary.save', { meetingId, summary: `${CANARY_SUMMARY} later`, decisions: [] });
+    await exec('recorderA', 'meetings.result.publish', { meetingId, confirmed: true });
+    const latest = (await events(meetingId)).at(-1) as { id: string };
+    expect((await wake(latest.id)).stored).toBe(2);
+    expect(await deliveries(`AND created_at > now() - interval '1 hour'`)).toHaveLength(2);
+  }, 60_000);
+
+  it('caps the minutes wakes of one grant at 60 an hour over all meetings, and only that grant: another grant of the org is still woken', async () => {
+    await reset();
+    // 60 wakes of this hour for the owner's grant, each for another meeting (written as the worker would, with valid bodies).
+    await sqlAdmin(
+      `INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body, created_at)
+       SELECT $1::uuid, g.id, $2::uuid, $3::text,
+              pg_catalog.jsonb_build_object('id', g.id::text, 'type', $3::text, 'created_at', '2026-11-18T03:00:00.000Z', 'org', $1::text, 'grant', $2::text,
+                'data', pg_catalog.jsonb_build_object('meeting_id', pg_catalog.gen_random_uuid()::text, 'published_at', '2026-11-18T02:59:58.123Z')),
+              now() - interval '5 minutes'
+       FROM (SELECT pg_catalog.gen_random_uuid() AS id FROM pg_catalog.generate_series(1, 60)) g`,
+      [orgA, ids.gOwner, TYPE],
+    );
+    const meetingId = await seedMeeting('capAll', 'org', true);
+    const [event] = await events(meetingId);
+    expect((await wake((event as { id: string }).id)).stored).toBe(1);
+    const mine = await deliveries(`AND body #>> '{data,meeting_id}' = '${meetingId}'`);
+    expect(mine.map((r) => r.grant_id)).toEqual([ids.gAdmin]);
+    expect(await deliveries(`AND grant_id = '${ids.gOwner}'`)).toHaveLength(60);
+    // An hour later the owner's grant is woken again.
+    await sqlAdmin(`UPDATE crove_kernel.agent_wake_delivery SET created_at = now() - interval '61 minutes' WHERE org_id = $1 AND type = $2`, [orgA, TYPE]);
+    const next = await seedMeeting('capAllNext', 'org', true);
+    expect((await wake(((await events(next))[0] as { id: string }).id)).stored).toBe(2);
+    await reset();
+  }, 60_000);
 });
