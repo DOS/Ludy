@@ -88,6 +88,7 @@ import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setM
 import {
   setSignCaBrokerAvailable,
   setSignLiveCaEnabled,
+  setSignWebhookBrokerAvailable,
   signAiCommands,
   signAiQueries,
   signCommands,
@@ -293,7 +294,9 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   setMeetingVideoImport(Boolean(config.MEDIA_URL));
   setMeetingPlatformVideoImport(config.MEDIA_URL ? Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY) : null);
   setSignLiveCaEnabled(config.SIGN_LIVE_CA_ENABLED === 'true');
-  setSignCaBrokerAvailable(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
+  const hasCredentialKey = Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE);
+  setSignCaBrokerAvailable(hasCredentialKey);
+  setSignWebhookBrokerAvailable(hasCredentialKey);
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({

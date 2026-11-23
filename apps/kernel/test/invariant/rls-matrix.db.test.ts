@@ -140,8 +140,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_sign.kyc_check',
   'crove_sign.playbook_check',
   'crove_sign.playbook_rule',
-  'crove_sign.webhook',
-  'crove_sign.webhook_delivery',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a

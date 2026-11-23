@@ -39,6 +39,8 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_meetings.media_key': "the wrapped keys of a meeting's recording: key material",
   'crove_meetings.member_hook': "a member's own webhook with its sealed secret: a credential, private to its member",
   'crove_sign.ca_connection': 'sealed CA provider credentials (secret_envelope): definer-only credentials',
+  'crove_sign.webhook': 'outbound eSign webhook endpoints with broker-sealed HMAC secrets (secret_envelope): definer-only credentials',
+  'crove_sign.webhook_delivery': 'an outbound eSign webhook delivery queue and log row: runtime machinery',
   'crove_sign.signing_token': 'signing link token hashes: credentials',
   'crove_sign.signing_otp': 'email signing OTP hashes: short-lived credentials',
   'crove_sign.template_direct_link': 'template direct signing link token hashes: credentials',

@@ -42,6 +42,7 @@ import {
   SIGN_MAX_LINK_HOURS,
   SIGN_READERS,
   SIGN_WRITERS,
+  WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   actorLabelOfCtx,
   assertSystemCommand,
   assertSystemQuery,
@@ -1623,6 +1624,7 @@ export const templateInstantiate = defineCommand({
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
     MAIL_MESSAGE_WRITE,
+    WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   ],
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);

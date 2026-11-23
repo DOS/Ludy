@@ -53,6 +53,7 @@ import {
   SIGNING_OTP_INVALIDATE_WRITE,
   SIGNING_TOKEN_WRITE,
   SIGN_MAX_LINK_HOURS,
+  WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   assertValidEnvelopeExpiry,
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
@@ -66,6 +67,7 @@ import { signObligationCommands } from './obligations.ts';
 import { signProfileCommands } from './profiles.ts';
 import { signTemplateCommands } from './templates.ts';
 import { envelopePreExpiryRemindSweep } from './today-and-reminders.ts';
+import { enqueueSignWebhookEvent, signWebhookCommands } from './webhooks.ts';
 
 export type { IssuedSigningLink };
 
@@ -983,6 +985,7 @@ export const envelopeSend = defineCommand({
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
     MAIL_MESSAGE_WRITE,
+    WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   ],
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
@@ -1582,6 +1585,7 @@ export const envelopeSealComplete = defineCommand({
     ]),
     SIGNING_EVENT_WRITE,
     MAIL_MESSAGE_WRITE,
+    WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
@@ -1758,6 +1762,15 @@ export const envelopeSealComplete = defineCommand({
       sealedSha256: sealedFile.sha256,
       certificateCode: input.certificateCode,
     });
+    await enqueueSignWebhookEvent(ctx, {
+      envelopeId: row.id,
+      eventType: 'sign.envelope.completed',
+      status: 'completed',
+      occurredAt: ctx.now,
+      completedAt: row.completed_at ? new Date(row.completed_at) : ctx.now,
+      certificateCode: input.certificateCode,
+      sealedSha256: sealedFile.sha256,
+    });
     ctx.audit({
       envelopeId: row.id,
       sealStatus: 'sealed',
@@ -1787,6 +1800,7 @@ export const envelopeExpireSweep = defineCommand({
     tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['revoked_at', 'revoked_by']),
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
+    WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   ],
   handler: async (ctx) => {
     assertSystem(ctx);
@@ -1835,6 +1849,13 @@ export const envelopeExpireSweep = defineCommand({
         actorLabel: actorLabelOf(ctx),
         documentSha256: env.source_sha256,
         payloadJson: {},
+        occurredAt: ctx.now,
+      });
+
+      await enqueueSignWebhookEvent(ctx, {
+        envelopeId: env.id,
+        eventType: 'sign.envelope.expired',
+        status: 'expired',
         occurredAt: ctx.now,
       });
     }
@@ -1997,4 +2018,5 @@ export const signCommands = [
   ...signInPersonCommands,
   ...signObligationCommands,
   ...signProfileCommands,
+  ...signWebhookCommands,
 ];
