@@ -25,6 +25,8 @@ import {
   type Deal,
   type MeetingResults,
   type Notes,
+  type PersonalDataErasure,
+  type PersonalDataResult,
   type RoadmapAdminItem,
   type RoadmapBoardSummary,
   type RoadmapSignalCreateResult,
@@ -1719,5 +1721,388 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     );
     expect(replay.signal.id).toBe(created.signal.id);
     expect(replay.signal.accountLabel).toBeNull();
+  }, 60_000);
+
+  it('gates meetings.meeting roadmap_signal.quote_excerpt in kernel.personal_data.find by meeting RLS and retention (#4600)', async () => {
+    const owner5 = await person('owner-4600');
+    const adminReader = await person('admin-reader-4600');
+    const adminNonReader = await person('admin-nonreader-4600');
+    const recorder = await person('recorder-4600');
+    const org5 = await createOrg(rt, asUser(owner5.userId), 'Cong ty Gate 4600');
+    await inviteAndJoin(org5.orgId, owner5.userId, adminReader, 'admin');
+    await inviteAndJoin(org5.orgId, owner5.userId, adminNonReader, 'admin');
+    await inviteAndJoin(org5.orgId, owner5.userId, recorder, 'member');
+
+    const exec5 = <T>(userId: string, cmd: string, input: unknown, idempotencyKey?: string) =>
+      rt.execute<T>(cmd, input, {
+        actor: asUser(userId),
+        orgId: org5.orgId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      });
+    const find5 = (userId: string, value: string) =>
+      rt.execute<PersonalDataResult>('kernel.personal_data.find', { value }, { actor: asUser(userId), orgId: org5.orgId });
+    const erase5 = (userId: string, value: string) =>
+      rt.execute<PersonalDataErasure>(
+        'kernel.personal_data.erase',
+        { value },
+        { actor: asMfa(userId), orgId: org5.orgId, idempotencyKey: randomUUID() },
+      );
+
+    const { board: board5 } = await exec5<{ board: RoadmapBoardSummary }>(owner5.userId, 'projects.roadmap.board.create', {
+      title: 'Board 4600',
+      slug: 'board-4600',
+    });
+    const createItem = async (title: string) =>
+      (
+        await exec5<{ item: RoadmapAdminItem }>(owner5.userId, 'projects.roadmap.item.create', {
+          boardId: board5.id,
+          publicTitle: title,
+          publicSummary: null,
+          category: null,
+        })
+      ).item;
+
+    const itemPriv = await createItem('Priv Meeting Signals');
+    const itemExpOrg = await createItem('Expired Org Meeting Signals');
+    const itemExpPriv = await createItem('Expired Priv Meeting Signals');
+    const itemDel = await createItem('Deleted Meeting Signals');
+    const itemActiveOrg = await createItem('Active Org Meeting Signals');
+    const itemPartyHidden = await createItem('Party Hidden Meeting Signals');
+    const itemPartyActive = await createItem('Party Active Meeting Signals');
+    const itemShort = await createItem('Short Number Meeting Signals');
+
+    // Meetings covering attendees-only, expired org (<= today VN), expired attendees-only, deleted, and active org (NULL retention)
+    const { meetingId: privActiveMeetingId } = await exec5<{ meetingId: string }>(recorder.userId, 'meetings.meeting.create', {
+      title: 'Attendees Only Active 4600',
+      consentMethod: 'told_at_start',
+      visibility: 'attendees',
+    });
+    await exec5(recorder.userId, 'meetings.reader.add', { meetingId: privActiveMeetingId, userId: adminReader.userId });
+
+    const { meetingId: expOrgMeetingId } = await exec5<{ meetingId: string }>(recorder.userId, 'meetings.meeting.create', {
+      title: 'Org Expired Today 4600',
+      consentMethod: 'told_at_start',
+      visibility: 'org',
+    });
+
+    const { meetingId: expPrivMeetingId } = await exec5<{ meetingId: string }>(recorder.userId, 'meetings.meeting.create', {
+      title: 'Priv Expired Yesterday 4600',
+      consentMethod: 'told_at_start',
+      visibility: 'attendees',
+    });
+    await exec5(recorder.userId, 'meetings.reader.add', { meetingId: expPrivMeetingId, userId: adminReader.userId });
+
+    const { meetingId: deletedMeetingId } = await exec5<{ meetingId: string }>(recorder.userId, 'meetings.meeting.create', {
+      title: 'Deleted Meeting 4600',
+      consentMethod: 'told_at_start',
+      visibility: 'org',
+    });
+
+    const { meetingId: activeOrgMeetingId } = await exec5<{ meetingId: string }>(recorder.userId, 'meetings.meeting.create', {
+      title: 'Org Active Null Retention 4600',
+      consentMethod: 'told_at_start',
+      visibility: 'org',
+    });
+
+    const privAcctEmail = 'priv.acct@p4600.test';
+    const privQuoteEmail = 'priv.quote@p4600.test';
+    const privQuotePhone = '0901460001';
+    const privQuoteText = `SECRET_ATTENDEES_QUOTE Email: ${privQuoteEmail} Phone: ${privQuotePhone}`;
+    const privIdemKey = randomUUID();
+    const sigPriv = (
+      await exec5<RoadmapSignalCreateResult>(
+        recorder.userId,
+        'projects.roadmap.signal.create',
+        {
+          boardId: board5.id,
+          roadmapItemId: itemPriv.id,
+          sourceType: 'meetings.meeting',
+          sourceId: privActiveMeetingId,
+          accountLabel: `Account ${privAcctEmail}`,
+          quoteExcerpt: privQuoteText,
+        },
+        privIdemKey,
+      )
+    ).signal;
+
+    const expOrgAcctEmail = 'exp.org.acct@p4600.test';
+    const expOrgQuoteEmail = 'exp.org.quote@p4600.test';
+    const expOrgQuoteTax = '0312460002';
+    const expOrgQuoteText = `EXPIRED_ORG_TODAY_QUOTE Email: ${expOrgQuoteEmail} Tax: ${expOrgQuoteTax}`;
+    const sigExpOrg = (
+      await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+        boardId: board5.id,
+        roadmapItemId: itemExpOrg.id,
+        sourceType: 'meetings.meeting',
+        sourceId: expOrgMeetingId,
+        accountLabel: `Account ${expOrgAcctEmail}`,
+        quoteExcerpt: expOrgQuoteText,
+      })
+    ).signal;
+
+    const expPrivAcctEmail = 'exp.priv.acct@p4600.test';
+    const expPrivQuoteEmail = 'exp.priv.quote@p4600.test';
+    const expPrivQuoteText = `EXPIRED_PRIV_QUOTE Email: ${expPrivQuoteEmail}`;
+    const sigExpPriv = (
+      await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+        boardId: board5.id,
+        roadmapItemId: itemExpPriv.id,
+        sourceType: 'meetings.meeting',
+        sourceId: expPrivMeetingId,
+        accountLabel: `Account ${expPrivAcctEmail}`,
+        quoteExcerpt: expPrivQuoteText,
+      })
+    ).signal;
+
+    const delAcctEmail = 'del.acct@p4600.test';
+    const delQuoteEmail = 'del.quote@p4600.test';
+    const delQuoteText = `DELETED_MEETING_QUOTE Email: ${delQuoteEmail}`;
+    const sigDel = (
+      await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+        boardId: board5.id,
+        roadmapItemId: itemDel.id,
+        sourceType: 'meetings.meeting',
+        sourceId: deletedMeetingId,
+        accountLabel: `Account ${delAcctEmail}`,
+        quoteExcerpt: delQuoteText,
+      })
+    ).signal;
+
+    const activeOrgAcctEmail = 'active.org.acct@p4600.test';
+    const activeOrgQuoteEmail = 'active.org.quote@p4600.test';
+    const activeOrgQuoteText = `ACTIVE_ORG_QUOTE Email: ${activeOrgQuoteEmail}`;
+    const sigActiveOrg = (
+      await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+        boardId: board5.id,
+        roadmapItemId: itemActiveOrg.id,
+        sourceType: 'meetings.meeting',
+        sourceId: activeOrgMeetingId,
+        accountLabel: `Account ${activeOrgAcctEmail}`,
+        quoteExcerpt: activeOrgQuoteText,
+      })
+    ).signal;
+
+    // Defense-in-depth: meeting signals linked to a party via source_party_id (matched in partyDealSignals)
+    const partyHiddenEmail = 'party.hidden@p4600.test';
+    const partyHiddenRes = await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.party (org_id, name, email, kind) VALUES ($1, 'Hidden Party 4600', $2, 'organization') RETURNING id`,
+      [org5.orgId, partyHiddenEmail],
+    );
+    const partyHiddenId = partyHiddenRes.rows[0]!.id;
+    const partyHiddenQuote = 'PARTY_LINKED_HIDDEN_MEETING_QUOTE_4600';
+    const sigPartyHidden = (
+      await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+        boardId: board5.id,
+        roadmapItemId: itemPartyHidden.id,
+        sourceType: 'meetings.meeting',
+        sourceId: privActiveMeetingId,
+        accountLabel: 'Hidden Party Name 4600',
+        quoteExcerpt: partyHiddenQuote,
+      })
+    ).signal;
+    await sqlAdmin(
+      `UPDATE ludy_projects.roadmap_signal SET source_party_id = $3 WHERE org_id = $1 AND id = $2`,
+      [org5.orgId, sigPartyHidden.id, partyHiddenId],
+    );
+
+    const partyActiveEmail = 'party.active@p4600.test';
+    const partyActiveRes = await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.party (org_id, name, email, kind) VALUES ($1, 'Active Party 4600', $2, 'organization') RETURNING id`,
+      [org5.orgId, partyActiveEmail],
+    );
+    const partyActiveId = partyActiveRes.rows[0]!.id;
+    const partyActiveQuote = 'PARTY_LINKED_ACTIVE_MEETING_QUOTE_4600';
+    const sigPartyActive = (
+      await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+        boardId: board5.id,
+        roadmapItemId: itemPartyActive.id,
+        sourceType: 'meetings.meeting',
+        sourceId: activeOrgMeetingId,
+        accountLabel: 'Active Party Name 4600',
+        quoteExcerpt: partyActiveQuote,
+      })
+    ).signal;
+    await sqlAdmin(
+      `UPDATE ludy_projects.roadmap_signal SET source_party_id = $3 WHERE org_id = $1 AND id = $2`,
+      [org5.orgId, sigPartyActive.id, partyActiveId],
+    );
+
+    // Short-number (< 10 digits) signals on hidden and active meetings
+    const shortHiddenAcct = '091246001';
+    const shortHiddenQuoteNum = '091246002';
+    const shortSharedNum = '091246004';
+    const shortHiddenQuote = `SHORT_HIDDEN_QUOTE_4600 Ref: ${shortHiddenQuoteNum} Shared: ${shortSharedNum}`;
+    await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+      boardId: board5.id,
+      roadmapItemId: itemShort.id,
+      sourceType: 'meetings.meeting',
+      sourceId: privActiveMeetingId,
+      accountLabel: `Short Acct ${shortHiddenAcct}`,
+      quoteExcerpt: shortHiddenQuote,
+    });
+    const shortActiveNum = '091246003';
+    const shortActiveQuote = `SHORT_ACTIVE_QUOTE_4600 Ref: ${shortActiveNum} Shared: ${shortSharedNum}`;
+    await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
+      boardId: board5.id,
+      roadmapItemId: itemShort.id,
+      sourceType: 'meetings.meeting',
+      sourceId: activeOrgMeetingId,
+      accountLabel: 'Short Active Acct',
+      quoteExcerpt: shortActiveQuote,
+    });
+
+    // Apply retention dates and delete the deleted meeting AFTER creating signals (bypassing command write check)
+    await sqlAdmin(
+      `UPDATE ludy_meetings.meeting
+          SET text_retention_date = (pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date
+        WHERE org_id = $1 AND id = $2`,
+      [org5.orgId, expOrgMeetingId],
+    );
+    await sqlAdmin(
+      `UPDATE ludy_meetings.meeting
+          SET text_retention_date = (pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date - 1
+        WHERE org_id = $1 AND id = $2`,
+      [org5.orgId, expPrivMeetingId],
+    );
+    await sqlAdmin(
+      `UPDATE ludy_meetings.meeting
+          SET text_retention_date = NULL
+        WHERE org_id = $1 AND id = $2`,
+      [org5.orgId, activeOrgMeetingId],
+    );
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [org5.orgId, deletedMeetingId]);
+
+    // 1. Non-attendee owner & admin probing quote_excerpt of attendees-only, expired (<= today), and deleted meetings
+    const hiddenSecrets = [privQuoteText, expOrgQuoteText, expPrivQuoteText, delQuoteText, partyHiddenQuote, shortHiddenQuote];
+    const nobodyEmailAdmin = await find5(adminNonReader.userId, 'nobody.holds.4600@p4600.test');
+    const nobodyDigitsAdmin = await find5(adminNonReader.userId, '0999999999');
+    expect(nobodyEmailAdmin.matches).toEqual([]);
+    expect(nobodyDigitsAdmin.matches).toEqual([]);
+    await expect(find5(recorder.userId, privQuoteEmail)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    for (const [probe, baseline] of [
+      [privQuoteEmail, nobodyEmailAdmin],
+      [privQuotePhone, nobodyDigitsAdmin],
+      [expOrgQuoteEmail, nobodyEmailAdmin],
+      [expOrgQuoteTax, nobodyDigitsAdmin],
+      [expPrivQuoteEmail, nobodyEmailAdmin],
+      [delQuoteEmail, nobodyEmailAdmin],
+    ] as const) {
+      const ownerRes = await find5(owner5.userId, probe);
+      expect(ownerRes.matches.filter((m) => m.column === 'ludy_projects.roadmap_signal.quote_excerpt'), probe).toEqual([]);
+      for (const secret of hiddenSecrets) expect(JSON.stringify(ownerRes), `${probe}:${secret}`).not.toContain(secret);
+
+      const adminRes = await find5(adminNonReader.userId, probe);
+      expect(adminRes, `admin zero existence oracle for ${probe}`).toEqual(baseline);
+    }
+    const adminAuditRows = await sqlAdmin<{ matches: string }>(
+      `SELECT detail->>'matches' AS matches
+         FROM ludy_kernel.audit_event
+        WHERE org_id = $1 AND actor_id = $2 AND command = 'kernel.personal_data.find'
+        ORDER BY id DESC LIMIT 6`,
+      [org5.orgId, adminNonReader.userId],
+    );
+    expect(adminAuditRows.rows.map((r) => r.matches)).toEqual(['0', '0', '0', '0', '0', '0']);
+
+    // Even an invited reader of an expired meeting (or owner on an org meeting whose retention date == today) sees zero quote_excerpt matches
+    const readerExpiredRes = await find5(adminReader.userId, expPrivQuoteEmail);
+    expect(readerExpiredRes).toEqual(nobodyEmailAdmin);
+    const readerExpiredOrgRes = await find5(adminReader.userId, expOrgQuoteEmail);
+    expect(readerExpiredOrgRes).toEqual(nobodyEmailAdmin);
+
+    // 2. Non-attendee owner & admin matching account_label (and partyDealSignals) receive the row with quote_excerpt: null
+    const accountLabelCases = [
+      { probe: privAcctEmail, signalId: sigPriv.id },
+      { probe: expOrgAcctEmail, signalId: sigExpOrg.id },
+      { probe: expPrivAcctEmail, signalId: sigExpPriv.id },
+      { probe: delAcctEmail, signalId: sigDel.id },
+      { probe: partyHiddenEmail, signalId: sigPartyHidden.id },
+    ];
+    for (const { probe, signalId } of accountLabelCases) {
+      for (const caller of [owner5.userId, adminNonReader.userId]) {
+        const res = await find5(caller, probe);
+        const match = res.matches.find((m) => m.column === 'ludy_projects.roadmap_signal.account_label' && m.rowId === signalId);
+        expect(match, `${caller}:${probe}`).toBeDefined();
+        expect(match?.row.quote_excerpt, `${caller}:${probe}`).toBeNull();
+        for (const secret of hiddenSecrets) expect(JSON.stringify(res), `${caller}:${probe}:${secret}`).not.toContain(secret);
+      }
+    }
+
+    // 3. Active attendees/readers and active org-visible readers still see expected quote_excerpt
+    for (const { probe, col, signalId, expectedQuote } of [
+      { probe: privQuoteEmail, col: 'ludy_projects.roadmap_signal.quote_excerpt', signalId: sigPriv.id, expectedQuote: privQuoteText },
+      { probe: privQuotePhone, col: 'ludy_projects.roadmap_signal.quote_excerpt', signalId: sigPriv.id, expectedQuote: privQuoteText },
+      { probe: privAcctEmail, col: 'ludy_projects.roadmap_signal.account_label', signalId: sigPriv.id, expectedQuote: privQuoteText },
+      { probe: partyHiddenEmail, col: 'ludy_projects.roadmap_signal.account_label', signalId: sigPartyHidden.id, expectedQuote: partyHiddenQuote },
+    ]) {
+      const readerRes = await find5(adminReader.userId, probe);
+      const match = readerRes.matches.find((m) => m.column === col && m.rowId === signalId);
+      expect(match, `adminReader:${probe}`).toBeDefined();
+      expect(match?.row.quote_excerpt, `adminReader:${probe}`).toBe(expectedQuote);
+    }
+
+    for (const caller of [owner5.userId, adminNonReader.userId]) {
+      for (const { probe, col, signalId, expectedQuote } of [
+        { probe: activeOrgQuoteEmail, col: 'ludy_projects.roadmap_signal.quote_excerpt', signalId: sigActiveOrg.id, expectedQuote: activeOrgQuoteText },
+        { probe: activeOrgAcctEmail, col: 'ludy_projects.roadmap_signal.account_label', signalId: sigActiveOrg.id, expectedQuote: activeOrgQuoteText },
+        { probe: partyActiveEmail, col: 'ludy_projects.roadmap_signal.account_label', signalId: sigPartyActive.id, expectedQuote: partyActiveQuote },
+      ]) {
+        const res = await find5(caller, probe);
+        const match = res.matches.find((m) => m.column === col && m.rowId === signalId);
+        expect(match, `${caller}:${probe}`).toBeDefined();
+        expect(match?.row.quote_excerpt, `${caller}:${probe}`).toBe(expectedQuote);
+      }
+    }
+
+    // 4. kernel.personal_data.erase: shortNumber keeps count-only reporting with zero leak, and full probes redact hidden/expired/deleted rows
+    const shortHiddenAcctErase = await erase5(owner5.userId, shortHiddenAcct);
+    expect(shortHiddenAcctErase.kept.find((k) => k.column === 'ludy_projects.roadmap_signal.account_label')?.rows).toBe(1);
+    expect(JSON.stringify(shortHiddenAcctErase)).not.toContain(shortHiddenQuote);
+    expect(JSON.stringify(shortHiddenAcctErase)).not.toContain(privActiveMeetingId);
+
+    const shortHiddenQuoteErase = await erase5(owner5.userId, shortHiddenQuoteNum);
+    expect(shortHiddenQuoteErase.kept.find((k) => k.column === 'ludy_projects.roadmap_signal.quote_excerpt')?.rows).toBe(1);
+    expect(JSON.stringify(shortHiddenQuoteErase)).not.toContain(shortHiddenQuote);
+    expect(JSON.stringify(shortHiddenQuoteErase)).not.toContain(privActiveMeetingId);
+
+    const shortActiveQuoteErase = await erase5(owner5.userId, shortActiveNum);
+    expect(shortActiveQuoteErase.kept.find((k) => k.column === 'ludy_projects.roadmap_signal.quote_excerpt')?.rows).toBe(1);
+    expect(JSON.stringify(shortActiveQuoteErase)).not.toContain(shortActiveQuote);
+    expect(JSON.stringify(shortActiveQuoteErase)).not.toContain(activeOrgMeetingId);
+
+    const shortSharedQuoteErase = await erase5(owner5.userId, shortSharedNum);
+    expect(shortSharedQuoteErase.kept.filter((k) => k.column === 'ludy_projects.roadmap_signal.quote_excerpt')).toHaveLength(1);
+    expect(shortSharedQuoteErase.kept.find((k) => k.column === 'ludy_projects.roadmap_signal.quote_excerpt')?.rows).toBe(2);
+    expect(JSON.stringify(shortSharedQuoteErase)).not.toContain(shortHiddenQuote);
+    expect(JSON.stringify(shortSharedQuoteErase)).not.toContain(privActiveMeetingId);
+
+    for (const { probe, signalId, meetingId } of [
+      { probe: privQuoteEmail, signalId: sigPriv.id, meetingId: privActiveMeetingId },
+      { probe: expOrgQuoteEmail, signalId: sigExpOrg.id, meetingId: expOrgMeetingId },
+      { probe: delQuoteEmail, signalId: sigDel.id, meetingId: deletedMeetingId },
+    ]) {
+      const eraseRes = await erase5(owner5.userId, probe);
+      expect(eraseRes.erased.find((e) => e.column === 'ludy_projects.roadmap_signal.quote_excerpt')?.rows).toBe(1);
+      expect(JSON.stringify(eraseRes)).not.toContain(meetingId);
+      for (const secret of hiddenSecrets) expect(JSON.stringify(eraseRes)).not.toContain(secret);
+
+      const dbRow = await sqlAdmin<{ quote_excerpt: string | null }>(
+        `SELECT quote_excerpt FROM ludy_projects.roadmap_signal WHERE org_id = $1 AND id = $2`,
+        [org5.orgId, signalId],
+      );
+      expect(dbRow.rows[0]?.quote_excerpt).not.toContain(probe);
+      expect(dbRow.rows[0]?.quote_excerpt).toContain(REDACTED_MARK);
+    }
+
+    const privIdemAfterErase = await sqlAdmin<{
+      resp_text: string;
+      response: { value?: { signal?: { quoteExcerpt?: string | null } } };
+    }>(
+      `SELECT response, response::text AS resp_text FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND key = $2 AND command = 'projects.roadmap.signal.create'`,
+      [org5.orgId, privIdemKey],
+    );
+    expect(privIdemAfterErase.rows[0]?.response?.value?.signal?.quoteExcerpt).toBeNull();
+    expect(privIdemAfterErase.rows[0]?.resp_text).not.toContain(privQuoteEmail);
+    expect(privIdemAfterErase.rows[0]?.resp_text).not.toContain('SECRET_ATTENDEES_QUOTE');
   }, 60_000);
 });

@@ -1011,6 +1011,30 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 // The tables of ludy_meetings.personal_row_ids's kind codes.
 const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter' };
 
+// Caller-RLS meeting visibility and active text retention check for meetings.meeting roadmap signals (#4600, ADR-0047).
+function meetingSignalReadable(alias: 't' | 's'): RawBuilder<boolean> {
+  const orgRef = sql.ref(`${alias}.org_id`);
+  const sourceIdRef = sql.ref(`${alias}.source_id`);
+  return sql<boolean>`EXISTS (
+    SELECT 1
+      FROM ludy_meetings.meeting m
+     WHERE m.org_id = ${orgRef}
+       AND m.id = ${sourceIdRef}
+       AND (m.text_retention_date IS NULL OR m.text_retention_date > (pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date)
+  )`;
+}
+
+// Scrubs roadmap_signal.quote_excerpt to NULL whenever a meetings.meeting row is unreadable, past text retention, or deleted.
+function roadmapSignalRowExpr(alias: 't' | 's'): RawBuilder<Record<string, unknown>> {
+  const rowRef = sql.ref(alias);
+  const sourceTypeRef = sql.ref(`${alias}.source_type`);
+  return sql<Record<string, unknown>>`CASE
+    WHEN ${sourceTypeRef} = 'meetings.meeting' AND NOT ${meetingSignalReadable(alias)}
+      THEN (pg_catalog.to_jsonb(${rowRef}) - 'search') || pg_catalog.jsonb_build_object('quote_excerpt', NULL)
+    ELSE pg_catalog.to_jsonb(${rowRef}) - 'search'
+  END`;
+}
+
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
 async function findPersonalData(
@@ -1061,6 +1085,14 @@ async function findPersonalData(
       if (ids.length === 0) continue;
       byId = sql`AND t.id = ANY(${ids}::uuid[])`;
     }
+    const signalVisibility =
+      key === 'ludy_projects.roadmap_signal.quote_excerpt'
+        ? sql`AND (t.source_type <> 'meetings.meeting' OR ${meetingSignalReadable('t')})`
+        : sql``;
+    const rowExpr =
+      schema === 'ludy_projects' && table === 'roadmap_signal'
+        ? roadmapSignalRowExpr('t')
+        : sql`pg_catalog.to_jsonb(t) - 'search'`;
     const isUnsealedExpr =
       schema === 'ludy_sign' && table === 'signer'
         ? sql<boolean>`EXISTS (
@@ -1072,9 +1104,9 @@ async function findPersonalData(
           )`
         : sql<boolean>`false`;
     const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
-      SELECT pg_catalog.to_jsonb(t) - 'search' AS row, ${isUnsealedExpr} AS is_unsealed
+      SELECT ${rowExpr} AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
-       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
+       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId} ${signalVisibility}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
     for (const { row, is_unsealed } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
@@ -1126,7 +1158,7 @@ async function findPersonalData(
              OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
              OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)
            ) AS documented,
-           pg_catalog.to_jsonb(s) AS row
+           ${roadmapSignalRowExpr('s')} AS row
       FROM ludy_projects.roadmap_signal s
       LEFT JOIN ludy_crm.deal d ON s.source_type = 'crm.deal' AND d.org_id = s.org_id AND d.id = s.source_id
       JOIN ludy_kernel.party p
@@ -1135,7 +1167,7 @@ async function findPersonalData(
      WHERE s.org_id = ${orgId}::uuid
        AND s.account_label IS NOT NULL
        AND ${partySignalFilter}
-     GROUP BY s.org_id, s.id
+     GROUP BY s.org_id, s.id, s.source_type, s.source_id
      ORDER BY s.created_at DESC, s.id
      LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
   if (partyDealSignals.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
@@ -2397,6 +2429,22 @@ export const personalDataErase = defineCommand({
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
     const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
+    // Unredacted quote_excerpt rows on unreadable, expired, or deleted meetings skipped by shortNumber: counted here
+    // (owner-only, never leaking text or meeting IDs) so kept[] accounts for every row left in DB (#4600).
+    const hiddenShortMeetingSignals = shortNumber
+      ? Number(
+          (
+            await sql<{ rows: string }>`
+              SELECT pg_catalog.count(*)::text AS rows
+                FROM ludy_projects.roadmap_signal s
+               WHERE s.org_id = ${ctx.orgId}::uuid
+                 AND s.quote_excerpt IS NOT NULL
+                 AND s.source_type = 'meetings.meeting'
+                 AND ${freeTextMatch(probe, sql.ref('s.quote_excerpt'))}
+                 AND NOT ${meetingSignalReadable('s')}`.execute(ctx.trx)
+          ).rows[0]?.rows ?? 0,
+        )
+      : 0;
     // Grouped by column and reason: rows of one column may be kept for different reasons (the default legal entity and
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
@@ -2415,6 +2463,13 @@ export const personalDataErase = defineCommand({
       const group = `${m.column}\n${reason}`;
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
+      kept.set(group, k);
+    }
+    if (hiddenShortMeetingSignals > 0) {
+      const column = 'ludy_projects.roadmap_signal.quote_excerpt';
+      const group = `${column}\n${ACTIVITY_SHORT_NUMBER_REASON}`;
+      const k = kept.get(group) ?? { column, rows: 0, reason: ACTIVITY_SHORT_NUMBER_REASON };
+      k.rows += hiddenShortMeetingSignals;
       kept.set(group, k);
     }
     // The original files behind posted entries that name these parties (issue #1009): accounting evidence the erasure
