@@ -90,6 +90,16 @@ export function TasksPage() {
   const perms = agentPermissions(org.data?.role);
   // The panel over the list: a new task, or one task opened from its row.
   const [panel, setPanel] = useState<{ kind: 'new' } | { kind: 'edit'; id: string } | null>(null);
+  useEffect(() => {
+    if (search.new !== '1' || !perms.tasks) return;
+    setPanel({ kind: 'new' });
+    void navigate({
+      to: '/o/$slug/tasks',
+      params: { slug },
+      search: withSearch(search, { new: undefined }),
+      replace: true,
+    });
+  }, [search, perms.tasks, slug, navigate]);
 
   const hasProjectsModule = projectsInstalled();
   const projectsQuery = useQuery({

@@ -1,10 +1,13 @@
 // The command palette (issue #439, DESIGN.md 5.2): which entries match what the user typed, in which order, and the
 // key that opens it. No browser or React imports, so it is unit tested.
 
-// parties, documents and entries hold what the org's search found (#673); notes what the notes search found (#1675).
-export type PaletteGroup = 'go' | 'proposals' | 'parties' | 'documents' | 'entries' | 'notes' | 'orgs' | 'actions';
+// parties, documents and entries hold what the org's search found (#673); notes what the notes search found (#1675);
+// recent holds per-org MRU screens/records shown when the query is empty (#4525).
+export type PaletteGroup = 'recent' | 'go' | 'proposals' | 'parties' | 'documents' | 'entries' | 'notes' | 'orgs' | 'actions';
 
-export const PALETTE_GROUPS: readonly PaletteGroup[] = ['go', 'proposals', 'parties', 'documents', 'entries', 'notes', 'orgs', 'actions'];
+export const PALETTE_GROUPS: readonly PaletteGroup[] = ['recent', 'go', 'proposals', 'parties', 'documents', 'entries', 'notes', 'orgs', 'actions'];
+
+export const MAX_PALETTE_RECENTS = 5;
 
 export interface PaletteItem {
   id: string;
@@ -16,6 +19,12 @@ export interface PaletteItem {
   keywords?: string;
 }
 
+export interface PaletteEntry extends PaletteItem {
+  run: () => void;
+  badge?: string;
+  children?: readonly PaletteEntry[];
+}
+
 // Folds case and Vietnamese marks, so "so sach" finds "Sổ sách" and "dien" finds "Điện". Đ has no decomposition in
 // Unicode, so it is mapped by hand.
 export function fold(text: string): string {
@@ -24,11 +33,12 @@ export function fold(text: string): string {
 
 // The entries whose label, detail or keywords contain every typed word, grouped in PALETTE_GROUPS order. Inside a
 // group a label that starts with the query comes first, then one that contains it, then the rest in their original
-// order; each group shows at most `perGroup` entries.
+// order; each group shows at most `perGroup` entries (`recent` only shows on an empty query and caps at 5).
 export function filterPalette<T extends PaletteItem>(items: readonly T[], query: string, perGroup = 8): T[] {
   const q = fold(query.trim());
   const words = q.split(/\s+/).filter(Boolean);
   const matches = items.flatMap((item, index) => {
+    if (item.group === 'recent' && words.length > 0) return [];
     const haystack = fold(`${item.label} ${item.detail ?? ''} ${item.keywords ?? ''}`);
     if (!words.every((w) => haystack.includes(w))) return [];
     const label = fold(item.label);
@@ -41,10 +51,32 @@ export function filterPalette<T extends PaletteItem>(items: readonly T[], query:
   const shown = new Map<PaletteGroup, number>();
   return matches.flatMap(({ item }) => {
     const n = shown.get(item.group) ?? 0;
-    if (n >= perGroup) return [];
+    const limit = item.group === 'recent' ? Math.min(perGroup, MAX_PALETTE_RECENTS) : perGroup;
+    if (n >= limit) return [];
     shown.set(item.group, n + 1);
     return [item];
   });
+}
+
+// Finds an active inline submenu entry by id when it has child options.
+export function findSubmenuEntry<T extends PaletteItem & { children?: readonly T[] | undefined }>(
+  entries: readonly T[],
+  submenuId: string | null,
+): T | null {
+  if (!submenuId) return null;
+  const entry = entries.find((item) => item.id === submenuId);
+  return entry && entry.children && entry.children.length > 0 ? entry : null;
+}
+
+// Resolves visible palette results at root or inside an inline submenu.
+export function resolvePaletteResults<T extends PaletteItem & { children?: readonly T[] | undefined }>(
+  entries: readonly T[],
+  query: string,
+  found: readonly T[],
+  submenu: T | null,
+): T[] {
+  if (submenu) return filterPalette(submenu.children ?? [], query);
+  return withFound(filterPalette(entries, query), found);
 }
 
 // What the server's search (#673) is asked for, or null: two characters at least, and a letter or a digit among them
