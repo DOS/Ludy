@@ -267,6 +267,7 @@ export interface LudySignSchema {
   'ludy_sign.envelope': SignEnvelopeTable;
   'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
   'ludy_sign.field': SignFieldTable;
+  'ludy_sign.kyc_check': SignKycCheckTable;
   'ludy_sign.member_signature': SignMemberSignatureTable;
   'ludy_sign.org_stamp': SignOrgStampTable;
   'ludy_sign.playbook_check': SignPlaybookCheckTable;
@@ -4213,6 +4214,23 @@ export interface SignFieldTable {
   attachment_content_type: string | null;
   attachment_size_bytes: number | null;
   attachment_sha256: string | null;
+}
+
+/** ludy_sign.kyc_check */
+export interface SignKycCheckTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  field_id: string;
+  file_id: string;
+  file_sha256: string;
+  status: Generated<string>;
+  mode: string;
+  findings_json: ColumnType<unknown, string | undefined, string>;
+  checked_by: string | null;
+  checked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_sign.member_signature */

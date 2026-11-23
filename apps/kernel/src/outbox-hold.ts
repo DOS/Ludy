@@ -57,6 +57,8 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = {
   'hr.': 'hr',
   // Only the attachment extraction requests of Notes (#3561); its other events keep flowing as before.
   'notes.attachment.': 'notes',
+  // Signer KYC attachment PDF inspection (#4443); Sign's other events recover via sweepSignPendingWork in SELF_RECOVERING_EVENTS.
+  'sign.kyc.': 'sign',
 };
 
 /** The app whose events wait while it is off, for this event type, or null when the event is never parked. */

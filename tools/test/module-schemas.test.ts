@@ -97,7 +97,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
   'packages/kernel/src/personal-data.ts': {
     modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
-    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427) while eSign OTP emails are erased via crove_sign.personal_erase_otp (#3323)',
+    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427), eSign OTP emails via crove_sign.personal_erase_otp (#3323), and matching crove_sign.kyc_check findings via crove_sign.personal_data_erase_kyc_check (#4443)',
   },
   'packages/kernel/src/queries.ts': {
     modules: ['sign'],

@@ -24,6 +24,7 @@ import {
   type CredentialBroker,
   type Runtime,
 } from '@ludy/kernel-runtime';
+import { SIGN_ATTACHMENT_MAX_BYTES } from '@ludy/kernel-contract';
 import {
   DEFAULT_OTP_RETENTION_HOURS,
   DEFAULT_RETENTION_DAYS,
@@ -36,6 +37,7 @@ import {
   type SignCaJobBeginResult,
   type SignCaJobRecordResult,
   type SignInspectJobData,
+  type SignKycInspectJobData,
   type SignPreExpirySweepResult,
   type SignSealJobData,
 } from '@ludy/mod-sign';
@@ -70,10 +72,21 @@ export interface SignTemplateInspectJob {
   templateId: string;
 }
 
-export type SignPdfInspectJob = SignEnvelopeJob | SignTemplateInspectJob;
+export interface SignKycAttachmentInspectJob {
+  orgId: string;
+  targetKind: 'kyc_attachment';
+  envelopeId: string;
+  fieldId: string;
+}
+
+export type SignPdfInspectJob = SignEnvelopeJob | SignTemplateInspectJob | SignKycAttachmentInspectJob;
 
 export function isSignTemplateInspectJob(job: SignPdfInspectJob): job is SignTemplateInspectJob {
   return 'targetKind' in job && job.targetKind === 'template';
+}
+
+export function isSignKycAttachmentInspectJob(job: SignPdfInspectJob): job is SignKycAttachmentInspectJob {
+  return 'targetKind' in job && job.targetKind === 'kyc_attachment';
 }
 
 export interface SignWorkerDeps {
@@ -111,11 +124,83 @@ export async function runSignPdfInspectJob(
     return { status: 'skipped_app_off' };
   }
 
+  const options = { actor: SIGN_ACTOR, orgId: job.orgId };
+
+  if (isSignKycAttachmentInspectJob(job)) {
+    const kycData = await deps.runtime.query<SignKycInspectJobData | null>(
+      'sign.kyc.inspect_job_data',
+      { envelopeId: job.envelopeId, fieldId: job.fieldId },
+      options,
+    );
+    if (!kycData) {
+      return { status: 'skipped_not_pending' };
+    }
+
+    let pdfBytes: Uint8Array;
+    try {
+      pdfBytes = await readVerified(
+        deps.store,
+        { key: kycData.storageKey, generation: kycData.generation, sha256: kycData.fileSha256 },
+        Math.min(SIGN_ATTACHMENT_MAX_BYTES, EXTRACT_LIMITS.maxFileBytes),
+      );
+    } catch (error) {
+      if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
+        await deps.runtime.execute(
+          'sign.kyc.inspect_complete',
+          {
+            envelopeId: job.envelopeId,
+            fieldId: job.fieldId,
+            fileId: kycData.fileId,
+            fileSha256: kycData.fileSha256,
+            outcome: 'failed',
+            error: error.message.slice(0, 500),
+          },
+          options,
+        );
+        return { status: 'failed' };
+      }
+      throw error;
+    }
+
+    const res = await deps.extract.extract('pdf_inspect', pdfBytes);
+    if (!res.ok) {
+      if (INPUT_ERROR_CODES.includes(res.code)) {
+        await deps.runtime.execute(
+          'sign.kyc.inspect_complete',
+          {
+            envelopeId: job.envelopeId,
+            fieldId: job.fieldId,
+            fileId: kycData.fileId,
+            fileSha256: kycData.fileSha256,
+            outcome: 'failed',
+            error: res.message.slice(0, 500),
+          },
+          options,
+        );
+        return { status: 'failed' };
+      }
+      throw new Error(`crove-extract pdf_inspect ${res.code}: ${res.message}`);
+    }
+
+    await deps.runtime.execute(
+      'sign.kyc.inspect_complete',
+      {
+        envelopeId: job.envelopeId,
+        fieldId: job.fieldId,
+        fileId: kycData.fileId,
+        fileSha256: kycData.fileSha256,
+        outcome: 'passed',
+        pages: res.pages.map((p) => ({ page: p.page, text: p.text })),
+      },
+      options,
+    );
+    return { status: 'passed', pageCount: res.pageCount };
+  }
+
   const isTemplate = isSignTemplateInspectJob(job);
   const targetField = isSignTemplateInspectJob(job) ? { templateId: job.templateId } : { envelopeId: job.envelopeId };
   const queryName = isTemplate ? 'sign.template.inspect_job_data' : 'sign.envelope.inspect_job_data';
   const completeCommand = isTemplate ? 'sign.template.inspect_complete' : 'sign.envelope.inspect_complete';
-  const options = { actor: SIGN_ACTOR, orgId: job.orgId };
   const data = await deps.runtime.query<SignInspectJobData | null>(queryName, targetField, options);
   const validStatus = isTemplate ? data?.status === 'draft' || data?.status === 'active' : data?.status === 'draft';
   if (!data || !validStatus || data.inspectStatus !== 'pending') {

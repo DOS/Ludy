@@ -1626,6 +1626,10 @@ export const SIGN_PLAYBOOK_SEVERITIES = ['info', 'warn', 'critical'] as const;
 export type SignPlaybookSeverity = (typeof SIGN_PLAYBOOK_SEVERITIES)[number];
 export const SIGN_PLAYBOOK_MODES = ['ai', 'deterministic', 'manual'] as const;
 export type SignPlaybookMode = (typeof SIGN_PLAYBOOK_MODES)[number];
+export const SIGN_KYC_CHECK_STATUSES = ['pending', 'matched', 'mismatch', 'needs_review'] as const;
+export type SignKycCheckStatus = (typeof SIGN_KYC_CHECK_STATUSES)[number];
+export const SIGN_KYC_CHECK_MODES = ['deterministic', 'ai', 'manual'] as const;
+export type SignKycCheckMode = (typeof SIGN_KYC_CHECK_MODES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1685,6 +1689,13 @@ export type SignCaSigningRequestTable = Refine<
 export type SignEnvelopeObligationTable = Refine<
   G.SignEnvelopeObligationTable,
   { status: Generated<SignObligationStatus> }
+>;
+export type SignKycCheckTable = Refine<
+  G.SignKycCheckTable,
+  {
+    status: Generated<SignKycCheckStatus>;
+    mode: SignKycCheckMode;
+  }
 >;
 export type SignMemberSignatureTable = Refine<
   G.SignMemberSignatureTable,
@@ -1775,6 +1786,7 @@ type Refined = Tables<{
   'ludy_sign.envelope': SignEnvelopeTable;
   'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
   'ludy_sign.field': SignFieldTable;
+  'ludy_sign.kyc_check': SignKycCheckTable;
   'ludy_sign.member_signature': SignMemberSignatureTable;
   'ludy_sign.org_stamp': SignOrgStampTable;
   'ludy_sign.playbook_check': SignPlaybookCheckTable;

@@ -63,6 +63,7 @@ import {
   type IssuedSigningLink,
 } from './shared.ts';
 import { signCaCommands } from './ca.ts';
+import { signKycCommands } from './kyc.ts';
 import { signObligationCommands } from './obligations.ts';
 import { signPlaybookCommands } from './playbook.ts';
 import { signProfileCommands } from './profiles.ts';
@@ -2017,6 +2018,7 @@ export const signCommands = [
   ...signTemplateCommands,
   ...signCaCommands,
   ...signInPersonCommands,
+  ...signKycCommands,
   ...signObligationCommands,
   ...signProfileCommands,
   ...signWebhookCommands,

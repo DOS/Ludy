@@ -371,6 +371,7 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'envelope',
       'envelope_obligation',
       'field',
+      'kyc_check',
       'member_signature',
       'org_stamp',
       'playbook_check',
