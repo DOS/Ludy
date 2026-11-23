@@ -85,18 +85,22 @@ Deploy PR `#4484` (`9f6cfe18b`, `#3971` migrating `crove_finance`, `crove_hr`, `
 
 Why a short maintenance window helps ([ADR-0054](../adr/0054-rebrand-internal-crove-identifiers-to-ludy.md) section 3): `20270316140000_ludy_kernel_rebrand_module_schemas.sql` runs `ALTER SCHEMA crove_<module> RENAME TO ludy_<module>` for all 9 modules. While old pre-`#3971` containers run concurrently with or right after `migrate`, they still query `crove_<module>.*`. Stopping `worker` and `api` (plus `prober` if running under `COMPOSE_PROFILES=prober`) right after the CI image build completes limits downtime to roughly 1 to 2 minutes and avoids spurious error alerts during migration.
 
-1. **[CHECK]** Confirm the target commit on `main` (containing both `9f6cfe18b` and the `#3972` cutover-runbook/`WAL_STANZA` commit) has green required CI checks (`Lint, typecheck, test`, `Playwright on docker compose`, `Docs check`).
+1. **[CHECK]** Confirm the target commit on `main` (containing both `9f6cfe18b` and the `#3972` cutover-runbook/`WAL_STANZA` commit) has green required CI checks (`Lint, typecheck, test`, `Playwright on docker compose`, `Docs check`). Keep `DEPLOY_MODULES_ENVIRONMENT` and `DEPLOY_IDP_ENVIRONMENT` unchanged during this tag deploy so Stage 1 isolates only the release and schema cutover.
 2. **[OWNER]** Create and publish the release tag (`v*`, e.g. `v0.3.10`) on `main` (`https://github.com/DOS/Ludy/releases/new?tag=vX.Y.Z&target=main&title=vX.Y.Z`), and wait for `.github/workflows/deploy.yml` job `Build and push the images` to finish pushing digests to GHCR.
-3. **[OPERATOR]** Once `Build and push the images` finishes (right before approving `Deploy to pilot` in GitHub Actions), stop the app containers during the short maintenance window while keeping `db`, `auth`, `caddy`, `crove-extract`, and `crove-media` running (include `prober` only if running in Compose):
+3. **[OPERATOR]** Once `Build and push the images` finishes (right before approving `Deploy to pilot` in GitHub Actions), stop the app containers during the short maintenance window and temporarily move `<DEPLOY_DIR>/.deploy/current` and `.deploy/previous` aside so neither `deploy.sh` `recover` nor `deploy.yml`'s `public-smoke` failure hook can automatically downgrade containers back to a pre-`#3971` release after `20270316140000` commits:
 
    ```bash
    cd <DEPLOY_DIR>
    docker compose stop api worker
    docker compose stop prober || true
+   umask 077
+   mkdir -p /root/deploy-state.pre-phase3
+   if [ -f .deploy/current ]; then mv .deploy/current /root/deploy-state.pre-phase3/current; fi
+   if [ -f .deploy/previous ]; then mv .deploy/previous /root/deploy-state.pre-phase3/previous; fi
    ```
 
-4. **[OWNER]** Approve the `Deploy to pilot` job in GitHub Actions (when `Required reviewers` is enabled on `pilot`). `deploy.sh` pulls images by digest, runs `migrate`, runs `auth-grants`, starts `worker`, `api`, and `prober` (if in `COMPOSE_PROFILES`), and runs loopback + public smoke tests.
-5. **[CHECK]** After `Deploy to pilot` turns green, verify health, version, and all 12 PostgreSQL schemas:
+4. **[OWNER]** Approve the `Deploy to pilot` job in GitHub Actions (when `Required reviewers` is enabled on `pilot`). `deploy.sh` pulls images by digest, runs `migrate`, runs `auth-grants`, starts `worker`, `api`, and `prober` (if in `COMPOSE_PROFILES`), and runs loopback + public smoke tests. (Because `.deploy/current` and `.deploy/previous` were moved aside, a post-migration container or public-smoke failure stops cleanly without reactivating incompatible pre-`#3971` containers; diagnose and fix forward with a patch release on `main`.)
+5. **[CHECK]** After `Deploy to pilot` turns green, verify health, version, and all 12 PostgreSQL schemas (leave `.deploy/previous` unset so future rollbacks stay post-`#3971`, and remove `/root/deploy-state.pre-phase3` only after Stage 1 passes):
 
    ```bash
    curl -fsS https://<your domain>/version
@@ -112,13 +116,14 @@ Why a short maintenance window helps ([ADR-0054](../adr/0054-rebrand-internal-cr
      "SELECT nspname FROM pg_namespace WHERE nspname ~ '^(crove|ludy)_' ORDER BY 1;"
    docker compose exec -T db psql -U postgres -d postgres -Atc \
      "SELECT count(*) FROM ludy_meta.schema_migrations WHERE version = '20270316140000';"
+   rm -rf /root/deploy-state.pre-phase3
    ```
 
    Expected output: exactly the 12 `ludy_*` schemas (`ludy_ads`, `ludy_crm`, `ludy_finance`, `ludy_hr`, `ludy_jobs`, `ludy_kernel`, `ludy_meetings`, `ludy_meta`, `ludy_notes`, `ludy_projects`, `ludy_sign`, `ludy_social`), **zero** `crove_*` schemas, and migration count `1`.
 
 6. **Rollback:**
-   - If `migrate` fails before committing, PostgreSQL rolls back the transaction cleanly; restart the prior containers (`docker compose start worker api`, plus `prober` if enabled), or run the `deploy.yml` `rollback` workflow targeting `main` (`pilot` environment).
-   - Once `20270316140000` commits, schemas are forward-only (`ludy_<module>`). Do not roll back to a pre-`#3971` release binary against renamed schemas; to revert completely after commit, restore the Stage 0 `backup.sh` snapshot or PITR timestamp per [backup-and-restore.md](backup-and-restore.md).
+   - **Only if `20270316140000` did NOT commit** (`ludy_meta.schema_migrations` count for `'20270316140000'` is `0` and `crove_*` schemas are intact): move `/root/deploy-state.pre-phase3/current` into `<DEPLOY_DIR>/.deploy/previous` and run `bash <DEPLOY_DIR>/.deploy/deploy.sh rollback --dir <DEPLOY_DIR> --env-file <DEPLOY_DIR>/.env` (or re-run `deploy.yml` with `action: rollback`), then restore the prior `.deploy/previous` state file if needed.
+   - **Once `20270316140000` commits**, schemas are forward-only (`ludy_<module>`): never downgrade application containers to a pre-`#3971` release against renamed schemas. Fix forward with a new patch release on `main`, or to revert completely across the rename, restore the Stage 0 `backup.sh` snapshot or PITR timestamp per [backup-and-restore.md](backup-and-restore.md) alongside the saved `.deploy/current` release.
 
 ---
 
@@ -333,7 +338,7 @@ Ludy already tags expired marketplace originals with `ludy-retention=expired` in
 Never overwrite, delete, or change `WAL_ENCRYPTION_KEY` for the existing `crove/` repository prefix until its retention window (`WAL_RETENTION_FULL`, typically 4 weeks) has elapsed. Moving both `WAL_STANZA=ludy` and `BACKUP_S3_PREFIX=ludy` starts a clean pgBackRest repository at `/ludy/wal` alongside the preserved `/crove/wal` archive.
 
 1. **[OWNER]** Update the S3 IAM / bucket policies on `<backup-bucket>` **before** switching `.env`:
-   - On `WAL_S3_ACCESS_KEY_ID`: add `s3:ListBucket` / `GetObject` / `PutObject` / `DeleteObject` for `ludy/wal/*` while keeping `crove/wal/*` readable (at minimum `ListBucket` + `GetObject`) during the retention overlap window.
+   - On `WAL_S3_ACCESS_KEY_ID`: add `s3:ListBucket` / `GetObject` / `PutObject` / `DeleteObject` for `ludy/wal/*` while keeping full write permissions on `crove/wal/*` throughout the cutover rollback window (narrowing `crove/wal/*` to read-only only after Stage 7 sign-off, so a rollback running `wal.sh setup` can still push segments).
    - On `BACKUP_S3_ACCESS_KEY_ID` (used by `backup.sh`): add permissions on `ludy/*` matching its existing permissions on `crove/*`, keeping `crove/*` intact until old runs age out.
 2. **[CHECK]** Verify Stage 2 already placed the updated [`compose.wal.yml`](../../tools/backup/compose.wal.yml) (containing `${WAL_STANZA:-crove}`) in `<DEPLOY_DIR>/compose.wal.yml`, and verify the backup bucket already contains a healthy Stage 0 `backup.sh` run.
 3. **[OPERATOR]** In `<DEPLOY_DIR>/.env`, set:
@@ -376,9 +381,15 @@ Never overwrite, delete, or change `WAL_ENCRYPTION_KEY` for the existing `crove/
    - `last-success` matches the just-completed run ID.
 
 5. **Retire old `crove/` backup objects safely (after ~30 days):**
-   Keep `crove/` and `crove/wal/` in `<backup-bucket>` and keep their keys in the owner's secret store until after the next successful monthly restore drill under `ludy/` (`BACKUP_KEEP_DAYS` / `WAL_RETENTION_FULL` elapsed). To inspect an old `crove/` WAL archive in the meantime on a scratch stack (`wal.sh info` uses `dc exec`, so start the scratch `db` container first), pass `WAL_STANZA=crove BACKUP_S3_PREFIX=crove` with read-only S3 credentials and restore with `--archive-mode off`.
+   Keep `crove/` and `crove/wal/` in `<backup-bucket>` and keep their keys in the owner's secret store until after the next successful monthly restore drill under `ludy/` (`BACKUP_KEEP_DAYS` / `WAL_RETENTION_FULL` elapsed). To inspect the old `crove/` WAL archive on a scratch stack without initializing PostgreSQL into an empty `db-data` volume (leaving the volume ready for `wal.sh restore`), set `WAL_STANZA=crove` and `BACKUP_S3_PREFIX=crove` with read-only S3 credentials and run a one-off container:
 
-6. **Rollback:** Revert `WAL_STANZA=crove` and `BACKUP_S3_PREFIX=crove` in `<DEPLOY_DIR>/.env`, run `cd <DEPLOY_DIR> && docker compose up -d --no-deps --no-build db`, and run `LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/wal.sh setup` so PostgreSQL reloads `archive_command = 'pgbackrest --stanza=crove archive-push %p'`. If any WAL segments already pushed to `ludy/` before rolling back, immediately run `wal.sh backup --type full` on stanza `crove` so PITR continuity has no missing segment gap.
+   ```bash
+   docker compose --project-directory <SCRATCH_DIR> run --rm --no-deps -T -u postgres --entrypoint pgbackrest db info
+   ```
+
+   When restoring from that archive onto the scratch stack, always use `--archive-mode off`.
+
+6. **Rollback:** Ensure `WAL_S3_ACCESS_KEY_ID` still has write permissions on `crove/wal/*`. In `<DEPLOY_DIR>/.env`, revert `WAL_STANZA=crove` and `BACKUP_S3_PREFIX=crove` and restore the original `crove/` `WAL_ENCRYPTION_KEY` from Stage 0 (or the owner's secret store) if a new key was set for `ludy/`. Run `cd <DEPLOY_DIR> && docker compose up -d --no-deps --no-build db`, then run `LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/wal.sh setup` so PostgreSQL reloads `archive_command = 'pgbackrest --stanza=crove archive-push %p'`. If any WAL segments already pushed to `ludy/` before rolling back, immediately run `wal.sh backup --type full` on stanza `crove` so PITR continuity has no missing segment gap.
 
 ---
 
