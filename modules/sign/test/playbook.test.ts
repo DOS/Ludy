@@ -9,6 +9,7 @@ import {
   defaultSlotForRuleId,
   deterministicPlaybookRuleId,
   evaluatePlaybookDeterministically,
+  sanitizeMatchKeywords,
   zPlaybookRecordCheckInput,
   type SignPlaybookRuleEffective,
 } from '../src/playbook.ts';
@@ -363,5 +364,51 @@ describe('evaluatePlaybookDeterministically AI-off parity (#4442)', () => {
       findings: [],
     });
     expect(checkRev1).not.toBe(checkRev2);
+  });
+
+  it('strips Cc control characters from matchKeywords before persistence', () => {
+    const cleaned = sanitizeMatchKeywords([
+      'phạt\u0007\n\t vi\u001b phạm\u007f',
+      '\u0000\u0007\u007f',
+      '  8%  ',
+    ]);
+    expect(cleaned).toEqual(['phạt vi phạm', '8%']);
+    for (const kw of cleaned) {
+      expect(/\p{Cc}/u.test(kw)).toBe(false);
+    }
+  });
+
+  it('retains sibling chunks sharing sentGroupId for over-long unpunctuated clauses', () => {
+    const rules = defaultEffectiveRules(ORG_A);
+    const bySlot = new Map(rules.map((r) => [defaultSlotForRuleId(ORG_A, r.id), r]));
+    const padding = 'nội dung hợp đồng thương mại dịch vụ giữa hai bên được thực hiện nghiêm túc '.repeat(8);
+
+    const longPenaltyClause = `Điều khoản phạt vi phạm và bồi thường thiệt hại áp dụng cho các bên trong suốt thời gian thực hiện ${padding} với mức chế tài cố định là 15% tổng giá trị hợp đồng nếu vi phạm.`;
+    const penaltyOut = evaluatePlaybookDeterministically(
+      ORG_A,
+      [bySlot.get('penalty_cap')!],
+      [{ page: 1, text: longPenaltyClause }],
+      1,
+    );
+    expect(penaltyOut[0]?.verdict).toBe('fail');
+    expect(penaltyOut[0]?.quoteExcerpt).toContain('15%');
+
+    const longTerminationClause = `Điều khoản chấm dứt hợp đồng trước thời hạn quy định trách nhiệm bàn giao tài liệu ${padding} nhưng Bên A có quyền hủy ngay lập tức không cần báo trước cho Bên B.`;
+    const termOut = evaluatePlaybookDeterministically(
+      ORG_A,
+      [bySlot.get('termination_notice')!],
+      [{ page: 1, text: longTerminationClause }],
+      1,
+    );
+    expect(termOut[0]?.verdict).toBe('fail');
+
+    const longAcceptanceClause = `Điều khoản nghiệm thu kết quả bàn giao sản phẩm phần mềm giữa các bên ${padding} quy định thời hạn phản hồi bằng văn bản tối đa là 14 ngày làm việc kể từ ngày nhận bàn giao.`;
+    const acceptanceOut = evaluatePlaybookDeterministically(
+      ORG_A,
+      [bySlot.get('acceptance_criteria')!],
+      [{ page: 1, text: longAcceptanceClause }],
+      1,
+    );
+    expect(acceptanceOut[0]?.verdict).toBe('warn');
   });
 });

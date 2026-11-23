@@ -268,13 +268,20 @@ function stripFormatControl(value: string): string {
 }
 
 function cleanSingleLine(value: string, max: number): string {
-  const one = stripFormatControl(value).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const one = stripFormatControl(value)
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\p{Cc}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const points = Array.from(one);
   return points.length <= max ? one : points.slice(0, max).join('').trimEnd();
 }
 
 function cleanMultiLine(value: string, max: number): string {
-  const cleaned = stripFormatControl(value).replace(/\r\n/g, '\n').trim();
+  const cleaned = stripFormatControl(value)
+    .replace(/\r\n/g, '\n')
+    .replace(/(?!\n)\p{Cc}/gu, '')
+    .trim();
   const points = Array.from(cleaned);
   return points.length <= max ? cleaned : points.slice(0, max).join('').trimEnd();
 }
@@ -298,7 +305,7 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
-function sanitizeMatchKeywords(raw: readonly string[]): string[] {
+export function sanitizeMatchKeywords(raw: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const item of raw) {
@@ -680,6 +687,18 @@ function findBestSnippet(
   return findMatchingSnippets(snippets, keywords)[0] ?? null;
 }
 
+// Retain every chunk sharing a sentGroupId with any topic-matched snippet so unpunctuated
+// >480-char clauses with the topic keyword in chunk 1 and the value/phrase in chunk 2 stay intact.
+function filterTopicSnippets(
+  rawMatches: readonly PageClauseSnippet[],
+  predicate: (snippet: PageClauseSnippet) => boolean,
+): readonly PageClauseSnippet[] {
+  const topicMatches = rawMatches.filter(predicate);
+  if (topicMatches.length === 0) return rawMatches;
+  const topicGroupIds = new Set(topicMatches.map((m) => m.sentGroupId));
+  return rawMatches.filter((m) => topicGroupIds.has(m.sentGroupId));
+}
+
 function extractPercentAnalysis(text: string): NumericAnalysis {
   const values: number[] = [];
   let hasUnsupported = false;
@@ -878,10 +897,9 @@ function evaluateSingleRuleDeterministically(
     }
     const capPercent = Math.max(...guidancePercents.values);
     const rawMatches = findMatchingSnippets(snippets, keywords);
-    const topicMatches = rawMatches.filter((m) =>
+    const matches = filterTopicSnippets(rawMatches, (m) =>
       /phạt|vi\s+phạm|penalty|liquidated\s+damages|điều\s+301/iu.test(m.raw),
     );
-    const matches = topicMatches.length > 0 ? topicMatches : rawMatches;
     const redline =
       capPercent === 8
         ? 'Mức phạt vi phạm hợp đồng tối đa không vượt quá 8% giá trị phần nghĩa vụ hợp đồng bị vi phạm theo Điều 301 Luật Thương mại 2005.'
@@ -1089,10 +1107,9 @@ function evaluateSingleRuleDeterministically(
     const redlineDays = Math.max(30, minNoticeDays);
     const redline = `Mỗi bên có quyền đơn phương chấm dứt hợp đồng khi bên kia vi phạm nghĩa vụ cơ bản không khắc phục hoặc khi gửi thông báo bằng văn bản trước ít nhất ${redlineDays} ngày.`;
     const rawMatches = findMatchingSnippets(snippets, keywords);
-    const topicMatches = rawMatches.filter((m) =>
+    const matches = filterTopicSnippets(rawMatches, (m) =>
       /chấm\s+dứt|hủy\s+bỏ|terminat/iu.test(m.raw),
     );
-    const matches = topicMatches.length > 0 ? topicMatches : rawMatches;
     if (matches.length === 0) {
       return {
         ...base,
@@ -1429,10 +1446,9 @@ function evaluateSingleRuleDeterministically(
     }
     const maxResponseDays = Math.max(...guidanceDays.values);
     const rawMatches = findMatchingSnippets(snippets, keywords);
-    const topicMatches = rawMatches.filter((m) =>
+    const matches = filterTopicSnippets(rawMatches, (m) =>
       /nghiệm\s+thu|bàn\s+giao|acceptance|deliverables|handover|deemed\s+accepted/iu.test(m.raw),
     );
-    const matches = topicMatches.length > 0 ? topicMatches : rawMatches;
     const redline = `Bên mua kiểm tra kết quả bàn giao và ký biên bản nghiệm thu hoặc phản hồi bằng văn bản nêu rõ nội dung cần hiệu chỉnh trong vòng ${Math.min(5, maxResponseDays)} ngày làm việc kể từ ngày nhận bàn giao.`;
     if (matches.length === 0) {
       return {

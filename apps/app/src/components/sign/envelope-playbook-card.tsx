@@ -13,6 +13,7 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { errorMessage, queryClient } from '../../lib/api.ts';
+import { isKernelErrorCode } from '../../lib/kernel-errors.ts';
 import {
   downloadSignPdfBytes,
   signApi,
@@ -72,6 +73,12 @@ function severityBadgeVariant(
   return 'secondary';
 }
 
+type PlaybookOverrideDraft = {
+  checkRevision: string;
+  verdict: SignPlaybookVerdictContract;
+  note: string;
+};
+
 export function EnvelopePlaybookCard({
   envelopeId,
   sourceFileId,
@@ -83,7 +90,7 @@ export function EnvelopePlaybookCard({
   const [aiNoticeKey, setAiNoticeKey] = useState<PlaybookAiNoticeKey>(null);
   const [runningKind, setRunningKind] = useState<'ai' | 'rule' | null>(null);
   const [overrideDrafts, setOverrideDrafts] = useState<
-    Record<string, { verdict: SignPlaybookVerdictContract; note: string }>
+    Record<string, PlaybookOverrideDraft>
   >({});
 
   const playbookQuery = useQuery({
@@ -155,11 +162,24 @@ export function EnvelopePlaybookCard({
         verdict: input.verdict,
         manualNote: input.manualNote,
       }),
-    onSuccess: async () => {
+    onSuccess: async (_res, variables) => {
+      setOverrideDrafts((prev) => {
+        if (!(variables.ruleId in prev)) return prev;
+        const next = { ...prev };
+        delete next[variables.ruleId];
+        return next;
+      });
       toast(t('overrideSavedToast'));
       await queryClient.invalidateQueries({ queryKey: ['sign', 'playbook-check', envelopeId] });
     },
-    onError: (err) => toast(errorMessage(err), 'error'),
+    onError: async (err) => {
+      toast(errorMessage(err), 'error');
+      const rawCode = (err as { code?: unknown }).code;
+      if (typeof rawCode === 'string' && isKernelErrorCode(rawCode) && rawCode === 'SIGN_PLAYBOOK_STALE_CHECK') {
+        setOverrideDrafts({});
+        await queryClient.invalidateQueries({ queryKey: ['sign', 'playbook-check', envelopeId] });
+      }
+    },
   });
 
   const handleCopyRedline = async (text: string) => {
@@ -171,10 +191,14 @@ export function EnvelopePlaybookCard({
     }
   };
 
-  const getDraftForFinding = (finding: SignPlaybookFindingContract) => {
+  const getDraftForFinding = (
+    finding: SignPlaybookFindingContract,
+    currentRevision: string,
+  ): PlaybookOverrideDraft => {
     const existing = overrideDrafts[finding.ruleId];
     if (existing) return existing;
     return {
+      checkRevision: currentRevision,
       verdict: finding.verdict,
       note: finding.manualNote ?? '',
     };
@@ -260,7 +284,7 @@ export function EnvelopePlaybookCard({
             </p>
             <ul className="space-y-3" data-testid="playbook-findings-list">
               {check.findings.map((finding) => {
-                const draft = getDraftForFinding(finding);
+                const draft = getDraftForFinding(finding, check.revision);
                 const selectId = `playbook-verdict-${finding.ruleId}`;
                 const noteId = `playbook-note-${finding.ruleId}`;
                 return (
@@ -296,7 +320,7 @@ export function EnvelopePlaybookCard({
                     {finding.quoteExcerpt ? (
                       <div className="space-y-1.5 rounded border bg-background p-2">
                         <div className="flex items-center justify-between gap-2">
-                          <blockquote className="italic text-muted-foreground line-clamp-4">
+                          <blockquote className="min-w-0 break-words italic text-muted-foreground line-clamp-4">
                             &ldquo;{finding.quoteExcerpt}&rdquo;
                           </blockquote>
                           {finding.pageNumber !== null ? (
@@ -364,13 +388,17 @@ export function EnvelopePlaybookCard({
                             value={draft.verdict}
                             onChange={(e) => {
                               const nextVerdict = e.target.value as SignPlaybookVerdictContract;
-                              setOverrideDrafts((prev) => ({
-                                ...prev,
-                                [finding.ruleId]: {
-                                  verdict: nextVerdict,
-                                  note: draft.note,
-                                },
-                              }));
+                              setOverrideDrafts((prev) => {
+                                const existing = prev[finding.ruleId];
+                                return {
+                                  ...prev,
+                                  [finding.ruleId]: {
+                                    checkRevision: existing?.checkRevision ?? check.revision,
+                                    verdict: nextVerdict,
+                                    note: existing?.note ?? (finding.manualNote ?? ''),
+                                  },
+                                };
+                              });
                             }}
                             data-testid={`playbook-override-select-${finding.ruleId}`}
                           >
@@ -393,13 +421,17 @@ export function EnvelopePlaybookCard({
                               placeholder={t('manualNotePlaceholder')}
                               onChange={(e) => {
                                 const nextNote = e.target.value;
-                                setOverrideDrafts((prev) => ({
-                                  ...prev,
-                                  [finding.ruleId]: {
-                                    verdict: draft.verdict,
-                                    note: nextNote,
-                                  },
-                                }));
+                                setOverrideDrafts((prev) => {
+                                  const existing = prev[finding.ruleId];
+                                  return {
+                                    ...prev,
+                                    [finding.ruleId]: {
+                                      checkRevision: existing?.checkRevision ?? check.revision,
+                                      verdict: existing?.verdict ?? finding.verdict,
+                                      note: nextNote,
+                                    },
+                                  };
+                                });
                               }}
                               data-testid={`playbook-override-note-${finding.ruleId}`}
                             />
@@ -412,7 +444,7 @@ export function EnvelopePlaybookCard({
                               onClick={() =>
                                 overrideMutation.mutate({
                                   ruleId: finding.ruleId,
-                                  checkRevision: check.revision,
+                                  checkRevision: draft.checkRevision,
                                   verdict: draft.verdict,
                                   manualNote: draft.note.trim() || null,
                                 })

@@ -1,20 +1,120 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // UI rendering, accessibility, RBAC, and i18n copy tests for SME contract playbook (Slice 5d, #4442).
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viCatalog } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 import type { SignPlaybookGetResult, SignPlaybookRulesListResult } from '../src/lib/sign-api.ts';
 
+interface DrivenMutationSlot {
+  isPending: boolean;
+  error: unknown;
+  variables: unknown;
+  inFlight: Promise<void> | null;
+}
+
+const cache = vi.hoisted(() => ({ current: null as unknown as QueryClient }));
+const invalidateQueriesSpy = vi.hoisted(() => vi.fn());
+const toastSpy = vi.hoisted(() => vi.fn());
+const hookDriver = vi.hoisted(() => ({
+  inTargetComponent: false,
+  states: [] as unknown[],
+  stateCursor: 0,
+  mutations: [] as DrivenMutationSlot[],
+  mutationCursor: 0,
+}));
+
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  return {
+    ...actual,
+    useState: (<S,>(initialState?: S | (() => S)) => {
+      if (!hookDriver.inTargetComponent) return actual.useState(initialState as S);
+      const idx = hookDriver.stateCursor++;
+      if (idx >= hookDriver.states.length) {
+        hookDriver.states.push(typeof initialState === 'function' ? (initialState as () => S)() : initialState);
+      }
+      const setState = (action: S | ((prev: S) => S)) => {
+        const prev = hookDriver.states[idx] as S;
+        hookDriver.states[idx] = typeof action === 'function' ? (action as (p: S) => S)(prev) : action;
+      };
+      return [hookDriver.states[idx] as S, setState];
+    }) as typeof actual.useState,
+  };
+});
+
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>();
+  return {
+    ...actual,
+    useQuery: ((options: { queryKey: readonly unknown[] }) => {
+      if (!hookDriver.inTargetComponent) {
+        return actual.useQuery(options as Parameters<typeof actual.useQuery>[0]);
+      }
+      return {
+        data: cache.current.getQueryData(options.queryKey),
+        error: null,
+        isPending: false,
+      };
+    }) as typeof actual.useQuery,
+    useMutation: ((options: {
+      mutationFn?: (variables: unknown) => Promise<unknown>;
+      onSuccess?: (data: unknown, variables: unknown) => Promise<unknown> | unknown;
+      onError?: (err: unknown, variables: unknown) => Promise<unknown> | unknown;
+    }) => {
+      if (!hookDriver.inTargetComponent) {
+        return actual.useMutation(options as Parameters<typeof actual.useMutation>[0]);
+      }
+      const idx = hookDriver.mutationCursor++;
+      if (idx >= hookDriver.mutations.length) {
+        hookDriver.mutations.push({ isPending: false, error: null, variables: undefined, inFlight: null });
+      }
+      const slot = hookDriver.mutations[idx]!;
+      return {
+        isPending: slot.isPending,
+        error: slot.error,
+        variables: slot.variables,
+        reset: () => {
+          slot.isPending = false;
+          slot.error = null;
+          slot.variables = undefined;
+        },
+        mutate: (variables?: unknown) => {
+          slot.isPending = true;
+          slot.error = null;
+          slot.variables = variables;
+          slot.inFlight = (async () => {
+            try {
+              const data = await options.mutationFn?.(variables);
+              await options.onSuccess?.(data, variables);
+              slot.isPending = false;
+            } catch (err) {
+              slot.error = err;
+              await options.onError?.(err, variables);
+              slot.isPending = false;
+            }
+          })();
+        },
+      };
+    }) as typeof actual.useMutation,
+  };
+});
+
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
+  cache.current = new QC();
+  const origInvalidate = cache.current.invalidateQueries.bind(cache.current);
+  cache.current.invalidateQueries = ((...args: Parameters<typeof origInvalidate>) => {
+    invalidateQueriesSpy(...args);
+    return origInvalidate(...args);
+  }) as typeof cache.current.invalidateQueries;
   return {
     orpc: {},
-    queryClient: new QC(),
+    queryClient: cache.current,
     client: {},
     errorMessage: (e: unknown) => String(e),
     isStepUpRequired: () => false,
@@ -24,8 +124,43 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
+vi.mock('../src/lib/toast.ts', () => ({
+  toast: toastSpy,
+}));
+
+const { signApi } = await import('../src/lib/sign-api.ts');
 const { PlaybookRulesCard, parseKeywordsCsv } = await import('../src/components/sign/playbook-rules-card.tsx');
 const { EnvelopePlaybookCard } = await import('../src/components/sign/envelope-playbook-card.tsx');
+
+function collectByTestId(
+  node: ReactNode,
+  testId: string,
+  out: ReactElement<Record<string, unknown>>[] = [],
+): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) {
+    for (const item of node) collectByTestId(item, testId, out);
+    return out;
+  }
+  if (!isValidElement(node)) return out;
+  const props = node.props as Record<string, unknown>;
+  if (props['data-testid'] === testId) {
+    out.push(node as ReactElement<Record<string, unknown>>);
+  }
+  if (props.children !== undefined) {
+    collectByTestId(props.children as ReactNode, testId, out);
+  }
+  return out;
+}
+
+function requireByTestId(
+  node: ReactNode,
+  testId: string,
+  index = 0,
+): ReactElement<Record<string, unknown>> {
+  const found = collectByTestId(node, testId)[index];
+  if (!found) throw new Error(`missing testId ${testId} at index ${index}`);
+  return found;
+}
 
 function renderInLocale(locale: 'vi' | 'en', node: ReactNode, client = new QueryClient()): string {
   return renderToStaticMarkup(
@@ -199,6 +334,7 @@ describe('EnvelopePlaybookCard (/o/$slug/sign/envelopes/$id, #4442)', () => {
     expect(html).toContain(`for="playbook-verdict-${RULE_1_ID}"`);
     expect(html).toContain(`for="playbook-note-${RULE_1_ID}"`);
     expect(html).toContain('[&amp;_select]:min-h-11');
+    expect(html).toContain('min-w-0 break-words');
 
     const overriddenAiQc = new QueryClient();
     overriddenAiQc.setQueryData(['sign', 'playbook-check', ENV_ID], {
@@ -250,5 +386,139 @@ describe('EnvelopePlaybookCard (/o/$slug/sign/envelopes/$id, #4442)', () => {
     expect(viewerHtml).not.toContain(`data-testid="playbook-override-save-${RULE_1_ID}"`);
     expect(viewerHtml).toContain(`data-testid="playbook-jump-page-${RULE_1_ID}"`);
     expect(viewerHtml).toContain('Đã thống nhất với kế toán');
+  });
+
+  describe('overrideDrafts optimistic lock & lifecycle', () => {
+    beforeEach(() => {
+      cache.current.clear();
+      invalidateQueriesSpy.mockReset();
+      toastSpy.mockReset();
+      hookDriver.inTargetComponent = false;
+      hookDriver.states = [];
+      hookDriver.stateCursor = 0;
+      hookDriver.mutations = [];
+      hookDriver.mutationCursor = 0;
+    });
+
+    it('locks draft checkRevision across background refetches, clears saved draft on success, and resets drafts on SIGN_PLAYBOOK_STALE_CHECK', async () => {
+      const overrideSpy = vi.spyOn(signApi, 'overridePlaybookFinding').mockResolvedValue(sampleCheck.check!);
+
+      let capturedTree: ReactNode = null;
+      function Probe(props: Parameters<typeof EnvelopePlaybookCard>[0]) {
+        hookDriver.inTargetComponent = true;
+        hookDriver.stateCursor = 0;
+        hookDriver.mutationCursor = 0;
+        try {
+          const rendered = EnvelopePlaybookCard(props);
+          capturedTree = rendered;
+          return rendered;
+        } finally {
+          hookDriver.inTargetComponent = false;
+        }
+      }
+
+      const renderProbe = (locale: 'vi' | 'en' = 'vi') =>
+        renderInLocale(
+          locale,
+          <Probe
+            envelopeId={ENV_ID}
+            sourceFileId={FILE_ID}
+            inspectStatus="passed"
+            pdfBytes={null}
+            onJumpToPage={vi.fn()}
+          />,
+          cache.current,
+        );
+
+      // 1. Open draft on rev-1 for RULE_1_ID and modify both verdict and note.
+      cache.current.setQueryData(['sign', 'playbook-check', ENV_ID], sampleCheck);
+      renderProbe();
+
+      (requireByTestId(capturedTree, `playbook-override-select-${RULE_1_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'pass' } });
+
+      renderProbe();
+      (requireByTestId(capturedTree, `playbook-override-note-${RULE_1_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'Approved after legal call' } });
+
+      // 2. Simulate background refetch rotating check.revision from rev-1 -> rev-2 while draft is open.
+      const rev2Check: SignPlaybookGetResult = {
+        ...sampleCheck,
+        check: {
+          ...sampleCheck.check!,
+          revision: 'rev-2',
+          findings: [
+            {
+              ...sampleCheck.check!.findings[0]!,
+              verdict: 'warn',
+              manualNote: 'Server rev-2 note',
+            },
+            sampleCheck.check!.findings[1]!,
+          ],
+        },
+      };
+      cache.current.setQueryData(['sign', 'playbook-check', ENV_ID], rev2Check);
+      renderProbe();
+
+      // Draft still displays unsaved user edits AND keeps original checkRevision ('rev-1').
+      expect(requireByTestId(capturedTree, `playbook-override-select-${RULE_1_ID}`).props.value).toBe('pass');
+      expect(requireByTestId(capturedTree, `playbook-override-note-${RULE_1_ID}`).props.value).toBe(
+        'Approved after legal call',
+      );
+
+      (requireByTestId(capturedTree, `playbook-override-save-${RULE_1_ID}`).props.onClick as () => void)();
+      const overrideSlot = hookDriver.mutations[1]!;
+      await overrideSlot.inFlight;
+
+      expect(overrideSpy).toHaveBeenCalledTimes(1);
+      expect(overrideSpy).toHaveBeenLastCalledWith({
+        envelopeId: ENV_ID,
+        ruleId: RULE_1_ID,
+        checkRevision: 'rev-1',
+        verdict: 'pass',
+        manualNote: 'Approved after legal call',
+      });
+      expect(invalidateQueriesSpy).toHaveBeenCalledWith({ queryKey: ['sign', 'playbook-check', ENV_ID] });
+
+      // 3. After save resolves, RULE_1_ID's draft was deleted so server rev-2 values show without masking.
+      renderProbe();
+      expect(requireByTestId(capturedTree, `playbook-override-select-${RULE_1_ID}`).props.value).toBe('warn');
+      expect(requireByTestId(capturedTree, `playbook-override-note-${RULE_1_ID}`).props.value).toBe(
+        'Server rev-2 note',
+      );
+
+      // 4. Open drafts on RULE_1_ID and RULE_2_ID, then simulate 409 SIGN_PLAYBOOK_STALE_CHECK error.
+      (requireByTestId(capturedTree, `playbook-override-note-${RULE_2_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'Unsaved rule 2 note' } });
+      renderProbe();
+      (requireByTestId(capturedTree, `playbook-override-select-${RULE_1_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'fail' } });
+      renderProbe();
+
+      overrideSpy.mockRejectedValueOnce(
+        Object.assign(new Error('Check changed concurrently'), {
+          code: 'SIGN_PLAYBOOK_STALE_CHECK',
+          status: 409,
+        }),
+      );
+      invalidateQueriesSpy.mockClear();
+
+      (requireByTestId(capturedTree, `playbook-override-save-${RULE_1_ID}`).props.onClick as () => void)();
+      await overrideSlot.inFlight;
+
+      expect(toastSpy).toHaveBeenCalledWith(expect.any(String), 'error');
+      expect(invalidateQueriesSpy).toHaveBeenCalledWith({ queryKey: ['sign', 'playbook-check', ENV_ID] });
+
+      renderProbe();
+      expect(requireByTestId(capturedTree, `playbook-override-select-${RULE_1_ID}`).props.value).toBe('warn');
+      expect(requireByTestId(capturedTree, `playbook-override-note-${RULE_2_ID}`).props.value).toBe(
+        'Đã thống nhất với kế toán',
+      );
+      overrideSpy.mockRestore();
+    });
   });
 });
