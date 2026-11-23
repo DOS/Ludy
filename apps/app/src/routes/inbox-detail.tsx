@@ -176,27 +176,27 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
     <Card className="block space-y-4 p-4">
       <div className="grid gap-4 sm:grid-cols-3">
         <div>
-          <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherCashAccount')}</p>
+          <p className="text-xs text-subtle-foreground">{t('voucherCashAccount')}</p>
           <p className="mt-1 text-sm font-medium text-foreground">
             <span className="font-mono">{voucher.cashAccount}</span> <span className="text-subtle-foreground">{accountName(voucher.cashAccount)}</span>
           </p>
         </div>
         <div>
-          <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherParty')}</p>
+          <p className="text-xs text-subtle-foreground">{t('voucherParty')}</p>
           <p className="mt-1 text-sm text-foreground">{voucher.party ? voucher.party.name : t('notStated')}</p>
           {voucher.party?.taxCode && <p className="text-xs text-muted-foreground">{t('taxCode', { code: voucher.party.taxCode })}</p>}
         </div>
         <div>
-          <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherTotal')}</p>
+          <p className="text-xs text-subtle-foreground">{t('voucherTotal')}</p>
           <p className="mt-1 text-base font-semibold text-foreground tabular-nums">{f.money(voucher.total)}</p>
         </div>
         <div className="sm:col-span-2">
-          <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherReason')}</p>
+          <p className="text-xs text-subtle-foreground">{t('voucherReason')}</p>
           <p className="mt-1 text-sm whitespace-pre-wrap text-foreground">{voucher.description}</p>
         </div>
         {voucher.personName && (
           <div>
-            <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherPerson')}</p>
+            <p className="text-xs text-subtle-foreground">{t('voucherPerson')}</p>
             <p className="mt-1 text-sm text-foreground">{voucher.personName}</p>
           </div>
         )}
@@ -204,7 +204,7 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
       {voucher.checks && voucher.checks.length > 0 && (
         // The warnings raised when the voucher was asked for (#2419), worded as an invoice's checks are.
         <div data-testid="voucher-checks">
-          <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('checks')}</p>
+          <p className="text-xs font-medium text-subtle-foreground">{t('checks')}</p>
           <ul className="mt-3 space-y-1.5">
             {voucher.checks.map((c) => (
               <li key={c.id} className="flex items-start gap-2 text-sm">
@@ -216,7 +216,7 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
         </div>
       )}
       <div>
-        <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('journal')}</p>
+        <p className="text-xs font-medium text-subtle-foreground">{t('journal')}</p>
         <table className="mt-3 w-full text-sm">
           <thead className="text-left text-xs text-subtle-foreground">
             <tr>
@@ -262,16 +262,16 @@ function JournalVoucherCard({ voucher, code, slug, accountName, proposalId }: { 
     <Card className="block space-y-4 p-4">
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="sm:col-span-2">
-          <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherReason')}</p>
+          <p className="text-xs text-subtle-foreground">{t('voucherReason')}</p>
           <p className="mt-1 text-sm whitespace-pre-wrap text-foreground">{voucher.description}</p>
         </div>
         <div>
-          <p className="text-xs tracking-wide uppercase text-subtle-foreground">{t('voucherTotal')}</p>
+          <p className="text-xs text-subtle-foreground">{t('voucherTotal')}</p>
           <p className="mt-1 text-base font-semibold text-foreground tabular-nums">{f.money(voucher.total)}</p>
         </div>
       </div>
       <div>
-        <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('journal')}</p>
+        <p className="text-xs font-medium text-subtle-foreground">{t('journal')}</p>
         <table className="mt-3 w-full text-sm">
           <thead className="text-left text-xs text-subtle-foreground">
             <tr>

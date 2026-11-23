@@ -19,7 +19,7 @@ export async function signOut(options: { keepInvite?: boolean } = {}): Promise<v
   await stopAndSave({ quiet: true });
   if (!options.keepInvite) forgetInvite();
   forgetShare();
-  await forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint }));
+  await forgetPushDevice((endpoint) => client.notifications.push.unsubscribe({ endpoint }));
   return signOutWithRevoke({
     // The kernel's user id (me.get), not Supabase Auth's: a revoke names the Crove user (issue #184).
     currentSession: async () => {

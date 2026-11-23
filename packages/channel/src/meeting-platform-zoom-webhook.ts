@@ -24,6 +24,13 @@ const SIGNATURE = /^v0=([0-9a-f]{64})$/i;
 const TIMESTAMP = /^[0-9]{1,13}$/;
 const HOST_ID = /^[A-Za-z0-9_-]{1,200}$/;
 
+// THE KEY OF A ZOOM ACCOUNT. Zoom user ids are case-sensitive, but Ludy keys a connection by the id in lower case: the connect step (meeting-platform-zoom.ts) stores it so, a notice's host id is read
+// so (parseZoomNotice), and crove_kernel.meeting_platform_ring compares it so. This one function is the rule for the two sides in this package, so they cannot drift (a test ties them by behaviour); the connect command's schema in
+// packages/kernel/src/meeting-platform.ts lowers once more on purpose (the kernel cannot import this package), and the SQL side lowers the same way, held to it by apps/kernel/test/meeting-platform-ring.db.test.ts. Decision of #4011 (point 2, from the shared-core review of #3939): keep the folding. Two Zoom users whose ids differ only in case
+// would share a key, and the only effect is that the sweep lists the other one's connection early, with that member's own sealed token; no recording, name or token crosses. Storing the id as Zoom sends
+// it would be exact, but the case of every stored id is already lost, so each member would have to connect again, and the notices of the old connections would be missed until they did.
+export const zoomAccountKey = (id: string): string => id.trim().toLowerCase();
+
 export interface ZoomSignatureInput {
   body: Uint8Array;
   signature: string | undefined;
@@ -95,5 +102,5 @@ export function parseZoomNotice(body: Uint8Array): ZoomNotice {
   if (!HOST_ID.test(hostId)) return { kind: 'ignored' };
   const uuid = typeof object.uuid === 'string' ? object.uuid.slice(0, 200) : '';
   const eventTs = typeof parsed.event_ts === 'number' && Number.isFinite(parsed.event_ts) ? String(parsed.event_ts) : '';
-  return { kind: 'recording', event: parsed.event, hostId: hostId.toLowerCase(), uuid, eventTs };
+  return { kind: 'recording', event: parsed.event, hostId: zoomAccountKey(hostId), uuid, eventTs };
 }

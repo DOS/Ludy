@@ -1,4 +1,4 @@
-// Web Push for Social notifications (#1238), with Node's own crypto and no library: the message is encrypted for the
+// Web Push for notifications (#1238 for Social, #3736 for the kernel's), with Node's own crypto and no library: the message is encrypted for the
 // browser as RFC 8291 says (ECDH on P-256 with the browser's key, HKDF with its auth secret, one aes128gcm record of
 // RFC 8188), and the request carries a VAPID token (RFC 8292: an ES256 JWT for the push service's origin, signed with
 // the deployment's key). Posts go through the egress guard: the endpoint is a URL a member's browser gave, so only a
@@ -19,7 +19,10 @@ const JWT_LIFETIME_SECONDS = 12 * 3600;
 const SEND_TIMEOUT_MS = 10_000;
 // A push message must fit one record; the payload stays far below.
 export const PUSH_PAYLOAD_MAX = 3000;
-const ACTOR = { type: 'system' as const, component: 'social.push' };
+const ACTOR = { type: 'system' as const, component: 'kernel.push' };
+// Where a push job reads what to send: a Social notification or a kernel one (each knows its own kinds, lines and paths). The answers are recorded the same way for both.
+export type PushSource = 'social' | 'kernel';
+const TARGETS: Readonly<Record<PushSource, string>> = { social: 'social.push.targets', kernel: 'kernel.push.targets' };
 
 export interface VapidKeys {
   // The uncompressed P-256 point, base64url: what browsers subscribe with (applicationServerKey).
@@ -167,14 +170,14 @@ export function createPushSender(keys: VapidKeys, deps: { request?: PushRequest;
   };
 }
 
-// The push job of one notification: what to send and to whom (social.push.targets), one post per subscription, and
-// the answers recorded (social.push.record). Never retried as a whole: a subscription that failed counts it, and the
+// The push job of one notification: what to send and to whom (social.push.targets or kernel.push.targets), one post per subscription, and
+// the answers recorded (kernel.push.record). Never retried as a whole: a subscription that failed counts it, and the
 // next notification tries it again.
-export async function runPushJob(deps: { runtime: Runtime; sender: PushSender; brand: string }, job: { orgId: string; notificationId: string }): Promise<{ sent: number; gone: number; failed: number }> {
+export async function runPushJob(deps: { runtime: Runtime; sender: PushSender; brand: string; source?: PushSource }, job: { orgId: string; notificationId: string }): Promise<{ sent: number; gone: number; failed: number }> {
   const ctx = { actor: ACTOR, orgId: job.orgId };
-  const targets = await deps.runtime.query<{ subscriptions: { id: string; endpoint: string; p256dh: string; auth: string }[]; line: string; path: string; tag: string } | null>('social.push.targets', { notificationId: job.notificationId }, ctx);
+  const targets = await deps.runtime.query<{ subscriptions: { id: string; endpoint: string; p256dh: string; auth: string }[]; line: string; path: string; tag: string } | null>(TARGETS[deps.source ?? 'social'], { notificationId: job.notificationId }, ctx);
   if (!targets) return { sent: 0, gone: 0, failed: 0 };
-  // No post text: the brand, the kind's line and the path the notification opens.
+  // No text of the subject: the brand, the kind's line and the path the notification opens.
   const payload = JSON.stringify({ title: deps.brand, body: targets.line, url: targets.path, tag: targets.tag });
   const results = await Promise.all(
     targets.subscriptions.map(async (s) => {
@@ -182,7 +185,7 @@ export async function runPushJob(deps: { runtime: Runtime; sender: PushSender; b
       return { id: s.id, outcome: done.outcome };
     }),
   );
-  if (results.length > 0) await deps.runtime.execute('social.push.record', { results }, ctx);
+  if (results.length > 0) await deps.runtime.execute('kernel.push.record', { results }, ctx);
   const count = (o: PushOutcome) => results.filter((r) => r.outcome === o).length;
   return { sent: count('sent'), gone: count('gone'), failed: count('failed') };
 }

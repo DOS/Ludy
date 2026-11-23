@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@ludy/db';
 import { MINUTES_PUBLISHED_EVENT, SUMMARY_READY_EVENT, vietnamToday } from '@ludy/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@ludy/kernel';
+import { KERNEL_NOTIFYING_EVENTS, PUSH_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@ludy/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@ludy/agent';
 import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@ludy/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -262,6 +262,8 @@ interface PushJob {
 }
 // A push job may run this long (pg-boss expires it after): each post has its own 10-second deadline.
 const PUSH_JOB_EXPIRE_SECONDS = 120;
+// A kernel notification is pushed once in a day: a second job for it within this window is refused (the push service keeps a message a day at most).
+const PUSH_SINGLETON_SECONDS = 86_400;
 
 interface ChannelOptionJob {
   orgId: string;
@@ -2200,8 +2202,36 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     }
     const notify = NOTIFY_COMMANDS.get(job.data.type);
     if (!notify || !deps.runtime.installed(notify.module)) return;
-    await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId });
+    const as = { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId } as const;
+    await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, as);
+    // Browser push (#3736): one job per unread notification of a pushed kind this event's dispatch wrote in the last day, after the dispatch committed, and only for the event types that can write one. A retried job
+    // of this queue names them again (so a crash after the dispatch still pushes), and the push job's singleton window keeps that from pushing twice (the window is slot-aligned, and the tag folds a rare repeat into one
+    // notification in the browser); a failure here leaves the notice and its mail, so it is logged by its class only.
+    if (deps.push && PUSH_EVENTS.has(job.data.type)) {
+      try {
+        for (const notificationId of await deps.runtime.query<string[]>('kernel.push.pending', { eventId: job.data.eventId }, as)) {
+          await boss.send(QUEUES.kernelPush, { orgId: job.data.orgId, notificationId } satisfies PushJob, {
+            singletonKey: jobKey(job.data.orgId, QUEUES.kernelPush, notificationId),
+            singletonSeconds: PUSH_SINGLETON_SECONDS,
+            retryLimit: 0,
+            expireInSeconds: PUSH_JOB_EXPIRE_SECONDS,
+          });
+        }
+      } catch (error) {
+        console.warn(`[kernel-push] ${job.data.eventId.slice(0, 8)} not queued`, error instanceof Error ? error.name : 'error');
+      }
+    }
   });
+
+  // Browser push of a kernel notification (#3736): read what to send, post it to each of the member's devices, record the answers.
+  if (deps.push) {
+    const push = deps.push;
+    await boss.work<PushJob>(QUEUES.kernelPush, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runPushJob({ runtime: deps.runtime, sender: push.sender, brand: push.brand, source: 'kernel' }, job.data);
+      if (done.sent + done.gone + done.failed > 0) console.log(`[kernel-push] ${job.data.notificationId.slice(0, 8)}: sent ${done.sent}, gone ${done.gone}, failed ${done.failed}`);
+    });
+  }
 
   // Dead letters (#1720): a job that failed its last retry raises an Inbox item in its org (dead-letter.ts).
   await boss.work(QUEUES.deadLetter, DEAD_LETTER_WORK, async ([job]) => {

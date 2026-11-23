@@ -185,8 +185,7 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
                 if (files.length > 0) upload.mutate(files);
               }}
             />
-            <Button variant="outline" disabled={upload.isPending} onClick={() => picker.current?.click()}>
-              {upload.isPending ? <Spinner className="text-current" /> : null}
+            <Button variant="outline" loading={upload.isPending} onClick={() => picker.current?.click()}>
               {t('libraryUpload')}
             </Button>
             {stockEnabled && (
@@ -209,8 +208,7 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
               {t('bulkDrafts.open')}
             </Button>
           )}
-          <Button size="sm" variant={archived ? 'default' : 'outline'} className={cn(archived && 'ml-auto')} disabled={archiveFiles.isPending} onClick={() => archiveFiles.mutate({ fileIds: picked.map((p) => p.fileId), restore: archived })}>
-            {archiveFiles.isPending ? <Spinner className="text-current" /> : null}
+          <Button size="sm" variant={archived ? 'default' : 'outline'} className={cn(archived && 'ml-auto')} loading={archiveFiles.isPending} onClick={() => archiveFiles.mutate({ fileIds: picked.map((p) => p.fileId), restore: archived })}>
             {t(archived ? 'libraryRestorePicked' : 'libraryArchivePicked', { count: picked.length })}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setPicked([])}>
@@ -235,7 +233,7 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
           title={tag ? t('libraryNoTagMatch') : search.trim() ? t('libraryNoMatch') : archived ? t('libraryArchivedEmpty') : t('libraryEmpty')}
           action={
             canWrite && !archived && !tag && !search.trim() ? (
-              <Button size="lg" disabled={upload.isPending} onClick={() => picker.current?.click()}>
+              <Button size="lg" loading={upload.isPending} onClick={() => picker.current?.click()}>
                 {t('libraryAdd')}
               </Button>
             ) : undefined
@@ -310,7 +308,7 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
               {canWrite && aiPhotos && !open.archivedAt && <DraftFromPhotoLink slug={slug} item={open} />}
               {canWrite && (
                 <div className="space-y-1">
-                  <Button size="sm" variant="outline" disabled={archiveFiles.isPending} onClick={() => archiveFiles.mutate({ fileIds: [open.fileId], restore: open.archivedAt !== null })}>
+                  <Button size="sm" variant="outline" loading={archiveFiles.isPending} onClick={() => archiveFiles.mutate({ fileIds: [open.fileId], restore: open.archivedAt !== null })}>
                     {t(open.archivedAt ? 'libraryRestore' : 'libraryArchive')}
                   </Button>
                   {!open.archivedAt && <p className="text-xs text-subtle-foreground">{t('libraryArchiveHint')}</p>}
@@ -325,7 +323,7 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
         </div>
       )}
       {library.hasNextPage && (
-        <Button variant="ghost" size="sm" disabled={library.isFetchingNextPage} onClick={() => void library.fetchNextPage()}>
+        <Button variant="ghost" size="sm" loading={library.isFetchingNextPage} onClick={() => void library.fetchNextPage()}>
           {t('libraryMore')}
         </Button>
       )}
@@ -891,7 +889,7 @@ export function SocialPage() {
               )}
               {list.hasNextPage && (
                 <div className="mt-4 flex justify-center">
-                  <Button variant="outline" onClick={() => void list.fetchNextPage()} disabled={list.isFetchingNextPage}>
+                  <Button variant="outline" onClick={() => void list.fetchNextPage()} loading={list.isFetchingNextPage}>
                     {t('filters.loadMore')}
                   </Button>
                 </div>
@@ -974,7 +972,7 @@ export function SocialPage() {
                 )}
                 {list.hasNextPage && (
                   <div className="mt-4 flex justify-center">
-                    <Button variant="outline" onClick={() => void list.fetchNextPage()} disabled={list.isFetchingNextPage}>
+                    <Button variant="outline" onClick={() => void list.fetchNextPage()} loading={list.isFetchingNextPage}>
                       {t('filters.loadMore')}
                     </Button>
                   </div>

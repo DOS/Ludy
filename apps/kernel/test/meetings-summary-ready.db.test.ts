@@ -183,6 +183,9 @@ suite('the "minutes draft ready" notice (#3730)', () => {
     expect(JSON.stringify(queued)).not.toContain('Họp tuần');
     expect(await notices(meetingId)).toEqual([]);
     expect(await dispatchAll(meetingId)).toEqual([{ notified: true, mailed: true }]);
+    // Browser push (#3736): the worker asks which notices this event wrote and queues a push job for each; the recorder's notice is the one, a replay of the event names it no more than once a day, and the line it pushes has no word of the draft.
+    const pushed = await worker.query<string[]>('kernel.push.pending', { eventId: queued[0]?.id }, { actor: { type: 'system', component: 'test.summary-ready' }, orgId });
+    expect(pushed).toHaveLength(1);
     // One in-app notice, to the recorder, about this meeting, keyed by the run, with an empty detail.
     expect(await notices(meetingId)).toEqual([{ user_id: users.recorder, subject_type: 'meetings.meeting', subject_id: meetingId, detail: {}, dedupe_key: `summary:${out.runId}` }]);
     // One mail, to the recorder's address, with exactly the merge data the template needs.
@@ -228,6 +231,8 @@ suite('the "minutes draft ready" notice (#3730)', () => {
       const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
       expect(out.state).toBe('ready');
       expect(await dispatchAll(meetingId)).toEqual([{ notified: false, mailed: false }]);
+      // Nothing was written, so nothing is pushed either: the one switch covers the in-app line, the mail and the push.
+      expect(await worker.query<string[]>('kernel.push.pending', { eventId: (await events(meetingId))[0]?.id }, { actor: { type: 'system', component: 'test.summary-ready' }, orgId })).toEqual([]);
       expect(await notices(meetingId)).toEqual([]);
       expect(await mails(meetingId)).toEqual([]);
     } finally {

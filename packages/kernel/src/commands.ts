@@ -63,6 +63,7 @@ import { mailCommands, queueContactMail, queueMemberMail } from './mail.ts';
 import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
+import { pushCommands } from './push.ts';
 import { inboxItemCommands, raiseOriginalNeeded } from './inbox-items.ts';
 import { savedViewCommands } from './saved-views.ts';
 import { todayMailCommands } from './today-mail.ts';
@@ -1233,6 +1234,7 @@ const otherKernelCommands = [
   ...imageSizeCommands,
   ...fileHoldCommands,
   ...notificationCommands,
+  ...pushCommands,
   ...inboxItemCommands,
   ...savedViewCommands,
   ...todayMailCommands,

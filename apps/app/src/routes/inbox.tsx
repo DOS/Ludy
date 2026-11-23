@@ -116,7 +116,7 @@ function failedWork(queue: string): FailedWork {
   if (queue === 'finance-year-archive') return 'yearArchive';
   if (queue.startsWith('kernel-mail-')) return 'mail';
   if (queue.startsWith('social-publish-')) return 'socialPublish';
-  if (queue === 'kernel-notify' || queue === 'social-notify' || queue === 'social-push') return 'notify';
+  if (queue === 'kernel-notify' || queue === 'social-notify' || queue === 'social-push' || queue === 'kernel-push') return 'notify';
   if (queue.startsWith('social-')) return 'social';
   if (queue.startsWith('crm-booking')) return 'booking';
   if (queue.startsWith('kernel-agent-')) return 'agent';

@@ -6,8 +6,9 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { catalog } from '../src/i18n/runtime.ts';
-import { TOUCH_BUTTON, TOUCH_MIN_PX, TOUCH_SELECT } from '../src/lib/conversation-touch.ts';
+import { TOUCH_BUTTON, TOUCH_MIN_PX } from '../src/lib/conversation-touch.ts';
 
 const state = vi.hoisted(() => ({ qc: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -99,10 +100,15 @@ describe('loading as shapes (IN-7)', () => {
 });
 
 describe('tap targets (IN-8)', () => {
-  it('are 44 px on a phone or a touch pointer, for buttons and for the select inside its wrapper', () => {
+  it('are 44 px on a phone or a touch pointer, for buttons and for NativeSelect directly on <select>', () => {
     expect(TOUCH_MIN_PX).toBe(44);
     expect(TOUCH_BUTTON).toBe('max-sm:min-h-11 pointer-coarse:min-h-11');
-    expect(TOUCH_SELECT).toContain('[&_select]:min-h-11');
+    const selectHtml = renderToStaticMarkup(
+      <NativeSelect size="sm" aria-label="Status">
+        <NativeSelectOption value="all">All</NativeSelectOption>
+      </NativeSelect>,
+    );
+    expect(/<select [^>]*>/.exec(selectHtml)?.[0] ?? '').toContain('max-md:min-h-11');
     // The classes are strings only here; the measured 44 px at 390 wide is the Playwright test of the empty Inbox (e2e/tests/conversations.spec.ts).
   });
 });
