@@ -596,6 +596,34 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(unchanged.map((r) => r.text)).toEqual([`Số một ${PHONE_PII}`, `Email mới ${EMAIL_PII}`]);
   });
 
+  // #4540: a mark is longer than the value it replaces, so a field close to its cap can grow past it. The command refuses the whole redaction instead of cutting the end of the user's text.
+  it('refuses a redaction whose marks would push a field past its cap, whole, and cuts nothing', async () => {
+    const meetingId = await seedMeeting({ readers: ['attendee'] });
+    // 72 characters (the cap of a speaker label is 80) holding five phone numbers: each mark is 10 characters longer than its number.
+    // Made-up numbers only (the PII scan refuses a plausible one): sequences and repeated digits.
+    const label = [PHONE_PII, TITLE_PHONE, '0911 111 222', '0922 222 111', '0933 333 444'].join(' / ');
+    expect(label.length).toBeLessThanOrEqual(80);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId,
+      segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: label, text: 'Xin chào mọi người.' }],
+    });
+    const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId });
+    const onLabel = scan.candidates.filter((c) => c.surface === 'transcript_segment.speaker_label');
+    expect(onLabel.length).toBeGreaterThanOrEqual(2);
+    expect(
+      await refuses(
+        exec('recorder', 'meetings.transcript.redact', {
+          meetingId,
+          confirmed: true,
+          items: onLabel.map((c) => ({ surface: c.surface, targetId: c.targetId, decisionIndex: null, kind: c.kind, startPos: c.startPos, version: c.version })),
+        }),
+      ),
+    ).toBe('REDACTION_TOO_LONG');
+    const after = await sqlAdmin<{ speaker_label: string; text: string }>('SELECT speaker_label, text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]);
+    expect(after.map((r) => r.speaker_label)).toEqual([label]);
+    expect(after.map((r) => r.text)).toEqual(['Xin chào mọi người.']);
+  });
+
   it('keeps published rows immutable (D3) and refuses meeting.title redaction once any surface is published', async () => {
     const meetingId = await seedMeeting({
       readers: ['attendee'],
@@ -810,6 +838,53 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(await refuses(exec('recorder', 'kernel.member_vy.subject_results.drop', { subjectType: 'Meeting free text', subjectId: secondMeetingId }))).toBe(
       'VALIDATION',
     );
+  });
+
+  it('blanks the live transcript preview of the meeting when it redacts, keeping where the preview has read, and leaves the preview of another meeting alone (#4557)', async () => {
+    const meetingId = await seedMeeting({ title: 'Họp 4557 xem trước' });
+    const other = await seedMeeting({ title: 'Họp 4557 khác' });
+    const runId = randomUUID();
+    const line = (m: string, seq: number, text: string, source: string | null = null) =>
+      sqlAdmin(
+        `INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text, source_run_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() - interval '2 days')`,
+        [orgId, randomUUID(), m, seq, seq * 10, seq * 10 + 10, text, source],
+      );
+    await line(meetingId, 0, `Gọi ${PHONE_PII} nhé`, runId);
+    await line(meetingId, 1, '');
+    await line(meetingId, 2, `Email ${EMAIL_PII}`);
+    await line(other, 0, `Gọi ${PHONE_PII} nhé`);
+    await exec('recorder', 'meetings.summary.save', { meetingId, summary: `Liên hệ ${PHONE_PII}`, decisions: [] });
+
+    const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId });
+    expect(scan.candidates.length).toBeGreaterThanOrEqual(1);
+    // The preview is not a surface of the scan: no candidate names a live line.
+    expect(JSON.stringify(scan)).not.toContain('live_line');
+    const done = await exec<TranscriptRedacted>('recorder', 'meetings.transcript.redact', {
+      meetingId,
+      confirmed: true,
+      items: scan.candidates.map((c) => ({ surface: c.surface, targetId: c.targetId, decisionIndex: c.decisionIndex, kind: c.kind, startPos: c.startPos, version: c.version })),
+    });
+    expect(done.redactedCount).toBe(scan.candidates.length);
+
+    // Every line is a silent piece now, at the same seq and times: nothing of the text is left and the preview still reads on from its last line (seq 2), so the next window does not read the audio again.
+    const lines = await sqlAdmin<{ seq: number; start_seconds: number; end_seconds: number; text: string; source_run_id: string | null; old: boolean }>(
+      `SELECT seq, start_seconds, end_seconds, text, source_run_id, created_at < now() - interval '1 day' AS old FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2 ORDER BY seq`,
+      [orgId, meetingId],
+    );
+    // The run the line came from and the day it was written stay as they were (the taint's source and the expiry clock), only the text is gone.
+    expect(lines).toEqual([
+      { seq: 0, start_seconds: 0, end_seconds: 10, text: '', source_run_id: runId, old: true },
+      { seq: 1, start_seconds: 10, end_seconds: 20, text: '', source_run_id: null, old: true },
+      { seq: 2, start_seconds: 20, end_seconds: 30, text: '', source_run_id: null, old: true },
+    ]);
+    // The other meeting's preview is untouched, and the audit holds the count of lines that held text (never a word of them).
+    expect(await sqlAdmin<{ text: string }>(`SELECT text FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2`, [orgId, other])).toEqual([{ text: `Gọi ${PHONE_PII} nhé` }]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.transcript.redact' AND detail ->> 'meetingId' = $2 ORDER BY occurred_at DESC LIMIT 1`,
+      [orgId, meetingId],
+    );
+    expect(audit[0]?.detail).toMatchObject({ clearedLiveLines: 2 });
+    expect(JSON.stringify(audit)).not.toContain(PHONE_PII);
   });
 
   it('fails closed with VY_RUN_BUSY on out-of-order concurrent Vy run creation and retries ascending new runs cleanly', async () => {

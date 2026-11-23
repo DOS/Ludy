@@ -28,8 +28,8 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   await signUp(page, newEmail('layout'));
   const slug = await createOrg(page, 'Công ty Màn hình nhỏ');
   const sidebar = page.getByRole('complementary');
-  const signOut = sidebar.getByRole('button', { name: 'Đăng xuất', exact: true });
-  await expect(signOut).toBeInViewport();
+  const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
+  await expect(account).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
   // A new org opens on the overview, which belongs to no app: the rail shows, and no app menu, not even the Cộng tác one (#3588).
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
@@ -68,7 +68,8 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
 
   // Back to the home screen: some linked screens have their own layout without this sidebar.
   await page.goto('/');
-  await signOut.click();
+  await account.click();
+  await sidebar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
 });
 
@@ -289,7 +290,7 @@ test.describe('at phone width', () => {
         }).length,
     );
     expect(nestedScrollers).toBeLessThanOrEqual(1);
-    await expect(drawer.getByRole('button', { name: 'Đăng xuất', exact: true })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: /^Tài khoản:/ })).toBeVisible();
     await drawer.getByRole('link', { name: 'Sổ sách' }).click();
     await expect(page).toHaveURL(/\/ledger$/);
     await expect(drawer).toBeHidden();

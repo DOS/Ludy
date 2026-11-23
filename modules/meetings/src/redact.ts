@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Code-assisted draft redaction (#4001, ADR-0047): deterministic detection across all draft publish surfaces;
-// typed non-value marks; no undo store; recorder-only; drops private Vy results and draft translations so redacted text cannot return.
+// typed non-value marks; no undo store; recorder-only; drops private Vy results and draft translations and blanks the live preview so redacted text cannot return.
 import { sql } from 'kysely';
 import {
   REDACTION_CANDIDATES_MAX,
@@ -178,6 +178,8 @@ async function lockChapters(trx: Trx, orgId: string, meetingId: string, ids: rea
 const staleError = () => new DomainError('REDACTION_STALE', 409, 'This draft changed since you reviewed it; reload and review again');
 const publishedError = () => new DomainError('REDACTION_PUBLISHED_IMMUTABLE', 409, 'Published meeting text cannot be redacted');
 const mismatchError = () => new DomainError('REDACTION_SPAN_MISMATCH', 422, 'Selected item no longer matches detected personal data');
+// The marks are longer than most of what they replace (#4540): a field close to its cap can grow past it. The command refuses it, whole (nothing is written), instead of cutting the end of the user's text.
+const tooLongError = () => new DomainError('REDACTION_TOO_LONG', 422, 'The text would be longer than this field allows once the marks are in; shorten the text first');
 
 interface FieldRedactionTask {
   key: string;
@@ -196,7 +198,7 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     kinds: task.selections.map((s) => s.kind),
     marks: task.selections.map((s) => REDACTION_MARK_BY_KIND[s.kind]),
   }));
-  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null }>`
+  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null; too_long: boolean }>`
     WITH req AS (
       SELECT
         r.idx,
@@ -240,15 +242,24 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
           )
         ) AS has_mismatch
       FROM req
+    ),
+    done AS (
+      SELECT
+        idx,
+        has_mismatch,
+        max_len,
+        CASE
+          WHEN has_mismatch THEN NULL::text
+          ELSE ludy_kernel.text_redact_spans(text, starts, kinds, marks)
+        END AS redacted
+      FROM checked
     )
     SELECT
       idx,
       has_mismatch,
-      CASE
-        WHEN has_mismatch THEN NULL::text
-        ELSE pg_catalog.left(ludy_kernel.text_redact_spans(text, starts, kinds, marks), max_len)
-      END AS redacted
-    FROM checked
+      redacted,
+      COALESCE(pg_catalog.length(redacted) > max_len, false) AS too_long
+    FROM done
     ORDER BY idx`.execute(trx);
 
   if (rows.length !== tasks.length) throw mismatchError();
@@ -257,7 +268,10 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     const task = tasks[i]!;
     const row = rows[i]!;
     const redacted = row.redacted;
-    if (row.idx !== i || row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
+    if (row.idx !== i) throw mismatchError();
+    // A selection the server does not detect any more is a mismatch whatever the length; only a matching one that would not fit is "too long".
+    if (!row.has_mismatch && row.too_long) throw tooLongError();
+    if (row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
       throw mismatchError();
     }
     redactedByKey.set(task.key, redacted);
@@ -448,6 +462,29 @@ export const transcriptRedactCandidates = defineQuery({
 });
 
 // Builds the redaction commands, taking the delete-only draft-translation helper from translate.ts so this file stays isolated from that table.
+// Blanks the text of the meeting's live preview lines: each line that holds text is deleted and written again with the same seq, start, end, run and creation time and no text (a silent piece), in the
+// caller's transaction, so the taint's source, the 30-day expiry clock and the "already copied" check by run all stay as they were. Returns how many lines held text. Only the recorder reaches it
+// (redaction is recorder-only, and the table's row security lets only the recorder read, write and delete a line).
+async function clearLiveLines(trx: Trx, orgId: string, meetingId: string): Promise<number> {
+  const { rows } = await sql<{ seq: number; start_seconds: number; end_seconds: number; source_run_id: string | null; created_at: Date }>`
+    SELECT seq, start_seconds, end_seconds, source_run_id, created_at FROM ludy_meetings.live_line
+    WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND text <> ''
+    ORDER BY seq`.execute(trx);
+  if (rows.length === 0) return 0;
+  await sql`DELETE FROM ludy_meetings.live_line WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND text <> ''`.execute(trx);
+  await sql`
+    INSERT INTO ludy_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text, source_run_id, created_at)
+    SELECT ${orgId}::uuid, ${meetingId}::uuid, u.seq, u.start_seconds, u.end_seconds, '', u.source_run_id, u.created_at
+    FROM ROWS FROM (
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.seq))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.start_seconds))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.end_seconds))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.source_run_id))}::uuid[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => new Date(r.created_at).toISOString()))}::timestamptz[])
+    ) AS u(seq, start_seconds, end_seconds, source_run_id, created_at)`.execute(trx);
+  return rows.length;
+}
+
 export function createRedactCommands(dropDraftTranslations: DropDraftTranslationsFn) {
   const transcriptRedact = defineCommand({
   name: 'meetings.transcript.redact',
@@ -723,6 +760,13 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       subjectId: input.meetingId,
     });
 
+    // The recorder's live transcript preview (live_line, #4557) is not a surface they review or select from, so no candidate is listed for it, yet it is the model's transcription of the same audio and it
+    // feeds the next live notes run: a number redacted from the draft would come back through it. A redaction therefore clears the text of the preview whole, as it drops the private Vy results. A line
+    // is not deleted but blanked (deleted and written again as a silent piece, '' at the same seq): the preview's progress is the highest seq it holds, so the next window must still start after it
+    // and not read the audio again. A silent piece is never shown and never read as text. The meeting row is held (above); a tick that copies a window of new audio at the same moment adds text of its own,
+    // which is new audio and not redacted text coming back.
+    const clearedLiveLines = await clearLiveLines(ctx.trx, ctx.orgId, input.meetingId);
+
     if (nextMeetingTitle !== null) {
       await ctx.trx
         .updateTable('ludy_meetings.meeting')
@@ -835,6 +879,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       droppedVyResults: droppedVy.removed,
       cancelledVyRuns: droppedVy.cancelled,
       droppedTranslations,
+      clearedLiveLines,
     });
 
     const countsByKind: RedactionCountsByKind = {

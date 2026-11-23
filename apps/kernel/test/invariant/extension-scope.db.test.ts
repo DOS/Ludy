@@ -45,14 +45,12 @@ const REACHABLE = [
   'meetings.live.chunk:meetings',
   'meetings.agenda.next:agenda',
   'meetings.meeting.recording_stopped:meetings',
+  // The heartbeat (and the end) of a running capture, ADR-0055 slice 1 (#4123, #4335): keeps the one-meeting rule's record alive from the extension; pinned exactly like the rest.
+  'meetings.capture.heartbeat:meetings',
   'notes.note.clip:notes',
   'notes.todo.quick_capture:notes',
   'notes.extension.exchanged:notes',
 ];
-
-// Landing in two steps (ADR-0055 slice 1, issue #4123): this file first lets the pin below accept the heartbeat of a running capture with or without it, so the code that adds the command can be checked by the
-// base copy of the suite. The second step adds the command and moves its entry into REACHABLE, then this list is empty. A command listed here may be missing; any other difference from REACHABLE still fails.
-const REACHABLE_NEXT = ['meetings.capture.heartbeat:meetings'];
 
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
 
@@ -164,10 +162,8 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       extension?: { scope: string };
     }>;
     expect(new Set(REACHABLE).size).toBe(REACHABLE.length);
-    expect(REACHABLE_NEXT.filter((entry) => REACHABLE.includes(entry))).toEqual([]);
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    for (const next of REACHABLE_NEXT) expect(reachable.filter((entry) => entry === next).length).toBeLessThanOrEqual(1);
-    expect(reachable.filter((entry) => !REACHABLE_NEXT.includes(entry)).sort()).toEqual([...REACHABLE].sort());
+    expect(reachable.sort()).toEqual([...REACHABLE].sort());
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 

@@ -17,6 +17,12 @@
 // fenced as untrusted data. Nothing is stored or sent here; the brief is computed when it is read.
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { crmFollowupDong } from './crm-followup.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+} from './injection-guards.ts';
 import { hasAddress, hasNumberWords } from './reminder.ts';
 
 export type MeetingBriefStepReason = 'no_activity' | 'past_close' | 'quote_unanswered' | 'quote_expiring';
@@ -187,6 +193,8 @@ const clean = (value: unknown): string => (typeof value === 'string' ? value : '
 
 /** The brief the model gave, or why there is none. Pure: the model call is the caller's. facts: the same facts the model was given. Nothing is cut or repaired: a brief that fails is no brief. */
 export function checkMeetingBrief(facts: MeetingBriefFacts, output: { summary?: string; points?: string[] } | null): MeetingBriefResult {
+  const rawTexts = [typeof output?.summary === 'string' ? output.summary : '', ...(Array.isArray(output?.points) ? output.points.filter((p): p is string => typeof p === 'string') : [])];
+  if (rawTexts.some((t) => hasStealthControls(t) || hasPromptMarkupLeak(t))) return { kind: 'none', code: 'LINK' };
   const summary = clean(output?.summary);
   const points = (Array.isArray(output?.points) ? output.points : []).map(clean);
   if (summary === '' || points.some((p) => p === '')) return { kind: 'none', code: 'EMPTY' };
@@ -204,7 +212,7 @@ export function checkMeetingBrief(facts: MeetingBriefFacts, output: { summary?: 
   // The facts' own figures are the business's; the customer's words give back only a small number or a phone number (a quantity, a size), never a price.
   if (texts.some((t) => draftFiguresOutside(t, trusted, facts.messages).length > 0 || hasNumberWords(rest(t)) || dayKeys(t).some((k) => !days.has(k)) || amountKeys(t).some((k) => !amounts.has(k)) || timeKeys(t).some((k) => !times.has(k)))) return { kind: 'none', code: 'FIGURES' };
   // Any address, on any domain (an email, "pay.example.cn", "name (at) host"), and any link or handle the facts do not hold.
-  if (texts.some((t) => hasAddress(rest(t)) || draftLinksOutside(t, trusted).length > 0)) return { kind: 'none', code: 'LINK' };
+  if (texts.some((t) => hasAddress(rest(t)) || draftLinksOutside(t, trusted).length > 0 || hasObfuscatedContactOrLink(rest(t), trusted) || hasAutonomousActionDirective(t))) return { kind: 'none', code: 'LINK' };
   const known = new Set([...trusted, ...nameTexts(facts), ...facts.messages].flatMap(wordsOf));
   if (texts.some((t) => inventsName(t, known))) return { kind: 'none', code: 'NAME' };
   return { kind: 'brief', brief: { summary, points } };

@@ -1,10 +1,10 @@
 name: release-branch
 
-# The web app ships with the backend release (#2261, docs/runbooks/split-app-api.md). Vercel's Production Branch is
+# The web app ships with the backend release (#2261, #3580, docs/runbooks/split-app-api.md). Vercel's Production Branch is
 # `release`, so app.<domain> is built from whatever commit this workflow points `release` at, and never from a plain
-# merge to main. It runs by hand (or from the operator's deploy pipeline, `gh workflow run release-branch.yml -f tag=v1.2.3`)
-# AFTER the backend runs that tag, so the app never goes live before its API; to roll back, run it again with the earlier
-# tag. The branch is only a pointer; nothing is committed to it.
+# merge to main. `.github/workflows/deploy.yml` dispatches it automatically on `main` after a successful `pilot` `v*`
+# tag deploy, and it also runs by hand (`gh workflow run release-branch.yml -f tag=v1.2.3`) for rollbacks or recovery.
+# The branch is only a pointer; nothing is committed to it.
 #
 # The file that runs is the one on main (a dispatch from another ref is refused below, and the `release` environment
 # should allow main only: docs/runbooks/split-app-api.md), so a tagged commit cannot edit the checks that gate it.

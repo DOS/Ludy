@@ -173,6 +173,27 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     expect(kept.rows[0]?.payload).toEqual({ keep: true });
   });
 
+  // The org export (#4533): the mail log is exported, but not the follow-up mails of a meeting (their payload holds the meeting's text, which an attendees-only meeting keeps out of the export).
+  it('leaves the follow-up mails out of the org export and keeps the mail of every other source', async () => {
+    const SECRET = `Bi-mat-cuoc-hop-${randomUUID()}`;
+    const m = await seedSent({ summary: SECRET, subject: `Cam on ${SECRET}` });
+    const OTHER_SUBJECT = `Nhac-thanh-toan-${randomUUID()}`;
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), $3, '{\"keep\":true}', '<export@y.test>', 'queued') RETURNING id",
+      [orgId, m, OTHER_SUBJECT],
+    )).rows[0]!.id;
+    // The follow-up mail of the meeting is there to be left out.
+    expect((await sqlAdmin<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup'", [orgId])).rows[0]?.n).not.toBe('0');
+    const lines: string[] = [];
+    await worker.stream('kernel.org.export.snapshot', { table: 'kernel.mail_message' }, { actor: SYSTEM, orgId }, async (raw) => {
+      lines.push(...(raw as { lines: string[] }).lines);
+    });
+    const rows = lines.map((l) => JSON.parse(l) as { id: string; source: string });
+    expect(rows.map((r) => r.id)).toContain(other);
+    expect(rows.filter((r) => r.source === 'meetings.followup')).toEqual([]);
+    expect(lines.join('\n')).not.toContain(SECRET);
+  });
+
   // The erasure of a mention (#3020, ADR-0047 point 7): kernel.personal_data.erase redacts the meeting's rows, and the copy in its follow-up mails goes with them.
   describe('kernel.personal_data.erase', () => {
     const MENTION = 'khach.hang@erase.test';
