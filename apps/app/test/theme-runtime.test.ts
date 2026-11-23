@@ -169,4 +169,51 @@ describe('theme-runtime synchronization', () => {
 
     stop();
   });
+
+  it('recovers via MutationObserver if <html> class drifts externally while not printing', async () => {
+    class FakeNode {}
+    let observerCallback: (() => void) | null = null;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    const takeRecords = vi.fn(() => []);
+    vi.stubGlobal('Node', FakeNode);
+    vi.stubGlobal(
+      'MutationObserver',
+      class {
+        constructor(cb: () => void) {
+          observerCallback = cb;
+        }
+        observe = observe;
+        disconnect = disconnect;
+        takeRecords = takeRecords;
+      },
+    );
+
+    const runtime = await load({ stored: 'light' });
+    Object.setPrototypeOf(root, FakeNode.prototype);
+    const tab = new EventTarget();
+    const stop = runtime.startThemeSync(tab as unknown as Window);
+    expect(observe).toHaveBeenCalledWith(root, { attributes: true, attributeFilter: ['class'] });
+    expect(root.classList.contains('dark')).toBe(false);
+
+    // External script toggles .dark on <html> while storage still holds 'light'.
+    root.classList.toggle('dark', true);
+    const triggerObserver = observerCallback as (() => void) | null;
+    triggerObserver?.();
+    expect(root.classList.contains('dark')).toBe(false);
+    expect(root.style.colorScheme).toBe('light');
+
+    // During printing, external removal of .dark is allowed until afterprint.
+    runtime.setThemeSetting('dark');
+    expect(takeRecords).toHaveBeenCalled();
+    tab.dispatchEvent(new Event('beforeprint'));
+    root.classList.toggle('dark', false);
+    triggerObserver?.();
+    expect(root.classList.contains('dark')).toBe(false);
+    tab.dispatchEvent(new Event('afterprint'));
+    expect(root.classList.contains('dark')).toBe(true);
+
+    stop();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
 });

@@ -11,6 +11,7 @@ let query: MediaQueryList | null = null;
 let applying = false;
 let printing = false;
 let stopCurrentSync: (() => void) | null = null;
+let activeObserver: MutationObserver | null = null;
 
 function localStorageOrNull(): Storage | null {
   try {
@@ -37,11 +38,14 @@ function systemQuery(): MediaQueryList | null {
 function apply(): void {
   if (typeof document === 'undefined') return;
   const dark = resolveTheme(current, systemQuery()?.matches ?? false) === 'dark';
+  const nextScheme = dark ? 'dark' : 'light';
   const root = document.documentElement;
+  if (root.classList?.contains?.('dark') === dark && root.style?.colorScheme === nextScheme) return;
   applying = true;
   try {
     root.classList?.toggle?.('dark', dark);
-    if (root.style) root.style.colorScheme = dark ? 'dark' : 'light';
+    if (root.style) root.style.colorScheme = nextScheme;
+    activeObserver?.takeRecords?.();
   } finally {
     applying = false;
   }
@@ -127,6 +131,7 @@ export function startThemeSync(target: Pick<Window, 'addEventListener' | 'remove
       if (applying || printing) return;
       syncThemeFromStorage();
     });
+    activeObserver = observer;
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   }
 
@@ -138,6 +143,7 @@ export function startThemeSync(target: Pick<Window, 'addEventListener' | 'remove
     target.removeEventListener('beforeprint', onBeforePrint);
     target.removeEventListener('afterprint', onAfterPrint);
     observer?.disconnect();
+    if (activeObserver === observer) activeObserver = null;
     if (stopCurrentSync === stop) stopCurrentSync = null;
   };
   stopCurrentSync = stop;

@@ -331,7 +331,9 @@ export function AccountPanel({
         </div>
       )}
       <div className="space-y-1.5">
-        <p className="px-1 text-xs font-medium text-muted-foreground">{t('org')}</p>
+        <p aria-hidden="true" className="px-1 text-xs font-medium text-muted-foreground">
+          {t('org')}
+        </p>
         <OrgMenu slug={slug} orgs={orgs} onNavigate={onNavigate} />
         {orgs.length > 1 && (
           <Link
@@ -358,8 +360,8 @@ export function AccountPanel({
         </div>
       </div>
       <div className="space-y-0.5 border-t pt-2">
-        <SupportLink className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8" />
-        <StatusLink className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8" />
+        <SupportLink className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent hover:text-link hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8" />
+        <StatusLink className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent hover:text-link hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8" />
         <button
           type="button"
           className="flex min-h-11 w-full items-center rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8"
@@ -419,7 +421,15 @@ export function AccountPopover({
             className="shrink-0 text-muted-foreground transition-transform group-data-popup-open/account:rotate-180 motion-reduce:transition-none"
           />
         </PopoverTrigger>
-        <PopoverContent container={host} side="top" align="start" sideOffset={8} className="w-72 p-3" data-testid="account-popover">
+        <PopoverContent
+          container={host}
+          side="top"
+          align="start"
+          sideOffset={8}
+          aria-label={t('account')}
+          className="w-72 p-3"
+          data-testid="account-popover"
+        >
           <AccountPanel
             slug={slug}
             orgs={orgs}
