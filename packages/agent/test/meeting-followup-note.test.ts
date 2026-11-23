@@ -159,10 +159,11 @@ describe('the contact and link shapes of #4553', () => {
       'a/x.com',
       'a_x.com',
       'abc . com',
+      '05/12/2026, 090_123_4567',
     ]) {
       expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body: `Liên hệ ${shape} nhé.` }), facts(`Liên hệ ${shape}.`))), shape).toBe('FOLLOWUP_NOTE_REFUSED');
     }
-    for (const fine of ['Hạn 28/11/2026 12 người', 'Từ 05 - 10 - 2026 đến 07 - 10 - 2026', 'Doanh thu 10000 - 20000', 'Ca 07.00 - 11.30']) {
+    for (const fine of ['Hạn 28/11/2026 12 người', 'Từ 05 - 10 - 2026 đến 07 - 10 - 2026', 'Doanh thu 10000 - 20000', 'Ca 07.00 - 11.30', 'Lô 01, 02, 03, 04, 05', 'Giao các ngày 05/12, 12/12, 19/12', 'Gói 100 - 200 - 300 nghìn', 'Xong . Ai làm tiếp?']) {
       expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body: `${fine} nhé.` }), facts(`${fine}.`))), fine).toBeNull();
     }
   });

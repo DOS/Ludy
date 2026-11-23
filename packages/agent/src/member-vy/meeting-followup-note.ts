@@ -128,7 +128,6 @@ const DASH_DATE = /^(?:\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?:0[1-9]
 const DOT_DATE = /^(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d{2}$/;
 // A hyphen with spaces around it, then a digit group: how a phone number is sometimes typed by hand (090 - 123 - 4567). The group is captured to see whether it holds a dot.
 const SPACED_DASH_DIGITS = /^[ \t]*-[ \t]*(\d+(?:\.\d+)*)/;
-// A dot, spaces, then a digit: a phone typed as "090. 123. 4567".
 // One dot or several, then a digit: the dot joins the digits on both sides of it (090.123.4567, 15.000.000).
 const DOTS_DIGIT = /^\.+\d/;
 // A dot, spaces, then a digit: a phone typed as "090. 123. 4567".
@@ -138,25 +137,32 @@ const UNSPACED_DASH = /\d-\d/;
 const SPACED_RUN_DIGITS_MIN = 9;
 // The dashes NFKC leaves alone (hyphen, non-breaking hyphen, figure dash, en dash, em dash, horizontal bar, minus sign) read as the hyphen they stand for (#4553).
 const OTHER_DASHES = /[\u2010-\u2015\u2212]/gu;
-// A run that opens like a phone number (0, 84 or +country digit) and goes on through groups of digits split by a hyphen, a slash, an underscore or a comma (with spaces around it), a
-// single line break, or spaces: 090/123/4567, 090_123_4567, 090,123,4567, 090-123 - 4567, 090 on one line and 123 4567 on the next.
-const PHONE_LEAD_RUN = /(?<![\d.])(?:\+[ \t]?\d|0|84)\d*(?:(?:[ \t]*[-/_,][ \t]*(?:\r?\n[ \t]*)?|[ \t]*\r?\n[ \t]*|[ \t]+)\d+)+/g;
-// A run that does not open like a phone number but is three or more short groups split by spaced hyphens: 90 - 123 - 4567, 415 - 555 - 2671. A range (two groups) is not one.
-const PHONE_LEADLESS_RUN = /(?<![\d.])\d{1,3}(?:[ \t]+-[ \t]+\d{1,4}){2,}(?!\d)/g;
-// A day that opens a run (28/11/2026, 05 - 10 - 2026, 2026-11-28) is a date followed by figures, not a contact.
-const DATE_START = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}[ \t]*[-/.][ \t]*\d{1,2}[ \t]*[-/.][ \t]*(?:19|20)\d{2}(?!\d))/;
+// A run that opens like a phone number (0, 84 or +country digit) and goes on through groups of two digits or more split by a hyphen, a slash or an underscore (spaces allowed around it),
+// a comma with no space after it, a single line break, or spaces: 090/123/4567, 090_123_4567, 090,123,4567, 090-123 - 4567, 090 on one line and 123 4567 on the next. A comma and a
+// space, and a group of one digit, are a list (01, 02, 03; 0/1/2), not a number. A run does not start in the middle of another (after a digit and a separator).
+const PHONE_LEAD_RUN = /(?<![\d.]|\d[ \t]*[-/_][ \t]*|\d,|\d[ \t]*\r?\n[ \t]*)(?:\+[ \t]?\d|0|84)\d*(?:(?:[ \t]*[-/_][ \t]*(?:\r?\n[ \t]*)?|,|[ \t]*\r?\n[ \t]*|[ \t]+)\d{2,})+/g;
+// A run that does not open like a phone number but is short groups split by spaced hyphens and ends in a group of four digits: 90 - 123 - 4567, 415 - 555 - 2671. A range, or tiers
+// of figures (100 - 200 - 300), are not one.
+const PHONE_LEADLESS_RUN = /(?<![\d.]|\d[ \t]*[-/_][ \t]*|\d,|\d[ \t]*\r?\n[ \t]*)\d{1,3}(?:[ \t]+-[ \t]+\d{1,4})+[ \t]+-[ \t]+\d{4}(?!\d)/g;
+// A day that opens a run (28/11/2026, 05 - 10 - 2026, 2026-11-28, or only a day and a month: 08/12) is a date. What follows it may still be a contact: see hasLoosePhone.
+const DATE_START = /^(?:\d{4}-\d{2}-\d{2}|(?:0?[1-9]|[12]\d|3[01])[ \t]*[-/.][ \t]*(?:0?[1-9]|1[0-2])(?:[ \t]*[-/.][ \t]*(?:19|20)\d{2})?(?!\d))/;
 
 // The phone shapes the run scan below does not join: other separators, a line break, a number typed without its leading 0. Nine digits or more, as a Vietnamese mobile has ten
 // (eleven with 84) and a time (0900 - 1700) or a day has eight. These only add refusals: the run scan still decides everything it decided before.
 function hasLoosePhone(normalized: string): boolean {
   for (const pattern of [PHONE_LEAD_RUN, PHONE_LEADLESS_RUN]) {
     for (const found of normalized.matchAll(pattern)) {
-      if (found[0].replace(/\D/gu, '').length >= SPACED_RUN_DIGITS_MIN && !DATE_START.test(found[0])) return true;
+      const date = DATE_START.exec(found[0]);
+      // A date opens the run: the date is not a contact, but what follows it may be (05/12/2026, 090_123_4567).
+      if (date !== null) {
+        if (hasLoosePhone(found[0].slice(date[0].length))) return true;
+        continue;
+      }
+      if (found[0].replace(/\D/gu, '').length >= SPACED_RUN_DIGITS_MIN) return true;
     }
   }
   return false;
 }
-
 // The same list as the contract's BARE_TLDS (meeting-followup.ts), 'test' included: a link the typed text is refused for is refused for the model's too (#4479).
 const BARE_TLDS = new Set([
   'com', 'net', 'org', 'vn', 'io', 'co', 'me', 'ly', 'app', 'info', 'biz', 'edu', 'gov', 'xyz', 'site', 'link', 'shop', 'online',
@@ -175,8 +181,8 @@ function trimToWord(token: string): string {
 // Any ASCII punctuation but the dot and the hyphen, and spaces, end a word: so does what is glued to a domain (a,123.com, a|x.com, a/x.com, a_x.com). Letters and digits of any
 // script stay in the word, so "chốt.Co" is one word with a non-ASCII letter and is not a domain.
 const WORD_BREAK = /[\s!-,/:-@[-`{-~]+/u;
-// Spaces around a dot between two ASCII words (abc . com) read as the dot they hide (#4553).
-const SPACED_DOT = /(?<=[A-Za-z0-9-])[ \t]+\.[ \t]+(?=[A-Za-z0-9-])/gu;
+// Spaces around a dot between two ASCII words (abc . com) read as the dot they hide (#4553). A capital after the dot is a new sentence ("Xong . Ai làm"), not a domain.
+const SPACED_DOT = /(?<=[A-Za-z0-9-])[ \t]+\.[ \t]+(?=[a-z0-9-])/gu;
 
 function hasBareDomainLink(text: string): boolean {
   if (hasBareLink(text)) return true;

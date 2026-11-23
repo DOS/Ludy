@@ -152,6 +152,10 @@ describe('the contact and link shapes of #4553', () => {
       'Số 090_123_4567',
       'Số 090,123,4567',
       'Số 090-123 - 4567',
+      // A date opens the run, a phone follows it: the date does not hide the phone.
+      'Họp 05/12/2026, 090_123_4567',
+      '05/12/2026 - 090/123/4567',
+      'Ngày 05/12/2026\n090 123\n4567',
     ]) {
       expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
     }
@@ -168,6 +172,15 @@ describe('the contact and link shapes of #4553', () => {
       'Mục 1, 2, 3, 4',
       'Họp 0900 - 1700',
       'Dòng 1\nDòng 2\nDòng 3',
+      // Lists and tiers: a comma and a space, day and month lists, three tiers of figures.
+      'Lô 01, 02, 03, 04, 05',
+      'Điểm: 0, 10, 20, 30, 40',
+      'Doanh số 845, 920, 1050 triệu',
+      'Giao hàng các ngày 05/12, 12/12, 19/12',
+      'Lịch 08/12 - 15/12 - 22/12',
+      'Phương án 0/1/2/3/4/5/6/7/8',
+      'Gói 100 - 200 - 300 nghìn',
+      '150 - 200 - 250 khách',
     ]) {
       expect(followupHasPhoneOrLongDigits(fine), fine).toBe(false);
     }
@@ -178,7 +191,7 @@ describe('the contact and link shapes of #4553', () => {
     for (const glued of ['a|x.com', 'a/x.com', 'a*x.com', 'a&x.com', 'a=x.com', 'a~x.com', 'a:x.com', 'a#x.com', 'a+x.com', 'a%x.com', 'a_x.com', 'abc . com', `abc ${ideographic} com`]) {
       expect(followupHasBareLink(`Vào ${glued} nhé`), glued).toBe(true);
     }
-    for (const fine of ['chốt.Co thể', 'Họp lúc 9.30, tại phòng 5', 'và/hoặc đi', 'Giá 1,5 triệu và 2.5', 'Gửi báo giá, xong thì chốt', 'đi.Me', 'Giá 2.5,vn']) {
+    for (const fine of ['chốt.Co thể', 'Họp lúc 9.30, tại phòng 5', 'và/hoặc đi', 'Giá 1,5 triệu và 2.5', 'Gửi báo giá, xong thì chốt', 'đi.Me', 'Giá 2.5,vn', 'Xong . Ai làm tiếp?', 'Hàng về 3 . Vn sẽ xác nhận', 'BTC . VN']) {
       expect(followupHasBareLink(fine), fine).toBe(false);
     }
   });
