@@ -40,7 +40,7 @@ export const QUEUES = {
   socialEdit: 'social-edit',
   // Created by the Social push subscription migration (20261029215000).
   socialPush: 'social-push',
-  // Created by the generic push subscription migration (20270317150000): the push job of a kernel notification (#3736).
+  // Created by the generic push subscription migration (20270317160000): the push job of a kernel notification (#3736).
   kernelPush: 'kernel-push',
   // Created by the team chat alert migration (20261023143000).
   socialChatAlert: 'social-chat-alert',
