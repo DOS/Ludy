@@ -373,6 +373,8 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'field',
       'member_signature',
       'org_stamp',
+      'playbook_check',
+      'playbook_rule',
       'signer',
       'signing_event',
       'signing_otp',

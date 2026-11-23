@@ -2415,3 +2415,157 @@ export interface SignHookTargetRow {
   sealed: { keyId: string; envelope: string };
   previous: { keyId: string; envelope: string } | null;
 }
+
+// ---------------------------------------------------------------------------
+// Slice 5d (#4442): SME contract playbook checklist and cited redline suggestions
+// ---------------------------------------------------------------------------
+
+export const SIGN_PLAYBOOK_SEVERITIES = ['info', 'warn', 'critical'] as const;
+export const zSignPlaybookSeverity = z.enum(SIGN_PLAYBOOK_SEVERITIES);
+export type SignPlaybookSeverityContract = z.infer<typeof zSignPlaybookSeverity>;
+
+export const SIGN_PLAYBOOK_MODES = ['ai', 'deterministic', 'manual'] as const;
+export const zSignPlaybookMode = z.enum(SIGN_PLAYBOOK_MODES);
+export type SignPlaybookModeContract = z.infer<typeof zSignPlaybookMode>;
+
+export const SIGN_PLAYBOOK_VERDICTS = ['pass', 'warn', 'fail', 'unknown'] as const;
+export const zSignPlaybookVerdict = z.enum(SIGN_PLAYBOOK_VERDICTS);
+export type SignPlaybookVerdictContract = z.infer<typeof zSignPlaybookVerdict>;
+
+export const SIGN_PLAYBOOK_MAX_TOTAL_CHARS = 750_000;
+
+export const SIGN_PLAYBOOK_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'not_ready',
+  'no_text',
+  'no_rules',
+  'empty',
+  'failed',
+] as const;
+export const zSignPlaybookAiOutcome = z.enum(SIGN_PLAYBOOK_AI_OUTCOMES);
+export type SignPlaybookAiOutcome = z.infer<typeof zSignPlaybookAiOutcome>;
+
+export const zSignPlaybookRuleRecord = z.strictObject({
+  id: zId,
+  title: z.string(),
+  guidance: z.string(),
+  severity: zSignPlaybookSeverity,
+  matchKeywords: z.array(z.string()),
+  active: z.boolean(),
+  isDefault: z.boolean(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignPlaybookRuleRecord = z.infer<typeof zSignPlaybookRuleRecord>;
+
+export const zSignPlaybookRulesListInput = z.strictObject({
+  activeOnly: z.boolean().optional(),
+});
+export type SignPlaybookRulesListInput = z.infer<typeof zSignPlaybookRulesListInput>;
+
+export const zSignPlaybookRulesListResult = z.strictObject({
+  items: z.array(zSignPlaybookRuleRecord),
+  canManage: z.boolean(),
+  isSeeded: z.boolean(),
+});
+export type SignPlaybookRulesListResult = z.infer<typeof zSignPlaybookRulesListResult>;
+
+export const zSignPlaybookRuleUpsertInput = z.strictObject({
+  ruleId: zId.optional(),
+  title: z.string().trim().min(1).max(200),
+  guidance: z.string().trim().min(1).max(2000),
+  severity: zSignPlaybookSeverity.default('warn'),
+  matchKeywords: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
+  active: z.boolean().default(true),
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookRuleUpsertInput = z.infer<typeof zSignPlaybookRuleUpsertInput>;
+
+export const zSignPlaybookRuleDeleteInput = z.strictObject({
+  ruleId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookRuleDeleteInput = z.infer<typeof zSignPlaybookRuleDeleteInput>;
+
+export const zSignPlaybookRuleDeleteResult = z.strictObject({
+  deleted: z.boolean(),
+});
+export type SignPlaybookRuleDeleteResult = z.infer<typeof zSignPlaybookRuleDeleteResult>;
+
+export const zSignPlaybookSeedDefaultsInput = z.strictObject({
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookSeedDefaultsInput = z.infer<typeof zSignPlaybookSeedDefaultsInput>;
+
+export const zSignPlaybookFinding = z.strictObject({
+  ruleId: zId,
+  ruleTitle: z.string(),
+  severity: zSignPlaybookSeverity,
+  verdict: zSignPlaybookVerdict,
+  rationale: z.string(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  quoteExcerpt: z.string().nullable(),
+  suggestedRedline: z.string().nullable(),
+  proposedByAi: z.boolean(),
+  manualNote: z.string().nullable(),
+  overriddenBy: zId.nullable(),
+  overriddenAt: z.string().nullable(),
+});
+export type SignPlaybookFindingContract = z.infer<typeof zSignPlaybookFinding>;
+
+export const zSignEnvelopePlaybookCheckRecord = z.strictObject({
+  id: zId,
+  envelopeId: zId,
+  sourceSha256: z.string(),
+  revision: z.string(),
+  isStale: z.boolean(),
+  mode: zSignPlaybookMode,
+  findings: z.array(zSignPlaybookFinding),
+  promptVersion: z.string().nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopePlaybookCheckRecord = z.infer<typeof zSignEnvelopePlaybookCheckRecord>;
+
+export const zSignPlaybookGetResult = z.strictObject({
+  check: zSignEnvelopePlaybookCheckRecord.nullable(),
+  canEdit: z.boolean(),
+  activeRulesCount: z.number().int().min(0),
+});
+export type SignPlaybookGetResult = z.infer<typeof zSignPlaybookGetResult>;
+
+export const zSignPlaybookEvaluateInput = z.strictObject({
+  envelopeId: zId,
+  useAi: z.boolean().default(true),
+  pages: z
+    .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
+    .max(SIGN_MAX_PAGES)
+    .refine(
+      (pages) => pages.reduce((sum, item) => sum + item.text.length, 0) <= SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
+      `Total extracted text across all pages must not exceed ${SIGN_PLAYBOOK_MAX_TOTAL_CHARS} characters`,
+    )
+    .optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookEvaluateInput = z.infer<typeof zSignPlaybookEvaluateInput>;
+
+export const zSignPlaybookEvaluateResult = z.strictObject({
+  ai: zSignPlaybookAiOutcome,
+  check: zSignEnvelopePlaybookCheckRecord.nullable(),
+});
+export type SignPlaybookEvaluateResult = z.infer<typeof zSignPlaybookEvaluateResult>;
+
+export const zSignPlaybookOverrideFindingInput = z.strictObject({
+  envelopeId: zId,
+  ruleId: zId,
+  checkRevision: z.string().trim().min(1).max(128),
+  verdict: zSignPlaybookVerdict,
+  manualNote: z.string().trim().max(500).nullable().optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookOverrideFindingInput = z.infer<typeof zSignPlaybookOverrideFindingInput>;

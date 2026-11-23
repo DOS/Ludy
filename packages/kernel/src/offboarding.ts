@@ -323,6 +323,11 @@ export const EXPORT_TABLES = {
     omit: ['idempotency_key'],
   },
   'sign.org_stamp': { from: 'crove_sign.org_stamp', omit: [] },
+  'sign.playbook_rule': { from: 'crove_sign.playbook_rule', omit: [] },
+  'sign.playbook_check': {
+    from: '(SELECT pc.* FROM crove_sign.playbook_check pc WHERE crove_sign.is_exportable_envelope_id(pc.org_id, pc.envelope_id))',
+    omit: [],
+  },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;

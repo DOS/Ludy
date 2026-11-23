@@ -1622,6 +1622,10 @@ export const SIGN_CA_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached']
 export type SignCaSubFilter = (typeof SIGN_CA_SUBFILTERS)[number];
 export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
 export type SignObligationStatus = (typeof SIGN_OBLIGATION_STATUSES)[number];
+export const SIGN_PLAYBOOK_SEVERITIES = ['info', 'warn', 'critical'] as const;
+export type SignPlaybookSeverity = (typeof SIGN_PLAYBOOK_SEVERITIES)[number];
+export const SIGN_PLAYBOOK_MODES = ['ai', 'deterministic', 'manual'] as const;
+export type SignPlaybookMode = (typeof SIGN_PLAYBOOK_MODES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1696,6 +1700,18 @@ export type SignOrgStampTable = Refine<
     status: Generated<SignOrgStampStatus>;
   }
 >;
+export type SignPlaybookCheckTable = Refine<
+  G.SignPlaybookCheckTable,
+  {
+    mode: Generated<SignPlaybookMode>;
+  }
+>;
+export type SignPlaybookRuleTable = Refine<
+  G.SignPlaybookRuleTable,
+  {
+    severity: Generated<SignPlaybookSeverity>;
+  }
+>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1761,6 +1777,8 @@ type Refined = Tables<{
   'crove_sign.field': SignFieldTable;
   'crove_sign.member_signature': SignMemberSignatureTable;
   'crove_sign.org_stamp': SignOrgStampTable;
+  'crove_sign.playbook_check': SignPlaybookCheckTable;
+  'crove_sign.playbook_rule': SignPlaybookRuleTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
   'crove_sign.template': SignTemplateTable;
