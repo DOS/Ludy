@@ -15,21 +15,49 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   await openSettingsTab(page, 'apps');
 
   const social = page.getByTestId('org-app-social');
+  const socialSwitch = social.getByRole('switch', { name: 'Bật hoặc tắt Hộp thư & Bài đăng' });
+  const financeSwitch = page.getByTestId('org-app-finance').getByRole('switch', { name: 'Bật hoặc tắt Tài chính' });
   await expect(social).toBeVisible();
-  await expect(social.getByRole('checkbox')).toBeChecked();
+  await expect(socialSwitch).toBeChecked();
+  await expect(financeSwitch).toBeChecked();
 
-  // Turning off asks first and says what is kept.
-  await social.getByRole('checkbox').click();
+  // Separated app blocks, aligned left text edge, and vertically aligned right-column switches (#4508).
+  const teamworkGroupBox = await page.getByTestId('org-app-group-teamwork').boundingBox();
+  const financeRowBox = await page.getByTestId('org-app-finance').boundingBox();
+  const financeLabelBox = await page.getByTestId('org-app-finance').locator(':scope > span').boundingBox();
+  const socialLabelBox = await social.locator(':scope > span').boundingBox();
+  const financeSwitchBox = await financeSwitch.boundingBox();
+  const socialSwitchBox = await socialSwitch.boundingBox();
+  expect(teamworkGroupBox && financeRowBox && financeRowBox.y > teamworkGroupBox.y + teamworkGroupBox.height).toBe(true);
+  expect(Math.abs((financeLabelBox?.x ?? 0) - (socialLabelBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((financeSwitchBox?.x ?? 0) - (socialSwitchBox?.x ?? 0))).toBeLessThanOrEqual(1);
+
+  // Turning off via keyboard asks first and says what is kept.
+  await socialSwitch.focus();
+  await page.keyboard.press('Space');
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Tắt Hộp thư & Bài đăng?')).toBeVisible();
   await expect(dialog.getByText('Dữ liệu được giữ nguyên')).toBeVisible();
   await dialog.getByRole('button', { name: 'Giữ nguyên' }).click();
-  await expect(social.getByRole('checkbox')).toBeChecked();
+  await expect(socialSwitch).toBeChecked();
 
-  await social.getByRole('checkbox').click();
+  await socialSwitch.click();
   await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(social.getByText('Đã tắt')).toBeVisible();
-  await expect(social.getByRole('checkbox')).not.toBeChecked();
+  await expect(socialSwitch).not.toBeChecked();
+
+  // The status badge sits to the left of the switch without shifting the switch column.
+  const socialSwitchOffBox = await socialSwitch.boundingBox();
+  expect(Math.abs((financeSwitchBox?.x ?? 0) - (socialSwitchOffBox?.x ?? 0))).toBeLessThanOrEqual(1);
+
+  // On a phone viewport, switches meet the 44px touch target without horizontal overflow.
+  const desktopViewport = page.viewportSize();
+  await page.setViewportSize({ width: 360, height: 780 });
+  const mobileSwitchBox = await socialSwitch.boundingBox();
+  expect(mobileSwitchBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(mobileSwitchBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  if (desktopViewport) await page.setViewportSize(desktopViewport);
 
   // The screen does not open for anyone in the company: the address goes to the overview.
   await page.goto(`/o/${slug}/social`);
@@ -37,8 +65,8 @@ test('an owner switches Social off and on again from Settings', async ({ page })
 
   // Back on: everything is where it was.
   await page.goto(`/o/${slug}/settings/apps`);
-  await page.getByTestId('org-app-social').getByRole('checkbox').click();
-  await expect(page.getByTestId('org-app-social').getByRole('checkbox')).toBeChecked();
+  await page.getByTestId('org-app-social').getByRole('switch').click();
+  await expect(page.getByTestId('org-app-social').getByRole('switch')).toBeChecked();
   await page.goto(`/o/${slug}/social`);
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social`));
   // The screen is there, not a loading or an error state: Engage is back in the menu and the Social page shows its own subtitle.
@@ -57,7 +85,7 @@ test('an open screen of an app goes to the overview when the owner switches the 
   await up;
 
   await page.goto(`/o/${slug}/settings/apps`);
-  await page.getByTestId('org-app-social').getByRole('checkbox').click();
+  await page.getByTestId('org-app-social').getByRole('switch').click();
   await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(page.getByTestId('org-app-social').getByText('Đã tắt')).toBeVisible();
 
@@ -79,7 +107,7 @@ test('the Settings of another open tab drops the cards of an app that was switch
   await up;
 
   await page.goto(`/o/${slug}/settings/apps`);
-  await page.getByTestId('org-app-finance').getByRole('checkbox').click();
+  await page.getByTestId('org-app-finance').getByRole('switch').click();
   await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(page.getByTestId('org-app-finance').getByText('Đã tắt')).toBeVisible();
 
