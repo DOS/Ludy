@@ -1,7 +1,7 @@
 ---
 name: "Ludy"
-version: "4.3"
-date: "2026-11-03"
+version: "4.4"
+date: "2026-11-24"
 # Machine-readable tokens of the design system, for design tools and coding agents. Everything outside `rules` is copied
 # from the CSS files and checked against them by tools/test/design-tokens.test.ts, so it cannot drift: when a value here
 # and the CSS disagree, the CSS is right and this block is fixed. `rules` holds the values that DESIGN.md decides in prose
@@ -348,9 +348,11 @@ rules:
 
 # Ludy design system and UI/UX guidelines
 
-Version 4.3 (2026-11-03). Applies to the marketing site (`apps/web`, ludy.vn), the web app (`apps/app`) and the component package (`packages/ui`). Written for engineers, designers and coding agents. The machine-readable tokens are the block at the top of this file; the research behind each rule, with sources and measurements, is summarized in [docs/design/ui-ux-research-2026-10.vi.html](docs/design/ui-ux-research-2026-10.vi.html).
+Version 4.4 (2026-11-24). Applies to the marketing site (`apps/web`, ludy.vn), the web app (`apps/app`) and the component package (`packages/ui`). Written for engineers, designers and coding agents. The machine-readable tokens are the block at the top of this file; the research behind each rule, with sources and measurements, is summarized in [docs/design/ui-ux-research-2026-10.vi.html](docs/design/ui-ux-research-2026-10.vi.html).
 
 ## What changed since 3.0 (2026-10-18)
+
+- **Shell chrome, `SegmentedControl`, and AI coworker governance (4.4, [#4500](https://github.com/DOS/Ludy/issues/4500), [#4502](https://github.com/DOS/Ludy/issues/4502)).** Added §3.8 (collapsible no-app rail, bottom `AccountPopover`, and `OrgMenu` placement), §4.6 (`SegmentedControl`, `<NativeSelect>` ban on chrome/view toggles, and the `theme-runtime.ts` DOM/storage sync invariant), §5.6 (unified AI coworker attribution and `ProposalSurface` framing), and §10 chrome anti-patterns.
 
 - **AI coworkers** (4.2, [#2409](https://github.com/DOS/Ludy/issues/2409), [#2440](https://github.com/DOS/Ludy/issues/2440), owner decisions 2026-11-02 and 2026-11-03, logged on [#1210](https://github.com/DOS/Ludy/issues/1210)): the AI is a coworker, never an "assistant"; a general manager coordinates across every app and each area has its own coworker, with a default name an org can rename. Section 1.1 has the roster and the rule; the home agents section follows it. The names live in two constants only (`apps/web/src/content/roster.ts`, `packages/kernel-contract/src/coworkers.ts`), keyed by what each coworker covers, so a rename is a one-line change in each. **Ludy Engage** (`engage`) hosts the `social` ("Hộp thư & Bài đăng" / "Inbox & Posts"), `crm`, and `ads` modules (shell label "Engage"); code identifiers keep `social`.
 - **Names and logo.** Ludy is the suite and Vy the AI general manager (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Crove ring mark and the three-tile mark with a spark (Ô tia, [#2052](https://github.com/DOS/Ludy/issues/2052)) are gone.
@@ -388,6 +390,7 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 | decision D5 | Social is not paused: the owner answered "no for Social" on 2026-10-17 (backlog review, D5) and confirmed on 2026-11-08 that no pause was ever decided. The 2026-11-01 "Mở lại, làm FB + Zalo" ([#236](https://github.com/DOS/Ludy/issues/236)) set the order of work (the Facebook Page and Zalo OA channels first), not a reopening. | 4.1 |
 | 2026-11-17 | Settings "Ứng dụng" ([#3312](https://github.com/DOS/Ludy/issues/3312), [ADR-0053](docs/adr/0053-per-org-app-enablement.md)): one switch per app the build ships, every app on with no setup, in a card of Settings that every member sees and only an owner or admin can change. An app that is off shows why ("Đã tắt", or "Chưa có trong gói" with no working switch); turning one off asks first, says that the data stays and what pauses (connections, public pages), and an app that is busy (an open recording) answers with its own message. The menus, the screens and every app-dependent part of a screen follow the org's own apps, not the deployment's list; an off app's screen opened by address goes to the overview. No AI takes part in this screen: every change is a person's, and Vy only stops mentioning an app that is off. | 1, 3.4 |
 | 2026-11-18 | Owner decision ([#3796](https://github.com/DOS/Ludy/issues/3796)): standardize the four-tier naming hierarchy across code, contracts and UI: **Suite** (Ludy), **App / Ứng dụng** (`teamwork`, `finance`, `engage`, `hr`, `sign`, `ai`), **Feature Group / Nhóm tính năng** (sidebar groups inside an App), and **Module / Phân hệ** (`kernel`, `finance`, `social`, `ads`, `crm`, `notes`, `hr`, `meetings`, `projects`, `sign`). Settings **Ứng dụng & Phân hệ** groups toggleable modules under their parent App and uses unified `modules.*` labels (`social` displays as "Hộp thư & Bài đăng" / "Inbox & Posts", never "Social"). | 1.1, 3.4 |
+| 2026-11-23 | Owner decisions ([#4500](https://github.com/DOS/Ludy/issues/4500), [#4502](https://github.com/DOS/Ludy/issues/4502), logged on [#1210](https://github.com/DOS/Ludy/issues/1210#issuecomment-7103259234)): move `OrgMenu` into the bottom `AccountPopover`, replace `<details>` and `<NativeSelect>` chrome toggles with `SegmentedControl` (icon Theme toggle and `VI`/`EN` Language toggle), collapse the empty `224px` secondary panel on `app === null` routes (with `[` rail collapse), unify AI coworker attribution and `ProposalSurface` framing, and enforce shell-chrome anti-patterns. | 3.8, 4.6, 5.6, 10 |
 
 The visual direction in one line: the brand violet is the single, restrained accent, and teal marks done and approved states (`ok` on the marketing site, `success` in `packages/ui`); controls use a 6px radius; the marketing site implements it in `apps/web` (tokens in `apps/web/src/app/globals.css`) and the web app's `packages/ui` tokens use the same values (3.1), with the `proposal` token for AI proposals nobody has approved yet.
 
@@ -560,6 +563,12 @@ Never more than 12px on a container, never pill on a primary action. Radius foll
 - `lucide-react`, stroke 1.5, 16px in dense UI and 20px elsewhere, colored with `currentColor`. The default is set once, not per icon: `<IconDefaults>` (`packages/ui/src/components/icon-defaults.tsx`) wraps the app's root, and one stylesheet rule does the same on the marketing site, whose sections ship no client JavaScript. Spinners and check marks are the exceptions: they draw heavier (2 to 3) so they stay legible when small, and name their width themselves (never 2 on the marketing site, where the rule would turn it into 1.5). `packages/ui/test/icon-stroke.test.ts` and `apps/web/test/icon-stroke.test.ts` hold both.
 - An icon sits beside its label. No icons inside colored rounded tiles above headings. No emoji as icons.
 
+### 3.8 App shell, sidebar and workspace chrome
+
+- **Collapsible two-zone desktop shell:** Left primary rail (`64px`, `w-16`) holds `Tổng quan`, active Apps, Notifications Bell, and `Settings`. The secondary menu panel (`224px`) renders only when the active route owns a menu (an App or `Settings` per [#4499](https://github.com/DOS/Ludy/issues/4499)) and can be collapsed with `[` on desktop (`>= md`). When `app === null` (`Overview`, `Notifications`, `Audit`, `Personal Data`), never render an empty `224px` column; collapse cleanly to the `64px` rail (with the `⌘K` search button and `AccountPopover` avatar trigger in the rail foot).
+- **Workspace / Org switcher placement:** `OrgMenu` belongs inside the bottom `AccountPopover` (and `/clients`), never pinned at the top of the sidebar above navigation. Keep subtle active-org context visible on the bottom `AccountPopover` trigger (and phone header) so multi-org users always know which organization is active; switching orgs or adding a client org takes one click inside `AccountPopover` or `⌘K`. `EntitySwitcher` (for multi-legal-entity accounting) renders contextually on Finance and Settings entity routes when `entities.length > 1`.
+- **User / Account Popover (`AccountPopover`):** Built with `@ludy/ui` `Popover` (or `DropdownMenu`), never raw HTML `<details>`/`<summary>`. Contains: (a) user identity and active organization switcher (`OrgMenu`, the multi-org `/clients` link when `orgs.length > 1`, and `Add organization`), (b) inline Theme segmented icon toggle and Language segmented toggle, (c) Help (`Góp ý / Hỗ trợ`) and System Status links, and (d) Sign out. Inside the mobile `NavDrawer` (`<dialog>`), portal `PopoverContent` into the drawer container so the browser's top layer never leaves it inert.
+
 ## 4. Components (`packages/ui`)
 
 Components come from shadcn (base-nova style on Base UI) and are themed only through tokens. Add new ones with `pnpm dlx shadcn@latest add <name>` in `packages/ui`.
@@ -597,6 +606,12 @@ Components come from shadcn (base-nova style on Base UI) and are themed only thr
 - Dialog for decisions that block (approve with step-up, destructive confirm). Sheet for side detail on narrow screens.
 - `Sheet` (`packages/ui/src/components/sheet.tsx`) is the panel at the right edge for adding or reading one record without leaving the list (adding a contact or a company, #3586): full screen on a phone, a 28rem column from `sm` up, a fixed header (`SheetHeader`, title and a short line), a scrolling `SheetBody`, a fixed `SheetFooter` that keeps Save in view, and a close button whose name the caller gives. Esc, the close button and the backdrop cancel; focus moves in and returns to the trigger. Fields follow 4.2: the ones used most first, the rest folded in a "Thông tin thêm" section. A form in a panel goes through `FormPanel` (`apps/app/src/components/form-panel.tsx`): Cmd or Ctrl plus Enter saves from any field, and typed input is not dropped without asking (Esc or the close button show "Tiếp tục nhập" or "Bỏ thay đổi"; a click on the dimmed page never closes a form). Tasks create and edit use it (#3606): the list is the first thing on the screen, "Thêm việc" asks for the title first, and a title an open task already has shows "Đã có việc này" with a link. Popover (`packages/ui/src/components/popover.tsx`, #3597) for small pickers and a list's filters: one button that shows how many are on, a panel of fields under it, Esc or a click outside closes it and focus returns to the button (Team tasks: status, assignee, due, origin and sort; the search box stays in view). Toast for results, with an undo where the action allows it.
 - Focus moves into the overlay and returns to the trigger on close. Overlays never cover the focused element (WCAG 2.4.11).
+
+### 4.6 Chrome and utility controls (`SegmentedControl`)
+
+- `@ludy/ui` `SegmentedControl` (`packages/ui/src/components/segmented-control.tsx`, `role="radiogroup"` with `role="radio"` items and `aria-checked`, 28px to 32px desktop height, `max-md:min-h-11` and `max-md:min-w-11` mobile hit targets): crisp pill/button group with `bg-muted` track and `bg-background text-foreground shadow-xs` active thumb, supporting arrow-key roving focus (`Home`, `End`, left/right/up/down).
+- **Rule:** Every 2-to-4 option chrome or view preference (`Theme`: Light `Sun` / Dark `Moon` / System `Monitor`; `Language`: `VI` / `EN`; `View`: Board / List; `Density`: Compact / Comfortable) MUST use `SegmentedControl`, never `<NativeSelect>` (`<select>`). Icon-only segment items carry both `aria-label` and a tooltip (`title`).
+- **Theme sync invariant:** `apps/app/src/lib/theme-runtime.ts` must keep `<html>.classList.contains('dark')`, `root.style.colorScheme`, `localStorage('ludy-theme')`, and React `useSyncExternalStore` strictly synchronized (handling `event.key === null` storage clears, `storageArea` checks, legacy key events, `focus`/`pageshow` re-sync, external `<html>.classList` drift when not printing, and re-syncing on `startThemeSync()`).
 
 ## 5. Interaction patterns
 
@@ -637,6 +652,11 @@ Approve, edit and reject have equal visual access (reject is not hidden in a men
 - Money: `32.832.000 ₫` in Vietnamese (`vi-VN`), `₫32,832,000` in English (`en-GB`). Never rounded to whole đồng when the ledger holds decimals. Format through `apps/app/src/lib/format.ts` from decimal strings, never JS number arithmetic.
 - Dates: `dd/mm/yyyy`, times 24-hour (`16:05`). Relative time ("2 phút trước") only for activity feeds, with the absolute time in a tooltip.
 - Tax and document codes keep their official formatting (MST, ký hiệu `1C26TPT`, số `00001284`).
+
+### 5.6 AI coworker presence and attribution
+
+- Unify all non-inbox AI surfaces (`TodayBrief`, `TodayWeekly`, `DraftPanel`, `NoteVyPanel`, `MyWorkVyPlannerPanel`, `NotesVyOrganizerPanel`, `VyClausePanel`, `FinanceOverview` explanation) on one consistent `<CoworkerAttribution>` header (teal-key/avatar mark, coworker name from 1.1 such as Vy/Ly/Dy/Uy, and plain-language provenance) plus a `<ProposalSurface>` dashed container (`border-dashed border-proposal/60`) whenever content is unapproved or AI-drafted.
+- Ambient AI slots silently omit or fall back to deterministic copy when AI is off; on-demand AI triggers keep core workflows usable without AI.
 
 ## 6. Marketing site (`apps/web`)
 
@@ -747,6 +767,12 @@ SEO trade-off: with one URL per page, search engines see one language, Vietnames
 - Heavy UI kits (Material UI, Ant Design). Build on `@ludy/ui`.
 - A claim on a marketing page with no merged PR behind it, or a planned feature named outside the "coming soon" strip.
 - Shipping a screen that has not been checked at 360px, in both themes, and with the keyboard.
+- Raw HTML `<details>`/`<summary>` menus in persistent navigation chrome.
+- `<NativeSelect>` (`<select>`) for 2-to-4 choice shell or view toggles (Theme, Language, Board/List).
+- Empty secondary sidebar panels on `app === null` routes (`Overview`, `Notifications`, `Audit`, `Personal Data`).
+- Stacking operational alert, intake, or reconciliation cards above primary list tabs (`InboxPage`).
+- Multi-word Vietnamese `uppercase` headings (more than two words).
+- Colored rounded icon tiles above headings on `apps/web` (`AppCards`, `Story`).
 
 ## 11. References
 

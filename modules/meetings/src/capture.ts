@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // One meeting, one live capture (ADR-0055 slice 1, issue #4123). When a client starts to record a call (the browser extension, or the app's recorder), meetings.meeting.create opens a capture here, in the same
-// transaction as the meeting, and a second open capture of the same call is refused: 409 CAPTURE_ALREADY_RUNNING, saying which kind of client holds the call and since when, never a person and never the other
+// transaction as the meeting, and a second open capture of the same call is refused: 409 CAPTURE_ALREADY_RUNNING, saying to an attendee which kind of client holds the call and since when (to anyone else, nothing more than the refusal), never a person and never the other
 // meeting, and the refusal rolls the meeting back, so a refused start leaves nothing. "The same call" is the member's own calendar event or a meeting key (a hash of the org, the platform and the platform's
 // meeting id, read from a join address that is never stored); a capture that names neither is recorded and conflicts with nothing. The rule lives in the database (ludy_meetings.capture_open and its unique indexes over open rows): code
 // here reads what the client says of its call, asks the definer, and turns its answer into the refusal.
@@ -37,13 +37,15 @@ export function captureKeyOf(orgId: string, joinUrl: string): string | null {
 }
 
 /**
- * Opens the capture of a meeting the caller has just made, or refuses with CAPTURE_ALREADY_RUNNING (409, details {kind, since}) when the call is already held; the command's transaction then rolls back,
+ * Opens the capture of a meeting the caller has just made, or refuses with CAPTURE_ALREADY_RUNNING (409, details {kind, since} for an attendee only) when the call is already held; the command's transaction then rolls back,
  * the meeting row included. `start` is what the client said of the call; an extension token is a capture even when it said nothing.
  */
 export async function openCapture(ctx: CommandContext, meetingId: string, start: CaptureStart | undefined): Promise<CaptureKind> {
   const kind = captureKindOf(ctx);
   let joinUrl = start?.joinUrl ?? null;
   let agendaId: string | null = null;
+  // The caller's own calendar event for this call, if they named one: the proof that they are an attendee (#4538).
+  let eventKey: string | null = null;
   if (start?.agendaId !== undefined) {
     // The member's own event only (their row security shows no other); an id that is not theirs, or is gone, is left out rather than refused.
     const { rows } = await sql<{ id: string; join_url: string | null }>`
@@ -51,6 +53,7 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
     const event = rows[0];
     if (event) {
       agendaId = event.id;
+      eventKey = event.join_url === null ? null : captureKeyOf(ctx.orgId, event.join_url);
       // The call's address is also read from the event when the client gave none, or one this cannot read.
       if ((joinUrl === null || captureCallOf(joinUrl) === null) && event.join_url !== null) joinUrl = event.join_url;
     }
@@ -60,7 +63,10 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
     SELECT kind, since FROM ludy_meetings.capture_open(${meetingId}::uuid, ${kind}::text, ${agendaId}::uuid, ${key}::text)`.execute(ctx.trx);
   const holder = held[0];
   if (holder) {
-    const details: CaptureRunning = { kind: holder.kind, since: new Date(holder.since).toISOString() };
+    // Who holds the call, and since when, is told to an attendee only: a caller with their own calendar event for this very call (its address gives the same key, or the call is known by the event alone).
+    // A member who merely knows the join address gets the same 409 without the details, so it cannot be used to learn that someone in the org is recording that call (#4538).
+    const attendee = agendaId !== null && (key === null || eventKey === key);
+    const details: CaptureRunning | undefined = attendee ? { kind: holder.kind, since: new Date(holder.since).toISOString() } : undefined;
     throw new DomainError('CAPTURE_ALREADY_RUNNING', 409, 'This meeting is already being recorded', details);
   }
   return kind;

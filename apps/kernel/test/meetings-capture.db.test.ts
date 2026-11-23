@@ -165,7 +165,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     expect(audit).not.toContain(code);
   });
 
-  it('a second capture of the same call is refused, in any spelling of its address, by anyone in the org: the kind and the time, no person, and no meeting left behind', async () => {
+  it('a second capture of the same call is refused, in any spelling of its address, by anyone in the org: the kind and the time only to an attendee, no person, and no meeting left behind', async () => {
     const code = meet();
     const first = await create(app(users.m1), orgA, { joinUrl: meetUrl(code) });
     const [row] = await sessionsOf(first);
@@ -176,11 +176,24 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
       const error = await refusal(attempt());
       expect(error.code).toBe('CAPTURE_ALREADY_RUNNING');
       expect(error.status).toBe(409);
-      expect(error.details).toEqual({ kind: 'app', since: new Date(since).toISOString() });
-      // The refusal names no person, no meeting and no address, in its message, its details or anywhere it may be shown.
+      // A member who only knows the join address is refused the same way but is not told who holds the call or since when (#4538).
+      expect(error.details).toBeUndefined();
       const said = JSON.stringify({ message: error.message, details: error.details });
-      for (const secret of [users.m1, users.m2, first, code, 'meet.google.com', row!.meeting_key as string]) expect(said).not.toContain(secret);
+      for (const secret of [users.m1, users.m2, first, code, 'meet.google.com', row!.meeting_key as string, 'app', since]) expect(said).not.toContain(secret);
     }
+    // An attendee (the member's own calendar event for this call) is told the kind and the time, and nothing else: no person, no meeting and no address.
+    const invite = await agendaEvent(orgA, users.m2, meetUrl(code, '?authuser=5'));
+    const attendee = await refusal(create(app(users.m2), orgA, { agendaId: invite }));
+    expect(attendee.code).toBe('CAPTURE_ALREADY_RUNNING');
+    expect(attendee.status).toBe(409);
+    expect(attendee.details).toEqual({ kind: 'app', since: new Date(since).toISOString() });
+    const told = JSON.stringify({ message: attendee.message, details: attendee.details });
+    for (const secret of [users.m1, users.m2, first, code, 'meet.google.com', row!.meeting_key as string]) expect(told).not.toContain(secret);
+    // An event that is the member's but is another call proves nothing about this one: the address the client sends decides the call, and the refusal stays plain.
+    const elsewhere = await agendaEvent(orgA, users.m2, meetUrl(meet()));
+    const unrelated = await refusal(create(app(users.m2), orgA, { agendaId: elsewhere, joinUrl: meetUrl(code) }));
+    expect(unrelated.code).toBe('CAPTURE_ALREADY_RUNNING');
+    expect(unrelated.details).toBeUndefined();
     // The refused starts rolled back with their meetings.
     expect(await meetingCount(users.m2)).toBe(before);
     // The holder is untouched.

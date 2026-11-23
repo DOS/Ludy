@@ -123,13 +123,20 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.business_trip_request',
+  'crove_hr.contract_addendum',
+  'crove_hr.employee_asset_handover',
+  'crove_hr.okr_key_result',
+  'crove_hr.okr_objective',
+  'crove_hr.payroll_adjustment_item',
+  'crove_hr.salary_advance_request',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  'crove_meetings.capture_session',
+  'crove_kernel.push_subscription',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',
@@ -177,12 +184,18 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
   ['crove_hr.attendance_log', () => 'false'], // HR is for owners and admins or linked self employees in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.attendance_qr_config', () => 'false'], // HR, as above.
+  ['crove_hr.business_trip_request', () => 'false'], // HR, as above.
   ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.contract_addendum', () => 'false'], // HR, as above.
   ['crove_hr.department', () => 'false'], // HR, as above.
+  ['crove_hr.employee_asset_handover', () => 'false'], // HR, as above.
   ['crove_hr.job_opening', () => 'false'], // HR, as above.
   ['crove_hr.leave_request', () => 'false'], // HR, as above.
+  ['crove_hr.okr_key_result', () => 'false'], // HR, as above.
+  ['crove_hr.okr_objective', () => 'false'], // HR, as above.
   ['crove_hr.onboarding_submission', () => 'false'], // HR, as above.
   ['crove_hr.overtime_request', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_adjustment_item', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
@@ -191,6 +204,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.payroll_line', () => 'false'], // HR, as above.
   ['crove_hr.payroll_run', () => 'false'], // HR, as above.
   ['crove_hr.probation_review', () => 'false'], // HR, as above.
+  ['crove_hr.salary_advance_request', () => 'false'], // HR, as above.
   ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
   ['crove_kernel.calendar_event_link', () => 'false'], // Reads through the member's own connection.
   ['crove_kernel.conversation', () => 'false'], // The inbox is read per member.
@@ -210,6 +224,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
   ['crove_kernel.notification', () => 'false'], // Per member.
   ['crove_kernel.notification_mute', () => 'false'], // Per member.
+  ['crove_kernel.push_subscription', () => 'false'], // A member's own browser push subscriptions (generic web push, #3736): endpoint and keys, read by that member, a user; an agent context reads none.
   ['crove_kernel.saved_view', () => 'false'], // Per member.
   ['crove_kernel.today_mail', () => 'false'], // Per member.
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
@@ -294,15 +309,21 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
-  // Departments and lightweight recruiting (#3403) and Stage 5C attendance (#4447): owners/admins (and linked employee on attendance_log) in a user context alone.
+  // Departments and lightweight recruiting (#3403), Stage 5C attendance (#4447), and Stage 6 HR (#4527, #4528, #4529): user-context only; system and agent contexts read and write none.
   ['crove_hr.attendance_log', 'false'],
   ['crove_hr.attendance_qr_config', 'false'],
+  ['crove_hr.business_trip_request', 'false'],
   ['crove_hr.candidate', 'false'],
+  ['crove_hr.contract_addendum', 'false'],
   ['crove_hr.department', 'false'],
+  ['crove_hr.employee_asset_handover', 'false'],
   ['crove_hr.job_opening', 'false'],
   ['crove_hr.leave_request', 'false'],
+  ['crove_hr.okr_key_result', 'false'],
+  ['crove_hr.okr_objective', 'false'],
   ['crove_hr.onboarding_submission', 'false'],
   ['crove_hr.overtime_request', 'false'],
+  ['crove_hr.payroll_adjustment_item', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
@@ -313,6 +334,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
   ['crove_hr.probation_review', 'false'],
+  ['crove_hr.salary_advance_request', 'false'],
   // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
   // A member's own recordings a meeting platform offered (meetings integrations C1, #3173): the member's alone; the worker's system context reads and writes nothing (its writers are definers).
   ['crove_kernel.meeting_platform_recording', 'false'],
@@ -505,6 +527,9 @@ const stockMonth = () => {
 let bankTemplateSeq = 0;
 // A department (#3403) is unique per entity and name: each seeded one takes the next number.
 let hrDepartmentSeq = 0;
+// Stage 6C addendum numbers and asset codes (#4528): unique per entity/org across seeded and probed rows.
+let hrAddendumSeq = 0;
+let hrAssetSeq = 0;
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -2240,14 +2265,76 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       },
     }),
   },
+  // #4527 (Stage 6B): employee business trip request with 2-level approval (owner/admin, linked employee, and L1 department manager in a user context; system and agent contexts read and write none).
+  'crove_hr.business_trip_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const day = `${payrollMonth()}-02`;
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          destination: 'Da Nang',
+          purpose: 'RLS matrix',
+          start_on: day,
+          end_on: day,
+          estimated_allowance: '1500000',
+          status: 'pending_final',
+        },
+      };
+    },
+  },
   // #3403 (Phase 7 Stage 3): recruiting candidates, departments and job openings (owners and admins only, AUTHOR_ONLY).
   'crove_hr.candidate': {
     update: { set: 'display_name = display_name' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
   },
+  // #4528 (Stage 6C): employment contract addendum (owner/admin management and linked employee read in a user context; system and agent contexts read and write none).
+  'crove_hr.contract_addendum': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          addendum_number: `PL-${String(++hrAddendumSeq).padStart(4, '0')}`,
+          effective_on: '2026-11-15',
+          change_summary: 'RLS matrix addendum',
+          previous_pay_rate: '10000000',
+          new_pay_rate: '12000000',
+          status: 'draft',
+        },
+      };
+    },
+  },
   'crove_hr.department': {
     update: { set: 'name = name' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS matrix ${hrDepartmentSeq++}` } }),
+  },
+  // #4528 (Stage 6C): employee asset issuance and return handover record (owner/admin management and linked employee read in a user context; system and agent contexts read and write none).
+  'crove_hr.employee_asset_handover': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          asset_code: `TS-${String(++hrAssetSeq).padStart(4, '0')}`,
+          asset_name: 'RLS matrix laptop',
+          handed_over_on: '2026-11-01',
+          status: 'assigned',
+        },
+      };
+    },
   },
   'crove_hr.job_opening': {
     update: { set: 'title = title' },
@@ -2263,6 +2350,60 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, month, start_on: day, end_on: day, kind: 'annual_leave', days: '1' },
+      };
+    },
+  },
+  // #4529 (Stage 6D): quarterly OKR key result tied to an objective (owner/admin, L1 department manager, and linked owner employee in a user context; system and agent contexts read and write none).
+  'crove_hr.okr_key_result': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const objective = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } },
+          {
+            table: 'crove_hr.okr_objective',
+            values: {
+              org_id: o.id,
+              id: objective,
+              quarter: '2026-Q4',
+              scope: 'individual',
+              title: 'RLS matrix objective',
+              owner_employee_id: employee,
+              status: 'active',
+            },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          objective_id: objective,
+          title: 'RLS matrix key result',
+          metric_type: 'number',
+          target_value: '100',
+          current_value: '25',
+          progress_pct: '25',
+        },
+      };
+    },
+  },
+  // #4529 (Stage 6D): quarterly OKR objective (owner/admin, L1 department manager, and linked owner employee in a user context; system and agent contexts read and write none).
+  'crove_hr.okr_objective': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          quarter: '2026-Q4',
+          scope: 'individual',
+          title: 'RLS matrix objective',
+          owner_employee_id: employee,
+          status: 'active',
+        },
       };
     },
   },
@@ -2287,6 +2428,26 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, month, work_date: workDate, hours: '2', day_type: 'weekday' },
+      };
+    },
+  },
+  // #4527 (Stage 6B): owner/admin-approved retro pay or offset deduction item for a monthly payroll run (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.payroll_adjustment_item': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          month: payrollMonth(),
+          kind: 'retro_pay',
+          amount: '500000',
+          reason: 'RLS matrix',
+          status: 'pending',
+        },
       };
     },
   },
@@ -2394,6 +2555,25 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, period_start: day, period_end: day, decision: 'pass' },
+      };
+    },
+  },
+  // #4527 (Stage 6B): employee salary advance request with 2-level approval (owner/admin, linked employee, and L1 department manager in a user context; system and agent contexts read and write none).
+  'crove_hr.salary_advance_request': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          employee_id: employee,
+          month: payrollMonth(),
+          amount: '1000000',
+          reason: 'RLS matrix',
+          status: 'pending_final',
+        },
       };
     },
   },
@@ -3016,6 +3196,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #676: per-org reminder and escalation settings for pending proposals (one row per org).
   'crove_kernel.proposal_policy': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), remind_after_days: 3, escalate_after_days: 7, updated_by: o.owner } }) },
+  // A member's browser push subscription on one device, for every kernel notification of a pushed kind (generic web push, #3736, step 1 of 2: its factory lands before the table, so PENDING_TABLES holds it until the migration of step 2).
+  // It is Social's `push_subscription` (#1238) moved to the kernel: under a restrictive policy like the mutes, each member sees and changes only their own. One endpoint per member, so every row gets its own; the keys are a P-256
+  // point and a 16-byte secret, base64url.
+  'crove_kernel.push_subscription': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        endpoint: `https://push.example.com/rls-${tag()}`,
+        p256dh: Buffer.concat([Buffer.from([4]), randomBytes(64)]).toString('base64url'),
+        auth: randomBytes(16).toString('base64url'),
+        user_agent: 'RLS matrix',
+      },
+    }),
+  },
   // #1280 part 3b: an org-wide record (a party) linked to a legal entity, so a member limited to that entity sees it.
   // The link names an entity of its own org, made in the same transaction.
   'crove_kernel.record_le': {
