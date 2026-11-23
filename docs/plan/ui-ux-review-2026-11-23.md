@@ -159,7 +159,7 @@ B) When inside an App or Settings (#4499):
 |      | -------------------- |                                        |
 | [🔔] | [AV] Minh Anh        |  <- Clicking opens AccountPopover:     |
 | [⚙]  |      Gạo Sạch Mekong |     +--------------------------------+ |
-+------+----------------------+     | Minh Anh (minh@gaosach.vn)     | |
++------+----------------------+     | Minh Anh (anh@example.com)     | |
                                     | Tổ chức: [Gạo Sạch Mekong  ▾]  | |
                                     |          [Tất cả doanh nghiệp] | |
                                     |          [+ Thêm tổ chức]      | |
@@ -194,7 +194,7 @@ B) When inside an App or Settings (#4499):
 +-------------------------------------------------------------------------+
 | Compact Action Strip (collapsed summary pills, expand on click):        |
 | [! 2 việc cần xử lý: 1 file lỗi · 3 dòng sao kê chưa khớp]  [Xem ▾]     |
-| [+ Thả XML / PDF / ảnh vào đây hoặc gửi tới inv@gaosach.ludy.vn]       |
+| [+ Thả XML / PDF / ảnh vào đây hoặc gửi tới inv@gaosach.example]       |
 +-------------------------------------------------------------------------+
 | ProposalGroups ("3 hóa đơn sạch từ EVN theo quy tắc đã học") [Duyệt 3]  |
 +------------------------------------+------------------------------------+
