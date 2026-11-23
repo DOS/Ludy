@@ -172,6 +172,7 @@ export function ctxQueryFn(ctx: QueryContext): SourceQueryFn {
   return async <T>(name: string, input: Record<string, unknown>): Promise<SourceQueryResponse<T>> => {
     if (name.startsWith('notes.') && !ctx.installed('notes')) return { status: 'not_installed' };
     if (name.startsWith('meetings.') && !ctx.installed('meetings')) return { status: 'not_installed' };
+    if (name.startsWith('crm.') && !ctx.installed('crm')) return { status: 'not_installed' };
     return await ctx.query<T>(name, input);
   };
 }

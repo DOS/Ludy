@@ -36,9 +36,11 @@ import {
   type RoadmapItemStage,
 } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
+import { kernelManifest } from '@ludy/kernel';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
 import { sealEphemeralOtpCode } from './roadmap-mail.ts';
+import { scrubRoadmapSignalIdempotencyResponses } from './roadmap-signals.ts';
 import { READERS, WRITERS, assertNotArchived, memberProfilesMap, userOf, type ProjectRow, type Trx } from './shared.ts';
 
 const TABLES = projectsManifest.tables;
@@ -131,7 +133,7 @@ async function assertPublicProjectAllowed(
   return { id: project.id, name: project.name, status: project.status as ProjectRow['status'] };
 }
 
-async function loadBoardSummary(trx: Trx, orgId: string, boardId: string): Promise<RoadmapBoardSummary> {
+export async function loadBoardSummary(trx: Trx, orgId: string, boardId: string): Promise<RoadmapBoardSummary> {
   const { rows } = await sql<{
     id: string;
     slug: string;
@@ -990,7 +992,9 @@ export const roadmapItemMerge = defineCommand({
   target: (input) => ({ type: 'projects.roadmap_item', id: input.targetItemId }),
   writes: [
     tableWrite(TABLES, 'ludy_projects', 'roadmap_vote', ['org_id', 'board_id', 'item_id', 'voter_email_hash', 'notify_on_ship', 'created_at']),
+    tableWrite(TABLES, 'ludy_projects', 'roadmap_signal', ['org_id', 'roadmap_item_id', 'updated_at']),
     tableWrite(TABLES, 'ludy_projects', 'roadmap_item', ['vote_count', 'moderation_status', 'merged_into_item_id', 'updated_at']),
+    tableWrite(kernelManifest.tables, 'ludy_kernel', 'idempotency_key', ['response']),
   ],
   handler: async (ctx, input) => {
     userOf(ctx.actor);
@@ -1037,6 +1041,37 @@ export const roadmapItemMerge = defineCommand({
       .deleteFrom('ludy_projects.roadmap_vote')
       .where('org_id', '=', ctx.orgId)
       .where('item_id', '=', source.id)
+      .execute();
+
+    // Deduplicate overlapping (source_type, source_id) signals before transferring remaining signals to targetItemId.
+    const { rows: dedupedSignals } = await sql<{ id: string }>`
+      DELETE FROM ludy_projects.roadmap_signal s
+       WHERE s.org_id = ${ctx.orgId}::uuid
+         AND s.roadmap_item_id = ${source.id}::uuid
+         AND EXISTS (
+           SELECT 1
+             FROM ludy_projects.roadmap_signal t
+            WHERE t.org_id = s.org_id
+              AND t.roadmap_item_id = ${target.id}::uuid
+              AND t.source_type = s.source_type
+              AND t.source_id = s.source_id
+         )
+       RETURNING s.id`.execute(ctx.trx);
+
+    await scrubRoadmapSignalIdempotencyResponses(
+      ctx.trx,
+      ctx.orgId,
+      dedupedSignals.map((r) => r.id),
+    );
+
+    await ctx.trx
+      .updateTable('ludy_projects.roadmap_signal')
+      .set({
+        roadmap_item_id: target.id,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('roadmap_item_id', '=', source.id)
       .execute();
 
     const { rows: countRows } = await sql<{ n: string }>`
@@ -1673,7 +1708,7 @@ export interface RoadmapAiChangelogSource {
   }>;
 }
 
-async function loadProjectsAiMeta(trx: Trx, orgId: string): Promise<{ todayVn: string; aiStopped: boolean; aiBudgetSpent: boolean }> {
+export async function loadProjectsAiMeta(trx: Trx, orgId: string): Promise<{ todayVn: string; aiStopped: boolean; aiBudgetSpent: boolean }> {
   const { rows } = await sql<{
     today_vn: string;
     ai_stopped: boolean;

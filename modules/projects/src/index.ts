@@ -155,6 +155,7 @@ export {
 } from './columns.ts';
 import { roadmapCommands, roadmapQueries } from './roadmap.ts';
 import { roadmapMcpQueries } from './roadmap-mcp.ts';
+import { roadmapSignalCommands, roadmapSignalQueries } from './roadmap-signals.ts';
 export {
   generateEphemeralOtpWrapKey,
   openEphemeralOtpCode,
@@ -166,6 +167,11 @@ export {
   type RoadmapAiChangelogSource,
   type RoadmapAiDedupeSource,
 } from './roadmap.ts';
+export {
+  computeSignalRollup,
+  enrichMeetingSignalMatchSource,
+  type RoadmapAiSignalMatchSource,
+} from './roadmap-signals.ts';
 export {
   MCP_ROADMAP_DEFAULT,
   MCP_ROADMAP_MAX,
@@ -229,6 +235,7 @@ export const projectsCommands = [
   projectTaskSetDates,
   ...projectCycleCommands,
   ...roadmapCommands,
+  ...roadmapSignalCommands,
   projectTimeStart,
   projectTimeStop,
   projectTimeLog,
@@ -256,6 +263,7 @@ export const projectsQueries = [
   ...projectCycleQueries,
   ...roadmapQueries,
   ...roadmapMcpQueries,
+  ...roadmapSignalQueries,
   projectTimeSummary,
   projectTimeExportCsv,
 ];

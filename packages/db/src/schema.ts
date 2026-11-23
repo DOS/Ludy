@@ -1514,6 +1514,16 @@ export type ProjectsRoadmapItemTable = Refine<
   }
 >;
 
+export const ROADMAP_SIGNAL_SOURCE_TYPES = ['crm.deal', 'kernel.conversation', 'meetings.meeting'] as const;
+export type RoadmapSignalSourceType = (typeof ROADMAP_SIGNAL_SOURCE_TYPES)[number];
+
+export type ProjectsRoadmapSignalTable = Refine<
+  G.ProjectsRoadmapSignalTable,
+  {
+    source_type: RoadmapSignalSourceType;
+  }
+>;
+
 // Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
@@ -1781,6 +1791,7 @@ type Refined = Tables<{
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'ludy_projects.roadmap_signal': ProjectsRoadmapSignalTable;
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
   'ludy_sign.envelope': SignEnvelopeTable;
