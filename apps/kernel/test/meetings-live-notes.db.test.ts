@@ -488,7 +488,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
 
   // The tick and the copy of the running notes hold the meeting row first, then the recorder's live lock, and only then read the private result (#4474, #4415): a redaction of the same
   // meeting holds the row and drops the private results, so a command that waits for the row reads them gone. Simulated by holding the row in a transaction of its own and dropping the
-  // private result there, as the redaction does, before it commits. Without the lock neither command waits for the row, so both tests would see the result read and copied.
+  // private result there, as the redaction does, before it commits. Without the lock neither command waits for the row (the foreign keys they write take only a key share of it), so both tests fail by timing out while waiting for the block.
   describe('the meeting row is held before the private result is read (#4474)', () => {
     const answer = JSON.stringify({ summary: 'Hà gửi báo giá.', decisions: ['Giữ giá cũ'], items: [], dropped: 0 });
 
@@ -528,9 +528,9 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
       expect(await count('SELECT 1 FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2', [orgId, meetingId])).toBe(1);
 
-      const ticked = await redactedWhileWaiting(meetingId, () => tick('recorder', meetingId));
-      expect(ticked.copiedRunId).toBeNull();
-      expect(ticked.lines).toBe(0);
+      const ticked = await redactedWhileWaiting(meetingId, () => tick('recorder', meetingId).then((t) => ({ t }), (e: unknown) => ({ t: null, code: (e as { code?: string }).code })));
+      expect(ticked).toHaveProperty('t.copiedRunId', null);
+      expect(ticked).toHaveProperty('t.lines', 0);
       expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(0);
     });
 
@@ -551,6 +551,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       const meetingId = await seedMeeting('recorder', { pieces: 3 });
       const { runId } = await start('recorder', meetingId);
       expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
+      // Line 90 is past every piece, so the preview has reached the end and no tick starts another window while the commands race.
       await sql(`INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, $3, 90, 0, 10, 'Một dòng để ghi chú')`, [orgId, randomUUID(), meetingId]);
       const as = { actor: asUser('recorder'), orgId };
       const notes = await app.execute<{ runId: string | null }>('meetings.live.notes_start', { meetingId }, as);
