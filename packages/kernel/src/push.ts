@@ -15,7 +15,7 @@
 import { createPublicKey } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SUMMARY_READY_KIND, zId } from '@ludy/kernel-contract';
+import { SUMMARY_READY_EVENT, SUMMARY_READY_KIND, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
@@ -81,13 +81,18 @@ function requireUser(ctx: Pick<QueryContext, 'actor'>): string {
 // The kernel's notification kinds that also go out as browser push, each with its one fixed line and the app path it opens (never text of the subject). A kind is added here
 // with its line and path; its notice must be written by a job of the notify queue (the dispatch of an outbox event), which is where the worker looks for what to push.
 export interface PushKind {
+  // The outbox event whose dispatch writes this kind (the worker asks for pushes only after such an event).
+  event: string;
   line: string;
   path(slug: string, subject: { type: string | null; id: string | null }): string;
 }
 export const PUSH_KINDS: ReadonlyMap<string, PushKind> = new Map<string, PushKind>([
   // The minutes draft of a meeting the recorder ran is ready (#3730): opens the meeting.
-  [SUMMARY_READY_KIND, { line: 'Bản nháp biên bản đã sẵn sàng để bạn xem', path: (slug, s) => (s.type === 'meetings.meeting' && s.id ? `/o/${slug}/meetings/${s.id}` : `/o/${slug}/meetings`) }],
+  [SUMMARY_READY_KIND, { event: SUMMARY_READY_EVENT, line: 'Bản nháp biên bản đã sẵn sàng để bạn xem', path: (slug, s) => (s.type === 'meetings.meeting' && s.id ? `/o/${slug}/meetings/${s.id}` : `/o/${slug}/meetings`) }],
 ]);
+
+// The outbox event types whose dispatch can write a pushed kind: the worker runs kernel.push.pending after these only, so no other notify job pays for it.
+export const PUSH_EVENTS: ReadonlySet<string> = new Set([...PUSH_KINDS.values()].map((k) => k.event));
 
 export interface PushDevice {
   id: string;

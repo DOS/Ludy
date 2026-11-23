@@ -679,7 +679,7 @@ export const vi = {
       projects_weekly_status: 'Báo cáo tuần dự án được gửi qua email',
       meetings_series_open_items: 'Việc còn dở từ buổi họp trước của chuỗi cuộc họp',
       meetings_summary_ready: 'Bản nháp biên bản của cuộc họp tôi ghi đã sẵn sàng (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
-      meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
+      meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email; tắt ở đây là tắt cả hai)',
       kernel_channel_expired: 'Kết nối tài khoản quảng cáo hết hạn hoặc bị từ chối',
       kernel_ai_budget: 'Ngân sách AI sắp hết hoặc đã hết',
       kernel_conversation_new: 'Có hội thoại mới cần trả lời',

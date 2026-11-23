@@ -681,7 +681,7 @@ export const en = {
       projects_weekly_status: 'Project weekly status sent by email',
       meetings_series_open_items: 'Open items from the previous meeting of a series',
       meetings_summary_ready: 'The minutes draft of a meeting I recorded is ready (also sent by email and push; turning it off here turns off all three)',
-      meetings_morning: 'The meetings I have today, if I asked for the morning notice (also sent by email and push; turning it off here turns off all three)',
+      meetings_morning: 'The meetings I have today, if I asked for the morning notice (also sent by email; turning it off here turns off both)',
       kernel_channel_expired: 'An ad account connection expired or was refused',
       kernel_ai_budget: 'The AI budget is nearly or fully used',
       kernel_conversation_new: 'A new conversation needs an answer',

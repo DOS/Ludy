@@ -76,7 +76,7 @@ export function PushSetting() {
                   {d.current ? ` (${t('pushThisDevice')})` : ''} · {t('pushSince', { date: f.date(d.createdAt) })}
                 </span>
                 {!d.current && (
-                  <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(d.id)}>
+                  <Button variant="ghost" size="sm" aria-label={`${t('pushRemove')}: ${d.label ?? t('pushUnknownDevice')}`} disabled={remove.isPending} onClick={() => remove.mutate(d.id)}>
                     {t('pushRemove')}
                   </Button>
                 )}

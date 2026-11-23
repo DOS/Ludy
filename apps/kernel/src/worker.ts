@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@ludy/db';
 import { MINUTES_PUBLISHED_EVENT, SUMMARY_READY_EVENT, vietnamToday } from '@ludy/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@ludy/kernel';
+import { KERNEL_NOTIFYING_EVENTS, PUSH_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@ludy/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@ludy/agent';
 import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@ludy/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -2204,9 +2204,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (!notify || !deps.runtime.installed(notify.module)) return;
     const as = { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId } as const;
     await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, as);
-    // Browser push (#3736): one job per notification this event's dispatch wrote of a pushed kind, after the dispatch committed. A replayed event wrote none, and the push job's singleton window
-    // keeps a retried job of this queue from pushing twice; a failure here leaves the notice and its mail, so it is logged by its class only.
-    if (deps.push) {
+    // Browser push (#3736): one job per unread notification of a pushed kind this event's dispatch wrote in the last day, after the dispatch committed, and only for the event types that can write one. A retried job
+    // of this queue names them again (so a crash after the dispatch still pushes), and the push job's singleton window keeps that from pushing twice (the window is slot-aligned, and the tag folds a rare repeat into one
+    // notification in the browser); a failure here leaves the notice and its mail, so it is logged by its class only.
+    if (deps.push && PUSH_EVENTS.has(job.data.type)) {
       try {
         for (const notificationId of await deps.runtime.query<string[]>('kernel.push.pending', { eventId: job.data.eventId }, as)) {
           await boss.send(QUEUES.kernelPush, { orgId: job.data.orgId, notificationId } satisfies PushJob, {
