@@ -485,4 +485,88 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect(await count('SELECT 1 FROM ludy_meetings.meeting_result WHERE meeting_id = $1', [meetingId])).toBe(0);
     });
   });
+
+  // The tick and the copy of the running notes hold the meeting row first, then the recorder's live lock, and only then read the private result (#4474, #4415): a redaction of the same
+  // meeting holds the row and drops the private results, so a command that waits for the row reads them gone. Simulated by holding the row in a transaction of its own and dropping the
+  // private result there, as the redaction does, before it commits. Without the lock neither command waits for the row, so both tests would see the result read and copied.
+  describe('the meeting row is held before the private result is read (#4474)', () => {
+    const answer = JSON.stringify({ summary: 'Hà gửi báo giá.', decisions: ['Giữ giá cũ'], items: [], dropped: 0 });
+
+    async function waitForBlockedOnPid(holdPid: number): Promise<void> {
+      for (let i = 0; i < 400; i += 1) {
+        const blocked = await sql<{ pid: number }>(`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`, [holdPid]);
+        if (blocked.rows.length > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 15));
+      }
+      throw new Error(`Timed out waiting for a transaction to block on pid ${holdPid}`);
+    }
+
+    // Holds the meeting row as a redaction does, runs `command` meanwhile, drops the private results of the meeting in the same transaction (what the redaction's
+    // kernel.member_vy.subject_results.drop does) once `command` is waiting for the row, and commits.
+    async function redactedWhileWaiting<T>(meetingId: string, command: () => Promise<T>): Promise<T> {
+      const holder = new pg.Client({ connectionString: adminUrl });
+      await holder.connect();
+      try {
+        const holdPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+        await holder.query('BEGIN');
+        await holder.query(`SELECT id FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE`, [orgId, meetingId]);
+        const pending = command();
+        // It has not finished: it waits for the meeting row, before anything it would read.
+        await waitForBlockedOnPid(holdPid);
+        await holder.query(`DELETE FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId]);
+        await holder.query('COMMIT');
+        return await pending;
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+      }
+    }
+
+    it('a tick that waits for a redaction finds the finished window gone and copies nothing', async () => {
+      const meetingId = await seedMeeting('recorder', { pieces: 3 });
+      const { runId } = await start('recorder', meetingId);
+      expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
+      expect(await count('SELECT 1 FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2', [orgId, meetingId])).toBe(1);
+
+      const ticked = await redactedWhileWaiting(meetingId, () => tick('recorder', meetingId));
+      expect(ticked.copiedRunId).toBeNull();
+      expect(ticked.lines).toBe(0);
+      expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(0);
+    });
+
+    it('a copy of the running notes that waits for a redaction finds the result gone and writes no draft', async () => {
+      const meetingId = await seedMeeting('recorder', { pieces: 0 });
+      await sql(`INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, $3, 0, 0, 10, 'Hà sẽ gửi báo giá cho khách')`, [orgId, randomUUID(), meetingId]);
+      const as = { actor: asUser('recorder'), orgId };
+      const started = await app.execute<{ runId: string | null }>('meetings.live.notes_start', { meetingId }, as);
+      const runId = started.runId as string;
+      await app.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: answer } }, as);
+
+      const copied = await redactedWhileWaiting(meetingId, () => refuses(app.execute('meetings.live.notes_copy', { meetingId, runId }, as)));
+      expect(copied).toBe('LIVE_NOTES_NOT_FOUND');
+      expect(await count('SELECT 1 FROM ludy_meetings.meeting_result WHERE meeting_id = $1', [meetingId])).toBe(0);
+    });
+
+    it('two tabs ticking and copying one meeting at once end whole, with one copy of a window and no deadlock', async () => {
+      const meetingId = await seedMeeting('recorder', { pieces: 3 });
+      const { runId } = await start('recorder', meetingId);
+      expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
+      await sql(`INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, $3, 90, 0, 10, 'Một dòng để ghi chú')`, [orgId, randomUUID(), meetingId]);
+      const as = { actor: asUser('recorder'), orgId };
+      const notes = await app.execute<{ runId: string | null }>('meetings.live.notes_start', { meetingId }, as);
+      await app.execute('kernel.member_vy.result.store', { runId: notes.runId as string, outcome: { status: 'ready', body: answer } }, as);
+
+      const settled = await Promise.all([
+        refuses(tick('recorder', meetingId)),
+        refuses(tick('recorder', meetingId)),
+        refuses(app.execute('meetings.live.notes_copy', { meetingId, runId: notes.runId as string }, as)),
+        refuses(app.execute('meetings.live.notes_copy', { meetingId, runId: notes.runId as string }, as)),
+      ]);
+      // Both ticks answer; of the two copies one is made and the other is told it was (never a database deadlock or a half copy).
+      expect(settled.slice(0, 2)).toEqual([null, null]);
+      expect(settled.slice(2).sort()).toEqual([null, 'LIVE_NOTES_ALREADY_COPIED'].sort());
+      expect(await count('SELECT 1 FROM ludy_meetings.live_line WHERE meeting_id = $1 AND source_run_id = $2', [meetingId, runId])).toBe(2);
+      expect(await count('SELECT 1 FROM ludy_meetings.meeting_result WHERE meeting_id = $1', [meetingId])).toBe(1);
+    });
+  });
 });
