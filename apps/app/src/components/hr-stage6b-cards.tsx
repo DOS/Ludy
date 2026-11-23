@@ -74,7 +74,7 @@ function ApprovalQueueRow(props: {
       </div>
       <p className="text-xs text-muted-foreground">{props.subtitle}</p>
       {props.lockedNotice && (
-        <p className="text-xs font-medium text-amber-700 dark:text-amber-400" data-testid={`${props.testId}-locked`}>
+        <p className="text-xs font-medium text-warning" data-testid={`${props.testId}-locked`}>
           {props.lockedNotice}
         </p>
       )}
@@ -914,7 +914,7 @@ export function HrPayrollAdjustmentsPanel(props: {
 
       {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
       {!props.draft && items.some((i) => i.status === 'pending') && (
-        <p className="mb-3 text-xs font-medium text-amber-700 dark:text-amber-400" data-testid="hr-adj-nondraft-notice">
+        <p className="mb-3 text-xs font-medium text-warning" data-testid="hr-adj-nondraft-notice">
           {t('nonDraftNotice')}
         </p>
       )}
