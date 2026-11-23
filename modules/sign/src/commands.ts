@@ -27,6 +27,7 @@ import {
   assertCanUseProjectAcceptanceSource,
   insertEnvelopeGuardingProjectAcceptance,
 } from './acceptance.ts';
+import { signApiKeyCommands } from './api-keys.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
@@ -913,6 +914,17 @@ export const fieldSet = defineCommand({
       }
     }
 
+    const existingTextDefaults = await ctx.trx
+      .selectFrom('crove_sign.field')
+      .select(['signer_id', 'label', 'value_text'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', row.id)
+      .where('field_type', '=', 'text')
+      .where('filled_at', 'is', null)
+      .where('label', 'is not', null)
+      .where('value_text', 'is not', null)
+      .execute();
+
     await ctx.trx
       .deleteFrom('crove_sign.field')
       .where('org_id', '=', ctx.orgId)
@@ -946,6 +958,21 @@ export const fieldSet = defineCommand({
         .returning('id')
         .execute();
       for (const item of inserted) fieldIds.push(item.id);
+
+      if (existingTextDefaults.length > 0) {
+        await sql`
+          SELECT crove_sign.preserve_draft_field_text_defaults(
+            ${row.id}::uuid,
+            ${JSON.stringify(
+              existingTextDefaults.map((d) => ({
+                signerId: d.signer_id,
+                label: d.label,
+                valueText: d.value_text,
+              })),
+            )}::jsonb
+          )
+        `.execute(ctx.trx);
+      }
     }
 
     await ctx.trx
@@ -2023,4 +2050,5 @@ export const signCommands = [
   ...signProfileCommands,
   ...signWebhookCommands,
   ...signPlaybookCommands,
+  ...signApiKeyCommands,
 ];

@@ -18,11 +18,14 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { PlaybookRulesCard } from '../components/sign/playbook-rules-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { SignWebhooksSection } from '../components/sign/sign-webhooks-card.tsx';
+import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import {
   signApi,
+  type SignApiKeyRecord,
+  type SignApiKeyScope,
   type SignCaConnectionRecord,
   type SignCaCredentialsInput,
   type SignCaProvider,
@@ -1081,6 +1084,408 @@ export function SignMemberSignaturesAndStampsSection({ slug }: { slug: string | 
   );
 }
 
+export type SignApiKeyExpiryPreset = 'none' | '30d' | '90d' | '365d';
+
+export function computeApiKeyExpiresAt(preset: SignApiKeyExpiryPreset, nowMs = Date.now()): string | null {
+  if (preset === 'none') return null;
+  const days = preset === '30d' ? 30 : preset === '90d' ? 90 : 365;
+  return new Date(nowMs + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export interface SignApiKeysViewProps {
+  role: string | null | undefined;
+  items: readonly SignApiKeyRecord[];
+  createdSecret: string | null;
+  creating?: boolean;
+  revokingId?: string | null;
+  createError?: unknown;
+  onCreate: (input: { name: string; scopes: SignApiKeyScope[]; expiresAt: string | null }) => void;
+  onStepUpVerified?: () => void;
+  onStepUpCancel?: () => void;
+  onDismissSecret: () => void;
+  onCopySecret?: (secret: string) => void;
+  onRevoke: (apiKeyId: string) => void;
+}
+
+export function SignApiKeysView({
+  role,
+  items,
+  createdSecret,
+  creating = false,
+  revokingId = null,
+  createError = null,
+  onCreate,
+  onStepUpVerified,
+  onStepUpCancel,
+  onDismissSecret,
+  onCopySecret,
+  onRevoke,
+}: SignApiKeysViewProps) {
+  const t = useTranslations('sign.apiKeys');
+  const f = useFormat();
+  const canManage = canManageSignCa(role);
+
+  const [keyName, setKeyName] = useState('');
+  const [scopeRead, setScopeRead] = useState(true);
+  const [scopeDraft, setScopeDraft] = useState(false);
+  const [expiryPreset, setExpiryPreset] = useState<SignApiKeyExpiryPreset>('90d');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [revokingKey, setRevokingKey] = useState<SignApiKeyRecord | null>(null);
+
+  useEffect(() => {
+    if (createdSecret) {
+      setKeyName('');
+    }
+  }, [createdSecret]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!canManage) return;
+    const trimmed = keyName.trim();
+    if (!trimmed) {
+      setFormError(t('nameRequired'));
+      return;
+    }
+    const scopes: SignApiKeyScope[] = [];
+    if (scopeRead) scopes.push('sign:read');
+    if (scopeDraft) scopes.push('sign:draft');
+    if (scopes.length === 0) {
+      setFormError(t('scopeRequired'));
+      return;
+    }
+    setFormError(null);
+    onCreate({
+      name: trimmed,
+      scopes,
+      expiresAt: computeApiKeyExpiresAt(expiryPreset),
+    });
+  };
+
+  const handleCopy = async (secret: string) => {
+    if (onCopySecret) {
+      onCopySecret(secret);
+      return;
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(secret);
+        toast(t('copiedSecretToast'));
+      }
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="sign-api-keys-section">
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight">{t('title')}</h2>
+        <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
+      </div>
+
+      {!canManage ? (
+        <Alert data-testid="sign-api-keys-readonly-notice">
+          <AlertDescription>{t('memberReadOnlyNotice')}</AlertDescription>
+        </Alert>
+      ) : (
+        <div className="space-y-4">
+          {createdSecret ? (
+            <Card className="border-field-border" data-testid="sign-api-key-secret-banner">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">{t('createdBannerTitle')}</CardTitle>
+                <CardDescription>{t('createdBannerHint')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Label htmlFor="sign-api-key-secret-input" className="sr-only">
+                    {t('createdBannerTitle')}
+                  </Label>
+                  <Input
+                    id="sign-api-key-secret-input"
+                    readOnly
+                    value={createdSecret}
+                    className="min-h-11 font-mono text-xs"
+                    data-testid="sign-api-key-secret-input"
+                  />
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="min-h-11"
+                      onClick={() => void handleCopy(createdSecret)}
+                      data-testid="sign-api-key-copy-btn"
+                    >
+                      {t('copySecretButton')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={onDismissSecret}
+                      data-testid="sign-api-key-dismiss-btn"
+                    >
+                      {t('dismissSecretButton')}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('createCardTitle')}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <form className="space-y-4" onSubmit={handleSubmit} data-testid="sign-api-key-create-form">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sign-api-key-name-input">{t('nameLabel')}</Label>
+                    <Input
+                      id="sign-api-key-name-input"
+                      className="min-h-11"
+                      maxLength={120}
+                      placeholder={t('namePlaceholder')}
+                      value={keyName}
+                      onChange={(e) => setKeyName(e.target.value)}
+                      data-testid="sign-api-key-name-input"
+                    />
+                  </div>
+
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-medium">{t('scopesLabel')}</legend>
+                    <label
+                      htmlFor="sign-api-key-scope-read"
+                      className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-field-border p-3"
+                    >
+                      <input
+                        id="sign-api-key-scope-read"
+                        type="checkbox"
+                        checked={scopeRead}
+                        onChange={(e) => setScopeRead(e.target.checked)}
+                        className="mt-1 h-4 w-4 shrink-0"
+                        data-testid="sign-api-key-scope-read"
+                      />
+                      <span className="space-y-0.5 text-sm">
+                        <span className="block font-medium">{t('scopeReadLabel')}</span>
+                        <span className="block text-xs text-muted-foreground">{t('scopeReadHint')}</span>
+                      </span>
+                    </label>
+                    <label
+                      htmlFor="sign-api-key-scope-draft"
+                      className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-field-border p-3"
+                    >
+                      <input
+                        id="sign-api-key-scope-draft"
+                        type="checkbox"
+                        checked={scopeDraft}
+                        onChange={(e) => setScopeDraft(e.target.checked)}
+                        className="mt-1 h-4 w-4 shrink-0"
+                        data-testid="sign-api-key-scope-draft"
+                      />
+                      <span className="space-y-0.5 text-sm">
+                        <span className="block font-medium">{t('scopeDraftLabel')}</span>
+                        <span className="block text-xs text-muted-foreground">{t('scopeDraftHint')}</span>
+                      </span>
+                    </label>
+                  </fieldset>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sign-api-key-expiry-select">{t('expiryLabel')}</Label>
+                    <NativeSelect
+                      id="sign-api-key-expiry-select"
+                      className="min-h-11 w-full"
+                      value={expiryPreset}
+                      onChange={(e) => setExpiryPreset(e.target.value as SignApiKeyExpiryPreset)}
+                      data-testid="sign-api-key-expiry-select"
+                    >
+                      <NativeSelectOption value="30d">{t('expiry30d')}</NativeSelectOption>
+                      <NativeSelectOption value="90d">{t('expiry90d')}</NativeSelectOption>
+                      <NativeSelectOption value="365d">{t('expiry365d')}</NativeSelectOption>
+                      <NativeSelectOption value="none">{t('expiryNone')}</NativeSelectOption>
+                    </NativeSelect>
+                  </div>
+
+                  {formError ? <ErrorText>{formError}</ErrorText> : null}
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      className="min-h-11"
+                      loading={creating}
+                      data-testid="sign-api-key-create-btn"
+                    >
+                      {t('createButton')}
+                    </Button>
+                  </div>
+                </form>
+                {createError && isStepUpRequired(createError) ? (
+                  <div data-testid="sign-api-key-step-up">
+                    <StepUpPrompt
+                      enroll={false}
+                      action={t('stepUpCreate')}
+                      onVerified={() => onStepUpVerified?.()}
+                      onCancel={() => onStepUpCancel?.()}
+                    />
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('listCardTitle')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {items.length === 0 ? (
+                  <Empty title={t('emptyTitle')} hint={t('emptyHint')} />
+                ) : (
+                  <ul className="space-y-3" data-testid="sign-api-key-list">
+                    {items.map((item) => {
+                      const isRevoked = item.revokedAt !== null;
+                      const isExpired = !isRevoked && item.expiresAt !== null && Date.parse(item.expiresAt) <= Date.now();
+                      return (
+                        <li
+                          key={item.id}
+                          className="flex flex-col justify-between gap-3 rounded-md border border-field-border p-3 sm:flex-row sm:items-center"
+                          data-testid={`sign-api-key-row-${item.id}`}
+                        >
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate font-medium text-sm">{item.name}</span>
+                              <Badge variant={isRevoked || isExpired ? 'secondary' : 'default'}>
+                                {isRevoked ? t('revokedBadge') : isExpired ? t('expiredBadge') : t('activeBadge')}
+                              </Badge>
+                              {item.scopes.map((scope) => (
+                                <Badge key={scope} variant="outline" className="font-mono text-xs">
+                                  {scope}
+                                </Badge>
+                              ))}
+                            </div>
+                            <p className="font-mono text-xs text-muted-foreground">{item.keyPrefix}...</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t('createdOn', { date: f.dateTime(item.createdAt) })}
+                              {' · '}
+                              {item.lastUsedAt ? t('lastUsedOn', { date: f.dateTime(item.lastUsedAt) }) : t('neverUsed')}
+                              {' · '}
+                              {item.expiresAt ? t('expiresOn', { date: f.dateTime(item.expiresAt) }) : t('noExpiry')}
+                            </p>
+                          </div>
+                          {!isRevoked ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11 shrink-0"
+                              loading={revokingId === item.id}
+                              onClick={() => setRevokingKey(item)}
+                              data-testid={`sign-api-key-revoke-btn-${item.id}`}
+                            >
+                              {t('revokeButton')}
+                            </Button>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={revokingKey !== null}
+        onOpenChange={(open) => {
+          if (!open) setRevokingKey(null);
+        }}
+        title={t('revokeTitle')}
+        description={t('revokeConfirm', { name: revokingKey?.name ?? '', prefix: revokingKey?.keyPrefix ?? '' })}
+        confirm={t('revokeButton')}
+        destructive
+        disabled={revokingId !== null}
+        onConfirm={() => {
+          if (revokingKey) {
+            const targetId = revokingKey.id;
+            setRevokingKey(null);
+            onRevoke(targetId);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+function SignApiKeysSection({ slug, role }: { slug: string | null; role: string | null | undefined }) {
+  const t = useTranslations('sign.apiKeys');
+  const canManage = canManageSignCa(role);
+  const [createdSecret, setCreatedSecret] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCreatedSecret(null);
+  }, [slug]);
+
+  const keysQuery = useQuery({
+    queryKey: ['sign', 'api-keys', slug],
+    queryFn: () => signApi.listApiKeys(),
+    enabled: Boolean(slug && canManage),
+  });
+
+  const invalidateKeys = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['sign', 'api-keys', slug] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: (input: { name: string; scopes: SignApiKeyScope[]; expiresAt: string | null }) =>
+      signApi.createApiKey(input),
+    onSuccess: async (res) => {
+      setCreatedSecret(res.secret);
+      toast(t('createdToast'));
+      await invalidateKeys();
+    },
+    onError: (err) => {
+      if (!isStepUpRequired(err)) toast(errorMessage(err), 'error');
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: async (apiKeyId: string) => {
+      setRevokingId(apiKeyId);
+      return signApi.revokeApiKey(apiKeyId);
+    },
+    onSuccess: async () => {
+      toast(t('revokedToast'));
+      await invalidateKeys();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+    onSettled: () => setRevokingId(null),
+  });
+
+  if (canManage && keysQuery.isLoading) {
+    return <ListSkeleton />;
+  }
+  if (canManage && keysQuery.error) {
+    return <ErrorText>{errorMessage(keysQuery.error)}</ErrorText>;
+  }
+
+  return (
+    <SignApiKeysView
+      role={role}
+      items={keysQuery.data?.items ?? []}
+      createdSecret={createdSecret}
+      creating={createMutation.isPending}
+      revokingId={revokingId}
+      createError={createMutation.error}
+      onCreate={(input) => createMutation.mutate(input)}
+      onStepUpVerified={() => createMutation.variables && createMutation.mutate(createMutation.variables)}
+      onStepUpCancel={() => createMutation.reset()}
+      onDismissSecret={() => setCreatedSecret(null)}
+      onRevoke={(apiKeyId) => revokeMutation.mutate(apiKeyId)}
+    />
+  );
+}
+
 export function SignSettingsPage() {
   const t = useTranslations('sign.ca');
   const orgQuery = useQuery(orpc.org.get.queryOptions());
@@ -1149,6 +1554,7 @@ export function SignSettingsPage() {
     <div className="space-y-8">
       <SignMemberSignaturesAndStampsSection slug={slug} />
       <PlaybookRulesCard slug={slug} role={orgQuery.data?.role} />
+      <SignApiKeysSection slug={slug} role={orgQuery.data?.role} />
       {orgQuery.isPending || settingsQuery.isPending ? (
         <ListSkeleton />
       ) : settingsQuery.error ? (

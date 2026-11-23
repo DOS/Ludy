@@ -342,6 +342,8 @@ export function SignCeremonyPage() {
           for (const field of view.fields) {
             if (field.fieldType === 'date' && !next[field.id]?.valueText) {
               next[field.id] = { ...next[field.id], valueText: todayStr };
+            } else if (field.fieldType === 'text' && field.valueText && !next[field.id]?.valueText) {
+              next[field.id] = { ...next[field.id], valueText: field.valueText };
             } else if (field.fieldType === 'attachment' && field.attachment && !next[field.id]?.attachment) {
               next[field.id] = { ...next[field.id], attachment: field.attachment };
             }

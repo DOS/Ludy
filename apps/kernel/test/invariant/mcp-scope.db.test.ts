@@ -101,6 +101,13 @@ const REACHABLE = [
   // is refused by both, the CRM read for a plain member too. Pinned in test/invariant/mcp-wake-engage-reach.db.test.ts and mcp-wake-engage.test.ts.
   'kernel.wake.conversations:ludy.read',
   'crm.wake.facts:ludy.read',
+  // The four eSign read-only projections for a company grant (#4438 / #4441, Slice 5c): non-confidential envelopes, single envelope progress with confirmed obligations,
+  // upcoming renewals, and reusable templates. Never returns hr_contract or meeting_minutes envelopes, signing tokens, OTPs, counterparty names, or signer emails/phones;
+  // pinned in test/invariant/mcp-sign-company.db.test.ts.
+  'sign.mcp.envelopes:ludy.read',
+  'sign.mcp.envelope_get:ludy.read',
+  'sign.mcp.renewals:ludy.read',
+  'sign.mcp.templates:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -129,15 +136,8 @@ const SIGNALS = [
 const FINANCE_READS: readonly string[] = [
 ];
 
-// The eSign read-only projections for a company grant (#4438 / #4441, Slice 5c): non-confidential envelopes, single envelope progress with confirmed obligations,
-// upcoming renewals, and reusable templates. Optional in Step 0 so Slice 5c can land while main's base invariant suite runs; never returns hr_contract or
-// meeting_minutes envelopes, signing tokens, OTPs, or signer emails/phones.
-const SIGN_READS: readonly string[] = [
-  'sign.mcp.envelopes:ludy.read',
-  'sign.mcp.envelope_get:ludy.read',
-  'sign.mcp.renewals:ludy.read',
-  'sign.mcp.templates:ludy.read',
-];
+// Graduated into REACHABLE in #4441 (Slice 5c).
+const SIGN_READS: readonly string[] = [];
 
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.

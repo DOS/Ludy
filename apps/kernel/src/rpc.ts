@@ -9,7 +9,7 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
 import { assertSignCaProviderAllowed } from '@ludy/mod-sign';
 import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
-import type { SignCaConnectionRecord, SignCaSettingsResult, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
+import type { SignApiKeyListResult, SignApiKeyRecord, SignCaConnectionRecord, SignCaSettingsResult, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
@@ -122,7 +122,7 @@ import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line
 import { misaAmisPreview } from './misa-amis-preview.ts';
 import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
-import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { DomainError, egressFetch, sha256Hex, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
 import { ChatAlertSaveBudget, ChatAlertTestBudget, requestChatAlertTest, saveChatAlert } from './chat-alert-save.ts';
@@ -5309,6 +5309,44 @@ export function createRpcHandler(
           ),
         ),
         confirm: os.sign.kyc.confirm.handler(signCommand('sign.kyc.confirm')),
+      },
+      api_keys: {
+        list: os.sign.api_keys.list.handler(({ context }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được khóa API eSign');
+            return runtime.query<SignApiKeyListResult>('sign.api_key.list', {}, { actor, orgId });
+          }),
+        ),
+        create: os.sign.api_keys.create.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tạo được khóa API eSign');
+            const secret = `ludy_sk_${randomBytes(32).toString('base64url')}`;
+            const keyPrefix = secret.slice(0, 16);
+            const keySha256 = sha256Hex(secret);
+            const apiKey = await runtime.execute<SignApiKeyRecord>(
+              'sign.api_key.create',
+              {
+                name: input.name,
+                keyPrefix,
+                keySha256,
+                scopes: input.scopes,
+                expiresAt: input.expiresAt ?? null,
+              },
+              { actor, orgId },
+            );
+            return { apiKey, secret };
+          }),
+        ),
+        revoke: os.sign.api_keys.revoke.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới thu hồi được khóa API eSign');
+            return runtime.execute<SignApiKeyRecord>('sign.api_key.revoke', input, {
+              actor,
+              orgId,
+              ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+            });
+          }),
+        ),
       },
     },
   });

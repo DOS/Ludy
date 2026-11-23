@@ -231,3 +231,28 @@ export {
   type SignKycInspectJobData,
   type SignKycSource,
 } from './kyc.ts';
+export {
+  signApiKeyCommands,
+  signApiKeyCreate,
+  signApiKeyList,
+  signApiKeyQueries,
+  signApiKeyRevoke,
+} from './api-keys.ts';
+export {
+  mcpSignEnvelopeGet,
+  mcpSignEnvelopes,
+  mcpSignRenewals,
+  mcpSignTemplates,
+  signMcpQueries,
+  type McpSignConfirmedObligation,
+  type McpSignConfirmedObligationItem,
+  type McpSignEnvelopeDetail,
+  type McpSignEnvelopeRow,
+  type McpSignEnvelopesResult,
+  type McpSignMaskedSigner,
+  type McpSignRenewalRow,
+  type McpSignRenewalsResult,
+  type McpSignSignerCounts,
+  type McpSignTemplateRow,
+  type McpSignTemplatesResult,
+} from './mcp.ts';

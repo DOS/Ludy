@@ -101,18 +101,18 @@ const PUBLIC: Record<string, string> = {
   '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify': 'public Projects roadmap email OTP verification (#4398 / #4399, ADR-0057): checks org_app_on, entitlement, and board.enabled with opaque 404, per-IP rate limit, 2 KB body cap, constant-time SHA-256 match locked after 5 failed attempts, and mints short-lived HMAC-signed voter claim',
   '/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas': 'public Projects roadmap idea submission (#4398 / #4399, ADR-0057): requires valid HMAC voter claim (or signed-in workspace session), enforces org_app_on + entitlement + allow_submissions opaque 404/403, per-IP rate limit, 16 KB body cap, schema check, and forces tainted = true and moderation_status = pending',
   '/api/projects/public-roadmap/:orgSlug/:boardSlug/votes': 'public Projects roadmap vote toggle and unsubscribe POST (#4398 / #4399, ADR-0057): requires valid HMAC voter claim (or signed-in session) for voting or unsubscribe_token_sha256 match for POST unsubscribe, enforces org_app_on + entitlement + allow_voting, per-IP rate limit, 2 KB body cap, and stores only keyed voter_email_hash',
-};
-
-// Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
-// here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
-// not exist yet; the stale-list check below skips it, and nothing else does.
-const PENDING: Record<string, string> = {
   '/api/v1/sign/envelopes': 'external eSign REST envelope list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, per-key rate limit, and excludes hr_contract and meeting_minutes envelopes',
   '/api/v1/sign/envelopes/:id': 'external eSign REST envelope detail (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, and omits signing tokens and OTPs',
   '/api/v1/sign/envelopes/:id/sealed': 'external eSign REST sealed PDF download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
   '/api/v1/sign/envelopes/:id/certificate': 'external eSign REST audit certificate download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
   '/api/v1/sign/templates': 'external eSign REST reusable template list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, and never returns direct-link capability tokens',
   '/api/v1/sign/envelopes/from-template': 'external eSign REST draft-only envelope creation from template (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:draft scope, org_app_on + entitlement opaque 404, creates status = draft only for human review, and never auto-sends or mints signing tokens',
+};
+
+// Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
+// here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
+// not exist yet; the stale-list check below skips it, and nothing else does.
+const PENDING: Record<string, string> = {
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
