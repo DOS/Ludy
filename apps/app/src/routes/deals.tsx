@@ -63,7 +63,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
   return (
     <>
       <TableRow data-testid="deal-row">
-        <TableCell className="px-4 text-sm">
+        <TableCell className="text-sm">
           {/* The deal opens in its side sheet: details, quotes, bookings and meetings (#3648). */}
           <button type="button" onClick={onOpen} data-testid="deal-row-open" className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
             {deal.title}
@@ -79,11 +79,11 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
           )}
           {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
         </TableCell>
-        <TableCell className="px-4 text-sm">
+        <TableCell className="text-sm">
           {deal.partyName}
           <DealPartyDuplicate deal={deal} canEdit={canEdit} />
         </TableCell>
-        <TableCell className="px-4 text-sm">
+        <TableCell className="text-sm">
           {canEdit ? (
             <NativeSelect size="sm" aria-label={t('stageOf', { title: deal.title })} value={deal.stageId} disabled={move.isPending} onChange={(e) => pick(e.target.value)}>
               {stages.map((s) => (
@@ -96,17 +96,17 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
             <Badge variant="outline">{stages.find((s) => s.id === deal.stageId)?.name ?? ''}</Badge>
           )}
         </TableCell>
-        <TableCell className="px-4 text-right text-sm tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</TableCell>
-        <TableCell data-label={t('columns.expectedClose')} className={`px-4 text-sm ${overdue ? 'text-destructive' : ''}`}>
+        <TableCell className="text-right text-sm tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</TableCell>
+        <TableCell data-label={t('columns.expectedClose')} className={`text-sm tabular-nums ${overdue ? 'text-destructive' : ''}`}>
           {deal.expectedClose ? formatDate(deal.expectedClose, locale) : ''}
           {/* The word, not only the colour (#3649). */}
           {overdue && <span className="ml-1 font-medium">{t('overdue')}</span>}
         </TableCell>
-        <TableCell data-label={t('columns.owner')} className="px-4 text-sm">
+        <TableCell data-label={t('columns.owner')} className="text-sm">
           {owner ? (owner.displayName ?? owner.email) : ''}
         </TableCell>
         {canEdit && (
-          <TableCell className="px-4">
+          <TableCell>
             <div className="flex flex-wrap gap-1">
               <Button size="sm" variant="outline" onClick={onOpen} aria-label={t('editOf', { title: deal.title })}>
                 {t('edit')}
@@ -133,7 +133,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
       </TableRow>
       {(losing || move.error || remove.error) && (
         <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
+          <TableCell colSpan={columns} className="py-3">
             {losing && (
               <form
                 className="flex flex-wrap items-end gap-2"

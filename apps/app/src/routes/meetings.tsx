@@ -701,7 +701,7 @@ export function MeetingsPage() {
                   const duration = m.lengthSeconds === null ? null : formatMeetingDuration(m.lengthSeconds, durationLabels);
                   return (
                     <TableRow key={m.id} data-testid="meeting-row">
-                      <TableCell data-label={t('table.colMeeting')} className="px-4 py-3">
+                      <TableCell data-label={t('table.colMeeting')}>
                         <div className="inline-flex flex-wrap items-center gap-2">
                           <Link
                             data-meeting-row-link
@@ -715,13 +715,13 @@ export function MeetingsPage() {
                           {m.platform && <Badge variant="outline">{t(`agenda.service.${m.platform}`)}</Badge>}
                         </div>
                       </TableCell>
-                      <TableCell data-label={t('table.colWhen')} className="px-4 py-3 text-xs text-muted-foreground">
+                      <TableCell data-label={t('table.colWhen')} className="text-xs text-muted-foreground tabular-nums">
                         <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
                           <span className="text-foreground">{f.dateTime(m.startedAt ?? m.createdAt)}</span>
                           {duration && <span className="font-mono tabular-nums">{duration}</span>}
                         </span>
                       </TableCell>
-                      <TableCell data-label={t('table.colSummary')} className="px-4 py-3">
+                      <TableCell data-label={t('table.colSummary')}>
                         <div className="inline-flex flex-wrap items-center gap-1.5">
                           <Badge variant="outline">{m.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}</Badge>
                           <span className="text-xs text-muted-foreground tabular-nums">
@@ -732,7 +732,7 @@ export function MeetingsPage() {
                           {m.hasTranscript && <Badge variant="secondary">{t('badgeTranscript')}</Badge>}
                         </div>
                       </TableCell>
-                      <TableCell data-label={t('table.colRetention')} className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
+                      <TableCell data-label={t('table.colRetention')} className="text-xs text-muted-foreground tabular-nums">
                         {f.date(m.audioRetentionDate)}
                       </TableCell>
                     </TableRow>

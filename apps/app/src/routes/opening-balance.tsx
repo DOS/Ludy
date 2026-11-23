@@ -204,8 +204,8 @@ function OpeningBalanceForm() {
                   <DataTable numeric={[2, 3]} head={[t('columns.row'), t('columns.account'), t('columns.debit'), t('columns.credit'), t('columns.status')]}>
                     {shown.map((r) => (
                       <TableRow key={r.rowNo} className="hover:bg-transparent">
-                        <TableCell className="px-4 text-subtle-foreground tabular-nums">{r.rowNo}</TableCell>
-                        <TableCell className="px-4">
+                        <TableCell className="text-subtle-foreground tabular-nums">{r.rowNo}</TableCell>
+                        <TableCell>
                           <span className="font-mono text-foreground">{r.accountCode}</span> <span className="text-muted-foreground">{r.accountName}</span>
                           {(r.partyTaxCode || r.partyName) && (
                             <span className="block text-xs text-subtle-foreground">
@@ -213,9 +213,9 @@ function OpeningBalanceForm() {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="px-4 text-right tabular-nums">{r.debit && r.debit !== '0' ? f.money(r.debit) : ''}</TableCell>
-                        <TableCell className="px-4 text-right tabular-nums">{r.credit && r.credit !== '0' ? f.money(r.credit) : ''}</TableCell>
-                        <TableCell className="px-4">
+                        <TableCell className="text-right tabular-nums">{r.debit && r.debit !== '0' ? f.money(r.debit) : ''}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.credit && r.credit !== '0' ? f.money(r.credit) : ''}</TableCell>
+                        <TableCell>
                           {r.errors.length === 0 ? (
                             <Badge variant="secondary">{t('rowOk')}</Badge>
                           ) : (

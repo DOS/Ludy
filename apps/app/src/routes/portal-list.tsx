@@ -55,17 +55,17 @@ function ItemRow({ item, slug, direction }: { item: ReconcileItem; slug: string;
   for (const d of item.differences) notes.push(t(`differences.${d}`));
   return (
     <TableRow>
-      <TableCell className="px-4 py-3 text-muted-foreground">{f.date(invoice.issueDate)}</TableCell>
-      <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{invoiceLabel(invoice)}</TableCell>
-      <TableCell className="px-4 py-3 text-foreground">
+      <TableCell className="text-muted-foreground tabular-nums">{f.date(invoice.issueDate)}</TableCell>
+      <TableCell className="font-mono text-xs text-foreground">{invoiceLabel(invoice)}</TableCell>
+      <TableCell className="text-foreground">
         {partyName}
         {partyTaxCode && <span className="block font-mono text-xs text-subtle-foreground">{partyTaxCode}</span>}
       </TableCell>
-      <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">
+      <TableCell className="text-right text-foreground tabular-nums">
         {item.portal?.total != null ? f.money(item.portal.total, item.portal.currency) : <span className="text-subtle-foreground">{t('noAmount')}</span>}
       </TableCell>
-      <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{item.ludy ? f.money(item.ludy.total, item.ludy.currency) : '-'}</TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell className="text-right text-foreground tabular-nums">{item.ludy ? f.money(item.ludy.total, item.ludy.currency) : '-'}</TableCell>
+      <TableCell>
         <div className="flex flex-wrap items-center gap-1">
           {item.portal?.statusLabel && <Badge variant={item.portal.status === 'cancelled' || item.portal.status === 'replaced' ? 'destructive' : 'outline'}>{item.portal.statusLabel}</Badge>}
           {notes.map((n) => (
@@ -411,12 +411,12 @@ export function PortalListPage() {
               <DataTable head={[t('columns.file'), t('columns.importedAt'), t('columns.listRange'), t('columns.status'), '']}>
                 {data.lists.map((list) => (
                   <TableRow key={list.id}>
-                    <TableCell className="px-4 py-3 text-foreground">{list.filename}</TableCell>
-                    <TableCell className="px-4 py-3 text-muted-foreground">{f.dateTime(list.createdAt)}</TableCell>
-                    <TableCell className="px-4 py-3 text-muted-foreground">
+                    <TableCell className="text-foreground">{list.filename}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{f.dateTime(list.createdAt)}</TableCell>
+                    <TableCell className="text-muted-foreground">
                       {list.listFrom && list.listTo ? t('listRange', { from: f.date(list.listFrom), to: f.date(list.listTo) }) : '-'}
                     </TableCell>
-                    <TableCell className="px-4 py-3">
+                    <TableCell>
                       {list.status === 'pending' ? (
                         <Badge variant="brand">{t('listStatus.pending')}</Badge>
                       ) : list.status === 'done' ? (
@@ -433,7 +433,7 @@ export function PortalListPage() {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="px-4 py-3 text-right">
+                    <TableCell className="text-right">
                       {editor && (
                         <Button variant="ghost" size="sm" disabled={removeList.isPending} onClick={() => removeList.mutate({ listId: list.id })}>
                           {t('remove')}

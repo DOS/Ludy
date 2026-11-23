@@ -45,7 +45,7 @@ export function isCurrentDeclarationRequest(
   );
 }
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 const FINDING_CODE_KEYS = [
   'MISSING_IDENTITY_NUMBER',
@@ -97,11 +97,11 @@ function SheetTable({ sheet, noRows }: { sheet: Sheet; noRows: string }) {
       {sheet.rows.length === 0 && !sheet.totals ? (
         <p className="text-sm text-muted-foreground">{noRows}</p>
       ) : (
-        <DataTable head={sheet.columns.map((c) => c.header)} numeric={numeric}>
+        <DataTable stickyFirstCol head={sheet.columns.map((c) => c.header)} numeric={numeric}>
           {sheet.rows.map((row, i) => (
             <TableRow key={i}>
               {sheet.columns.map((c) => (
-                <TableCell key={c.key} className={c.kind === 'text' ? 'px-4 py-3' : NUM}>
+                <TableCell key={c.key} className={c.kind === 'text' ? undefined : NUM}>
                   {cell(c.kind, row[c.key])}
                 </TableCell>
               ))}
@@ -110,7 +110,7 @@ function SheetTable({ sheet, noRows }: { sheet: Sheet; noRows: string }) {
           {sheet.totals && (
             <TableRow className="font-medium">
               {sheet.columns.map((c) => (
-                <TableCell key={c.key} className={c.kind === 'text' ? 'px-4 py-3' : NUM}>
+                <TableCell key={c.key} className={c.kind === 'text' ? undefined : NUM}>
                   {cell(c.kind, sheet.totals?.[c.key])}
                 </TableCell>
               ))}

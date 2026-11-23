@@ -19,7 +19,8 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
   const trigger = accountButton(sidebar);
 
   await test.step('active org context sits on the bottom account trigger, not a top org dropdown', async () => {
-    await expect(trigger).toContainText('Công ty Hướng Dương');
+    await expect(trigger).toHaveAccessibleName(new RegExp(String.raw`^Tài khoản: .*Công ty Hướng Dương`));
+    await expect(trigger).toHaveAttribute('title', /Công ty Hướng Dương/);
     await expect(sidebar.getByRole('combobox')).toHaveCount(0);
     await expect(orgButton(sidebar)).toHaveCount(0);
     await expect(sidebar.getByRole('link', { name: 'Thêm tổ chức' })).toHaveCount(0);
@@ -86,6 +87,13 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
     await expect(target).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${first}/overview$`));
+    await expect(trigger).toHaveAccessibleName(new RegExp(String.raw`^Tài khoản: .*Công ty Hoa Sen`));
+    await expect(trigger).toHaveAttribute('title', /Công ty Hoa Sen/);
+  });
+
+  await test.step('on an App screen, the expanded bottom trigger visibly displays the active org name', async () => {
+    await sidebar.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${first}/accounting$`));
     await expect(trigger).toContainText('Công ty Hoa Sen');
   });
 

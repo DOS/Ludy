@@ -45,6 +45,10 @@ export type ExtensionScope = (typeof EXTENSION_SCOPES)[number];
 export interface ExtensionGrant {
   tokenId: string;
   scopes: readonly string[];
+  // Who the token was made for (ADR-0055 slice 2, #4515): the browser extension or Ludy Desktop. Set by the HTTP edge from the token's
+  // own row (ludy_kernel.extension_token.client, which the server wrote at the exchange), never from anything a request says. Absent
+  // means 'extension'. Slice 3 (desktop capture) decides the capture kind from this field.
+  client?: 'extension' | 'desktop';
 }
 
 // The declaration that opens a command or query to an extension token holding `scope` (and to no other scope).
