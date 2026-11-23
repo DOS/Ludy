@@ -133,6 +133,57 @@ describe('followupNoteProblem', () => {
   });
 });
 
+describe('the contact and link shapes of #4553', () => {
+  // Gaps of #4479's review that were open before it: other dash characters, a line break between groups, a number typed without its leading 0, other separators, and links behind other
+  // punctuation or spaced dots. Nothing the guard refused before is allowed now (checked against the old guard on random strings).
+  it('refuses a phone typed with other dashes, line breaks, other separators or no leading 0, and keeps dates, times and ranges out of CONTACT', () => {
+    const en = String.fromCharCode(0x2013);
+    const minus = String.fromCharCode(0x2212);
+    for (const phone of [
+      `Số 090 ${en} 123 ${en} 4567`,
+      `Số 090${minus}123${minus}4567`,
+      'Số\n090\n123\n4567',
+      'Số 090 -\n123 -\n4567',
+      'Số 90 - 123 - 4567',
+      'US 415 - 555 - 2671',
+      'Gọi 1 - 415 - 555 - 2671',
+      'Số +1 415 - 555 - 2671',
+      'Số 090/123/4567',
+      'Số 090_123_4567',
+      'Số 090,123,4567',
+      'Số 090-123 - 4567',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
+    }
+    for (const fine of [
+      'Hạn 28/11/2026 12 người',
+      'Hạn 05/10/2026 12 người',
+      'Ngày 01-12-2026 12 người',
+      'Từ 05 - 10 - 2026 đến 07 - 10 - 2026',
+      `Ngày 28${en}11${en}2026`,
+      'Ca 07.00 - 11.30',
+      'Năm 2025 - 2026 - 2027',
+      'Doanh thu 10000 - 20000',
+      'Giá 0,5 - 0,75 triệu',
+      'Mục 1, 2, 3, 4',
+      'Họp 0900 - 1700',
+      'Dòng 1\nDòng 2\nDòng 3',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(fine), fine).toBe(false);
+    }
+  });
+
+  it('sees a domain behind any ASCII punctuation or with spaces around its dot, and still reads ordinary prose as prose', () => {
+    const ideographic = String.fromCharCode(0x3002);
+    for (const glued of ['a|x.com', 'a/x.com', 'a*x.com', 'a&x.com', 'a=x.com', 'a~x.com', 'a:x.com', 'a#x.com', 'a+x.com', 'a%x.com', 'a_x.com', 'abc . com', `abc ${ideographic} com`]) {
+      expect(followupHasBareLink(`Vào ${glued} nhé`), glued).toBe(true);
+    }
+    for (const fine of ['chốt.Co thể', 'Họp lúc 9.30, tại phòng 5', 'và/hoặc đi', 'Giá 1,5 triệu và 2.5', 'Gửi báo giá, xong thì chốt', 'đi.Me', 'Giá 2.5,vn']) {
+      expect(followupHasBareLink(fine), fine).toBe(false);
+    }
+  });
+});
+
 describe('the send and mail shapes', () => {
   it('holds a send to twenty recipients and refuses unknown fields', () => {
     const base = { meetingId: '00000000-0000-4000-8000-000000000001', factsKey: 'k', subject: 's', greeting: 'g', lead: 'l', closing: 'c', recipients: ['a@b.test'], confirmedOutsiders: [], confirmRepeat: false, fromVy: false, reviewed: false };
