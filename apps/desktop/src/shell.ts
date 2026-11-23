@@ -93,10 +93,13 @@ export function createShell(deps: ShellDeps): Shell {
 
   async function checkSessionNow(): Promise<void> {
     if (token === null || config.ludyUrl === null || auth.kind !== 'signed-in') return;
-    const status = await checkSession(deps.fetch, config.ludyUrl, token);
+    const checked = token;
+    const status = await checkSession(deps.fetch, config.ludyUrl, checked);
+    // The answer is about the token that was asked: if the member signed out and in again meanwhile, it says nothing of the new one.
+    if (token !== checked) return;
     if (status === 'revoked') {
       log('token refused by the server: signed out');
-      await signedOut('Thiết bị này đã bị ngắt kết nối, hãy đăng nhập lại');
+      await signedOut('Phiên đăng nhập không còn hiệu lực (thiết bị đã bị ngắt kết nối hoặc đã hết hạn), hãy đăng nhập lại');
     } else if (auth.kind === 'signed-in') {
       const online = status === 'valid';
       if (online !== auth.online) setAuth({ ...auth, online }, notice);

@@ -158,6 +158,25 @@ describe('shell token check', () => {
     expect(t.files.size).toBe(0);
   });
 
+  it('ignores the answer of a check that was in flight when the member signed out', async () => {
+    let release: (r: Response) => void = () => {};
+    const fetchImpl: FetchLike = async (url) => {
+      if (String(url).endsWith('/api/extension/token')) return json(200, { token: TOKEN, tokenId: 'tid', orgId: 'oid', scopes: [], expiresAt: '2027-02-01T00:00:00.000Z' });
+      return new Promise<Response>((resolve) => (release = resolve));
+    };
+    const t = setup({ fetchImpl });
+    const pending = t.shell.signIn();
+    await flush();
+    t.answer({ code: CODE, org: 'acme' });
+    await pending;
+    const check = t.shell.checkSessionNow();
+    await flush();
+    await t.shell.signOut();
+    release(json(401, {}));
+    await check;
+    expect(t.shell.model()).toMatchObject({ auth: { kind: 'signed-out' }, notice: null });
+  });
+
   it('a server error does not sign out, it only marks the server unreachable', async () => {
     const t = await signedIn();
     t.setMe(503);
