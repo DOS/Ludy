@@ -245,6 +245,7 @@ export function SignEnvelopeDetailPage() {
       : false;
   // The draft of a meeting-minutes envelope is read by every reader of the meeting but changed and sent only by its creator, an owner or an admin (#4530); the server refuses the others with 403.
   const canChangeDraft = envelope?.sourceKind !== 'meeting_minutes' || canManageLinksAndVoid;
+  const canEditDraft = isDraft && canChangeDraft;
   const canRemind = meQuery.data
     ? Boolean(roleHere && roleHere !== 'viewer')
     : orgQuery.data
@@ -721,7 +722,7 @@ export function SignEnvelopeDetailPage() {
   ];
 
   const handleAddField = (fieldType: SignFieldType, coords?: { pageNumber: number; xCenterNorm: number; yCenterNorm: number }) => {
-    if (!isDraft || !activeSignerId) return;
+    if (!canEditDraft || !activeSignerId) return;
     const targetPage = coords?.pageNumber ?? pageNumber;
     const existingOnPageCount = draftFields.filter((item) => item.pageNumber === targetPage).length;
     const box = createPlacedFieldBox({
@@ -748,7 +749,7 @@ export function SignEnvelopeDetailPage() {
   };
 
   const handleInitialAllPrecedingPages = () => {
-    if (!isDraft || !activeSignerId || effectivePageCount < 2) return;
+    if (!canEditDraft || !activeSignerId || effectivePageCount < 2) return;
     const plan = planInitialAllPrecedingPages({
       signerId: activeSignerId,
       pageCount: effectivePageCount,
@@ -790,7 +791,7 @@ export function SignEnvelopeDetailPage() {
   };
 
   const handleApplyProposal = (proposal: SignProposedField, adjustedBox?: NormalizedBox) => {
-    if (!isDraft) return;
+    if (!canEditDraft) return;
     const signerId = resolveProposalSignerId(proposal.signerId);
     if (!signerId) return;
     const box = clampFieldBox(adjustedBox ?? proposal);
@@ -817,7 +818,7 @@ export function SignEnvelopeDetailPage() {
   };
 
   const handleApplyAllProposals = () => {
-    if (!isDraft || pendingProposals.length === 0) return;
+    if (!canEditDraft || pendingProposals.length === 0) return;
     const nextFields: DraftFieldPlacement[] = [];
     const appliedIds: string[] = [];
     for (const proposal of pendingProposals) {
@@ -846,7 +847,7 @@ export function SignEnvelopeDetailPage() {
   };
 
   const handleApplyDetectedTags = () => {
-    if (!isDraft || tagPlan.applicable.length === 0) return;
+    if (!canEditDraft || tagPlan.applicable.length === 0) return;
     const placed: DraftFieldPlacement[] = tagPlan.applicable.map((item) => ({
       localId: `tag-${globalThis.crypto.randomUUID()}`,
       signerId: item.signerId,
@@ -997,7 +998,7 @@ export function SignEnvelopeDetailPage() {
         subtitle={`${t(`routing.${envelope.routingMode}`)} - ${t('fieldsCount', { count: String(draftFields.length) })}`}
         actions={
           <div className="flex flex-wrap gap-2">
-            {isDraft && canChangeDraft ? (
+            {canEditDraft ? (
               <>
                 <Button
                   type="button"
@@ -1066,7 +1067,7 @@ export function SignEnvelopeDetailPage() {
       {envelope.status === 'completed' && envelope.sealStatus === 'failed' ? (
         <ErrorText>{t('sealFailedBanner')}</ErrorText>
       ) : null}
-      {isDraft && readinessIssue ? (
+      {canEditDraft && readinessIssue ? (
         <p className="text-xs text-muted-foreground" data-testid="sign-readiness-hint">
           {t(`sendConfirm.readyHints.${readinessIssue}`)}
         </p>
@@ -1128,7 +1129,7 @@ export function SignEnvelopeDetailPage() {
             }
           />
 
-          {isDraft ? (
+          {canEditDraft ? (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">{t('saveMetadata')}</CardTitle>
@@ -1257,7 +1258,7 @@ export function SignEnvelopeDetailPage() {
         </div>
 
         <div className="min-w-0 space-y-3">
-          {isDraft && tagPlan.totalTags > 0 ? (
+          {canEditDraft && tagPlan.totalTags > 0 ? (
             <Card data-testid="sign-detected-tags-banner">
               <CardContent className="flex flex-col gap-2.5 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 space-y-1 text-xs">
@@ -1292,7 +1293,7 @@ export function SignEnvelopeDetailPage() {
             </Card>
           ) : null}
 
-          {isDraft ? (
+          {canEditDraft ? (
             <Card>
               <CardContent className="space-y-2 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1363,10 +1364,10 @@ export function SignEnvelopeDetailPage() {
               <FieldOverlayLayer
                 pageNumber={page}
                 fields={draftFields}
-                proposals={isDraft ? pendingProposals : []}
+                proposals={canEditDraft ? pendingProposals : []}
                 signers={signers}
                 selectedFieldId={selectedFieldId}
-                editable={isDraft}
+                editable={canEditDraft}
                 onSelectField={setSelectedFieldId}
                 onUpdateFieldBox={handleUpdateFieldBox}
                 onDeleteField={handleDeleteField}
@@ -1402,7 +1403,7 @@ export function SignEnvelopeDetailPage() {
           <VyClausePanel
             aiAnalysis={effectiveAi}
             pendingProposals={pendingProposals}
-            editable={isDraft}
+            editable={canEditDraft}
             analyzing={analyzeMutation.isPending}
             onAnalyze={() => analyzeMutation.mutate()}
             onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
@@ -1434,7 +1435,7 @@ export function SignEnvelopeDetailPage() {
             />
           ) : null}
 
-          {isDraft && selectedField ? (
+          {canEditDraft && selectedField ? (
             <Card data-testid="field-inspector-card">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">{t('fields.selectedLabel')}</CardTitle>
