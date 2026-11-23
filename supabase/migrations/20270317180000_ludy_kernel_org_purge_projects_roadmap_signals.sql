@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Projects Omnichannel Roadmap Signals (issue #4492): restate ludy_kernel.org_purge from 20270316130100_ludy_kernel_org_purge_sign_api_keys and 20270316140000_ludy_kernel_rebrand_module_schemas with ONE change:
--- delete ludy_projects.roadmap_signal ahead of ludy_projects.roadmap_item and ludy_projects.roadmap_board.
+-- Projects Omnichannel Roadmap Signals (issue #4492): restate ludy_kernel.org_purge from 20270317160000_ludy_kernel_push_subscription with ONE change:
+-- delete ludy_projects.roadmap_signal ahead of ludy_projects.roadmap_announcement and ludy_projects.roadmap_item.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
@@ -52,7 +52,7 @@ DECLARE
     'ludy_projects.roadmap_signal', 'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
     'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
     'ludy_kernel.activity', 'ludy_kernel.agent_wakeup', 'ludy_kernel.extraction',
-    'ludy_kernel.inbound_message', 'ludy_kernel.notification', 'ludy_kernel.notification_mute', 'ludy_kernel.inbox_item',
+    'ludy_kernel.inbound_message', 'ludy_kernel.push_subscription', 'ludy_kernel.notification', 'ludy_kernel.notification_mute', 'ludy_kernel.inbox_item',
     'ludy_kernel.mail_event', 'ludy_kernel.mail_suppression', 'ludy_kernel.mail_message',
     'ludy_kernel.member_invite', 'ludy_kernel.auth_session_org', 'ludy_kernel.inbound_drop',
     'ludy_kernel.idempotency_key', 'ludy_kernel.extension_token', 'ludy_kernel.extension_auth_code', 'ludy_kernel.agent_wake_delivery', 'ludy_kernel.agent_wake_signal_seen', 'ludy_kernel.agent_grant_wake', 'ludy_kernel.agent_grant', 'ludy_kernel.oauth_state', 'ludy_kernel.outbox_pending', 'ludy_kernel.outbox_held',
