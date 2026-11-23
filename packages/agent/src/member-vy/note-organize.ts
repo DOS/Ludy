@@ -8,6 +8,13 @@ import {
   sanitizeNoteAiText,
   type NoteAiLanguage,
 } from './note-ai.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasStealthControls,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
 import { type BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
@@ -93,18 +100,30 @@ const zRawNoteOrganize = z.object({
 
 const BARE_URL_RE = /\b(?:https?:\/\/|javascript:|data:)[^\s)>\]]*/gi;
 
+function isUnsafeOrganizeText(text: string): boolean {
+  return (
+    hasPromptTagLeak(text) ||
+    hasAutonomousActionDirective(text) ||
+    hasObfuscatedContactOrLink(text, []) ||
+    hasUngroundedMoneyOrScaleWords(text) ||
+    hasUngroundedMoneyOrIdToken(text, [])
+  );
+}
+
 function sanitizeReason(raw: string | undefined): { value: string; leaked: boolean } {
   if (!raw) return { value: '', leaked: false };
-  if (hasPromptTagLeak(raw)) return { value: '', leaked: true };
+  if (hasStealthControls(raw) || hasPromptTagLeak(raw)) return { value: '', leaked: true };
   const cleaned = sanitizeNoteAiText(raw.replace(BARE_URL_RE, ' '), ORGANIZE_LIMITS.maxReasonChars);
-  if (hasPromptTagLeak(cleaned)) return { value: '', leaked: true };
+  if ((raw.trim().length > 0 && cleaned.length === 0) || isUnsafeOrganizeText(cleaned)) {
+    return { value: '', leaked: true };
+  }
   return { value: cleaned, leaked: false };
 }
 
 function normalizeCandidateTag(rawTag: string): { value: string | null; leaked: boolean } {
-  if (hasPromptTagLeak(rawTag)) return { value: null, leaked: true };
+  if (hasStealthControls(rawTag) || hasPromptTagLeak(rawTag)) return { value: null, leaked: true };
   const cleaned = sanitizeNoteAiText(rawTag.replace(BARE_URL_RE, ' '), ORGANIZE_LIMITS.maxTagChars + 12);
-  if (hasPromptTagLeak(cleaned)) return { value: null, leaked: true };
+  if (isUnsafeOrganizeText(cleaned)) return { value: null, leaked: true };
   const stripped = cleaned.replace(/^#+/, '').replace(/[,;\r\n]/g, ' ').trim().toLowerCase();
   if (stripped.length === 0 || stripped.length > ORGANIZE_LIMITS.maxTagChars) return { value: null, leaked: false };
   if (/^https?:|^javascript:|^data:/.test(stripped)) return { value: null, leaked: false };

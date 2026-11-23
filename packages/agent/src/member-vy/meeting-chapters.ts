@@ -5,6 +5,7 @@
 // phone number, a run of digits or a figure the transcript does not hold is dropped, and the title is cleaned of control, bidi and zero-width characters first. What is left is still
 // the model's text, so it stays private to the recorder and tainted until the recorder's own command copies it into a draft and a person reviews and publishes it. Nothing here reads a
 // database, names a table or command, or persists anything (the boundary test pins that).
+import { hasAutonomousActionDirective, hasPromptMarkupLeak, hasUngroundedMoneyOrScaleWords } from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
 import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
@@ -108,7 +109,9 @@ export function checkChapters(raw: string, segments: readonly SummarySegment[], 
   if (!isRecord(root) || !Array.isArray(root.chapters)) throw new ChaptersError('CHAPTERS_UNPARSABLE');
   const anchors = anchorSeconds(segments);
   // The figures the meeting says (the speakers' words, not the clock of the lines).
-  const known = new Set(numbersIn(segments.map((s) => s.text).join('\n')));
+  const transcriptText = segments.map((s) => s.text).join('\n');
+  const known = new Set(numbersIn(transcriptText));
+  const transcriptHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(transcriptText);
   const bySecond = new Map<number, string>();
   let dropped = 0;
   for (const entry of root.chapters as unknown[]) {
@@ -126,6 +129,10 @@ export function checkChapters(raw: string, segments: readonly SummarySegment[], 
       !anchors.has(second) ||
       title === '' ||
       hasContact(title) ||
+      hasPromptMarkupLeak(entry.title) ||
+      hasPromptMarkupLeak(title) ||
+      hasAutonomousActionDirective(title) ||
+      (!transcriptHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(title)) ||
       title.includes('@') ||
       digits >= 8 ||
       figures.some((n) => !known.has(n)) ||

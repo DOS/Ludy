@@ -100,8 +100,10 @@ test('nothing on the sidebar screens slides, zooms, fades or pulses when the sys
     if (first) {
       first = false;
       await openPaletteAndClose(page);
-      await sidebar.locator('summary').click();
+      await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
+      await expect(sidebar.getByTestId('account-popover')).toBeVisible();
       await page.waitForTimeout(300);
+      await page.keyboard.press('Escape');
       expect(await probeSeen(page), 'the stylesheet cuts the probe short').toBe(false);
     }
     await note(path);

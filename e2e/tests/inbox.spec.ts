@@ -36,8 +36,11 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('the empty Inbox links the quick guide, and the shell the support channel (#310)', async () => {
-    const support = page.getByRole('complementary').getByRole('link', { name: 'Góp ý / Hỗ trợ' });
+    const sidebar = page.getByRole('complementary');
+    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    const support = sidebar.getByRole('link', { name: 'Góp ý / Hỗ trợ' });
     await expect(support).toHaveAttribute('href', 'mailto:support@e2e.test');
+    await page.keyboard.press('Escape');
     await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, khai thuế, xuất Excel' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/guide$`));
     await expect(page.getByRole('heading', { name: 'Hướng dẫn nhanh' })).toBeVisible();

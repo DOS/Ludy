@@ -79,3 +79,50 @@ jobs:
           AI_MODEL: ${{ secrets.AI_MODEL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
         run: pnpm ai:eval
+
+  coworkers:
+    name: AI coworkers eval (all features + injection corpus)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Is the AI endpoint configured
+        id: endpoint
+        env:
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+        run: |
+          if [ -n "$AI_BASE_URL" ] && [ -n "$AI_MODEL" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            message="AI coworkers eval skipped: the AI_BASE_URL and AI_MODEL secrets are not available. See docs/runbooks/ai-eval.md."
+            echo "::notice::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - if: steps.endpoint.outputs.ready == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - if: steps.endpoint.outputs.ready == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        if: steps.endpoint.outputs.ready == 'true'
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        if: steps.endpoint.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile --filter "@ludy/agent..." --filter "ludy-monorepo"
+
+      - name: Coworkers eval (all features, reported per feature)
+        if: steps.endpoint.outputs.ready == 'true'
+        env:
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+        run: pnpm ai:eval:coworkers

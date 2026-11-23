@@ -20,7 +20,11 @@ import { PHONE_TARGET } from '../src/lib/touch-target.ts';
 const state = vi.hoisted(() => ({ client: null as unknown as QueryClient, pathname: '/o/acme/overview', links: [] as Array<{ to: string; onClick?: unknown }> }));
 
 vi.mock('../src/lib/auth.ts', () => ({
-  getConfig: () => ({ modules: Object.keys(MODULE_SCREENS), mcpEnabled: true }),
+  getConfig: () => ({ modules: Object.keys(MODULE_SCREENS), mcpEnabled: true, supportUrl: 'mailto:support@example.com', statusPage: true }),
+}));
+
+vi.mock('../src/lib/api-base.ts', () => ({
+  serverOrigin: () => 'https://app.ludy.vn',
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -57,7 +61,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), client: node([]), clientForOrg: () => node([]), queryClient: state.client, errorMessage: String };
 });
 
-const { ShellNav } = await import('../src/components/app-nav.tsx');
+const { AccountPanel, ShellNav } = await import('../src/components/app-nav.tsx');
 const { PhoneHeader } = await import('../src/components/phone-header.tsx');
 
 function render(locale: 'vi' | 'en', node: React.ReactNode): string {
@@ -265,23 +269,52 @@ describe('SH-4: 44px targets under the phone breakpoint', () => {
   });
 });
 
-describe('SH-5: the cut-off names have a tooltip and the selects are named', () => {
-  it('puts the full org name and e-mail address in a title', () => {
+describe('SH-5: bottom AccountPopover keeps active org context and uses segmented chrome toggles (#4502)', () => {
+  it('puts the full org name and e-mail address in titles on the bottom account trigger, with no top org menu or <details>', () => {
     const html = shell('/o/acme/overview');
+    expect(html).toContain('data-testid="account-menu-trigger"');
     expect(html).toContain(`title="${LONG_NAME}"`);
     expect(html).toContain('title="chu.cong.ty@example.com"');
+    expect(html).not.toContain('data-testid="org-menu"');
+    expect(html).not.toContain('<details');
+    expect(html).not.toContain('<select');
   });
 
-  it('shows the name of the language and theme selects above them, in both languages', () => {
-    const vi = shell('/o/acme/overview');
-    expect(vi).toContain('>Ngôn ngữ</span>');
-    expect(vi).toContain('>Giao diện</span>');
-    const en = shell('/o/acme/overview', 'en');
-    expect(en).toContain('>Language</span>');
-    expect(en).toContain('>Theme</span>');
-    // The select keeps its own accessible name, so the visible label is not read twice.
-    expect(vi).toContain('aria-label="Ngôn ngữ"');
-    expect(vi).toContain('aria-label="Giao diện"');
+  it('houses org switcher, icon theme toggle, VI/EN locale toggle, support/status links, and sign-out inside AccountPanel', () => {
+    const orgs = [
+      { orgId: '1', slug: 'acme', name: LONG_NAME },
+      { orgId: '2', slug: 'beta', name: 'Beta Co' },
+    ];
+    for (const [locale, langLabel, themeLabel, allClients, signOutLabel] of [
+      ['vi', 'Ngôn ngữ', 'Giao diện', 'Tất cả doanh nghiệp', 'Đăng xuất'],
+      ['en', 'Language', 'Theme', 'All companies', 'Sign out'],
+    ] as const) {
+      const panel = render(
+        locale,
+        <AccountPanel slug="acme" orgs={orgs} email="chu.cong.ty@example.com" onSignOut={() => undefined} />,
+      );
+      expect(panel).toContain('data-testid="org-menu"');
+      expect(panel).toContain(allClients);
+      expect(panel).toContain(`>${langLabel}</span>`);
+      expect(panel).toContain(`>${themeLabel}</span>`);
+      expect(panel).toContain(`aria-label="${langLabel}"`);
+      expect(panel).toContain(`aria-label="${themeLabel}"`);
+      expect(panel).toContain('role="radiogroup"');
+      expect(panel).toContain('role="radio"');
+      expect(panel).toContain('max-md:min-h-11');
+      expect(panel).toContain('max-md:min-w-11');
+      expect(panel).toContain(signOutLabel);
+      expect(panel).toContain('mailto:support@example.com');
+      expect(panel).toContain('/status');
+      expect(panel).not.toContain('<select');
+      expect(panel).not.toContain('<details');
+    }
+
+    const singleOrgPanel = render(
+      'vi',
+      <AccountPanel slug="acme" orgs={orgs.slice(0, 1)} email="chu.cong.ty@example.com" onSignOut={() => undefined} />,
+    );
+    expect(singleOrgPanel).not.toContain('Tất cả doanh nghiệp');
   });
 });
 
