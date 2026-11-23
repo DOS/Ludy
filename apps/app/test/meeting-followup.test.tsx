@@ -26,7 +26,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
 
-const { FollowupForm } = await import('../src/components/meeting-followup.tsx');
+const { FollowupForm, stageAfterLoadError } = await import('../src/components/meeting-followup.tsx');
 const { MeetingResults } = await import('../src/components/meeting-results.tsx');
 
 const DRAFT: FollowupDraft = {
@@ -137,6 +137,18 @@ describe('FollowupForm', () => {
     expect(Object.keys(en.meetings.followup.wording).sort()).toEqual(Object.keys(viMessages.meetings.followup.wording).sort());
     expect(Object.keys(en.meetings.followup.noteAiStatus).sort()).toEqual(Object.keys(viMessages.meetings.followup.noteAiStatus).sort());
     expect(Object.keys(en.meetings.followup.noteState).sort()).toEqual(Object.keys(viMessages.meetings.followup.noteState).sort());
+  });
+});
+
+describe('the stage the dialog asks for after a failed load (#4479)', () => {
+  it('falls back to the default stage when the chosen draft is gone (published in another tab), and keeps every other choice and error', () => {
+    const gone = { code: 'NO_DRAFT_SUMMARY' };
+    expect(stageAfterLoadError('draft', gone)).toBeUndefined();
+    expect(stageAfterLoadError('published', gone)).toBe('published');
+    expect(stageAfterLoadError(undefined, gone)).toBeUndefined();
+    expect(stageAfterLoadError('draft', { code: 'FORBIDDEN' })).toBe('draft');
+    expect(stageAfterLoadError('draft', new Error('network'))).toBe('draft');
+    expect(stageAfterLoadError('draft', null)).toBe('draft');
   });
 });
 

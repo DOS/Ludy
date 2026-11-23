@@ -77,9 +77,12 @@ function trimToWord(token: string): string {
   return chars.slice(from, to).join('');
 }
 
-/** Whether a text carries a bare domain link (including numeric-prefix domains such as 123.com or 1.ai). */
+/**
+ * Whether a text carries a bare domain link (including numeric-prefix domains such as 123.com or 1.ai). A comma, a bracket or a quote glued to the front (a,123.com) does not hide
+ * one, and an ideographic full stop (123。com) reads as the dot it stands for (#4479).
+ */
 export function followupHasBareLink(text: string): boolean {
-  for (const raw of text.normalize('NFKC').split(/\s+/u)) {
+  for (const raw of text.normalize('NFKC').replace(/[。｡]/gu, '.').split(/[\s,;!()[\]{}<>"']+/u)) {
     const token = trimToWord(raw).toLowerCase();
     if (token === '') continue;
     const host = token.split(/[/?#:]/)[0] as string;
@@ -93,17 +96,23 @@ export function followupHasBareLink(text: string): boolean {
 
 const GROUPED_INTEGER = /^[1-9]\d{0,2}(?:\.\d{3})+$/;
 const DASH_DATE = /^(?:\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?:0[1-9]|[12]\d|3[01])-(?:0[1-9]|1[0-2])-\d{4})$/;
+// A day written with dots (28.11.2026): eight digits that are not a contact. The year is 19xx or 20xx, so a phone such as 09.12.4567 is not let through as one.
+const DOT_DATE = /^(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d{2}$/;
+// A hyphen with spaces around it, then a digit: how a phone number is sometimes typed by hand (090 - 123 - 4567).
+const SPACED_DASH_DIGIT = /^[ \t]*-[ \t]*\d/;
+const UNSPACED_DASH = /\d-\d/;
 
-/** Whether a cleaned text holds a phone number or an 8+-digit contact/ID run (allowing grouped thousands integers like 15.000.000 and dash dates like 2026-11-15). */
+/** Whether a cleaned text holds a phone number or an 8+-digit contact/ID run (allowing grouped thousands integers like 15.000.000, dash dates like 2026-11-15 and dot dates like 28.11.2026). */
 export function followupHasPhoneOrLongDigits(text: string): boolean {
   const normalized = text.normalize('NFKC');
   let start = -1;
   let last = -1;
   let digitCount = 0;
+  const standsAlone = (span: string): boolean => GROUPED_INTEGER.test(span) || DASH_DATE.test(span) || DOT_DATE.test(span);
   const flush = () => {
     if (start >= 0) {
       const span = normalized.slice(start, last + 1);
-      if (digitCount >= 8 && !GROUPED_INTEGER.test(span) && !DASH_DATE.test(span)) return true;
+      if (digitCount >= 8 && !standsAlone(span)) return true;
     }
     start = -1;
     last = -1;
@@ -119,15 +128,18 @@ export function followupHasPhoneOrLongDigits(text: string): boolean {
       digitCount += 1;
       continue;
     }
-    const joinSpace =
-      start >= 0 &&
-      (c === ' ' || c === '\t') &&
-      normalized[i + 1] !== '-' &&
-      !GROUPED_INTEGER.test(normalized.slice(start, last + 1)) &&
-      !DASH_DATE.test(normalized.slice(start, last + 1));
+    const span = start >= 0 ? normalized.slice(start, last + 1) : '';
+    const joinSpace = start >= 0 && (c === ' ' || c === '\t') && normalized[i + 1] !== '-' && !standsAlone(span);
     const joinDash = start >= 0 && c === '-' && normalized[i - 1] !== ' ' && normalized[i + 1] !== ' ';
+    // A phone typed with spaces around its hyphens (090 - 123 - 4567) is one run. Only a run that opens like a phone number (0, 84 or +) is joined this way, so a range of figures
+    // (1000 - 2000, 2025 - 2026) is not read as one, and a run that already holds a date or a grouped number stands alone.
+    const phoneLead = normalized[start] === '0' || normalized.startsWith('84', start) || normalized[start - 1] === '+';
+    const joinSpacedDash =
+      start >= 0 && (c === ' ' || c === '\t' || c === '-') && SPACED_DASH_DIGIT.test(normalized.slice(i)) && phoneLead && !standsAlone(span) && !UNSPACED_DASH.test(span);
     const joinParen = start >= 0 && (c === ')' || (c === '(' && digitCount <= 3));
-    if (joinSpace || joinDash || joinParen || (start >= 0 && c === '.')) continue;
+    // A dot joins two digits (090.123.4567, 15.000.000), not a full stop that ends a sentence ("Năm 2025. 2026 ...").
+    const joinDot = start >= 0 && c === '.' && (normalized[i + 1] ?? '') >= '0' && (normalized[i + 1] ?? '') <= '9';
+    if (joinSpace || joinDash || joinSpacedDash || joinParen || joinDot) continue;
     if (flush()) return true;
   }
   return false;

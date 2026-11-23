@@ -83,6 +83,28 @@ describe('followupNoteProblem', () => {
     expect(followupHasPhoneOrLongDigits('Hạn 2026-11-22 - 2026-12-01, gói 15.000.000 (2026)')).toBe(false);
     expect(followupHasPhoneOrLongDigits('Gọi 84 (028) 3822 1234')).toBe(true);
   });
+
+  it('reads a phone typed with spaced hyphens, keeps dot dates and figure ranges out of CONTACT, and sees a domain behind punctuation (#4479)', () => {
+    for (const phone of ['Số 090 - 123 - 4567', 'Gọi 090 - 1234567', 'Số +84 90 - 123 - 4567', 'Gọi 0901 - 234 - 567', 'Số 090.123.4567', 'Mã 09.12.4567']) {
+      expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
+    }
+    expect(followupNoteProblem(followupClean('Số 090 - 123 - 4567', false))).toBe('CONTACT');
+    for (const fine of [
+      'Họp ngày 28.11.2026',
+      'Hạn 28.11.2026 - 30.11.2026',
+      'Ngày 28.11.2026 lúc 09.30',
+      'Năm 2025. 2026 sẽ khác',
+      'Ngân sách 1000 - 2000 USD',
+      'Năm 2025 - 2026 - 2027',
+      'Từ 2026-11 - 2026-12',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(fine), fine).toBe(false);
+    }
+    for (const link of ['Vào a,123.com', 'Xem (123.com)', 'Vào 123。com', 'Vào 123｡com', 'Xem x;1.ai nhé', 'Kiểm tra unit.test nhé']) {
+      expect(followupHasBareLink(link), link).toBe(true);
+    }
+    for (const fine of ['Giá 1,5 triệu và 2.5', 'Gửi báo giá, xong thì chốt', 'Họp lúc 9.30, tại phòng 5']) expect(followupHasBareLink(fine), fine).toBe(false);
+  });
 });
 
 describe('the send and mail shapes', () => {

@@ -115,6 +115,27 @@ describe('checkFollowupPersonalNote', () => {
     expect(codeOf(() => checkFollowupPersonalNote('not json', FACTS))).toBe('FOLLOWUP_NOTE_UNPARSABLE');
     expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body: '   ' }), FACTS))).toBe('FOLLOWUP_NOTE_EMPTY');
   });
+
+  // The source facts hold what the body repeats, so the figures are grounded and only the contact and link checks can refuse it (#4479): the same edges as the contract's
+  // followupHasPhoneOrLongDigits and followupHasBareLink, which check what the recorder types.
+  it('refuses a phone typed with spaced hyphens and a domain behind punctuation or with the test suffix, and lets a dot date and a range of figures through', () => {
+    const facts = (summary: string): FollowupNoteFacts => ({ summary, decisions: [], items: [] });
+    for (const [body, source] of [
+      ['Gọi số 090 - 123 - 4567 nhé.', 'Số liên hệ 090 - 123 - 4567.'],
+      ['Gọi số +84 90 - 123 - 4567 nhé.', 'Số liên hệ +84 90 - 123 - 4567.'],
+      ['Vào a,123.com nhé.', 'Trang a,123.com của khách.'],
+      ['Vào 123。com nhé.', 'Trang 123。com của khách.'],
+      ['Xem unit.test nhé.', 'Trang unit.test của khách.'],
+    ] as const) {
+      expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body }), facts(source))), body).toBe('FOLLOWUP_NOTE_REFUSED');
+    }
+    for (const [body, source] of [
+      ['Hẹn gặp ngày 28.11.2026 nhé.', 'Hẹn ngày 28.11.2026.'],
+      ['Ngân sách 1000 - 2000 USD nhé.', 'Ngân sách 1000 - 2000 USD.'],
+    ] as const) {
+      expect(codeOf(() => checkFollowupPersonalNote(JSON.stringify({ body }), facts(source))), body).toBeNull();
+    }
+  });
 });
 
 describe('draftFollowupPersonalNote', () => {
