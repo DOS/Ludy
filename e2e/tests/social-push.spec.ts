@@ -63,7 +63,7 @@ test('a member turns push on for this device and off again; the worker registers
   // The API as with keys: the device list follows what the page subscribed and removed.
   let device: { label: string | null } | null = null;
   const calls: { name: string; input: Record<string, unknown> }[] = [];
-  await page.route('**/api/rpc/social/notifications/push/*', async (route) => {
+  await page.route('**/api/rpc/notifications/push/*', async (route) => {
     const name = new URL(route.request().url()).pathname.split('/').pop() ?? '';
     const body = input(route);
     calls.push({ name, input: body });

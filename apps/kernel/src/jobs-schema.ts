@@ -40,6 +40,8 @@ export const QUEUES = {
   socialEdit: 'social-edit',
   // Created by the Social push subscription migration (20261029215000).
   socialPush: 'social-push',
+  // Created by the generic push subscription migration (20270317090000): the push job of a kernel notification (#3736).
+  kernelPush: 'kernel-push',
   // Created by the team chat alert migration (20261023143000).
   socialChatAlert: 'social-chat-alert',
   // Created by the WORM archive migration (20261023230000).
@@ -197,6 +199,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.socialEdit]: CHANNELS,
   // A browser's push service endpoint, through guardedRequest (web-push.ts).
   [QUEUES.socialPush]: ['tenant_url'],
+  [QUEUES.kernelPush]: ['tenant_url'],
   [QUEUES.socialChatAlert]: ['provider:telegram', 'provider:discord'],
   [QUEUES.archiveWrite]: 'none',
   [QUEUES.archiveVerify]: 'none',

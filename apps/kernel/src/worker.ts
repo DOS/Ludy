@@ -262,6 +262,8 @@ interface PushJob {
 }
 // A push job may run this long (pg-boss expires it after): each post has its own 10-second deadline.
 const PUSH_JOB_EXPIRE_SECONDS = 120;
+// A kernel notification is pushed once in a day: a second job for it within this window is refused (the push service keeps a message a day at most).
+const PUSH_SINGLETON_SECONDS = 86_400;
 
 interface ChannelOptionJob {
   orgId: string;
@@ -2200,8 +2202,35 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     }
     const notify = NOTIFY_COMMANDS.get(job.data.type);
     if (!notify || !deps.runtime.installed(notify.module)) return;
-    await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId });
+    const as = { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId } as const;
+    await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, as);
+    // Browser push (#3736): one job per notification this event's dispatch wrote of a pushed kind, after the dispatch committed. A replayed event wrote none, and the push job's singleton window
+    // keeps a retried job of this queue from pushing twice; a failure here leaves the notice and its mail, so it is logged by its class only.
+    if (deps.push) {
+      try {
+        for (const notificationId of await deps.runtime.query<string[]>('kernel.push.pending', { eventId: job.data.eventId }, as)) {
+          await boss.send(QUEUES.kernelPush, { orgId: job.data.orgId, notificationId } satisfies PushJob, {
+            singletonKey: jobKey(job.data.orgId, QUEUES.kernelPush, notificationId),
+            singletonSeconds: PUSH_SINGLETON_SECONDS,
+            retryLimit: 0,
+            expireInSeconds: PUSH_JOB_EXPIRE_SECONDS,
+          });
+        }
+      } catch (error) {
+        console.warn(`[kernel-push] ${job.data.eventId.slice(0, 8)} not queued`, error instanceof Error ? error.name : 'error');
+      }
+    }
   });
+
+  // Browser push of a kernel notification (#3736): read what to send, post it to each of the member's devices, record the answers.
+  if (deps.push) {
+    const push = deps.push;
+    await boss.work<PushJob>(QUEUES.kernelPush, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runPushJob({ runtime: deps.runtime, sender: push.sender, brand: push.brand, source: 'kernel' }, job.data);
+      if (done.sent + done.gone + done.failed > 0) console.log(`[kernel-push] ${job.data.notificationId.slice(0, 8)}: sent ${done.sent}, gone ${done.gone}, failed ${done.failed}`);
+    });
+  }
 
   // Dead letters (#1720): a job that failed its last retry raises an Inbox item in its org (dead-letter.ts).
   await boss.work(QUEUES.deadLetter, DEAD_LETTER_WORK, async ([job]) => {

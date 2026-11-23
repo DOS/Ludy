@@ -2795,16 +2795,16 @@ export const zSocialNotifications = z.object({
   mailOff: z.boolean(),
 });
 
-// Browser push (#1238): the deployment's VAPID public key (null: push is off), the viewer's devices in the org and
+// Browser push (#1238, the kernel's since #3736): the deployment's VAPID public key (null: push is off), the viewer's devices in the org and
 // whether the asking browser is one of them.
-export const zSocialPushStatus = z.object({
+export const zPushStatus = z.object({
   enabled: z.boolean(),
   publicKey: z.string().nullable(),
   subscribed: z.boolean(),
   devices: z.array(z.object({ id: zId, label: z.string().nullable(), createdAt: z.string(), lastUsedAt: z.string().nullable(), current: z.boolean() })),
 });
 // A browser's push subscription as PushSubscription.toJSON() gives it; the command checks the URL and the keys.
-export const zSocialPushSubscribe = z.strictObject({
+export const zPushSubscribe = z.strictObject({
   endpoint: z.string().min(12).max(2048),
   p256dh: z.string().min(1).max(128),
   auth: z.string().min(1).max(128),
