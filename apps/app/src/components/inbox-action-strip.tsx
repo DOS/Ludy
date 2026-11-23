@@ -352,7 +352,7 @@ export function InboxActionStrip({
 
   const stagedStatementsCount = (stagedStatements.data ?? []).filter((file) => file.status === 'staged' && file.statement !== null).length;
   const bankOpenCount = (bankOpen.data?.accounts ?? []).filter((a) => a.open > 0).reduce((sum, a) => sum + a.open, 0);
-  const socialMailsCount = (inboundMails.data ?? []).filter((m) => m.hasText || m.subject?.trim()).slice(0, 5).length;
+  const socialMailsCount = (inboundMails.data ?? []).filter((m) => m.hasText || m.subject?.trim()).length;
 
   const summary = summarizeActionStrip({
     failedFilesCount: failedFiles.length,
@@ -432,13 +432,10 @@ export function InboxActionStrip({
         </div>
       )}
       {!expanded && failedFileErrors.length > 0 && (
-        <div className="mt-2 space-y-1 px-1" role="status">
-          {failedFileErrors.map((msg) => (
-            <p key={msg} className="text-xs text-destructive">
-              {msg}
-            </p>
-          ))}
-        </div>
+        <p className="mt-2 truncate px-1 text-xs text-destructive" role="status">
+          {failedFileErrors[0]}
+          {failedFileErrors.length > 1 ? ` (+${failedFileErrors.length - 1})` : ''}
+        </p>
       )}
       {expanded && (
         <div id={panelId} data-testid="inbox-action-strip-content" className="mt-3 space-y-4 [&>*]:!mt-0">

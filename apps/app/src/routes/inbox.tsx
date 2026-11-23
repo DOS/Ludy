@@ -654,7 +654,9 @@ export function InboxPage() {
                     slug={slug}
                     id={activePreviewId}
                     mode="embedded"
-                    onDone={(nextId) => setSelectedPreviewId(nextId)}
+                    onDone={(completedId, nextId) =>
+                      setSelectedPreviewId((current) => (current === null || current === completedId ? nextId : current))
+                    }
                     onResubmitted={(proposalId) => {
                       setSelectedPreviewId(proposalId);
                       setTab('pending');

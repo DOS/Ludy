@@ -374,6 +374,40 @@ describe('InboxActionStrip', () => {
     expect(expanded).toContain('5 items need attention');
     expect(expanded).toContain(catalog('en').inbox.bankLines.title);
   });
+
+  it('counts all qualifying inbound mails beyond the 5-item display slice and caps collapsed file errors to one line', () => {
+    seedInboxBase();
+    state.qc.setQueryData(
+      ['inbound', 'recent'],
+      Array.from({ length: 7 }, (_, idx) => ({
+        id: `m-${idx}`,
+        subject: `Mail ${idx}`,
+        from: `sender${idx}@example.com`,
+        receivedAt: '2026-11-23T01:00:00Z',
+        hasText: true,
+      })),
+    );
+    const failedTwo = [
+      fileEntry('f1', 'failed', 'first.pdf'),
+      { ...fileEntry('f2', 'failed', 'second.pdf'), error: 'Second parse failure' },
+    ];
+    const collapsed = renderNode(
+      <InboxActionStrip
+        slug="demo"
+        tab="pending"
+        role="owner"
+        failedFiles={failedTwo}
+        onReextract={() => undefined}
+        reextractPending={false}
+        reextractError={null}
+      />,
+      'en',
+    );
+    expect(collapsed).toContain('7 social items');
+    expect(collapsed).toContain('9 items need attention');
+    expect(collapsed).toContain('AI parse failed (+1)');
+    expect(collapsed).not.toContain('Second parse failure');
+  });
 });
 
 describe('InboxPage queue-first layout and xl split preview', () => {

@@ -316,7 +316,7 @@ export interface ProposalDetailProps {
   id: string;
   split?: boolean;
   mode?: 'page' | 'embedded';
-  onDone?: (nextId: string | null) => void;
+  onDone?: (completedId: string, nextId: string | null) => void;
   onResubmitted?: (proposalId: string) => void;
 }
 
@@ -420,6 +420,9 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
   // list; without a next one, or on a narrower screen, the Inbox.
   const done = async (said: string) => {
     let target: string | null = null;
+    if (mode === 'embedded') {
+      toast(said, 'success');
+    }
     if (split || mode === 'embedded') {
       const pendingKey = orpc.inbox.list.queryKey({ input: { status: 'pending' } });
       const before = queryClient.getQueryData<{ id: string }[]>(pendingKey) ?? [];
@@ -428,8 +431,7 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
     }
     void queryClient.invalidateQueries();
     if (mode === 'embedded') {
-      toast(said, 'success');
-      onDone?.(target);
+      onDone?.(id, target);
       return;
     }
     const going = target ? navigate({ to: '/o/$slug/inbox/$id', params: { slug, id: target } }) : navigate({ to: '/o/$slug/inbox', params: { slug } });
