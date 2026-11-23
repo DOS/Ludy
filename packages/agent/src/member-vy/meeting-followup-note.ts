@@ -4,6 +4,13 @@
 // no URL/link/bare-domain, no email address or phone/8+-digit contact detail, no invisible/bidi/control characters, length bounds). Non-grounded or unsafe output is
 // rejected as a whole (never silently stripped or repaired). Nothing here reads a database, names a table or command, or persists prose.
 import { randomBytes } from 'node:crypto';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
 import { figuresIn, hasBareLink, sameFigure } from './meeting-ask.ts';
 import { numbersIn } from './meeting-summary.ts';
@@ -258,18 +265,30 @@ export function countNoteParts(body: string): { paragraphs: number; bullets: num
 export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts): MeetingFollowupNoteAnswer {
   const parsed = jsonObject(raw);
   if (typeof parsed.body !== 'string') throw new FollowupNoteError('FOLLOWUP_NOTE_UNPARSABLE');
+  if (hasStealthControls(parsed.body) || hasPromptMarkupLeak(parsed.body)) {
+    throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
+  }
   const body = cleanFollowupNoteBody(parsed.body);
   const length = Array.from(body).length;
   if (body === '' || length < FOLLOWUP_NOTE_LIMITS.bodyMinChars) throw new FollowupNoteError('FOLLOWUP_NOTE_EMPTY');
   if (length > FOLLOWUP_NOTE_LIMITS.bodyMaxChars) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
 
   // Contact, link, URL, email, and phone / 8+-digit contact checks (never strip/repair silently).
-  if (ADDRESS_RE.test(body) || hasBareDomainLink(body) || hasPhoneOrLongDigits(body)) {
+  if (
+    ADDRESS_RE.test(body) ||
+    hasBareDomainLink(body) ||
+    hasPhoneOrLongDigits(body) ||
+    hasObfuscatedContactOrLink(body) ||
+    hasAutonomousActionDirective(body)
+  ) {
     throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
   }
 
   // Exact figure & date grounding against source meeting facts (#1237 rule).
   const source = sourceTextOf(facts);
+  if (!hasUngroundedMoneyOrScaleWords(source) && hasUngroundedMoneyOrScaleWords(body)) {
+    throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
+  }
   const sourceCurrencies = new Set(source.match(CURRENCY_RE) ?? []);
   for (const symbol of body.match(CURRENCY_RE) ?? []) {
     if (!sourceCurrencies.has(symbol)) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');

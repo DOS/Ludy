@@ -3,6 +3,14 @@
 // summarize a readable note and suggest personal to-dos from a readable note.
 // Pure module: zero runtime, database, or vendor SDK dependencies.
 import { z } from 'zod';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptTagOrFenceLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+  stripStealthControls,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
 import { numbersIn } from './meeting-summary.ts';
 import { contactsIn } from './meeting-translation.ts';
@@ -343,7 +351,7 @@ function stripMarkdownImagesAndLinks(text: string): string {
 }
 
 export function sanitizeNoteAiText(raw: string, maxChars: number): string {
-  const withoutTags = stripHtmlTags(raw);
+  const withoutTags = stripHtmlTags(stripStealthControls(raw));
   const withoutLinks = stripMarkdownImagesAndLinks(withoutTags);
   const collapsed = withoutLinks.replace(/\s+/g, ' ').trim();
   if (collapsed.length <= maxChars) return collapsed;
@@ -352,7 +360,14 @@ export function sanitizeNoteAiText(raw: string, maxChars: number): string {
 
 export function hasPromptTagLeak(raw: string): boolean {
   const lower = raw.toLowerCase();
-  return lower.includes('<subject-') || lower.includes('</subject-') || lower.includes('<memory-') || lower.includes('<knowledge-');
+  return (
+    lower.includes('<subject-') ||
+    lower.includes('</subject-') ||
+    lower.includes('<memory-') ||
+    lower.includes('<knowledge-') ||
+    /<\/?(?:system|note-ctx-[a-z0-9-]+)\b/.test(lower) ||
+    hasPromptTagOrFenceLeak(raw)
+  );
 }
 
 function hasUngroundedContact(candidate: string, allowedContacts: Set<string>): boolean {
@@ -405,24 +420,36 @@ function hasUngroundedNumber(text: string, allowedFigures: ReadonlySet<string>):
   return false;
 }
 
+function trustedContactsForNote(allowedContacts: ReadonlySet<string>): string[] {
+  return [...allowedContacts].filter((c) => c.startsWith('tel:') || (c.includes('@') && !c.includes('://') && !c.startsWith('www.')));
+}
+
 export function checkNoteSummary(raw: string, sourceText: string): CheckedNoteSummary {
   const parsedJson = extractJsonObject(raw, 'NOTE_SUMMARY_UNPARSABLE');
   const parsed = zSummaryRaw.safeParse(parsedJson);
   if (!parsed.success) throw new NoteAiError('NOTE_SUMMARY_UNPARSABLE');
 
   const allowedContacts = contactsIn(sourceText);
+  const trustedNoteContacts = trustedContactsForNote(allowedContacts);
   const allowedFigures = figuresIn(sourceText);
+  const sourceHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(sourceText);
   let dropped = 0;
 
   const summarySentences: string[] = [];
-  if (hasPromptTagLeak(parsed.data.summary)) {
+  if (hasPromptTagLeak(parsed.data.summary) || hasStealthControls(parsed.data.summary)) {
     dropped += 1;
   } else {
     const preCleaned = stripMarkdownImagesAndLinks(stripHtmlTags(parsed.data.summary));
     for (const sentence of splitSentences(preCleaned)) {
       const cleaned = sanitizeNoteAiText(sentence, NOTE_AI_LIMITS.maxSummaryChars);
       if (cleaned.length === 0) continue;
-      if (hasUngroundedContact(cleaned, allowedContacts) || hasUngroundedNumber(cleaned, allowedFigures)) {
+      if (
+        hasUngroundedContact(cleaned, allowedContacts) ||
+        hasUngroundedNumber(cleaned, allowedFigures) ||
+        hasObfuscatedContactOrLink(cleaned, trustedNoteContacts) ||
+        hasAutonomousActionDirective(cleaned) ||
+        (!sourceHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(cleaned))
+      ) {
         dropped += 1;
         continue;
       }
@@ -435,7 +462,7 @@ export function checkNoteSummary(raw: string, sourceText: string): CheckedNoteSu
   const bullets: string[] = [];
   const seenBullets = new Set<string>();
   for (const rawBullet of parsed.data.bullets) {
-    if (hasPromptTagLeak(rawBullet)) {
+    if (hasPromptTagLeak(rawBullet) || hasStealthControls(rawBullet)) {
       dropped += 1;
       continue;
     }
@@ -444,7 +471,13 @@ export function checkNoteSummary(raw: string, sourceText: string): CheckedNoteSu
       dropped += 1;
       continue;
     }
-    if (hasUngroundedContact(cleaned, allowedContacts) || hasUngroundedNumber(cleaned, allowedFigures)) {
+    if (
+      hasUngroundedContact(cleaned, allowedContacts) ||
+      hasUngroundedNumber(cleaned, allowedFigures) ||
+      hasObfuscatedContactOrLink(cleaned, trustedNoteContacts) ||
+      hasAutonomousActionDirective(cleaned) ||
+      (!sourceHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(cleaned))
+    ) {
       dropped += 1;
       continue;
     }
@@ -479,18 +512,29 @@ export function checkTodoSuggestions(
 
   const sourceText = `${input.noteTitle}\n${input.noteBody}`;
   const allowedContacts = contactsIn(sourceText);
+  const trustedNoteContacts = trustedContactsForNote(allowedContacts);
   const allowedFigures = figuresIn(sourceText);
   const suggestions: CheckedTodoSuggestion[] = [];
   const seenTitles = new Set<string>();
   let dropped = 0;
 
   for (const row of parsed.data.suggestions) {
-    if (hasPromptTagLeak(row.title) || (row.details ? hasPromptTagLeak(row.details) : false)) {
+    if (
+      hasPromptTagLeak(row.title) ||
+      hasStealthControls(row.title) ||
+      (row.details ? hasPromptTagLeak(row.details) || hasStealthControls(row.details) : false)
+    ) {
       dropped += 1;
       continue;
     }
     const title = sanitizeNoteAiText(row.title, NOTE_AI_LIMITS.maxTodoTitleChars);
-    if (title.length === 0 || hasUngroundedContact(title, allowedContacts) || hasUngroundedNumber(title, allowedFigures)) {
+    if (
+      title.length === 0 ||
+      hasUngroundedContact(title, allowedContacts) ||
+      hasUngroundedNumber(title, allowedFigures) ||
+      hasObfuscatedContactOrLink(title, trustedNoteContacts) ||
+      hasAutonomousActionDirective(title)
+    ) {
       dropped += 1;
       continue;
     }
@@ -505,7 +549,13 @@ export function checkTodoSuggestions(
     }
 
     let details = row.details ? sanitizeNoteAiText(row.details, NOTE_AI_LIMITS.maxTodoDetailsChars) : '';
-    if (details.length > 0 && (hasUngroundedContact(details, allowedContacts) || hasUngroundedNumber(details, allowedFigures))) {
+    if (
+      details.length > 0 &&
+      (hasUngroundedContact(details, allowedContacts) ||
+        hasUngroundedNumber(details, allowedFigures) ||
+        hasObfuscatedContactOrLink(details, trustedNoteContacts) ||
+        hasAutonomousActionDirective(details))
+    ) {
       details = '';
       dropped += 1;
     }
