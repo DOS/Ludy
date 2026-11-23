@@ -231,7 +231,7 @@ export function PlaybookRulesCard({ slug, role }: PlaybookRulesCardProps) {
                 <Label htmlFor="playbook-rule-severity">{t('severityLabel')}</Label>
                 <NativeSelect
                   id="playbook-rule-severity"
-                  className="min-h-11 w-full"
+                  className="min-h-11 w-full [&_select]:min-h-11"
                   value={severity}
                   onChange={(e) => setSeverity(e.target.value as SignPlaybookSeverityContract)}
                 >

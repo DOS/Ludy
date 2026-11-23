@@ -144,12 +144,14 @@ export function EnvelopePlaybookCard({
   const overrideMutation = useMutation({
     mutationFn: (input: {
       ruleId: string;
+      checkRevision: string;
       verdict: SignPlaybookVerdictContract;
       manualNote: string | null;
     }) =>
       signApi.overridePlaybookFinding({
         envelopeId,
         ruleId: input.ruleId,
+        checkRevision: input.checkRevision,
         verdict: input.verdict,
         manualNote: input.manualNote,
       }),
@@ -280,8 +282,11 @@ export function EnvelopePlaybookCard({
                           <Badge variant="proposal" data-testid={`playbook-ai-badge-${finding.ruleId}`}>
                             {t('proposedBadge')}
                           </Badge>
-                        ) : finding.overriddenAt ? (
-                          <Badge variant="outline">{t('overriddenBadge')}</Badge>
+                        ) : null}
+                        {finding.overriddenAt ? (
+                          <Badge variant="outline" data-testid={`playbook-overridden-badge-${finding.ruleId}`}>
+                            {t('overriddenBadge')}
+                          </Badge>
                         ) : null}
                       </div>
                     </div>
@@ -355,7 +360,7 @@ export function EnvelopePlaybookCard({
                           </Label>
                           <NativeSelect
                             id={selectId}
-                            className="min-h-11 w-full"
+                            className="min-h-11 w-full [&_select]:min-h-11"
                             value={draft.verdict}
                             onChange={(e) => {
                               const nextVerdict = e.target.value as SignPlaybookVerdictContract;
@@ -407,6 +412,7 @@ export function EnvelopePlaybookCard({
                               onClick={() =>
                                 overrideMutation.mutate({
                                   ruleId: finding.ruleId,
+                                  checkRevision: check.revision,
                                   verdict: draft.verdict,
                                   manualNote: draft.note.trim() || null,
                                 })

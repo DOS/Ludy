@@ -196,14 +196,18 @@ export {
 export {
   DEFAULT_VIETNAM_SME_PLAYBOOK_RULES,
   SIGN_MAX_PLAYBOOK_RULES,
+  computePlaybookCheckRevision,
+  computePlaybookRuleRevision,
   defaultSlotForRuleId,
   deterministicPlaybookRuleId,
   evaluatePlaybookDeterministically,
   signPlaybookCommands,
   signPlaybookQueries,
+  zPlaybookRecordCheckInput,
   type DefaultPlaybookRuleSlot,
   type DefaultVietnamSmePlaybookRuleSpec,
   type SignPlaybookExtractedPage,
   type SignPlaybookRuleEffective,
   type SignPlaybookSource,
+  type SignPlaybookSourceRule,
 } from './playbook.ts';

@@ -711,6 +711,7 @@ export const signApi = {
   overridePlaybookFinding: (input: {
     envelopeId: string;
     ruleId: string;
+    checkRevision: string;
     verdict: SignPlaybookVerdictContract;
     manualNote?: string | null;
   }) => client.sign.playbook.override_finding({ ...input, idempotencyKey: crypto.randomUUID() }),

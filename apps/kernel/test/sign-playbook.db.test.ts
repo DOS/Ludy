@@ -396,6 +396,42 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
 
     // Clean up custom rule so 6 defaults remain active for subsequent tests.
     expect((await rpc('sign/playbook/rule_delete', owner, { ruleId: customRule.id })).status).toBe(200);
+
+    // Deleting ALL rules keeps the workspace at zero rules (isSeeded=true) without auto-restoring defaults.
+    for (const defaultRule of listBody.items) {
+      expect((await rpc('sign/playbook/rule_delete', owner, { ruleId: defaultRule.id })).status).toBe(200);
+    }
+    const emptyList = (await rpc('sign/playbook/rules_list', owner, {})).body as unknown as SignPlaybookRulesListResult;
+    expect(emptyList.isSeeded).toBe(true);
+    expect(emptyList.items).toEqual([]);
+
+    // Guidance whose {{tag}} expansion exceeds 2000 characters is rejected with 422 instead of SQL 500.
+    const overflowRes = await rpc('sign/playbook/rule_upsert', owner, {
+      title: 'Overflow Guidance Rule',
+      guidance: `${'a'.repeat(1998)}{{`,
+      severity: 'warn',
+      matchKeywords: [],
+      active: true,
+    });
+    expect(overflowRes.status).toBe(422);
+
+    // Creating a custom rule after deleting all rules does not resurrect deleted defaults.
+    const postDeleteCustom = await rpc('sign/playbook/rule_upsert', owner, {
+      title: 'Post-Delete Custom Rule',
+      guidance: 'Check confidentiality clause manually.',
+      severity: 'warn',
+      matchKeywords: ['confidential'],
+      active: true,
+    });
+    expect(postDeleteCustom.status).toBe(200);
+    const afterCustomOnly = (await rpc('sign/playbook/rules_list', owner, {})).body as unknown as SignPlaybookRulesListResult;
+    expect(afterCustomOnly.items).toHaveLength(1);
+    expect((await rpc('sign/playbook/rule_delete', owner, { ruleId: (postDeleteCustom.body as unknown as SignPlaybookRuleRecord).id })).status).toBe(200);
+
+    // Explicitly restore the 6 default rules for subsequent tests.
+    const restoredAll = await rpc('sign/playbook/seed_defaults', owner, { idempotencyKey: randomUUID() });
+    expect(restoredAll.status).toBe(200);
+    expect((restoredAll.body as unknown as SignPlaybookRulesListResult).items).toHaveLength(6);
   });
 
   it('delivers 100% AI-off deterministic playbook evaluation and supports manual verdict overrides', async () => {
@@ -449,6 +485,7 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
         await rpc('sign/playbook/override_finding', viewer, {
           envelopeId: envId,
           ruleId: paymentFinding.ruleId,
+          checkRevision: evalBody.check!.revision,
           verdict: 'pass',
           manualNote: 'Viewer probe',
         })
@@ -459,6 +496,7 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
     const overrideRes = await rpc('sign/playbook/override_finding', member, {
       envelopeId: envId,
       ruleId: paymentFinding.ruleId,
+      checkRevision: evalBody.check!.revision,
       verdict: 'pass',
       manualNote: 'Giám đốc đã duyệt riêng điều khoản Net 45 cho nhà cung cấp này',
       idempotencyKey: randomUUID(),
@@ -471,6 +509,41 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
     expect(updatedPayment.proposedByAi).toBe(false);
     expect(updatedPayment.overriddenBy).toBe(member.userId);
     expect(updatedPayment.manualNote).toContain('Net 45');
+
+    // Non-forced fallback (preserveExistingFresh=true) never overwrites a committed manual check.
+    const preserved = await runtime.execute<{ id: string; mode: string }>(
+      'sign.playbook.record_check',
+      {
+        envelopeId: envId,
+        sourceSha256: evalBody.check!.sourceSha256,
+        mode: 'deterministic',
+        promptVersion: null,
+        preserveExistingFresh: true,
+        extractedPages: samplePages,
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(preserved.id).toBe(updatedCheck.id);
+    expect(preserved.mode).toBe('manual');
+
+    // Same-PDF re-evaluation rotates check revision and rejects stale overrides with 409 without modifying the check.
+    const rerunRes = await rpc('sign/playbook/evaluate', member, {
+      envelopeId: envId,
+      useAi: false,
+      pages: samplePages,
+      idempotencyKey: randomUUID(),
+    });
+    expect(rerunRes.status).toBe(200);
+    const rerunCheck = (rerunRes.body as unknown as SignPlaybookEvaluateResult).check!;
+    expect(rerunCheck.revision).not.toBe(updatedCheck.revision);
+    const staleOverrideRes = await rpc('sign/playbook/override_finding', member, {
+      envelopeId: envId,
+      ruleId: paymentFinding.ruleId,
+      checkRevision: updatedCheck.revision,
+      verdict: 'fail',
+      manualNote: 'Stale override probe',
+    });
+    expect(staleOverrideRes.status).toBe(409);
   });
 
   it('meters sign.playbook_check, verifies grounded citations, drops hallucinations, and respects AI budget + kill switch', async () => {
@@ -562,6 +635,83 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
     const savedPayment = evaluated.check!.findings.find((f) => f.ruleId === paymentRuleId)!;
     expect(savedPayment.proposedByAi).toBe(false);
     expect(savedPayment.verdict).toBe('pass');
+
+    // Overriding an AI-proposed finding preserves proposedByAi=true while recording overriddenBy/overriddenAt.
+    const aiOverrideRes = await rpc('sign/playbook/override_finding', member, {
+      envelopeId: envId,
+      ruleId: penaltyRuleId,
+      checkRevision: evaluated.check!.revision,
+      verdict: 'warn',
+      manualNote: 'Partner agreed to cap at 8% in addendum',
+    });
+    expect(aiOverrideRes.status).toBe(200);
+    const overriddenPenalty = (aiOverrideRes.body as unknown as NonNullable<SignPlaybookGetResult['check']>).findings.find(
+      (f) => f.ruleId === penaltyRuleId,
+    )!;
+    expect(overriddenPenalty.verdict).toBe('warn');
+    expect(overriddenPenalty.proposedByAi).toBe(true);
+    expect(overriddenPenalty.overriddenBy).toBe(member.userId);
+    expect(overriddenPenalty.overriddenAt).not.toBeNull();
+
+    // Editing a rule marks existing checks stale and rejects in-flight AI recording with 409 SIGN_PLAYBOOK_STALE_RULES.
+    const paymentRuleObj = (
+      (await rpc('sign/playbook/rules_list', owner, {})).body as unknown as SignPlaybookRulesListResult
+    ).items.find((r) => r.id === paymentRuleId)!;
+    const editedPayRes = await rpc('sign/playbook/rule_upsert', owner, {
+      ruleId: paymentRuleId,
+      title: paymentRuleObj.title,
+      guidance: 'Thời hạn thanh toán tối đa 15 ngày.',
+      severity: paymentRuleObj.severity,
+      matchKeywords: paymentRuleObj.matchKeywords,
+      active: true,
+    });
+    expect(editedPayRes.status).toBe(200);
+    const staleGet = (await rpc('sign/playbook/get', member, { envelopeId: envId })).body as unknown as SignPlaybookGetResult;
+    expect(staleGet.check?.isStale).toBe(true);
+
+    const staleAiReader = new SignAiReader(
+      { baseURL: 'http://model.invalid/v1', apiKey: null, model: 'test', maxRetries: 0 },
+      {
+        playbookCheck: async () => {
+          // Mutate the rule while the model call is in flight.
+          await rpc('sign/playbook/rule_upsert', owner, {
+            ruleId: paymentRuleId,
+            title: paymentRuleObj.title,
+            guidance: paymentRuleObj.guidance,
+            severity: paymentRuleObj.severity,
+            matchKeywords: paymentRuleObj.matchKeywords,
+            active: true,
+          });
+          return {
+            output: {
+              findings: [
+                {
+                  ruleId: penaltyRuleId,
+                  verdict: 'fail',
+                  rationale: 'Mức phạt 15% vượt trần 8%.',
+                  pageNumber: 2,
+                  quoteExcerpt: 'Mức phạt vi phạm hợp đồng là 15% tổng giá trị hợp đồng.',
+                  suggestedRedline: 'Giới hạn 8%.',
+                },
+              ],
+            },
+            usage: { inputTokens: 100, outputTokens: 50 },
+          };
+        },
+      },
+    );
+    await expect(
+      evaluateEnvelopePlaybook({
+        ai: signAi(staleAiReader, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 30 })),
+        runtime,
+        orgId: org.orgId,
+        actor: asUser(member),
+        envelopeId: envId,
+        useAi: true,
+        pages: samplePages,
+        meter,
+      }),
+    ).rejects.toMatchObject({ code: 'SIGN_PLAYBOOK_STALE_RULES', status: 409 });
 
     // Envelope status and version were NOT mutated by AI playbook evaluation.
     const envDetail = await runtime.query<{ envelope: { status: string } }>(

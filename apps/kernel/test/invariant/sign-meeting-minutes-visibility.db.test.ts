@@ -1137,6 +1137,7 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
           {
             envelopeId: recEnv.envelopeId,
             ruleId: '01900000-0000-4000-8000-000000000001',
+            checkRevision: '0'.repeat(64),
             verdict: 'pass',
           },
           { actor: asUser(nonReaderWriterId), orgId },

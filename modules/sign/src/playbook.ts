@@ -13,6 +13,7 @@ import {
 } from '@ludy/db';
 import {
   SIGN_MAX_PAGES,
+  SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
   SIGN_PLAYBOOK_VERDICTS,
   tableWrite,
   zId,
@@ -241,6 +242,11 @@ export interface SignPlaybookRuleEffective {
   matchKeywords: string[];
   active: boolean;
   isDefault: boolean;
+  revision?: string;
+}
+
+export interface SignPlaybookSourceRule extends SignPlaybookRuleEffective {
+  revision: string;
 }
 
 export interface SignPlaybookSource {
@@ -254,7 +260,7 @@ export interface SignPlaybookSource {
   title: string;
   pageCount: number | null;
   aiStopped: boolean;
-  activeRules: SignPlaybookRuleEffective[];
+  activeRules: SignPlaybookSourceRule[];
 }
 
 function stripFormatControl(value: string): string {
@@ -388,6 +394,42 @@ function toRuleRecord(
   };
 }
 
+export function computePlaybookRuleRevision(
+  rule: Pick<SignPlaybookRuleEffective, 'id' | 'title' | 'guidance' | 'severity' | 'matchKeywords' | 'active'>,
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        id: rule.id,
+        title: rule.title,
+        guidance: rule.guidance,
+        severity: rule.severity,
+        matchKeywords: [...rule.matchKeywords],
+        active: rule.active,
+      }),
+    )
+    .digest('hex');
+}
+
+async function isPlaybookInitializedOnTrx(
+  trx: QueryContext['trx'],
+  orgId: string,
+): Promise<boolean> {
+  const marker = await trx
+    .selectFrom('ludy_kernel.audit_event')
+    .select('id')
+    .where('org_id', '=', orgId)
+    .where('command', 'in', [
+      'sign.playbook.rule_upsert',
+      'sign.playbook.rule_delete',
+      'sign.playbook.seed_defaults',
+    ])
+    .where('outcome', '=', 'ok')
+    .limit(1)
+    .executeTakeFirst();
+  return Boolean(marker);
+}
+
 async function listEffectivePlaybookRulesOnTrx(
   trx: QueryContext['trx'],
   orgId: string,
@@ -402,6 +444,14 @@ async function listEffectivePlaybookRulesOnTrx(
     .execute();
 
   if (rows.length === 0) {
+    // Only return virtual defaults when the workspace has never initialized playbook rules;
+    // deleting all saved rules keeps the workspace at zero rules until defaults are restored.
+    if (await isPlaybookInitializedOnTrx(trx, orgId)) {
+      return {
+        items: [],
+        isSeeded: true,
+      };
+    }
     return {
       items: virtualDefaultRuleRecords(orgId),
       isSeeded: false,
@@ -424,7 +474,7 @@ async function ensurePlaybookRulesMaterialized(
     .where('org_id', '=', ctx.orgId)
     .limit(1)
     .executeTakeFirst();
-  if (existing) {
+  if (existing || (await isPlaybookInitializedOnTrx(ctx.trx, ctx.orgId))) {
     return;
   }
 
@@ -450,10 +500,75 @@ async function ensurePlaybookRulesMaterialized(
   }
 }
 
+const SNIPPET_MAX_CHARS = 480;
+const SNIPPET_OVERLAP_CHARS = 120;
+
 interface PageClauseSnippet {
   page: number;
   raw: string;
   norm: string;
+  sentGroupId: number;
+}
+
+interface NumericAnalysis {
+  values: number[];
+  hasUnsupported: boolean;
+}
+
+function adjustSurrogateEnd(text: string, index: number): number {
+  if (index <= 0 || index >= text.length) return index;
+  const code = text.charCodeAt(index - 1);
+  return code >= 0xd800 && code <= 0xdbff ? index - 1 : index;
+}
+
+function adjustSurrogateStart(text: string, index: number): number {
+  if (index <= 0 || index >= text.length) return index;
+  const code = text.charCodeAt(index);
+  return code >= 0xdc00 && code <= 0xdfff ? index + 1 : index;
+}
+
+function pushSentenceChunks(
+  snippets: PageClauseSnippet[],
+  page: number,
+  sentence: string,
+  sentGroupId: number,
+): void {
+  let start = 0;
+  while (start < sentence.length) {
+    const rawEnd = Math.min(sentence.length, start + SNIPPET_MAX_CHARS);
+    let end = rawEnd;
+    if (rawEnd < sentence.length) {
+      const spaceIdx = sentence.lastIndexOf(' ', rawEnd);
+      if (spaceIdx >= start + Math.floor(SNIPPET_MAX_CHARS / 2)) {
+        end = spaceIdx;
+      } else {
+        end = adjustSurrogateEnd(sentence, rawEnd);
+      }
+      if (end <= start) {
+        end = rawEnd;
+      }
+    }
+    const chunk = sentence.slice(start, end).trim();
+    if (chunk) {
+      snippets.push({
+        page,
+        raw: chunk,
+        norm: normalizeSearchText(chunk),
+        sentGroupId,
+      });
+    }
+    if (end >= sentence.length) break;
+    const overlapTarget = Math.max(start + 1, end - SNIPPET_OVERLAP_CHARS);
+    const nextSpace = sentence.indexOf(' ', overlapTarget);
+    let nextStart =
+      nextSpace !== -1 && nextSpace < end - 1
+        ? nextSpace + 1
+        : adjustSurrogateStart(sentence, overlapTarget);
+    if (nextStart <= start) {
+      nextStart = end;
+    }
+    start = nextStart;
+  }
 }
 
 function splitPagesIntoSnippets(
@@ -461,6 +576,7 @@ function splitPagesIntoSnippets(
   pageCount: number,
 ): PageClauseSnippet[] {
   const snippets: PageClauseSnippet[] = [];
+  let nextSentGroupId = 1;
   for (const p of pages) {
     if (!Number.isInteger(p.page) || p.page < 1 || p.page > pageCount) continue;
     const rawPage = stripFormatControl(p.text).replace(/\r\n/g, '\n');
@@ -474,21 +590,45 @@ function splitPagesIntoSnippets(
           page: p.page,
           raw: trimmed,
           norm: normalizeSearchText(trimmed),
+          sentGroupId: nextSentGroupId++,
         });
       } else {
         const sentences = trimmed.split(/(?<=[.;!?])\s+/u);
         let acc = '';
         for (const sent of sentences) {
+          if (sent.length > SNIPPET_MAX_CHARS) {
+            if (acc) {
+              snippets.push({
+                page: p.page,
+                raw: acc,
+                norm: normalizeSearchText(acc),
+                sentGroupId: nextSentGroupId++,
+              });
+              acc = '';
+            }
+            pushSentenceChunks(snippets, p.page, sent, nextSentGroupId++);
+            continue;
+          }
           const next = acc ? `${acc} ${sent}` : sent;
-          if (next.length > 480 && acc) {
-            snippets.push({ page: p.page, raw: acc, norm: normalizeSearchText(acc) });
-            acc = sent.slice(0, 480);
+          if (next.length > SNIPPET_MAX_CHARS && acc) {
+            snippets.push({
+              page: p.page,
+              raw: acc,
+              norm: normalizeSearchText(acc),
+              sentGroupId: nextSentGroupId++,
+            });
+            acc = sent;
           } else {
-            acc = next.slice(0, 480);
+            acc = next;
           }
         }
         if (acc) {
-          snippets.push({ page: p.page, raw: acc, norm: normalizeSearchText(acc) });
+          snippets.push({
+            page: p.page,
+            raw: acc,
+            norm: normalizeSearchText(acc),
+            sentGroupId: nextSentGroupId++,
+          });
         }
       }
     }
@@ -496,93 +636,204 @@ function splitPagesIntoSnippets(
   return snippets;
 }
 
-function findBestSnippet(
+function findMatchingSnippets(
   snippets: readonly PageClauseSnippet[],
   keywords: readonly string[],
-): PageClauseSnippet | null {
+): PageClauseSnippet[] {
   const normKeywords = keywords.map((k) => normalizeSearchText(k)).filter((k) => k.length > 0);
-  if (normKeywords.length === 0) return null;
-  let best: PageClauseSnippet | null = null;
-  let bestScore = 0;
-  for (const snippet of snippets) {
+  if (normKeywords.length === 0) return [];
+
+  const scored: Array<{ snippet: PageClauseSnippet; score: number; index: number }> = [];
+  const matchedGroupIds = new Set<number>();
+
+  for (const [index, snippet] of snippets.entries()) {
     let score = 0;
     for (const kw of normKeywords) {
       if (snippet.norm.includes(kw)) {
         score += kw.length >= 8 ? 3 : 1;
       }
     }
-    if (score > bestScore) {
-      bestScore = score;
-      best = snippet;
+    if (score > 0) {
+      scored.push({ snippet, score, index });
+      matchedGroupIds.add(snippet.sentGroupId);
     }
   }
-  return best;
+
+  // Include remaining overlapping chunks from an over-long sentence whose head/middle matched a keyword.
+  if (matchedGroupIds.size > 0) {
+    const directIdx = new Set(scored.map((item) => item.index));
+    for (const [index, snippet] of snippets.entries()) {
+      if (!directIdx.has(index) && matchedGroupIds.has(snippet.sentGroupId)) {
+        scored.push({ snippet, score: 0.5, index });
+      }
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+  return scored.map((item) => item.snippet);
 }
 
-function inferRuleSlot(
-  orgId: string,
-  rule: Pick<SignPlaybookRuleEffective, 'id' | 'title' | 'guidance' | 'matchKeywords'>,
-): DefaultPlaybookRuleSlot | null {
-  const byId = defaultSlotForRuleId(orgId, rule.id);
-  if (byId) return byId;
-  const hay = normalizeSearchText(`${rule.title} ${rule.guidance} ${rule.matchKeywords.join(' ')}`);
-  if (hay.includes('điều 301') || hay.includes('phạt vi phạm') || hay.includes('penalty cap') || hay.includes('liquidated damages')) {
-    return 'penalty_cap';
-  }
-  if (hay.includes('thời hạn thanh toán') || hay.includes('payment terms')) {
-    return 'payment_terms';
-  }
-  if (hay.includes('đơn phương chấm dứt') || hay.includes('termination notice')) {
-    return 'termination_notice';
-  }
-  if (hay.includes('tự động gia hạn') || hay.includes('gia hạn tự động') || hay.includes('auto-renew') || hay.includes('automatic renewal')) {
-    return 'auto_renewal_notice';
-  }
-  if (hay.includes('giải quyết tranh chấp') || hay.includes('dispute venue') || hay.includes('viac') || hay.includes('governing law')) {
-    return 'dispute_venue';
-  }
-  if (hay.includes('nghiệm thu') || hay.includes('acceptance criteria') || hay.includes('biên bản nghiệm thu')) {
-    return 'acceptance_criteria';
-  }
-  return null;
+function findBestSnippet(
+  snippets: readonly PageClauseSnippet[],
+  keywords: readonly string[],
+): PageClauseSnippet | null {
+  return findMatchingSnippets(snippets, keywords)[0] ?? null;
 }
 
-function extractPercentValues(text: string): number[] {
-  const out: number[] = [];
-  for (const m of text.matchAll(/(\d{1,3}(?:[.,]\d{1,2})?)\s*%/gu)) {
-    const num = Number((m[1] ?? '').replace(',', '.'));
-    if (Number.isFinite(num) && num >= 0 && num <= 100) {
-      out.push(num);
+function extractPercentAnalysis(text: string): NumericAnalysis {
+  const values: number[] = [];
+  let hasUnsupported = false;
+  for (const m of text.matchAll(/(?<![\p{N}])(?:[.,]\d+|\d+(?:[.,]\d+)*)\s*%/gu)) {
+    const full = m[0] ?? '';
+    const rawNum = full.replace(/\s*%$/u, '');
+    const idx = m.index ?? 0;
+    if (idx > 0) {
+      const prev = text[idx - 1] ?? '';
+      const prev2 = idx > 1 ? (text[idx - 2] ?? '') : '';
+      if ((prev === '-' || prev === '\u2212') && !/[\p{N}%]/u.test(prev2)) {
+        hasUnsupported = true;
+        continue;
+      }
+    }
+    if (/^\d{1,4}(?:[.,]\d{1,2})?$/.test(rawNum)) {
+      const num = Number(rawNum.replace(',', '.'));
+      if (Number.isFinite(num) && num >= 0) {
+        values.push(num);
+        continue;
+      }
+    }
+    hasUnsupported = true;
+  }
+  return { values, hasUnsupported };
+}
+
+function pushDayToken(rawNum: string, out: NumericAnalysis): void {
+  if (/^\d{1,5}$/.test(rawNum)) {
+    const num = Number(rawNum);
+    if (Number.isInteger(num) && num >= 0 && num <= 36500) {
+      out.values.push(num);
+      return;
+    }
+  }
+  out.hasUnsupported = true;
+}
+
+function extractDayAnalysis(text: string): NumericAnalysis {
+  const out: NumericAnalysis = { values: [], hasUnsupported: false };
+  for (const m of text.matchAll(
+    /(?<![\p{N}])([.,]\d+|\d+(?:[.,]\d+)*)\s*(?:ngày(?:\s+làm\s+việc)?|(?:calendar\s+|working\s+|business\s+)?days?)\b/giu,
+  )) {
+    pushDayToken(m[1] ?? '', out);
+  }
+  for (const m of text.matchAll(/\bnet\s*([.,]\d+|\d+(?:[.,]\d+)*)\b/giu)) {
+    pushDayToken(m[1] ?? '', out);
+  }
+  return out;
+}
+
+function extractNoticeBoundDays(text: string): NumericAnalysis {
+  const out: NumericAnalysis = { values: [], hasUnsupported: false };
+  const patterns: RegExp[] = [
+    /(?:báo|thông\s+báo)(?:\s+không\s+gia\s+hạn|\s+từ\s+chối\s+gia\s+hạn|\s+chấm\s+dứt)?(?:\s+bằng\s+văn\s+bản)?(?:\s+trước)?(?:\s+(?:ít\s+nhất|tối\s+thiểu|chậm\s+nhất))?\s+([.,]\d+|\d+(?:[.,]\d+)*)\s*(?:ngày(?:\s+làm\s+việc)?)\b/giu,
+    /\b([.,]\d+|\d+(?:[.,]\d+)*)\s*(?:ngày(?:\s+làm\s+việc)?)\s+(?:trước\s+(?:khi\s+)?(?:hết\s+hạn|gia\s+hạn|chấm\s+dứt|ngày\s+hết\s+hạn)|(?:để\s+)?(?:thông\s+báo|báo)\s+trước)/giu,
+    /(?:prior|advance)\s+(?:written\s+)?notice(?:\s+(?:of|at\s+least|not\s+less\s+than))?\s+(?:of\s+)?(?:(?:at\s+least|no\s+less\s+than|not\s+less\s+than)\s+)?([.,]\d+|\d+(?:[.,]\d+)*)\s*(?:(?:calendar|working|business)\s+)?days?\b/giu,
+    /\b([.,]\d+|\d+(?:[.,]\d+)*)[\s-]+(?:(?:calendar|working|business)\s+)?days?['’]?\s+(?:prior\s+(?:written\s+)?notice|advance\s+(?:written\s+)?notice|notice\s+(?:prior|before|in\s+advance)|before\s+(?:the\s+)?(?:expir|end|renew|terminat))/giu,
+    /\bnotice\s+(?:in\s+writing\s+)?(?:of\s+)?(?:at\s+least\s+)?([.,]\d+|\d+(?:[.,]\d+)*)\s*(?:(?:calendar|working|business)\s+)?days?\b/giu,
+  ];
+  for (const pattern of patterns) {
+    for (const m of text.matchAll(pattern)) {
+      pushDayToken(m[1] ?? '', out);
     }
   }
   return out;
 }
 
-function extractDayValues(text: string): number[] {
-  const out: number[] = [];
-  for (const m of text.matchAll(/\b(\d{1,3})\s*(?:ngày(?:\s+làm\s+việc)?|(?:calendar\s+|working\s+|business\s+)?days?)\b/giu)) {
-    const num = Number(m[1] ?? '');
-    if (Number.isInteger(num) && num >= 0 && num <= 365) {
-      out.push(num);
-    }
-  }
-  for (const m of text.matchAll(/\bnet\s*(\d{1,3})\b/giu)) {
-    const num = Number(m[1] ?? '');
-    if (Number.isInteger(num) && num >= 0 && num <= 365) {
-      out.push(num);
-    }
-  }
-  return out;
+function extractOptOutNoticeDays(text: string): NumericAnalysis {
+  // Mask renewal-term durations (e.g. "auto-renew for 90 days") so only opt-out notice deadlines count.
+  const masked = text
+    .replace(
+      /\b(?:auto-?renew(?:ed|s)?|automatically\s+(?:renew(?:ed|s)?|extend(?:ed|s)?))\s+(?:for|by)\s+(?:an?\s+(?:additional\s+)?(?:term|period)\s+of\s+)?[^.;,]+?(?=\b(?:unless|except|if|until|prior|with)\b|[.;,]|$)/giu,
+      ' ',
+    )
+    .replace(
+      /\brenew(?:al)?\s+(?:term|period)\s+of\s+[^.;,]+?(?=\b(?:unless|except|if|until|prior|with)\b|[.;,]|$)/giu,
+      ' ',
+    )
+    .replace(
+      /(?:tự\s+động\s+gia\s+hạn|gia\s+hạn\s+tự\s+động)\s+(?:thêm|trong(?:\s+thời\s+hạn)?)\s+[^.;,]+?(?=\b(?:trừ\s+khi|nếu|cho\s+đến|trước)\b|[.;,]|$)/giu,
+      ' ',
+    );
+  return extractNoticeBoundDays(masked);
 }
 
-function extractCapPercentFromGuidance(guidance: string, fallback: number): number {
-  const percents = extractPercentValues(guidance);
-  return percents.length > 0 ? Math.max(...percents) : fallback;
+function hasTerminationParity(text: string): boolean {
+  const hasAsymmetricDenial =
+    /(?<![\p{L}\p{N}])(?:only\s+(?:the\s+)?(?:buyer|seller|client|customer|provider|vendor|company|party\s+[ab])|chỉ\s+(?:bên\s+[ab]|bên\s+mua|bên\s+bán|khách\s+hàng|nhà\s+cung\s+cấp)|không\s+có\s+quyền\s+đơn\s+phương\s+chấm\s+dứt)(?![\p{L}\p{N}])/iu.test(
+      text,
+    );
+  if (hasAsymmetricDenial) return false;
+  return /(?<![\p{L}\p{N}])(?:mỗi\s+bên|hai\s+bên|cả\s+hai\s+bên|các\s+bên|bất\s+kỳ\s+bên\s+nào|bên\s+nào\s+cũng|tương\s*xứng|either\s+party|each\s+party|both\s+parties|any\s+party|either\s+of\s+the\s+parties|mutually)(?![\p{L}\p{N}])/iu.test(
+    text,
+  );
 }
 
-function extractMaxDaysFromGuidance(guidance: string, fallback: number): number {
-  const days = extractDayValues(guidance);
-  return days.length > 0 ? Math.max(...days) : fallback;
+const VIETNAM_LAW_RE =
+  /pháp\s+luật\s+(?:nước\s+cộng\s+hòa\s+xã\s+hội\s+chủ\s+nghĩa\s+)?việt\s*nam|luật\s+(?:pháp\s+)?việt\s*nam|vietnam(?:ese)?\s+law|laws?\s+of\s+viet\s*nam/iu;
+const VIETNAM_FORUM_RE =
+  /\bviac\b|trung\s+tâm\s+trọng\s+tài\s+quốc\s+tế\s+việt\s*nam|tòa\s+án\s+nhân\s+dân|tòa\s+án\s+có\s+thẩm\s+quyền\s+tại\s+việt\s*nam|trọng\s+tài(?:\s+thương\s+mại)?\s+tại\s+việt\s*nam|courts?\s+(?:of|in)\s+viet\s*nam|arbitration\s+in\s+(?:viet\s*nam|hanoi|hà\s+nội|ho\s+chi\s+minh|hồ\s+chí\s+minh|da\s+nang|đà\s+nẵng)|(?:tại|ở|in|at)\s+(?:hà\s+nội|hồ\s+chí\s+minh|tp\.?\s*hcm|đà\s+nẵng)/iu;
+const FOREIGN_VENUE_OR_LAW_RE =
+  /\b(?:singapore|siac|hong\s+kong|hkiac|london|lcia|new\s+york|delaware|california|england\s+and\s+wales|english\s+law|swiss\s+law|icc\s+paris|tokyo|kuala\s+lumpur|aiac|bangkok|taiac|seoul|kcab|beijing|cietac|geneva|zurich)\b/iu;
+
+function evaluateCustomOrUnparseableRule(
+  rule: SignPlaybookRuleEffective,
+  snippets: readonly PageClauseSnippet[],
+  extraKeywords: readonly string[],
+  unparseableNote?: string,
+): SignPlaybookFindingContract {
+  const base = {
+    ruleId: rule.id,
+    ruleTitle: rule.title,
+    severity: rule.severity,
+    proposedByAi: false,
+    manualNote: null,
+    overriddenBy: null,
+    overriddenAt: null,
+  };
+  const fallbackWords = rule.title
+    .split(/[^\p{L}\p{N}%]+/u)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 4)
+    .slice(0, 6);
+  const searchTerms =
+    rule.matchKeywords.length > 0
+      ? [...new Set([...rule.matchKeywords, ...extraKeywords])]
+      : [...new Set([...fallbackWords, ...extraKeywords])];
+  const customMatch = findBestSnippet(snippets, searchTerms);
+  const fallbackRedline = neutralizeEmbeddedTags(cleanMultiLine(rule.guidance, 600));
+
+  if (customMatch) {
+    return {
+      ...base,
+      verdict: 'warn',
+      rationale:
+        unparseableNote ??
+        `Tìm thấy điều khoản khớp từ khóa của quy tắc "${cleanSingleLine(rule.title, 120)}" tại trang ${customMatch.page}; cần đối chiếu thủ công với hướng dẫn.`,
+      pageNumber: customMatch.page,
+      quoteExcerpt: cleanMultiLine(customMatch.raw, 600),
+      suggestedRedline: fallbackRedline,
+    };
+  }
+
+  return {
+    ...base,
+    verdict: unparseableNote ? 'warn' : rule.severity === 'info' ? 'unknown' : 'warn',
+    rationale:
+      unparseableNote ??
+      `Không tìm thấy từ khóa khớp với quy tắc "${cleanSingleLine(rule.title, 120)}" trong văn bản trích xuất; cần rà soát thủ công.`,
+    pageNumber: null,
+    quoteExcerpt: null,
+    suggestedRedline: fallbackRedline,
+  };
 }
 
 function evaluateSingleRuleDeterministically(
@@ -590,7 +841,9 @@ function evaluateSingleRuleDeterministically(
   rule: SignPlaybookRuleEffective,
   snippets: readonly PageClauseSnippet[],
 ): SignPlaybookFindingContract {
-  const slot = inferRuleSlot(orgId, rule);
+  // Only built-in default rules (by deterministic org-scoped ruleId) run slot-specific numeric checks;
+  // custom rules never inherit built-in defaults (e.g. 8% cap or 30-day limit).
+  const slot = defaultSlotForRuleId(orgId, rule.id);
   const base = {
     ruleId: rule.id,
     ruleTitle: rule.title,
@@ -602,7 +855,6 @@ function evaluateSingleRuleDeterministically(
   };
 
   if (slot === 'penalty_cap') {
-    const capPercent = extractCapPercentFromGuidance(rule.guidance, 8);
     const keywords = [
       ...new Set([
         ...rule.matchKeywords,
@@ -610,13 +862,31 @@ function evaluateSingleRuleDeterministically(
         'mức phạt',
         'tiền phạt',
         'khoản phạt',
+        'bị phạt',
         'penalty',
         'liquidated damages',
       ]),
     ];
-    const match = findBestSnippet(snippets, keywords);
-    const redline = `Mức phạt vi phạm hợp đồng tối đa không vượt quá ${capPercent}% giá trị phần nghĩa vụ hợp đồng bị vi phạm theo Điều 301 Luật Thương mại 2005.`;
-    if (!match) {
+    const guidancePercents = extractPercentAnalysis(rule.guidance);
+    if (guidancePercents.hasUnsupported || guidancePercents.values.length === 0) {
+      return evaluateCustomOrUnparseableRule(
+        rule,
+        snippets,
+        keywords,
+        `Hướng dẫn quy tắc "${cleanSingleLine(rule.title, 120)}" không nêu ngưỡng phần trăm cố định; cần rà soát thủ công.`,
+      );
+    }
+    const capPercent = Math.max(...guidancePercents.values);
+    const rawMatches = findMatchingSnippets(snippets, keywords);
+    const topicMatches = rawMatches.filter((m) =>
+      /phạt|vi\s+phạm|penalty|liquidated\s+damages|điều\s+301/iu.test(m.raw),
+    );
+    const matches = topicMatches.length > 0 ? topicMatches : rawMatches;
+    const redline =
+      capPercent === 8
+        ? 'Mức phạt vi phạm hợp đồng tối đa không vượt quá 8% giá trị phần nghĩa vụ hợp đồng bị vi phạm theo Điều 301 Luật Thương mại 2005.'
+        : `Mức phạt vi phạm hợp đồng tối đa không vượt quá ${capPercent}% theo quy tắc của tổ chức.`;
+    if (matches.length === 0) {
       return {
         ...base,
         verdict: 'unknown',
@@ -626,25 +896,65 @@ function evaluateSingleRuleDeterministically(
         suggestedRedline: redline,
       };
     }
-    const percents = extractPercentValues(match.raw);
-    const highest = percents.length > 0 ? Math.max(...percents) : null;
-    if (highest !== null && highest > capPercent) {
+
+    let failHit: { snippet: PageClauseSnippet; highest: number } | null = null;
+    let unsupportedHit: PageClauseSnippet | null = null;
+    let missingPctHit: PageClauseSnippet | null = null;
+    let passHit: { snippet: PageClauseSnippet; highest: number } | null = null;
+
+    for (const match of matches) {
+      const analysis = extractPercentAnalysis(match.raw);
+      const highest = analysis.values.length > 0 ? Math.max(...analysis.values) : null;
+      if (highest !== null && highest > capPercent) {
+        if (!failHit || highest > failHit.highest) {
+          failHit = { snippet: match, highest };
+        }
+      } else if (analysis.hasUnsupported) {
+        if (!unsupportedHit) unsupportedHit = match;
+      } else if (highest === null) {
+        if (!missingPctHit) missingPctHit = match;
+      } else if (!passHit) {
+        passHit = { snippet: match, highest };
+      }
+    }
+
+    if (failHit) {
       return {
         ...base,
         verdict: 'fail',
-        rationale: `Điều khoản phạt ghi nhận mức ${highest}%, vượt trần ${capPercent}% theo quy tắc SME (Điều 301 Luật Thương mại 2005).`,
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: `Điều khoản phạt ghi nhận mức ${failHit.highest}%, vượt trần ${capPercent}% theo quy tắc đã cấu hình.`,
+        pageNumber: failHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(failHit.snippet.raw, 600),
         suggestedRedline: redline,
       };
     }
-    if (highest !== null && highest <= capPercent) {
+    if (unsupportedHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: `Điều khoản phạt có giá trị phần trăm vượt độ chính xác hoặc định dạng hỗ trợ; cần rà soát thủ công so với trần ${capPercent}%.`,
+        pageNumber: unsupportedHit.page,
+        quoteExcerpt: cleanMultiLine(unsupportedHit.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (missingPctHit && !passHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: `Có điều khoản phạt vi phạm nhưng chưa nêu rõ trần phần trăm <= ${capPercent}%.`,
+        pageNumber: missingPctHit.page,
+        quoteExcerpt: cleanMultiLine(missingPctHit.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (passHit) {
       return {
         ...base,
         verdict: 'pass',
-        rationale: `Mức phạt vi phạm (${highest}%) nằm trong giới hạn <= ${capPercent}%.`,
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: `Mức phạt vi phạm (${passHit.highest}%) nằm trong giới hạn <= ${capPercent}%.`,
+        pageNumber: passHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(passHit.snippet.raw, 600),
         suggestedRedline: null,
       };
     }
@@ -652,14 +962,13 @@ function evaluateSingleRuleDeterministically(
       ...base,
       verdict: 'warn',
       rationale: `Có điều khoản phạt vi phạm nhưng chưa nêu rõ trần phần trăm <= ${capPercent}%.`,
-      pageNumber: match.page,
-      quoteExcerpt: cleanMultiLine(match.raw, 600),
+      pageNumber: matches[0]!.page,
+      quoteExcerpt: cleanMultiLine(matches[0]!.raw, 600),
       suggestedRedline: redline,
     };
   }
 
   if (slot === 'payment_terms') {
-    const maxDays = extractMaxDaysFromGuidance(rule.guidance, 30);
     const keywords = [
       ...new Set([
         ...rule.matchKeywords,
@@ -671,9 +980,19 @@ function evaluateSingleRuleDeterministically(
         'net ',
       ]),
     ];
-    const match = findBestSnippet(snippets, keywords);
+    const guidanceDays = extractDayAnalysis(rule.guidance);
+    if (guidanceDays.hasUnsupported || guidanceDays.values.length === 0) {
+      return evaluateCustomOrUnparseableRule(
+        rule,
+        snippets,
+        keywords,
+        `Hướng dẫn quy tắc "${cleanSingleLine(rule.title, 120)}" không nêu giới hạn số ngày cố định; cần rà soát thủ công.`,
+      );
+    }
+    const maxDays = Math.max(...guidanceDays.values);
+    const matches = findMatchingSnippets(snippets, keywords);
     const redline = `Bên mua thanh toán đầy đủ trong vòng ${maxDays} ngày kể từ ngày nghiệm thu và nhận đủ hồ sơ thanh toán, hóa đơn hợp lệ.`;
-    if (!match) {
+    if (matches.length === 0) {
       return {
         ...base,
         verdict: 'warn',
@@ -683,25 +1002,52 @@ function evaluateSingleRuleDeterministically(
         suggestedRedline: redline,
       };
     }
-    const days = extractDayValues(match.raw);
-    const longest = days.length > 0 ? Math.max(...days) : null;
-    if (longest !== null && longest > maxDays) {
+
+    let overHit: { snippet: PageClauseSnippet; longest: number } | null = null;
+    let unsupportedHit: PageClauseSnippet | null = null;
+    let passHit: { snippet: PageClauseSnippet; longest: number } | null = null;
+
+    for (const match of matches) {
+      const days = extractDayAnalysis(match.raw);
+      const longest = days.values.length > 0 ? Math.max(...days.values) : null;
+      if (longest !== null && longest > maxDays) {
+        if (!overHit || longest > overHit.longest) {
+          overHit = { snippet: match, longest };
+        }
+      } else if (days.hasUnsupported) {
+        if (!unsupportedHit) unsupportedHit = match;
+      } else if (longest !== null && longest >= 1 && longest <= maxDays) {
+        if (!passHit) passHit = { snippet: match, longest };
+      }
+    }
+
+    if (overHit) {
       return {
         ...base,
         verdict: rule.severity === 'critical' ? 'fail' : 'warn',
-        rationale: `Thời hạn thanh toán (${longest} ngày) vượt ngưỡng tiêu chuẩn ${maxDays} ngày của doanh nghiệp.`,
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: `Thời hạn thanh toán (${overHit.longest} ngày) vượt ngưỡng tiêu chuẩn ${maxDays} ngày của doanh nghiệp.`,
+        pageNumber: overHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(overHit.snippet.raw, 600),
         suggestedRedline: redline,
       };
     }
-    if (longest !== null && longest >= 1 && longest <= maxDays) {
+    if (unsupportedHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: `Thời hạn thanh toán có định dạng số ngày không thể đối chiếu tự động với ngưỡng ${maxDays} ngày; cần rà soát thủ công.`,
+        pageNumber: unsupportedHit.page,
+        quoteExcerpt: cleanMultiLine(unsupportedHit.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (passHit) {
       return {
         ...base,
         verdict: 'pass',
-        rationale: `Thời hạn thanh toán (${longest} ngày) đáp ứng ngưỡng <= ${maxDays} ngày.`,
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: `Thời hạn thanh toán (${passHit.longest} ngày) đáp ứng ngưỡng <= ${maxDays} ngày.`,
+        pageNumber: passHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(passHit.snippet.raw, 600),
         suggestedRedline: null,
       };
     }
@@ -709,8 +1055,8 @@ function evaluateSingleRuleDeterministically(
       ...base,
       verdict: 'warn',
       rationale: `Có điều khoản thanh toán nhưng chưa nêu rõ số ngày tối đa (<= ${maxDays} ngày).`,
-      pageNumber: match.page,
-      quoteExcerpt: cleanMultiLine(match.raw, 600),
+      pageNumber: matches[0]!.page,
+      quoteExcerpt: cleanMultiLine(matches[0]!.raw, 600),
       suggestedRedline: redline,
     };
   }
@@ -726,10 +1072,28 @@ function evaluateSingleRuleDeterministically(
         'terminate',
       ]),
     ];
-    const match = findBestSnippet(snippets, keywords);
-    const redline =
-      'Mỗi bên có quyền đơn phương chấm dứt hợp đồng khi bên kia vi phạm nghĩa vụ cơ bản không khắc phục hoặc khi gửi thông báo bằng văn bản trước ít nhất 30 ngày.';
-    if (!match) {
+    const guidanceDays = extractDayAnalysis(rule.guidance);
+    if (guidanceDays.hasUnsupported || guidanceDays.values.length === 0) {
+      return evaluateCustomOrUnparseableRule(
+        rule,
+        snippets,
+        keywords,
+        `Hướng dẫn quy tắc "${cleanSingleLine(rule.title, 120)}" không nêu số ngày báo trước tối thiểu; cần rà soát thủ công.`,
+      );
+    }
+    const minNoticeDays = Math.min(...guidanceDays.values);
+    const requiresParity =
+      /tương\s*xứng|cân\s*bằng|hai\s+bên|mỗi\s+bên|both\s+parties|either\s+party|parity|mutual/iu.test(
+        rule.guidance,
+      );
+    const redlineDays = Math.max(30, minNoticeDays);
+    const redline = `Mỗi bên có quyền đơn phương chấm dứt hợp đồng khi bên kia vi phạm nghĩa vụ cơ bản không khắc phục hoặc khi gửi thông báo bằng văn bản trước ít nhất ${redlineDays} ngày.`;
+    const rawMatches = findMatchingSnippets(snippets, keywords);
+    const topicMatches = rawMatches.filter((m) =>
+      /chấm\s+dứt|hủy\s+bỏ|terminat/iu.test(m.raw),
+    );
+    const matches = topicMatches.length > 0 ? topicMatches : rawMatches;
+    if (matches.length === 0) {
       return {
         ...base,
         verdict: 'warn',
@@ -739,41 +1103,97 @@ function evaluateSingleRuleDeterministically(
         suggestedRedline: redline,
       };
     }
-    const immediateNoNotice =
-      /không\s+cần\s+(?:thông\s+báo|báo)\s+trước|chấm\s+dứt\s+ngay\s+lập\s+tức\s+mà\s+không|without\s+(?:prior\s+)?(?:written\s+)?notice|immediately\s+at\s+(?:its\s+)?sole\s+discretion|terminate\s+at\s+any\s+time\s+without\s+notice/iu.test(
-        match.raw,
-      );
-    if (immediateNoNotice) {
+
+    let failHit: PageClauseSnippet | null = null;
+    let shortOrOneSidedHit: { snippet: PageClauseSnippet; reason: string } | null = null;
+    let passHit: { snippet: PageClauseSnippet; noticeDays: number } | null = null;
+
+    for (const match of matches) {
+      const immediateNoNotice =
+        /không\s+cần\s+(?:thông\s+báo|báo)\s+trước|chấm\s+dứt\s+ngay\s+lập\s+tức\s+mà\s+không|without\s+(?:prior\s+)?(?:written\s+)?notice|immediately\s+at\s+(?:its\s+)?sole\s+discretion|terminate\s+at\s+any\s+time\s+without\s+notice/iu.test(
+          match.raw,
+        );
+      if (immediateNoNotice) {
+        if (!failHit) failHit = match;
+        continue;
+      }
+
+      const hasNoticePhrase =
+        /báo\s+trước|thông\s+báo\s+trước|thông\s+báo\s+bằng\s+văn\s+bản\s+trước|prior\s+(?:written\s+)?notice|advance\s+(?:written\s+)?notice|days?['’]?\s+(?:prior\s+)?notice/iu.test(
+          match.raw,
+        );
+      const noticeBound = extractNoticeBoundDays(match.raw);
+      const minMatchedNotice = noticeBound.values.length > 0 ? Math.min(...noticeBound.values) : null;
+      const parityOk = !requiresParity || hasTerminationParity(match.raw);
+
+      if (hasNoticePhrase && !noticeBound.hasUnsupported && minMatchedNotice !== null) {
+        if (minMatchedNotice < minNoticeDays) {
+          if (!shortOrOneSidedHit) {
+            shortOrOneSidedHit = {
+              snippet: match,
+              reason: `Thời hạn báo trước (${minMatchedNotice} ngày) thấp hơn ngưỡng tối thiểu ${minNoticeDays} ngày theo quy tắc.`,
+            };
+          }
+          continue;
+        }
+        if (!parityOk) {
+          if (!shortOrOneSidedHit) {
+            shortOrOneSidedHit = {
+              snippet: match,
+              reason: 'Điều khoản có nêu thời hạn báo trước nhưng chưa thể hiện quyền chấm dứt tương xứng cho cả hai bên.',
+            };
+          }
+          continue;
+        }
+        if (!passHit) {
+          passHit = { snippet: match, noticeDays: minMatchedNotice };
+        }
+      } else if (hasNoticePhrase || /\bđơn\s+phương\s+chấm\s+dứt|\bterminate\b|\btermination\b/iu.test(match.raw)) {
+        if (!shortOrOneSidedHit && !parityOk) {
+          shortOrOneSidedHit = {
+            snippet: match,
+            reason: `Cần kiểm tra thời hạn báo trước tối thiểu (>= ${minNoticeDays} ngày) và sự cân bằng quyền chấm dứt giữa hai bên.`,
+          };
+        }
+      }
+    }
+
+    if (failHit) {
       return {
         ...base,
         verdict: 'fail',
         rationale: 'Điều khoản cho phép đơn phương chấm dứt ngay lập tức không cần thông báo trước, gây rủi ro mất cân bằng.',
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        pageNumber: failHit.page,
+        quoteExcerpt: cleanMultiLine(failHit.raw, 600),
         suggestedRedline: redline,
       };
     }
-    const hasNoticePhrase = /báo\s+trước|thông\s+báo\s+trước|thông\s+báo\s+bằng\s+văn\s+bản\s+trước|prior\s+(?:written\s+)?notice|days['’]?\s+(?:prior\s+)?notice/iu.test(
-      match.raw,
-    );
-    const days = extractDayValues(match.raw);
-    const maxNotice = days.length > 0 ? Math.max(...days) : null;
-    if (hasNoticePhrase && maxNotice !== null && maxNotice >= 15) {
+    if (shortOrOneSidedHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: shortOrOneSidedHit.reason,
+        pageNumber: shortOrOneSidedHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(shortOrOneSidedHit.snippet.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (passHit) {
       return {
         ...base,
         verdict: 'pass',
-        rationale: `Điều khoản chấm dứt có thời hạn báo trước ${maxNotice} ngày.`,
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: `Điều khoản chấm dứt có thời hạn báo trước ${passHit.noticeDays} ngày${requiresParity ? ' và quyền chấm dứt tương xứng giữa hai bên' : ''}.`,
+        pageNumber: passHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(passHit.snippet.raw, 600),
         suggestedRedline: null,
       };
     }
     return {
       ...base,
       verdict: 'warn',
-      rationale: 'Cần kiểm tra thời hạn báo trước tối thiểu (15 đến 30 ngày) và sự cân bằng quyền chấm dứt giữa hai bên.',
-      pageNumber: match.page,
-      quoteExcerpt: cleanMultiLine(match.raw, 600),
+      rationale: `Cần kiểm tra thời hạn báo trước tối thiểu (>= ${minNoticeDays} ngày) và sự cân bằng quyền chấm dứt giữa hai bên.`,
+      pageNumber: matches[0]!.page,
+      quoteExcerpt: cleanMultiLine(matches[0]!.raw, 600),
       suggestedRedline: redline,
     };
   }
@@ -782,16 +1202,29 @@ function evaluateSingleRuleDeterministically(
     const autoKeywords = [
       'tự động gia hạn',
       'gia hạn tự động',
+      'tự động kéo dài',
       'auto-renew',
       'auto renew',
+      'renews automatically',
       'automatic renewal',
       'automatically renew',
       'automatically extended',
     ];
-    const autoMatch = findBestSnippet(snippets, autoKeywords);
-    const redline =
-      'Hợp đồng chỉ được gia hạn khi hai bên ký phụ lục gia hạn bằng văn bản, hoặc mỗi bên có quyền từ chối gia hạn tự động bằng thông báo văn bản trước ít nhất 30 ngày trước ngày hết hạn.';
-    if (!autoMatch) {
+    const guidanceDays = extractDayAnalysis(rule.guidance);
+    const addressesAutoRenewal =
+      /gia\s+hạn|auto[\s-]?renew|automatic\s+renewal|non-?renewal|opt[\s-]?out/iu.test(rule.guidance);
+    if (!addressesAutoRenewal || guidanceDays.hasUnsupported || guidanceDays.values.length === 0) {
+      return evaluateCustomOrUnparseableRule(
+        rule,
+        snippets,
+        [...autoKeywords, 'gia hạn', 'renewal'],
+        `Hướng dẫn quy tắc "${cleanSingleLine(rule.title, 120)}" không nêu số ngày báo trước từ chối gia hạn cố định; cần rà soát thủ công.`,
+      );
+    }
+    const minOptOutDays = Math.min(...guidanceDays.values);
+    const autoMatches = findMatchingSnippets(snippets, autoKeywords);
+    const redline = `Hợp đồng chỉ được gia hạn khi hai bên ký phụ lục gia hạn bằng văn bản, hoặc mỗi bên có quyền từ chối gia hạn tự động bằng thông báo văn bản trước ít nhất ${Math.max(30, minOptOutDays)} ngày trước ngày hết hạn.`;
+    if (autoMatches.length === 0) {
       const termMatch = findBestSnippet(snippets, [
         ...rule.matchKeywords,
         'hiệu lực hợp đồng',
@@ -819,28 +1252,58 @@ function evaluateSingleRuleDeterministically(
         suggestedRedline: null,
       };
     }
-    const days = extractDayValues(autoMatch.raw);
-    const noticeDays = days.length > 0 ? Math.max(...days) : null;
-    const hasOptOut =
-      /không\s+gia\s+hạn|từ\s+chối\s+gia\s+hạn|chấm\s+dứt\s+gia\s+hạn|báo\s+trước|thông\s+báo\s+trước|non-renewal|not\s+to\s+renew|opt[\s-]out|prior\s+(?:written\s+)?notice/iu.test(
-        autoMatch.raw,
-      );
-    if (hasOptOut && noticeDays !== null && noticeDays >= 15) {
+
+    let warnHit: { snippet: PageClauseSnippet; reason: string } | null = null;
+    let passHit: { snippet: PageClauseSnippet; noticeDays: number } | null = null;
+
+    for (const autoMatch of autoMatches) {
+      const optOutDays = extractOptOutNoticeDays(autoMatch.raw);
+      const hasOptOut =
+        /không\s+gia\s+hạn|từ\s+chối\s+gia\s+hạn|chấm\s+dứt\s+gia\s+hạn|báo\s+trước|thông\s+báo\s+trước|non-renewal|not\s+to\s+renew|opt[\s-]out|prior\s+(?:written\s+)?notice|advance\s+(?:written\s+)?notice/iu.test(
+          autoMatch.raw,
+        );
+      const minNotice = optOutDays.values.length > 0 ? Math.min(...optOutDays.values) : null;
+      if (hasOptOut && !optOutDays.hasUnsupported && minNotice !== null && minNotice >= minOptOutDays) {
+        if (!passHit) passHit = { snippet: autoMatch, noticeDays: minNotice };
+      } else {
+        if (!warnHit) {
+          warnHit = {
+            snippet: autoMatch,
+            reason:
+              minNotice !== null && minNotice < minOptOutDays
+                ? `Thời hạn báo trước để từ chối gia hạn tự động (${minNotice} ngày) thấp hơn ngưỡng ${minOptOutDays} ngày.`
+                : `Điều khoản tự động gia hạn chưa nêu rõ số ngày báo trước (>= ${minOptOutDays} ngày) gắn với thông báo từ chối gia hạn.`,
+          };
+        }
+      }
+    }
+
+    if (warnHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: warnHit.reason,
+        pageNumber: warnHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(warnHit.snippet.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (passHit) {
       return {
         ...base,
         verdict: 'pass',
-        rationale: `Hợp đồng có tự động gia hạn kèm thời hạn thông báo từ chối trước (${noticeDays} ngày).`,
-        pageNumber: autoMatch.page,
-        quoteExcerpt: cleanMultiLine(autoMatch.raw, 600),
+        rationale: `Hợp đồng có tự động gia hạn kèm thời hạn thông báo từ chối trước (${passHit.noticeDays} ngày).`,
+        pageNumber: passHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(passHit.snippet.raw, 600),
         suggestedRedline: null,
       };
     }
     return {
       ...base,
       verdict: 'warn',
-      rationale: 'Điều khoản tự động gia hạn chưa nêu rõ thời hạn báo trước tối thiểu để từ chối gia hạn.',
-      pageNumber: autoMatch.page,
-      quoteExcerpt: cleanMultiLine(autoMatch.raw, 600),
+      rationale: `Điều khoản tự động gia hạn chưa nêu rõ thời hạn báo trước tối thiểu (>= ${minOptOutDays} ngày) để từ chối gia hạn.`,
+      pageNumber: autoMatches[0]!.page,
+      quoteExcerpt: cleanMultiLine(autoMatches[0]!.raw, 600),
       suggestedRedline: redline,
     };
   }
@@ -860,10 +1323,21 @@ function evaluateSingleRuleDeterministically(
         'jurisdiction',
       ]),
     ];
-    const match = findBestSnippet(snippets, keywords);
+    const expectsVietnam =
+      /việt\s*nam|viet\s*nam|vietnam|\bviac\b|tòa\s+án\s+nhân\s+dân/iu.test(rule.guidance);
+    if (!expectsVietnam) {
+      return evaluateCustomOrUnparseableRule(
+        rule,
+        snippets,
+        keywords,
+        `Hướng dẫn quy tắc "${cleanSingleLine(rule.title, 120)}" đã được tùy chỉnh ngoài chuẩn Việt Nam/VIAC; cần rà soát thủ công.`,
+      );
+    }
+
+    const matches = findMatchingSnippets(snippets, keywords);
     const redline =
       'Hợp đồng này được điều chỉnh theo pháp luật Việt Nam. Mọi tranh chấp phát sinh không tự thương lượng được sẽ giải quyết tại Tòa án nhân dân có thẩm quyền tại Việt Nam hoặc Trung tâm Trọng tài Quốc tế Việt Nam (VIAC).';
-    if (!match) {
+    if (matches.length === 0) {
       return {
         ...base,
         verdict: 'warn',
@@ -873,40 +1347,59 @@ function evaluateSingleRuleDeterministically(
         suggestedRedline: redline,
       };
     }
-    const foreignVenue =
-      /\b(?:singapore|siac|hong\s+kong|hkiac|london|lcia|new\s+york|delaware|california|england\s+and\s+wales|swiss\s+law|icc\s+paris|tokyo)\b/iu.test(
-        match.raw,
-      );
-    const vietnamVenue =
-      /việt\s*nam|viet\s*nam|vietnam|\bviac\b|tòa\s+án\s+nhân\s+dân|hà\s+nội|hồ\s+chí\s+minh|tp\.?\s*hcm|đà\s+nẵng/iu.test(
-        match.raw,
-      );
-    if (foreignVenue && !vietnamVenue) {
+
+    const foreignHit = matches.find((m) => FOREIGN_VENUE_OR_LAW_RE.test(m.raw));
+    if (foreignHit) {
       return {
         ...base,
         verdict: rule.severity === 'critical' ? 'fail' : 'warn',
-        rationale: 'Điều khoản tranh chấp tham chiếu tài phán hoặc trọng tài nước ngoài, có thể phát sinh chi phí pháp lý cao.',
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale:
+          'Điều khoản tranh chấp hoặc luật áp dụng tham chiếu tài phán hay trọng tài nước ngoài, có thể phát sinh chi phí pháp lý cao.',
+        pageNumber: foreignHit.page,
+        quoteExcerpt: cleanMultiLine(foreignHit.raw, 600),
         suggestedRedline: redline,
       };
     }
-    if (vietnamVenue) {
+
+    const lawHit = matches.find((m) => VIETNAM_LAW_RE.test(m.raw));
+    const forumHit = matches.find((m) => VIETNAM_FORUM_RE.test(m.raw));
+    if (lawHit && forumHit) {
+      const cited = forumHit.page === lawHit.page ? forumHit : matches[0]!;
       return {
         ...base,
         verdict: 'pass',
-        rationale: 'Điều khoản dẫn chiếu pháp luật hoặc cơ quan giải quyết tranh chấp tại Việt Nam.',
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: 'Điều khoản xác định áp dụng pháp luật Việt Nam và giải quyết tranh chấp tại cơ quan tài phán tại Việt Nam.',
+        pageNumber: cited.page,
+        quoteExcerpt: cleanMultiLine(cited.raw, 600),
         suggestedRedline: null,
+      };
+    }
+    if (lawHit && !forumHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: 'Điều khoản có dẫn chiếu pháp luật Việt Nam nhưng chưa nêu rõ cơ quan giải quyết tranh chấp tại Việt Nam.',
+        pageNumber: lawHit.page,
+        quoteExcerpt: cleanMultiLine(lawHit.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (forumHit && !lawHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: 'Điều khoản có nêu cơ quan giải quyết tranh chấp tại Việt Nam nhưng chưa xác định rõ luật áp dụng là pháp luật Việt Nam.',
+        pageNumber: forumHit.page,
+        quoteExcerpt: cleanMultiLine(forumHit.raw, 600),
+        suggestedRedline: redline,
       };
     }
     return {
       ...base,
       verdict: 'warn',
-      rationale: 'Có điều khoản tranh chấp nhưng chưa xác định rõ cơ quan tài phán tại Việt Nam.',
-      pageNumber: match.page,
-      quoteExcerpt: cleanMultiLine(match.raw, 600),
+      rationale: 'Có điều khoản tranh chấp nhưng chưa xác định rõ pháp luật Việt Nam và cơ quan tài phán tại Việt Nam.',
+      pageNumber: matches[0]!.page,
+      quoteExcerpt: cleanMultiLine(matches[0]!.raw, 600),
       suggestedRedline: redline,
     };
   }
@@ -923,10 +1416,25 @@ function evaluateSingleRuleDeterministically(
         'handover',
       ]),
     ];
-    const match = findBestSnippet(snippets, keywords);
-    const redline =
-      'Bên mua kiểm tra kết quả bàn giao và ký biên bản nghiệm thu hoặc phản hồi bằng văn bản nêu rõ nội dung cần hiệu chỉnh trong vòng 05 ngày làm việc kể từ ngày nhận bàn giao.';
-    if (!match) {
+    const guidanceDays = extractDayAnalysis(rule.guidance);
+    const asksProtocol =
+      /nghiệm\s+thu|tiêu\s+chí|biên\s+bản|acceptance|criteria|protocol/iu.test(rule.guidance);
+    if (!asksProtocol || guidanceDays.hasUnsupported || guidanceDays.values.length === 0) {
+      return evaluateCustomOrUnparseableRule(
+        rule,
+        snippets,
+        keywords,
+        `Hướng dẫn quy tắc "${cleanSingleLine(rule.title, 120)}" không nêu ngưỡng số ngày phản hồi nghiệm thu cố định; cần rà soát thủ công.`,
+      );
+    }
+    const maxResponseDays = Math.max(...guidanceDays.values);
+    const rawMatches = findMatchingSnippets(snippets, keywords);
+    const topicMatches = rawMatches.filter((m) =>
+      /nghiệm\s+thu|bàn\s+giao|acceptance|deliverables|handover|deemed\s+accepted/iu.test(m.raw),
+    );
+    const matches = topicMatches.length > 0 ? topicMatches : rawMatches;
+    const redline = `Bên mua kiểm tra kết quả bàn giao và ký biên bản nghiệm thu hoặc phản hồi bằng văn bản nêu rõ nội dung cần hiệu chỉnh trong vòng ${Math.min(5, maxResponseDays)} ngày làm việc kể từ ngày nhận bàn giao.`;
+    if (matches.length === 0) {
       return {
         ...base,
         verdict: 'warn',
@@ -936,61 +1444,62 @@ function evaluateSingleRuleDeterministically(
         suggestedRedline: redline,
       };
     }
-    const days = extractDayValues(match.raw);
-    const hasProtocol =
-      /biên\s+bản\s+nghiệm\s+thu|acceptance\s+certificate|written\s+acceptance|ký\s+nghiệm\s+thu/iu.test(match.raw);
-    if (days.length > 0 || hasProtocol) {
+
+    let overHit: { snippet: PageClauseSnippet; days: number } | null = null;
+    let passHit: PageClauseSnippet | null = null;
+    let partialHit: PageClauseSnippet | null = null;
+
+    for (const match of matches) {
+      const days = extractDayAnalysis(match.raw);
+      const longest = days.values.length > 0 ? Math.max(...days.values) : null;
+      const hasProtocolOrCriteria =
+        /biên\s+bản\s+nghiệm\s+thu|tiêu\s+chí\s+nghiệm\s+thu|điều\s+kiện\s+nghiệm\s+thu|acceptance\s+criteria|acceptance\s+certificate|written\s+acceptance|ký\s+nghiệm\s+thu|deemed\s+accepted/iu.test(
+          match.raw,
+        );
+      if (longest !== null && longest > maxResponseDays) {
+        if (!overHit || longest > overHit.days) {
+          overHit = { snippet: match, days: longest };
+        }
+        continue;
+      }
+      if (hasProtocolOrCriteria && !days.hasUnsupported && longest !== null && longest >= 1 && longest <= maxResponseDays) {
+        if (!passHit) passHit = match;
+      } else if (!partialHit) {
+        partialHit = match;
+      }
+    }
+
+    if (overHit) {
+      return {
+        ...base,
+        verdict: 'warn',
+        rationale: `Thời hạn phản hồi nghiệm thu (${overHit.days} ngày) vượt ngưỡng ${maxResponseDays} ngày theo quy tắc.`,
+        pageNumber: overHit.snippet.page,
+        quoteExcerpt: cleanMultiLine(overHit.snippet.raw, 600),
+        suggestedRedline: redline,
+      };
+    }
+    if (passHit) {
       return {
         ...base,
         verdict: 'pass',
-        rationale: 'Hợp đồng có quy định thủ tục hoặc thời hạn nghiệm thu bàn giao.',
-        pageNumber: match.page,
-        quoteExcerpt: cleanMultiLine(match.raw, 600),
+        rationale: `Hợp đồng có quy định thủ tục hoặc tiêu chí nghiệm thu kèm thời hạn phản hồi <= ${maxResponseDays} ngày.`,
+        pageNumber: passHit.page,
+        quoteExcerpt: cleanMultiLine(passHit.raw, 600),
         suggestedRedline: null,
       };
     }
     return {
       ...base,
       verdict: 'warn',
-      rationale: 'Có nhắc tới bàn giao/nghiệm thu nhưng chưa nêu rõ số ngày phản hồi hoặc biên bản nghiệm thu.',
-      pageNumber: match.page,
-      quoteExcerpt: cleanMultiLine(match.raw, 600),
+      rationale: `Điều khoản nghiệm thu chỉ đáp ứng một phần quy tắc (thiếu tiêu chí/biên bản hoặc thiếu thời hạn phản hồi <= ${maxResponseDays} ngày).`,
+      pageNumber: (partialHit ?? matches[0]!).page,
+      quoteExcerpt: cleanMultiLine((partialHit ?? matches[0]!).raw, 600),
       suggestedRedline: redline,
     };
   }
 
-  // Custom workspace rule: match configured keywords (or title words >= 4 chars when matchKeywords is empty).
-  const fallbackWords = rule.title
-    .split(/[^\p{L}\p{N}%]+/u)
-    .map((w) => w.trim())
-    .filter((w) => w.length >= 4)
-    .slice(0, 6);
-  const searchTerms = rule.matchKeywords.length > 0 ? rule.matchKeywords : fallbackWords;
-  const customMatch = findBestSnippet(snippets, searchTerms);
-  const fallbackRedline = neutralizeEmbeddedTags(cleanMultiLine(rule.guidance, 600));
-
-  if (customMatch) {
-    return {
-      ...base,
-      verdict: rule.severity === 'info' ? 'pass' : 'warn',
-      rationale:
-        rule.severity === 'info'
-          ? `Tìm thấy nội dung liên quan đến quy tắc "${cleanSingleLine(rule.title, 120)}" tại trang ${customMatch.page}.`
-          : `Tìm thấy điều khoản khớp từ khóa của quy tắc "${cleanSingleLine(rule.title, 120)}" tại trang ${customMatch.page}; cần đối chiếu thủ công với hướng dẫn.`,
-      pageNumber: customMatch.page,
-      quoteExcerpt: cleanMultiLine(customMatch.raw, 600),
-      suggestedRedline: rule.severity === 'info' ? null : fallbackRedline,
-    };
-  }
-
-  return {
-    ...base,
-    verdict: rule.severity === 'info' ? 'unknown' : 'warn',
-    rationale: `Không tìm thấy từ khóa khớp với quy tắc "${cleanSingleLine(rule.title, 120)}" trong văn bản trích xuất.`,
-    pageNumber: null,
-    quoteExcerpt: null,
-    suggestedRedline: fallbackRedline,
-  };
+  return evaluateCustomOrUnparseableRule(rule, snippets, []);
 }
 
 export function evaluatePlaybookDeterministically(
@@ -1004,7 +1513,14 @@ export function evaluatePlaybookDeterministically(
   return activeRules.map((rule) => evaluateSingleRuleDeterministically(orgId, rule, snippets));
 }
 
-function parseStoredFindings(raw: unknown): SignPlaybookFindingContract[] {
+interface StoredFindingWithRevision {
+  finding: SignPlaybookFindingContract;
+  ruleRevision: string | null;
+}
+
+const HEX_64_RE = /^[0-9a-f]{64}$/;
+
+function parseStoredFindingsInternal(raw: unknown): StoredFindingWithRevision[] {
   let list: unknown = raw;
   if (typeof raw === 'string') {
     try {
@@ -1014,7 +1530,7 @@ function parseStoredFindings(raw: unknown): SignPlaybookFindingContract[] {
     }
   }
   if (!Array.isArray(list)) return [];
-  const out: SignPlaybookFindingContract[] = [];
+  const out: StoredFindingWithRevision[] = [];
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
     const obj = item as Record<string, unknown>;
@@ -1056,22 +1572,80 @@ function parseStoredFindings(raw: unknown): SignPlaybookFindingContract[] {
       typeof obj.overriddenAt === 'string' && obj.overriddenAt.trim().length > 0
         ? obj.overriddenAt.trim()
         : null;
+    const ruleRevision =
+      typeof obj.ruleRevision === 'string' && HEX_64_RE.test(obj.ruleRevision)
+        ? obj.ruleRevision
+        : null;
     out.push({
-      ruleId: ruleIdParsed.data,
-      ruleTitle,
-      severity,
-      verdict,
-      rationale,
-      pageNumber: quoteExcerpt ? pageNumber : null,
-      quoteExcerpt: pageNumber ? quoteExcerpt : null,
-      suggestedRedline,
-      proposedByAi: obj.proposedByAi === true,
-      manualNote,
-      overriddenBy,
-      overriddenAt,
+      finding: {
+        ruleId: ruleIdParsed.data,
+        ruleTitle,
+        severity,
+        verdict,
+        rationale,
+        pageNumber: quoteExcerpt ? pageNumber : null,
+        quoteExcerpt: pageNumber ? quoteExcerpt : null,
+        suggestedRedline,
+        proposedByAi: obj.proposedByAi === true,
+        manualNote,
+        overriddenBy,
+        overriddenAt,
+      },
+      ruleRevision,
     });
   }
   return out;
+}
+
+function serializeStoredFindings(items: readonly StoredFindingWithRevision[]): string {
+  return JSON.stringify(
+    items.map((item) => ({
+      ...item.finding,
+      ...(item.ruleRevision ? { ruleRevision: item.ruleRevision } : {}),
+    })),
+  );
+}
+
+export function computePlaybookCheckRevision(params: {
+  id: string;
+  sourceSha256: string;
+  mode: SignPlaybookMode;
+  updatedAt: Date | string;
+  findings: readonly SignPlaybookFindingContract[];
+}): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        params.id,
+        params.sourceSha256,
+        params.mode,
+        new Date(params.updatedAt).toISOString(),
+        params.findings,
+      ]),
+    )
+    .digest('hex');
+}
+
+function isCheckStaleByRules(
+  stored: readonly StoredFindingWithRevision[],
+  currentRules: readonly SignPlaybookRuleEffective[],
+): boolean {
+  const activeRules = currentRules.filter((r) => r.active).slice(0, SIGN_MAX_PLAYBOOK_RULES);
+  const storedById = new Map(stored.map((item) => [item.finding.ruleId, item]));
+  if (stored.length !== activeRules.length || storedById.size !== activeRules.length) {
+    return true;
+  }
+  for (const rule of activeRules) {
+    const item = storedById.get(rule.id);
+    if (!item) return true;
+    const expectedRev = computePlaybookRuleRevision(rule);
+    if (item.ruleRevision !== null) {
+      if (item.ruleRevision !== expectedRev) return true;
+    } else if (item.finding.ruleTitle !== rule.title || item.finding.severity !== rule.severity) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function toPlaybookCheckRecord(
@@ -1087,18 +1661,30 @@ function toPlaybookCheckRecord(
     updated_at: Date | string;
   },
   currentSourceSha256: string,
+  currentRules: readonly SignPlaybookRuleEffective[],
 ): SignEnvelopePlaybookCheckRecord {
+  const parsed = parseStoredFindingsInternal(row.findings_json);
+  const findings = parsed.map((item) => item.finding);
+  const updatedAtIso = new Date(row.updated_at).toISOString();
+  const revision = computePlaybookCheckRevision({
+    id: row.id,
+    sourceSha256: row.source_sha256,
+    mode: row.mode,
+    updatedAt: updatedAtIso,
+    findings,
+  });
   return {
     id: row.id,
     envelopeId: row.envelope_id,
     sourceSha256: row.source_sha256,
-    isStale: row.source_sha256 !== currentSourceSha256,
+    revision,
+    isStale: row.source_sha256 !== currentSourceSha256 || isCheckStaleByRules(parsed, currentRules),
     mode: row.mode,
-    findings: parseStoredFindings(row.findings_json),
+    findings,
     promptVersion: row.prompt_version,
     createdBy: row.created_by,
     createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
+    updatedAt: updatedAtIso,
   };
 }
 
@@ -1139,16 +1725,32 @@ const zPlaybookAiFindingInput = z.strictObject({
   proposedByAi: z.boolean(),
 });
 
-const zPlaybookRecordCheckInput = z.strictObject({
-  envelopeId: zId,
-  sourceSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  mode: z.enum(SIGN_PLAYBOOK_MODES),
-  promptVersion: z.string().min(1).max(64).nullable(),
-  aiFindings: z.array(zPlaybookAiFindingInput).max(SIGN_MAX_PLAYBOOK_RULES).optional(),
-  extractedPages: z
-    .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
-    .max(SIGN_MAX_PAGES),
+const zPlaybookEvaluatedRuleRef = z.strictObject({
+  ruleId: zId,
+  revision: z.string().regex(HEX_64_RE),
 });
+
+export const zPlaybookRecordCheckInput = z
+  .strictObject({
+    envelopeId: zId,
+    sourceSha256: z.string().regex(HEX_64_RE),
+    mode: z.enum(SIGN_PLAYBOOK_MODES),
+    promptVersion: z.string().trim().min(1).max(32).nullable(),
+    preserveExistingFresh: z.boolean().optional(),
+    evaluatedRules: z.array(zPlaybookEvaluatedRuleRef).max(SIGN_MAX_PLAYBOOK_RULES).optional(),
+    aiFindings: z.array(zPlaybookAiFindingInput).max(SIGN_MAX_PLAYBOOK_RULES).optional(),
+    extractedPages: z
+      .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
+      .max(SIGN_MAX_PAGES)
+      .refine(
+        (pages) => pages.reduce((sum, item) => sum + item.text.length, 0) <= SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
+        `Total extracted text across all pages must not exceed ${SIGN_PLAYBOOK_MAX_TOTAL_CHARS} characters`,
+      ),
+  })
+  .refine(
+    (val) => val.mode !== 'ai' || (Array.isArray(val.evaluatedRules) && val.evaluatedRules.length > 0),
+    'evaluatedRules is required when recording AI playbook findings',
+  );
 
 export const playbookRulesList = defineQuery({
   name: 'sign.playbook.rules_list',
@@ -1197,7 +1799,7 @@ export const playbookGet = defineQuery({
     const activeRulesCount = effectiveRules.items.filter((r) => r.active).length;
 
     return {
-      check: row ? toPlaybookCheckRecord(row, env.source_sha256) : null,
+      check: row ? toPlaybookCheckRecord(row, env.source_sha256, effectiveRules.items) : null,
       canEdit: ctx.role === 'owner' || ctx.role === 'admin' || ctx.role === 'member',
       activeRulesCount,
     };
@@ -1239,8 +1841,9 @@ export const playbookSource = defineQuery({
       listEffectivePlaybookRulesOnTrx(ctx.trx, ctx.orgId),
     ]);
 
-    const activeRules: SignPlaybookRuleEffective[] = effectiveRules.items
+    const activeRules: SignPlaybookSourceRule[] = effectiveRules.items
       .filter((r) => r.active)
+      .slice(0, SIGN_MAX_PLAYBOOK_RULES)
       .map((r) => ({
         id: r.id,
         title: r.title,
@@ -1249,6 +1852,7 @@ export const playbookSource = defineQuery({
         matchKeywords: r.matchKeywords,
         active: r.active,
         isDefault: r.isDefault,
+        revision: computePlaybookRuleRevision(r),
       }));
 
     return {
@@ -1279,9 +1883,16 @@ export const playbookRuleUpsert = defineCommand({
     await ensurePlaybookRulesMaterialized(ctx, userId);
 
     const title = cleanSingleLine(input.title, 200);
-    const guidance = neutralizeEmbeddedTags(cleanMultiLine(input.guidance, 2000));
+    const guidance = cleanMultiLine(neutralizeEmbeddedTags(input.guidance), 4000);
     if (!title || !guidance) {
       throw new DomainError('SIGN_PLAYBOOK_RULE_INVALID', 422, 'Playbook rule title and guidance are required');
+    }
+    if (Array.from(guidance).length > 2000) {
+      throw new DomainError(
+        'SIGN_PLAYBOOK_RULE_INVALID',
+        422,
+        'Playbook rule guidance exceeds maximum length of 2000 characters',
+      );
     }
     const matchKeywords = sanitizeMatchKeywords(input.matchKeywords);
 
@@ -1503,7 +2114,7 @@ export const playbookRecordCheck = defineCommand({
     const pageCount = Math.max(1, env.page_count ?? 1);
 
     const effectiveRules = await listEffectivePlaybookRulesOnTrx(ctx.trx, ctx.orgId);
-    const activeRules: SignPlaybookRuleEffective[] = effectiveRules.items
+    const activeRules: SignPlaybookSourceRule[] = effectiveRules.items
       .filter((r) => r.active)
       .slice(0, SIGN_MAX_PLAYBOOK_RULES)
       .map((r) => ({
@@ -1514,7 +2125,50 @@ export const playbookRecordCheck = defineCommand({
         matchKeywords: r.matchKeywords,
         active: r.active,
         isDefault: r.isDefault,
+        revision: computePlaybookRuleRevision(r),
       }));
+
+    const activeRevisionById = new Map(activeRules.map((r) => [r.id, r.revision]));
+
+    if (input.evaluatedRules) {
+      const seenRuleIds = new Set<string>();
+      let matchesCurrent = input.evaluatedRules.length === activeRules.length;
+      if (matchesCurrent) {
+        for (const ref of input.evaluatedRules) {
+          if (seenRuleIds.has(ref.ruleId) || activeRevisionById.get(ref.ruleId) !== ref.revision) {
+            matchesCurrent = false;
+            break;
+          }
+          seenRuleIds.add(ref.ruleId);
+        }
+      }
+      if (!matchesCurrent) {
+        throw new DomainError('SIGN_PLAYBOOK_STALE_RULES', 409, 'Playbook rules changed during evaluation');
+      }
+    }
+
+    const lockedExisting = await ctx.trx
+      .selectFrom('crove_sign.playbook_check')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .forUpdate()
+      .executeTakeFirst();
+
+    if (input.preserveExistingFresh && lockedExisting) {
+      const existingRecord = toPlaybookCheckRecord(lockedExisting, env.source_sha256, effectiveRules.items);
+      if (!existingRecord.isStale && (existingRecord.mode === 'manual' || existingRecord.mode === 'ai')) {
+        ctx.audit({
+          action: 'sign.playbook.record_check',
+          envelopeId: env.id,
+          mode: existingRecord.mode,
+          preservedExisting: true,
+          findingCount: existingRecord.findings.length,
+          aiFindingCount: existingRecord.findings.filter((f) => f.proposedByAi).length,
+        });
+        return existingRecord;
+      }
+    }
 
     const deterministicByRuleId = new Map<string, SignPlaybookFindingContract>();
     for (const det of evaluatePlaybookDeterministically(ctx.orgId, activeRules, input.extractedPages, pageCount)) {
@@ -1575,48 +2229,103 @@ export const playbookRecordCheck = defineCommand({
       }
     }
 
-    const mergedFindings: SignPlaybookFindingContract[] = [];
+    const mergedFindingsWithRevisions: StoredFindingWithRevision[] = [];
     for (const rule of activeRules) {
       const fromAi = aiByRuleId.get(rule.id);
       const fromDet = deterministicByRuleId.get(rule.id);
-      if (fromAi) {
-        mergedFindings.push(fromAi);
-      } else if (fromDet) {
-        mergedFindings.push(fromDet);
+      const chosen = fromAi ?? fromDet;
+      if (chosen) {
+        mergedFindingsWithRevisions.push({
+          finding: chosen,
+          ruleRevision: rule.revision,
+        });
       }
     }
 
-    const hasAiFinding = mergedFindings.some((f) => f.proposedByAi);
+    const hasAiFinding = mergedFindingsWithRevisions.some((item) => item.finding.proposedByAi);
     const effectiveMode: SignPlaybookMode =
       input.mode === 'ai' && hasAiFinding ? 'ai' : input.mode === 'manual' ? 'manual' : 'deterministic';
     const effectivePromptVersion = effectiveMode === 'ai' ? input.promptVersion : null;
+    const serializedFindings = serializeStoredFindings(mergedFindingsWithRevisions);
+    const nextCheckId = randomUUID();
 
-    const saved = await ctx.trx
-      .insertInto('crove_sign.playbook_check')
-      .values({
-        org_id: ctx.orgId,
-        id: randomUUID(),
-        envelope_id: env.id,
-        source_sha256: env.source_sha256,
-        mode: effectiveMode,
-        findings_json: JSON.stringify(mergedFindings),
-        prompt_version: effectivePromptVersion,
-        created_by: actorUserId,
-        created_at: ctx.now,
-        updated_at: ctx.now,
-      })
-      .onConflict((oc) =>
-        oc.columns(['org_id', 'envelope_id']).doUpdateSet({
+    let saved = lockedExisting
+      ? await ctx.trx
+          .updateTable('crove_sign.playbook_check')
+          .set({
+            id: nextCheckId,
+            source_sha256: env.source_sha256,
+            mode: effectiveMode,
+            findings_json: serializedFindings,
+            prompt_version: effectivePromptVersion,
+            created_by: actorUserId,
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', lockedExisting.id)
+          .returningAll()
+          .executeTakeFirst()
+      : await ctx.trx
+          .insertInto('crove_sign.playbook_check')
+          .values({
+            org_id: ctx.orgId,
+            id: nextCheckId,
+            envelope_id: env.id,
+            source_sha256: env.source_sha256,
+            mode: effectiveMode,
+            findings_json: serializedFindings,
+            prompt_version: effectivePromptVersion,
+            created_by: actorUserId,
+            created_at: ctx.now,
+            updated_at: ctx.now,
+          })
+          .onConflict((oc) => oc.columns(['org_id', 'envelope_id']).doNothing())
+          .returningAll()
+          .executeTakeFirst();
+
+    // Handle concurrent first-insert race on (org_id, envelope_id).
+    if (!saved) {
+      const racedRow = await ctx.trx
+        .selectFrom('crove_sign.playbook_check')
+        .selectAll()
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', env.id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!racedRow) {
+        throw new DomainError('INTERNAL', 500, 'Failed to save playbook check');
+      }
+      if (input.preserveExistingFresh) {
+        const racedRecord = toPlaybookCheckRecord(racedRow, env.source_sha256, effectiveRules.items);
+        if (!racedRecord.isStale && (racedRecord.mode === 'manual' || racedRecord.mode === 'ai')) {
+          ctx.audit({
+            action: 'sign.playbook.record_check',
+            envelopeId: env.id,
+            mode: racedRecord.mode,
+            preservedExisting: true,
+            findingCount: racedRecord.findings.length,
+            aiFindingCount: racedRecord.findings.filter((f) => f.proposedByAi).length,
+          });
+          return racedRecord;
+        }
+      }
+      saved = await ctx.trx
+        .updateTable('crove_sign.playbook_check')
+        .set({
+          id: nextCheckId,
           source_sha256: env.source_sha256,
           mode: effectiveMode,
-          findings_json: JSON.stringify(mergedFindings),
+          findings_json: serializedFindings,
           prompt_version: effectivePromptVersion,
           created_by: actorUserId,
           updated_at: ctx.now,
-        }),
-      )
-      .returningAll()
-      .executeTakeFirst();
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', racedRow.id)
+        .returningAll()
+        .executeTakeFirst();
+    }
+
     if (!saved) {
       throw new DomainError('INTERNAL', 500, 'Failed to save playbook check');
     }
@@ -1625,11 +2334,11 @@ export const playbookRecordCheck = defineCommand({
       action: 'sign.playbook.record_check',
       envelopeId: env.id,
       mode: effectiveMode,
-      findingCount: mergedFindings.length,
-      aiFindingCount: mergedFindings.filter((f) => f.proposedByAi).length,
+      findingCount: mergedFindingsWithRevisions.length,
+      aiFindingCount: mergedFindingsWithRevisions.filter((item) => item.finding.proposedByAi).length,
     });
 
-    return toPlaybookCheckRecord(saved, env.source_sha256);
+    return toPlaybookCheckRecord(saved, env.source_sha256, effectiveRules.items);
   },
 });
 
@@ -1655,19 +2364,31 @@ export const playbookOverrideFinding = defineCommand({
     assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
-    const existing = await ctx.trx
-      .selectFrom('crove_sign.playbook_check')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      .where('envelope_id', '=', env.id)
-      .forUpdate()
-      .executeTakeFirst();
+    const [existing, effectiveRules] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_sign.playbook_check')
+        .selectAll()
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', env.id)
+        .forUpdate()
+        .executeTakeFirst(),
+      listEffectivePlaybookRulesOnTrx(ctx.trx, ctx.orgId),
+    ]);
     if (!existing) {
       throw new DomainError('SIGN_PLAYBOOK_CHECK_NOT_FOUND', 404, 'Playbook check not found for this envelope');
     }
 
-    const findings = parseStoredFindings(existing.findings_json);
-    const targetIdx = findings.findIndex((f) => f.ruleId === input.ruleId);
+    const existingRecord = toPlaybookCheckRecord(existing, env.source_sha256, effectiveRules.items);
+    if (input.checkRevision !== existingRecord.revision) {
+      throw new DomainError(
+        'SIGN_PLAYBOOK_STALE_CHECK',
+        409,
+        'Playbook check changed since you opened it. Refresh and try again.',
+      );
+    }
+
+    const storedItems = parseStoredFindingsInternal(existing.findings_json);
+    const targetIdx = storedItems.findIndex((item) => item.finding.ruleId === input.ruleId);
     if (targetIdx < 0) {
       throw new DomainError('SIGN_PLAYBOOK_FINDING_NOT_FOUND', 404, 'Playbook rule finding not found');
     }
@@ -1678,15 +2399,19 @@ export const playbookOverrideFinding = defineCommand({
         : null;
     const nowIso = ctx.now.toISOString();
 
-    const nextFindings = findings.map((item, idx) =>
+    const nextItems: StoredFindingWithRevision[] = storedItems.map((item, idx) =>
       idx === targetIdx
         ? {
             ...item,
-            verdict: input.verdict,
-            proposedByAi: false,
-            manualNote: cleanedNote,
-            overriddenBy: userId,
-            overriddenAt: nowIso,
+            finding: {
+              ...item.finding,
+              verdict: input.verdict,
+              // Preserve AI attribution on retained rationale and redline text;
+              // overriddenBy and overriddenAt track human authorship of the verdict.
+              manualNote: cleanedNote,
+              overriddenBy: userId,
+              overriddenAt: nowIso,
+            },
           }
         : item,
     );
@@ -1695,7 +2420,7 @@ export const playbookOverrideFinding = defineCommand({
       .updateTable('crove_sign.playbook_check')
       .set({
         mode: 'manual',
-        findings_json: JSON.stringify(nextFindings),
+        findings_json: serializeStoredFindings(nextItems),
         updated_at: ctx.now,
       })
       .where('org_id', '=', ctx.orgId)
@@ -1714,7 +2439,7 @@ export const playbookOverrideFinding = defineCommand({
       hasNote: cleanedNote !== null,
     });
 
-    return toPlaybookCheckRecord(updated, env.source_sha256);
+    return toPlaybookCheckRecord(updated, env.source_sha256, effectiveRules.items);
   },
 });
 

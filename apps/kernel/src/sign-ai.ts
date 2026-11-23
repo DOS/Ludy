@@ -20,19 +20,20 @@ import {
   type SignClauseSummaryResult,
   type SignFieldProposeResult,
 } from '@ludy/agent';
-import type {
-  SignDiffCompareInput,
-  SignDiffCompareResult,
-  SignDrafterProposeInput,
-  SignDrafterProposeResult,
-  SignEnvelopeObligationRecordContract,
-  SignEnvelopePlaybookCheckRecord,
-  SignObligationAiOutcome,
-  SignVaultAskInput,
-  SignVaultAskResult,
-  SignVaultSearchResult,
-  SignPlaybookAiOutcome,
-  SignPlaybookEvaluateResult,
+import {
+  SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
+  type SignDiffCompareInput,
+  type SignDiffCompareResult,
+  type SignDrafterProposeInput,
+  type SignDrafterProposeResult,
+  type SignEnvelopeObligationRecordContract,
+  type SignEnvelopePlaybookCheckRecord,
+  type SignObligationAiOutcome,
+  type SignVaultAskInput,
+  type SignVaultAskResult,
+  type SignVaultSearchResult,
+  type SignPlaybookAiOutcome,
+  type SignPlaybookEvaluateResult,
 } from '@ludy/kernel-contract';
 import {
   DomainError,
@@ -973,6 +974,15 @@ export async function evaluateEnvelopePlaybook(
     return { ai: 'no_text', check: await safeExisting() };
   }
 
+  const totalExtractedChars = extractedPages.reduce((sum, p) => sum + p.text.length, 0);
+  if (totalExtractedChars > SIGN_PLAYBOOK_MAX_TOTAL_CHARS) {
+    throw new DomainError(
+      'SIGN_PLAYBOOK_TEXT_TOO_LARGE',
+      422,
+      `Total extracted contract text exceeds maximum of ${SIGN_PLAYBOOK_MAX_TOTAL_CHARS} characters`,
+    );
+  }
+
   const execOptions = {
     actor,
     orgId,
@@ -999,6 +1009,7 @@ export async function evaluateEnvelopePlaybook(
         sourceSha256: source.sourceSha256,
         mode: 'deterministic',
         promptVersion: null,
+        preserveExistingFresh: !forceOverwrite,
         extractedPages,
       },
       execOptions,
@@ -1084,6 +1095,7 @@ export async function evaluateEnvelopePlaybook(
         sourceSha256: source.sourceSha256,
         mode: 'ai',
         promptVersion,
+        evaluatedRules: source.activeRules.map((r) => ({ ruleId: r.id, revision: r.revision })),
         aiFindings: aiResult.findings,
         extractedPages,
       },
@@ -1104,7 +1116,10 @@ export async function evaluateEnvelopePlaybook(
     if (error instanceof AiMeterMissingError) {
       throw error;
     }
-    if (error instanceof DomainError && (error.status === 403 || error.status === 404 || error.status === 409)) {
+    if (
+      error instanceof DomainError &&
+      (error.status === 403 || error.status === 404 || error.status === 409 || error.status === 422)
+    ) {
       throw error;
     }
     console.error('[sign-ai] playbook check failed', error instanceof Error ? error.name : typeof error);

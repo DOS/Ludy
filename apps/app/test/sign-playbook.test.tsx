@@ -133,6 +133,7 @@ describe('EnvelopePlaybookCard (/o/$slug/sign/envelopes/$id, #4442)', () => {
       id: '01900000-0000-7000-8000-000000000401',
       envelopeId: ENV_ID,
       sourceSha256: 'a'.repeat(64),
+      revision: 'rev-1',
       isStale: false,
       mode: 'ai',
       promptVersion: 'sign-playbook-v1',
@@ -197,6 +198,39 @@ describe('EnvelopePlaybookCard (/o/$slug/sign/envelopes/$id, #4442)', () => {
     expect(html).toContain(`data-testid="playbook-copy-redline-${RULE_1_ID}"`);
     expect(html).toContain(`for="playbook-verdict-${RULE_1_ID}"`);
     expect(html).toContain(`for="playbook-note-${RULE_1_ID}"`);
+    expect(html).toContain('[&amp;_select]:min-h-11');
+
+    const overriddenAiQc = new QueryClient();
+    overriddenAiQc.setQueryData(['sign', 'playbook-check', ENV_ID], {
+      ...sampleCheck,
+      check: {
+        ...sampleCheck.check!,
+        mode: 'manual',
+        findings: [
+          {
+            ...sampleCheck.check!.findings[0]!,
+            verdict: 'pass',
+            overriddenBy: '01900000-0000-7000-8000-000000000011',
+            overriddenAt: '2027-02-01T02:00:00.000Z',
+          },
+        ],
+      },
+    });
+    const overriddenAiHtml = renderInLocale(
+      'en',
+      <EnvelopePlaybookCard
+        envelopeId={ENV_ID}
+        sourceFileId={FILE_ID}
+        inspectStatus="passed"
+        pdfBytes={null}
+        onJumpToPage={vi.fn()}
+      />,
+      overriddenAiQc,
+    );
+    expect(overriddenAiHtml).toContain(`data-testid="playbook-ai-badge-${RULE_1_ID}"`);
+    expect(overriddenAiHtml).toContain(`data-testid="playbook-overridden-badge-${RULE_1_ID}"`);
+    expect(overriddenAiHtml).toContain('Proposed');
+    expect(overriddenAiHtml).toContain('Human verified');
 
     const viewerQc = new QueryClient();
     viewerQc.setQueryData(['sign', 'playbook-check', ENV_ID], { ...sampleCheck, canEdit: false });

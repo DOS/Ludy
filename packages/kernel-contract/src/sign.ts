@@ -2432,6 +2432,8 @@ export const SIGN_PLAYBOOK_VERDICTS = ['pass', 'warn', 'fail', 'unknown'] as con
 export const zSignPlaybookVerdict = z.enum(SIGN_PLAYBOOK_VERDICTS);
 export type SignPlaybookVerdictContract = z.infer<typeof zSignPlaybookVerdict>;
 
+export const SIGN_PLAYBOOK_MAX_TOTAL_CHARS = 750_000;
+
 export const SIGN_PLAYBOOK_AI_OUTCOMES = [
   'used',
   'off',
@@ -2519,6 +2521,7 @@ export const zSignEnvelopePlaybookCheckRecord = z.strictObject({
   id: zId,
   envelopeId: zId,
   sourceSha256: z.string(),
+  revision: z.string(),
   isStale: z.boolean(),
   mode: zSignPlaybookMode,
   findings: z.array(zSignPlaybookFinding),
@@ -2542,6 +2545,10 @@ export const zSignPlaybookEvaluateInput = z.strictObject({
   pages: z
     .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
     .max(SIGN_MAX_PAGES)
+    .refine(
+      (pages) => pages.reduce((sum, item) => sum + item.text.length, 0) <= SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
+      `Total extracted text across all pages must not exceed ${SIGN_PLAYBOOK_MAX_TOTAL_CHARS} characters`,
+    )
     .optional(),
   idempotencyKey: zId.optional(),
 });
@@ -2556,6 +2563,7 @@ export type SignPlaybookEvaluateResult = z.infer<typeof zSignPlaybookEvaluateRes
 export const zSignPlaybookOverrideFindingInput = z.strictObject({
   envelopeId: zId,
   ruleId: zId,
+  checkRevision: z.string().trim().min(1).max(128),
   verdict: zSignPlaybookVerdict,
   manualNote: z.string().trim().max(500).nullable().optional(),
   idempotencyKey: zId.optional(),
