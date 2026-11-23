@@ -538,7 +538,7 @@ describe('HR Stage 6A cited HR policy Q&A (hr.policy_qa, #4526)', () => {
         'Nhân viên chính thức được 12 ngày phép năm.',
         'Phụ cấp ăn trưa 730.000 VND/tháng và lương thử việc 85%.',
         'Anh Nguyễn Văn Bình lương 35.000.000 VND, STK 190012345678, CCCD 079199001234.',
-        'Liên hệ hr@company.vn hoặc https://intranet.local để hỏi thêm.',
+        'Liên hệ hr@example.com hoặc https://intranet.example để hỏi thêm.',
       ].join('\n'),
       visibility: 'org',
       updatedAt: '2026-11-23T00:00:00.000Z',
@@ -569,7 +569,7 @@ describe('HR Stage 6A cited HR policy Q&A (hr.policy_qa, #4526)', () => {
       {
         generate: async () => ({
           output: {
-            answer: 'Liên hệ hr@company.vn hoặc https://intranet.local để hỏi 730.000 VND.',
+            answer: 'Liên hệ hr@example.com hoặc https://intranet.example để hỏi 730.000 VND.',
             citations: [{ noteId: NOTE_LEAVE_ID, quoteExcerpt: 'Phụ cấp ăn trưa 730.000 VND/tháng' }],
           },
         }),
