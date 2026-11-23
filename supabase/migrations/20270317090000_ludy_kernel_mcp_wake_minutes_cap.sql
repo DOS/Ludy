@@ -101,3 +101,17 @@ BEGIN
   END IF;
   RETURN true;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Grants, restated as they were: the delivery worker's login alone (CREATE OR REPLACE kept them; the lint asks for them after every function it sees).
+-- ---------------------------------------------------------------------------
+REVOKE ALL ON FUNCTION ludy_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[]) FROM PUBLIC;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'ludy\_%' AND rolname <> current_user LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[]) FROM %I', r.rolname);
+  END LOOP;
+END $$;
+GRANT EXECUTE ON FUNCTION ludy_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[]) TO ludy_worker;
