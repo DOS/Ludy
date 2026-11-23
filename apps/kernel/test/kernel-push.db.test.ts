@@ -14,6 +14,7 @@ import { SUMMARY_READY_KIND } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type PushSender } from '../src/web-push.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
+import { contextToken } from './context-token.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -29,6 +30,7 @@ const endpoint = () => `https://push.example.com/send/${randomUUID()}`;
 suite('kernel browser push on PostgreSQL (#3736)', () => {
   const dbName = `crove_test_kernel_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let appUrl = '';
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
@@ -107,6 +109,7 @@ suite('kernel browser push on PostgreSQL (#3736)', () => {
     const app = new URL(adminUrl);
     app.username = 'ludy_app';
     app.password = 'test-app-pw';
+    appUrl = app.toString();
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
@@ -201,6 +204,54 @@ suite('kernel browser push on PostgreSQL (#3736)', () => {
     expect(await targets(o, n.id)).toBeNull();
     const own = await notice(o, o.owner);
     expect((await targets(o, own.id))?.subscriptions).toHaveLength(1);
+  });
+
+  it('keeps member A subscriptions from member B of the same org, in the commands and below them in the table (member contexts, as the API)', async () => {
+    const o = await org();
+    const b = await person('other-member');
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, b]));
+    const a = await subscribe(o, o.member);
+    const bRow = await subscribe(o, b);
+    // The commands: B lists none of A's, cannot remove A's by id, and removing "its own" endpoint touches only its row.
+    const aEndpoint = (await one<{ endpoint: string }>('SELECT endpoint FROM ludy_kernel.push_subscription WHERE id = $1', [a.id]))[0]?.endpoint as string;
+    expect((await rt.query<{ devices: { id: string }[] }>('kernel.push.devices', { endpoint: aEndpoint }, { actor: asUser(b), orgId: o.orgId })).devices.map((d) => d.id)).toEqual([bRow.id]);
+    expect(await exec(o, b, 'kernel.push.unsubscribe', { id: a.id })).toEqual({ removed: 0 });
+    expect(await exec(o, b, 'kernel.push.unsubscribe', { endpoint: aEndpoint })).toEqual({ removed: 0 });
+    // The table's own policy: in B's context a read, update and delete reach only B's row; an insert or a move of a row to A is refused.
+    const asApp = async <T>(user: string, fn: (c: pg.Client) => Promise<T>) => {
+      const client = new pg.Client({ connectionString: appUrl });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(user, o.orgId)]);
+        return await fn(client);
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end();
+      }
+    };
+    expect((await asApp(b, (c) => c.query('SELECT id, endpoint, p256dh, auth FROM ludy_kernel.push_subscription'))).rows.map((r) => r.id)).toEqual([bRow.id]);
+    expect(await asApp(b, async (c) => (await c.query('UPDATE ludy_kernel.push_subscription SET failure_count = 9 WHERE id = $1', [a.id])).rowCount)).toBe(0);
+    expect(await asApp(b, async (c) => (await c.query('DELETE FROM ludy_kernel.push_subscription WHERE id = $1', [a.id])).rowCount)).toBe(0);
+    await expect(asApp(b, (c) => c.query('INSERT INTO ludy_kernel.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.member, endpoint(), browserKeys().p256dh, browserKeys().auth]))).rejects.toThrow(/row-level security/);
+    expect((await one<{ failure_count: number }>('SELECT failure_count FROM ludy_kernel.push_subscription WHERE id = $1', [a.id]))[0]?.failure_count).toBe(0);
+  });
+
+  it('lets the login roles change a subscription only through the commands: no UPDATE of the endpoint or owner, no table grant to the worker', async () => {
+    const grants = await one<{ column_name: string; ok: boolean }>(
+      "SELECT c.column_name, has_column_privilege('ludy_tenant', 'ludy_kernel.push_subscription', c.column_name, 'UPDATE') AS ok FROM information_schema.columns c WHERE c.table_schema = 'ludy_kernel' AND c.table_name = 'push_subscription' ORDER BY c.column_name",
+      [],
+    );
+    expect(grants.filter((g) => g.ok).map((g) => g.column_name)).toEqual(['auth', 'failure_count', 'last_used_at', 'p256dh', 'user_agent']);
+    // The login roles hold no table privilege of their own: they write through ludy_tenant, whose rows the policies fence.
+    const own = await one<{ role: string; priv: string }>(
+      "SELECT r.rolname AS role, p.priv FROM pg_roles r CROSS JOIN (VALUES ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE')) p(priv) WHERE r.rolname IN ('ludy_app', 'ludy_worker') AND has_table_privilege(r.oid, 'ludy_kernel.push_subscription', p.priv) AND NOT pg_has_role(r.oid, 'ludy_tenant', 'MEMBER')",
+      [],
+    );
+    expect(own).toEqual([]);
+    expect(await one("SELECT 1 FROM pg_policies WHERE schemaname = 'ludy_kernel' AND tablename = 'push_subscription' AND policyname = 'own_push_subscription' AND permissive = 'RESTRICTIVE'", [])).toHaveLength(1);
+    // TRUNCATE is no tenant privilege.
+    expect((await one<{ ok: boolean }>("SELECT has_table_privilege('ludy_tenant', 'ludy_kernel.push_subscription', 'TRUNCATE') AS ok", []))[0]?.ok).toBe(false);
   });
 
   it('keeps the bookkeeping to the system and the member commands to users', async () => {
