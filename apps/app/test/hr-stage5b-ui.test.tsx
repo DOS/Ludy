@@ -113,8 +113,8 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
       for (const d of HR_OVERTIME_DAY_TYPES) expect(locale.hrMy.overtime.dayTypes[d]).toBeTruthy();
       for (const dec of HR_PROBATION_DECISIONS) expect(locale.hrEmployees.probation.decisions[dec]).toBeTruthy();
       expect(locale.hrPayroll.syncOvertime).toBeTruthy();
-      expect(locale.hrMy.overtime.commentaryNote).not.toContain('—');
-      expect(locale.hrEmployees.overtimeQueue.commentaryBadge).not.toContain('—');
+      expect(locale.hrMy.overtime.commentaryNote).not.toContain('\u2014');
+      expect(locale.hrEmployees.overtimeQueue.commentaryBadge).not.toContain('\u2014');
     }
   });
 

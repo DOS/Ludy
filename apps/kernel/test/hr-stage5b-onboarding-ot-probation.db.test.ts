@@ -16,6 +16,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { vietnamToday } from '@ludy/kernel-contract';
 import type {
+  HrAttendanceRollupResult,
   HrEmployee,
   HrOnboardingApproveResult,
   HrOnboardingSubmissionView,
@@ -900,5 +901,91 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       );
       expect(left.rows[0]?.cnt).toBe(0);
     }
+  });
+
+  it('prevents sync_overtime, recalculate, and later OT approval from overwriting attendance-rolled OT (#4448 x #4463)', async () => {
+    const o = await setupOrg();
+    const empA = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Nguyễn Chấm Công',
+          employment: {
+            effectiveFrom: '2026-09-01',
+            contractType: 'indefinite',
+            region: 'I',
+            baseWage: '20800000',
+          },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empA, userId: o.staffA }, asMfa(o.owner));
+
+    // 1. Approve initial 2h weekday OT request and open draft payroll run (overtimeFromRequests: true).
+    const ot1 = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-09',
+      hours: '2',
+      dayType: 'weekday',
+      reason: 'Tăng ca trước khi tổng hợp chấm công',
+    });
+    await o.exec(o.owner, 'hr.overtime.approve_final', { requestId: ot1.requestId });
+
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-10', workingDays: '26' }, asMfa(o.owner));
+    const initialSheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const initialLine = initialSheet.lines.find((l) => l.employeeId === empA && l.kind === 'pay');
+    expect(initialLine?.inputs.overtimeFromRequests).toBe(true);
+    expect(otHoursOnLine(initialLine)).toBe(2);
+
+    // 2. Roll attendance into the draft payroll run with different OT (4h Sunday work = weekly_rest_day).
+    await o.exec(o.owner, 'hr.attendance.adjust', {
+      employeeId: empA,
+      workDate: '2026-10-18',
+      checkedInAt: '2026-10-18T09:00:00+07:00',
+      checkedOutAt: '2026-10-18T13:00:00+07:00',
+      workedMinutes: 240,
+      status: 'adjusted',
+      note: 'Chấm công làm thêm Chủ nhật',
+    });
+    const rollup = await o.exec<HrAttendanceRollupResult>(o.owner, 'hr.attendance.rollup_to_payroll', {
+      runId: run.runId,
+      allowIncomplete: false,
+    });
+    expect(rollup.updatedCount).toBe(1);
+
+    const afterRollupSheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const rolledLine = afterRollupSheet.lines.find((l) => l.employeeId === empA && l.kind === 'pay');
+    expect(rolledLine?.inputs.overtimeFromRequests).toBe(false);
+    expect(rolledLine?.inputs.overtime).toEqual([{ dayKind: 'weekly_rest_day', night: false, hours: '4' }]);
+    expect(otHoursOnLine(rolledLine)).toBe(4);
+    const rolledGross = rolledLine?.figures?.gross;
+    const rolledNet = rolledLine?.figures?.net;
+    const rolledOvertimeLines = (rolledLine?.breakdown as PayrollBreakdown | null)?.pay.overtime;
+    expect(rolledOvertimeLines?.length).toBeGreaterThan(0);
+
+    // 3. Approve a second OT request and run both sync_overtime and recalculate: attendance-rolled OT must stay intact.
+    const ot2 = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-20',
+      hours: '3.5',
+      dayType: 'weekday',
+      reason: 'Đơn OT duyệt sau khi chốt chấm công',
+    });
+    const fin2 = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: ot2.requestId,
+    });
+    expect(fin2).toMatchObject({ status: 'approved', payrollRunUpdated: false });
+
+    await o.exec(o.owner, 'hr.payroll.run.sync_overtime', { runId: run.runId });
+    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
+
+    const finalSheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const finalLine = finalSheet.lines.find((l) => l.employeeId === empA && l.kind === 'pay');
+    expect(finalLine?.inputs.overtimeFromRequests).toBe(false);
+    expect(finalLine?.inputs.overtime).toEqual([{ dayKind: 'weekly_rest_day', night: false, hours: '4' }]);
+    expect(otHoursOnLine(finalLine)).toBe(4);
+    expect((finalLine?.breakdown as PayrollBreakdown | null)?.pay.overtime).toEqual(rolledOvertimeLines);
+    expect(finalLine?.figures?.gross).toBe(rolledGross);
+    expect(finalLine?.figures?.net).toBe(rolledNet);
   });
 });

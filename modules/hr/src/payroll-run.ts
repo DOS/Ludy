@@ -344,7 +344,7 @@ function formatOvertimeHours(total: Decimal): string {
   return normalized.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
-function sameOvertimeEntries(a: readonly PayrollOvertimeEntry[], b: readonly PayrollOvertimeEntry[]): boolean {
+export function sameOvertimeEntries(a: readonly PayrollOvertimeEntry[], b: readonly PayrollOvertimeEntry[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((entry, idx) => {
     const other = b[idx];
