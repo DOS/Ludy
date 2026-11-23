@@ -410,4 +410,63 @@ describe('projects.roadmap_signal_match (#4492)', () => {
       ),
     ).toEqual({ kind: 'none', code: 'LINK' });
   });
+
+  it('bounds candidate IDs and trustedTexts to the 60 rendered items and projects whitespace identically', () => {
+    const manyItems = Array.from({ length: 65 }, (_, idx) => ({
+      id: `00000000-0000-4000-8000-${String(idx + 1).padStart(12, '0')}`,
+      title: `Idea ${idx + 1}`,
+      summary: null,
+      stage: 'planned',
+      tainted: false,
+    }));
+    const manyFacts: RoadmapSignalMatchFacts = {
+      ...FACTS,
+      items: manyItems,
+    };
+
+    const prompt = roadmapSignalMatchPrompt(manyFacts);
+    expect(prompt).toContain(manyItems[59]!.id);
+    expect(prompt).not.toContain(manyItems[60]!.id);
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [{ roadmapItemId: manyItems[60]!.id, confidence: 'high', reason: 'Off-prompt item' }],
+          newIdeaDraft: null,
+        },
+        manyFacts,
+      ),
+    ).toEqual({ kind: 'none', code: 'UNKNOWN_ID' });
+
+    const spacedTitle = `${'   '.repeat(30)}Feature ${'a'.repeat(145)} 2026`;
+    const spacedFacts: RoadmapSignalMatchFacts = {
+      ...FACTS,
+      items: [
+        {
+          id: '00000000-0000-4000-8000-000000000101',
+          title: spacedTitle,
+          summary: null,
+          stage: 'planned',
+          tainted: false,
+        },
+      ],
+    };
+    const spacedPrompt = roadmapSignalMatchPrompt(spacedFacts);
+    expect(spacedPrompt).toContain('2026');
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [
+            {
+              roadmapItemId: '00000000-0000-4000-8000-000000000101',
+              confidence: 'high',
+              reason: 'Phu hop nhu cau nam 2026',
+            },
+          ],
+          newIdeaDraft: null,
+        },
+        spacedFacts,
+      ).kind,
+    ).toBe('ok');
+  });
 });

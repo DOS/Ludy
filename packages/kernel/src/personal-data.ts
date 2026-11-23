@@ -1099,17 +1099,21 @@ async function findPersonalData(
       : partySignalMatch;
   const partyDealSignals = await sql<{ id: string; documented: boolean; row: Record<string, unknown> }>`
     SELECT s.id,
-           (EXISTS (SELECT 1 FROM ludy_finance.purchase_document pd WHERE pd.org_id = p.org_id AND pd.party_id = p.id)
-            OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
-            OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented,
+           pg_catalog.bool_or(
+             EXISTS (SELECT 1 FROM ludy_finance.purchase_document pd WHERE pd.org_id = p.org_id AND pd.party_id = p.id)
+             OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
+             OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)
+           ) AS documented,
            pg_catalog.to_jsonb(s) AS row
       FROM ludy_projects.roadmap_signal s
-      JOIN ludy_crm.deal d ON d.org_id = s.org_id AND d.id = s.source_id
-      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      LEFT JOIN ludy_crm.deal d ON s.source_type = 'crm.deal' AND d.org_id = s.org_id AND d.id = s.source_id
+      JOIN ludy_kernel.party p
+        ON p.org_id = s.org_id
+       AND (p.id = s.source_party_id OR (s.source_type = 'crm.deal' AND p.id = d.party_id))
      WHERE s.org_id = ${orgId}::uuid
-       AND s.source_type = 'crm.deal'
        AND s.account_label IS NOT NULL
        AND ${partySignalFilter}
+     GROUP BY s.org_id, s.id
      ORDER BY s.created_at DESC, s.id
      LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
   if (partyDealSignals.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
@@ -1494,19 +1498,31 @@ export const personalDataErase = defineCommand({
       await sql`UPDATE ludy_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
     if (forgottenPartyIds.length > 0) {
-      const { rows: clearedDealSignals } = await sql<{ id: string }>`
+      const { rows: clearedDealSignals } = await sql<{ id: string; had_label: boolean }>`
         UPDATE ludy_projects.roadmap_signal s
            SET account_label = NULL,
+               source_party_id = CASE WHEN s.source_party_id = ANY(${forgottenPartyIds}::uuid[]) THEN NULL ELSE s.source_party_id END,
                updated_at = ${ctx.now}
-          FROM ludy_crm.deal d
-         WHERE s.org_id = ${ctx.orgId}::uuid
-           AND s.source_type = 'crm.deal'
-           AND s.account_label IS NOT NULL
-           AND d.org_id = s.org_id
-           AND d.id = s.source_id
-           AND d.party_id = ANY(${forgottenPartyIds}::uuid[])
-         RETURNING s.id`.execute(ctx.trx);
-      add('ludy_projects.roadmap_signal.account_label', clearedDealSignals.length);
+          FROM ludy_projects.roadmap_signal o
+         WHERE o.org_id = s.org_id
+           AND o.id = s.id
+           AND s.org_id = ${ctx.orgId}::uuid
+           AND (s.account_label IS NOT NULL OR s.source_party_id = ANY(${forgottenPartyIds}::uuid[]))
+           AND (
+             s.source_party_id = ANY(${forgottenPartyIds}::uuid[])
+             OR (
+               s.source_type = 'crm.deal'
+               AND EXISTS (
+                 SELECT 1
+                   FROM ludy_crm.deal d
+                  WHERE d.org_id = s.org_id
+                    AND d.id = s.source_id
+                    AND d.party_id = ANY(${forgottenPartyIds}::uuid[])
+               )
+             )
+           )
+         RETURNING s.id, (o.account_label IS NOT NULL) AS had_label`.execute(ctx.trx);
+      add('ludy_projects.roadmap_signal.account_label', clearedDealSignals.filter((r) => r.had_label).length);
       if (clearedDealSignals.length > 0) {
         const clearedIds = clearedDealSignals.map((r) => r.id);
         await sql`

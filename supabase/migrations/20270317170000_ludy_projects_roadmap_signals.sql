@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS ludy_projects.roadmap_signal (
   roadmap_item_id uuid NOT NULL,
   source_type text NOT NULL CHECK (source_type IN ('crm.deal', 'kernel.conversation', 'meetings.meeting')),
   source_id uuid NOT NULL,
+  source_party_id uuid,
   account_label text CHECK (
     account_label IS NULL
     OR (pg_catalog.length(account_label) BETWEEN 1 AND 160 AND account_label = pg_catalog.btrim(account_label))
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS ludy_projects.roadmap_signal (
     REFERENCES ludy_projects.roadmap_board (org_id, id) ON DELETE CASCADE,
   CONSTRAINT roadmap_signal_item_fk FOREIGN KEY (org_id, board_id, roadmap_item_id)
     REFERENCES ludy_projects.roadmap_item (org_id, board_id, id) ON DELETE CASCADE,
+  CONSTRAINT roadmap_signal_source_party_fk FOREIGN KEY (org_id, source_party_id)
+    REFERENCES ludy_kernel.party (org_id, id) ON DELETE SET NULL (source_party_id),
   CONSTRAINT roadmap_signal_item_source_uq UNIQUE (org_id, roadmap_item_id, source_type, source_id)
 );
 
@@ -61,5 +64,8 @@ CREATE INDEX IF NOT EXISTS roadmap_signal_item_idx
 
 CREATE INDEX IF NOT EXISTS roadmap_signal_source_idx
   ON ludy_projects.roadmap_signal (org_id, source_type, source_id);
+
+CREATE INDEX IF NOT EXISTS roadmap_signal_source_party_idx
+  ON ludy_projects.roadmap_signal (org_id, source_party_id);
 
 SELECT ludy_kernel.apply_tenant_rls('ludy_projects.roadmap_signal');

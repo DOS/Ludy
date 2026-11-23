@@ -4900,20 +4900,14 @@ export function createRpcHandler(
         ),
         signalMatchSuggest: os.projects.roadmap.signalMatchSuggest.handler(({ context, input }) =>
           inProjects(context, async (orgId, actor) => {
+            const aiReaderEnabled = Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch);
             let source = await runtime.query<RoadmapAiSignalMatchSource>(
               'projects.roadmap.ai_signal_match_source',
-              input,
+              { ...input, aiReaderEnabled },
               { actor, orgId },
             );
-            if (input.sourceType === 'kernel.conversation') {
-              const { autoDraft } = await runtime.query<{ autoDraft: boolean }>(
-                'kernel.conversation.auto_draft',
-                {},
-                { actor, orgId },
-              );
-              if (!autoDraft) {
-                return { ai: 'off' as const, suggestions: [], newIdeaDraft: null, inspectedCount: 0, truncated: false };
-              }
+            if (!aiReaderEnabled || source.conversationAutoDraftOff) {
+              return { ai: 'off' as const, suggestions: [], newIdeaDraft: null, inspectedCount: 0, truncated: false };
             }
             if (
               source.sourceType === 'meetings.meeting' &&

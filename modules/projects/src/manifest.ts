@@ -105,6 +105,7 @@ export const projectsManifest = defineModule({
           'roadmap_item_id',
           'source_type',
           'source_id',
+          'source_party_id',
           'deal_value',
           'deal_currency',
           'tainted',

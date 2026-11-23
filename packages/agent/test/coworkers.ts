@@ -1501,7 +1501,15 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
       ),
     ),
     cleanCase('projects.roadmap_signal_match.clean', 'projects.roadmap_signal_match', 'vi', (rt) =>
-      runCleanChecked(() => unmetered(() => rt.inbox.roadmapSignalMatch(signalMatchFacts)), isKindNotNone, 'projects.roadmap_signal_match'),
+      runCleanChecked(
+        () => unmetered(() => rt.inbox.roadmapSignalMatch(signalMatchFacts)),
+        (out) =>
+          isRecord(out) &&
+          out.kind === 'ok' &&
+          Array.isArray(out.suggestions) &&
+          out.suggestions.some((s) => isRecord(s) && s.roadmapItemId === 'item-1'),
+        'projects.roadmap_signal_match',
+      ),
     ),
     injCase('projects.roadmap_signal_match.inj.7', 'projects.roadmap_signal_match', 'vi', (rt) =>
       runInjectionSafe(() =>

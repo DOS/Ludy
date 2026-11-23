@@ -5,6 +5,7 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'use-intl';
+import type { DealCursor } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const { rpcCalls, capturedButtons } = vi.hoisted(() => ({
@@ -29,9 +30,12 @@ function makeProxy(path: string[] = []): unknown {
         });
       }
       if (prop === 'infiniteOptions') {
-        return (opts: { initialPageParam?: unknown; getNextPageParam?: unknown } = {}) => ({
+        return (opts: { input?: unknown; initialPageParam?: unknown; getNextPageParam?: unknown } = {}) => ({
           queryKey: ['orpc', ...path],
-          queryFn: async () => ({ items: [], next: null }),
+          queryFn: async () => {
+            rpcCalls.push({ path: path.join('.'), args: opts.input ?? null });
+            return { items: [], next: null };
+          },
           initialPageParam: opts.initialPageParam,
           getNextPageParam: opts.getNextPageParam,
         });
@@ -552,5 +556,65 @@ describe('Omnichannel roadmap signals UI (#4492)', () => {
     retryBtn?.onClick?.();
     await new Promise((r) => setTimeout(r, 10));
     expect(rpcCalls.slice(callsBefore).some((c) => c.path === 'projects.roadmap.boards')).toBe(true);
+  });
+
+  it('renders source load error with retry action and suppresses empty state when active source query fails without cached data', async () => {
+    const en = catalog('en').projects.roadmap.admin;
+    const vi = catalog('vi').projects.roadmap.admin;
+    expect(en.signalSourcesLoadError).not.toMatch(/[—–]/);
+    expect(vi.signalSourcesLoadError).not.toMatch(/[—–]/);
+
+    const dealsOpts = orpc.crm.deals.list.infiniteOptions({
+      input: (cursor: DealCursor | undefined) => ({ limit: 50, ...(cursor ? { cursor } : {}) }),
+      initialPageParam: undefined as DealCursor | undefined,
+      getNextPageParam: () => undefined,
+    });
+    queryClient
+      .getQueryCache()
+      .build(queryClient, { queryKey: dealsOpts.queryKey, queryFn: dealsOpts.queryFn })
+      .setState({
+        status: 'error',
+        error: new Error('Deals network error'),
+        fetchStatus: 'idle',
+        data: undefined,
+        errorUpdateCount: 1,
+      });
+
+    const html = await renderWithProviders(
+      <RoadmapSignalModal
+        open={true}
+        onOpenChange={() => undefined}
+        fixedBoardId="00000000-0000-4000-8000-000000000001"
+        fixedItem={{ id: '00000000-0000-4000-8000-000000000010', title: 'Export XML' }}
+      />,
+      'en',
+    );
+
+    expect(html).toContain(`data-testid="roadmap-signal-sources-error"`);
+    expect(html).toContain(`data-testid="roadmap-signal-sources-retry"`);
+    expect(html).toContain('min-h-11');
+    expect(html).toContain(en.signalSourcesLoadError);
+    expect(html).toContain(en.signalRetryBtn);
+    expect(html).not.toContain(`data-testid="roadmap-signal-sources-empty"`);
+    expect(html).not.toContain(en.signalSourcesEmpty);
+
+    const htmlVi = await renderWithProviders(
+      <RoadmapSignalModal
+        open={true}
+        onOpenChange={() => undefined}
+        fixedBoardId="00000000-0000-4000-8000-000000000001"
+        fixedItem={{ id: '00000000-0000-4000-8000-000000000010', title: 'Xuat XML' }}
+      />,
+      'vi',
+    );
+    expect(htmlVi).toContain(vi.signalSourcesLoadError);
+    expect(htmlVi).toContain(vi.signalRetryBtn);
+
+    const retryBtn = capturedButtons.get('roadmap-signal-sources-retry');
+    expect(retryBtn?.onClick).toBeTypeOf('function');
+    const callsBefore = rpcCalls.length;
+    retryBtn?.onClick?.();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rpcCalls.slice(callsBefore).some((c) => c.path === 'crm.deals.list')).toBe(true);
   });
 });

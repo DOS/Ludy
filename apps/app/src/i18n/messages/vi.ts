@@ -11922,6 +11922,8 @@ export const vi = {
         signalSourceUnavailable: 'Nguồn không khả dụng',
         signalBoardEmpty: 'Hãy bật một Bảng lộ trình trong Dự án trước khi gắn tín hiệu.',
         signalBoardsLoadError: 'Không tải được danh sách bảng lộ trình. Vui lòng thử lại.',
+        signalSourcesLoadError: 'Không thể tải danh sách nguồn. Vui lòng thử lại.',
+        signalSourcesEmpty: 'Không tìm thấy nguồn phù hợp.',
         signalInternalOnlyNotice: 'Dữ liệu nội bộ: trích dẫn, tên khách hàng và giá trị thương vụ chỉ hiển thị cho đội ngũ nội bộ, không lộ ra trang lộ trình công khai.',
       },
       public: {

@@ -22,6 +22,7 @@ export const ROADMAP_DEDUPE_MAX_SUGGESTIONS = 10;
 export const ROADMAP_DEDUPE_REASON_MAX = 280;
 export const ROADMAP_CHANGELOG_TITLE_MAX = 180;
 export const ROADMAP_CHANGELOG_BODY_MAX = 4000;
+export const ROADMAP_SIGNAL_MATCH_ITEMS_MAX = 60;
 
 const TITLE_PROMPT_CHARS = 180;
 const SUMMARY_PROMPT_CHARS = 320;
@@ -428,16 +429,17 @@ export function roadmapSignalMatchInstructions(language: 'vi' | 'en'): string {
 
 export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string {
   const cleanCut = (s: string, max: number) => Array.from(s.trim()).slice(0, max).join('');
-  const safeLine = (s: string, max: number) => fenced(cleanCut(s, max)).replace(/\s+/g, ' ').trim();
-  const lines = facts.items.slice(0, 60).map((item) => {
+  const safeLine = (s: string, max: number) => fenced(oneLine(s, max));
+  const safeUntrustedLine = (s: string, max: number) => fenced(cleanCut(s, max)).replace(/\s+/g, ' ').trim();
+  const lines = facts.items.slice(0, ROADMAP_SIGNAL_MATCH_ITEMS_MAX).map((item) => {
     const sum = item.summary ? ` | summary: "${safeLine(item.summary, 220)}"` : '';
     const trust = item.tainted ? 'external_untrusted' : 'internal';
     return `- id=${item.id} | stage=${item.stage} | trust=${trust} | title="${safeLine(item.title, 160)}"${sum}`;
   });
-  const account = facts.accountLabel ? `Account:\n<<<\n${safeLine(facts.accountLabel, 160)}\n>>>` : 'Account: (none)';
+  const account = facts.accountLabel ? `Account:\n<<<\n${safeUntrustedLine(facts.accountLabel, 160)}\n>>>` : 'Account: (none)';
   const deal =
     facts.dealValue && facts.dealCurrency
-      ? `Deal value: ${safeLine(facts.dealValue, 40)} ${safeLine(facts.dealCurrency, 8)}`
+      ? `Deal value: ${safeUntrustedLine(facts.dealValue, 40)} ${safeUntrustedLine(facts.dealCurrency, 8)}`
       : 'Deal value: (none)';
 
   return [
@@ -445,7 +447,7 @@ export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string
     `Signal source type: ${facts.sourceType}`,
     account,
     deal,
-    `Signal title (untrusted):\n<<<\n${safeLine(facts.sourceTitle, 200)}\n>>>`,
+    `Signal title (untrusted):\n<<<\n${safeUntrustedLine(facts.sourceTitle, 200)}\n>>>`,
     `Signal excerpt (untrusted):\n<<<\n${fenced(cleanCut(facts.sourceExcerpt, 1000))}\n>>>`,
     lines.length > 0
       ? `Candidate roadmap items (external_untrusted items contain untrusted visitor text):\n<<<\n${lines.join('\n')}\n>>>`
@@ -459,10 +461,11 @@ export function checkRoadmapSignalMatch(
 ): RoadmapSignalMatchCheckResult {
   if (!raw) return { kind: 'none', code: 'EMPTY' };
 
-  const allowedIds = new Set(facts.items.map((item) => item.id));
+  const candidates = facts.items.slice(0, ROADMAP_SIGNAL_MATCH_ITEMS_MAX);
+  const allowedIds = new Set(candidates.map((item) => item.id));
   const trustedTexts = [
     oneLine(facts.boardTitle, 160),
-    ...facts.items
+    ...candidates
       .filter((item) => item.tainted === false)
       .flatMap((item) => [
         oneLine(item.title, 160),

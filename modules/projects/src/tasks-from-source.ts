@@ -46,6 +46,8 @@ export interface ReadableTasksSource {
   anchorAt: string | null;
 }
 
+const visibleLength = (text: string): number => text.replace(/\p{Cf}/gu, '').trim().length;
+
 export function formatMeetingTaskSource(parts: {
   meeting: MeetingDetail;
   results: MeetingResults | null;
@@ -58,8 +60,8 @@ export function formatMeetingTaskSource(parts: {
   if (parts.results) {
     const draftHasContent =
       parts.results.draft !== null &&
-      (parts.results.draft.summary.trim().length > 0 ||
-        parts.results.draft.decisions.some((d) => d.trim().length > 0));
+      (visibleLength(parts.results.draft.summary) > 0 ||
+        parts.results.draft.decisions.some((d) => visibleLength(d) > 0));
     const primary = draftHasContent ? parts.results.draft : parts.results.published;
     if (primary) {
       if (primary.summary.trim().length > 0) {

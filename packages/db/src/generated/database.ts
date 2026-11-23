@@ -4052,6 +4052,7 @@ export interface ProjectsRoadmapSignalTable {
   roadmap_item_id: string;
   source_type: string;
   source_id: string;
+  source_party_id: string | null;
   account_label: string | null;
   quote_excerpt: string | null;
   deal_value: string | null;

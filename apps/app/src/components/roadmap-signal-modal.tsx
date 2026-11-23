@@ -294,6 +294,13 @@ export function RoadmapSignalModal({
     enabled: open && isFromItem && sourceType === 'meetings.meeting' && modulesKey.split(',').includes('meetings'),
   });
 
+  const activeSourceQuery =
+    sourceType === 'crm.deal'
+      ? dealsListQuery
+      : sourceType === 'kernel.conversation'
+        ? conversationsListQuery
+        : meetingsListQuery;
+
   const sourceOptions = useMemo(() => {
     const needle = sourceSearch.trim().toLowerCase();
     if (sourceType === 'crm.deal') {
@@ -762,6 +769,34 @@ export function RoadmapSignalModal({
                         </NativeSelectOption>
                       ))}
                     </NativeSelect>
+                    {activeSourceQuery.isError && sourceOptions.length === 0 ? (
+                      <Alert
+                        variant="destructive"
+                        className="flex flex-col gap-2 border-destructive/30 bg-destructive/10 sm:flex-row sm:items-center sm:justify-between"
+                        data-testid="roadmap-signal-sources-error"
+                      >
+                        <AlertDescription className="text-xs">{t('signalSourcesLoadError')}</AlertDescription>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="min-h-11 shrink-0"
+                          data-testid="roadmap-signal-sources-retry"
+                          onClick={() => {
+                            void activeSourceQuery.refetch();
+                          }}
+                        >
+                          {t('signalRetryBtn')}
+                        </Button>
+                      </Alert>
+                    ) : (
+                      activeSourceQuery.isSuccess &&
+                      sourceOptions.length === 0 && (
+                        <p className="text-xs text-muted-foreground" data-testid="roadmap-signal-sources-empty">
+                          {t('signalSourcesEmpty')}
+                        </p>
+                      )
+                    )}
                     {sourceType === 'crm.deal' && dealsListQuery.hasNextPage && (
                       <Button
                         type="button"

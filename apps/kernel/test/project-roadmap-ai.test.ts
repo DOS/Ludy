@@ -33,6 +33,7 @@ function sourceFixture(overrides: Partial<RoadmapAiSignalMatchSource> = {}): Roa
     truncated: false,
     aiStopped: false,
     aiBudgetSpent: false,
+    conversationAutoDraftOff: false,
     ...overrides,
   };
 }

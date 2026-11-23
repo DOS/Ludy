@@ -323,4 +323,38 @@ describe('computeSignalRollup (#4492)', () => {
     expect(formatted.sourceBody).toContain('Summary:\nCustomers requested scheduled PDF reports.');
     expect(formatted.sourceBody).toContain('Decisions:\n- Prioritize weekly PDF digest');
   });
+
+  it('treats U+200D-only draft summary and decisions as empty and falls back to published summary', () => {
+    const formatted = formatMeetingTaskSource({
+      meeting: {
+        title: 'Customer Sync Q1',
+      } as Parameters<typeof formatMeetingTaskSource>[0]['meeting'],
+      results: {
+        meetingId: '00000000-0000-4000-8000-000000000010',
+        isRecorder: true,
+        draft: {
+          id: '00000000-0000-4000-8000-000000000011',
+          feature: 'manual',
+          stage: 'draft',
+          summary: '\u200D \u200D',
+          decisions: ['\u200D'],
+          tainted: false,
+        },
+        published: {
+          id: '00000000-0000-4000-8000-000000000012',
+          feature: 'manual',
+          stage: 'published',
+          summary: 'Published summary after ZWJ draft.',
+          decisions: ['Ship ZWJ check'],
+          tainted: false,
+        },
+        items: [],
+      },
+      notes: null,
+      transcript: null,
+    });
+
+    expect(formatted.sourceBody).toContain('Summary:\nPublished summary after ZWJ draft.');
+    expect(formatted.sourceBody).toContain('Decisions:\n- Ship ZWJ check');
+  });
 });

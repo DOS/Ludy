@@ -775,6 +775,25 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     });
     expect(openaiHits).toBe(hitsBeforeAutoDraftOff);
 
+    const autoDraftOffSource = await query<RoadmapAiSignalMatchSource>(
+      alice.userId,
+      'projects.roadmap.ai_signal_match_source',
+      { boardId: board.id, sourceType: 'kernel.conversation', sourceId: convId },
+    );
+    expect(autoDraftOffSource.conversationAutoDraftOff).toBe(true);
+    expect(autoDraftOffSource.sourceTitle).toBe('');
+    expect(autoDraftOffSource.sourceExcerpt).toBe('');
+    expect(autoDraftOffSource.items).toEqual([]);
+
+    const aiReaderOffSource = await query<RoadmapAiSignalMatchSource>(
+      alice.userId,
+      'projects.roadmap.ai_signal_match_source',
+      { boardId: board.id, sourceType: 'crm.deal', sourceId: deal1.id, aiReaderEnabled: false },
+    );
+    expect(aiReaderOffSource.sourceTitle).toBe('');
+    expect(aiReaderOffSource.sourceExcerpt).toBe('');
+    expect(aiReaderOffSource.items).toEqual([]);
+
     // Turning auto_draft back on allows HTTP RPC signalMatchSuggest to run and hit real InboxReader
     await exec(owner.userId, 'kernel.conversation.auto_draft_set', { autoDraft: true });
     const autoDraftOnRpc = await rpc(
@@ -1593,5 +1612,112 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       { boardId: board3.id, sourceType: 'meetings.meeting', sourceId: privMeeting },
     );
     expect(taintedMatchSource.items.find((i) => i.id === itemDel.id)?.tainted).toBe(true);
+  }, 60_000);
+
+  it('clears party-linked signal account_label and source_party_id even after crm.deal.update reassigns the deal (#4492)', async () => {
+    const owner4 = await person('owner-reassign');
+    const org4 = await createOrg(rt, asUser(owner4.userId), 'Cong ty Reassign 4492');
+    const exec4 = <T>(userId: string, cmd: string, input: unknown, idempotencyKey?: string) =>
+      rt.execute<T>(cmd, input, {
+        actor: asUser(userId),
+        orgId: org4.orgId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      });
+
+    const { board: board4 } = await exec4<{ board: RoadmapBoardSummary }>(owner4.userId, 'projects.roadmap.board.create', {
+      title: 'Lo trinh Reassign',
+      slug: 'roadmap-reassign',
+    });
+    const { item: item4 } = await exec4<{ item: RoadmapAdminItem }>(owner4.userId, 'projects.roadmap.item.create', {
+      boardId: board4.id,
+      publicTitle: 'Dong bo CRM',
+      publicSummary: null,
+      category: null,
+    });
+
+    await exec4(owner4.userId, 'crm.pipeline.setup', {});
+    const emailA = 'reassign.pdpl@p4492.test';
+    const nameA = 'Khach hang Goc Reassign';
+    const partyARes = await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'person', $3) RETURNING id`,
+      [org4.orgId, nameA, emailA],
+    );
+    const partyAId = partyARes.rows[0]!.id;
+    const partyBRes = await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'organization', $3) RETURNING id`,
+      [org4.orgId, 'Cong ty Moi Sau Doi', 'kept.party@p4492.test'],
+    );
+    const partyBId = partyBRes.rows[0]!.id;
+
+    const deal = await exec4<Deal>(owner4.userId, 'crm.deal.create', {
+      partyId: partyAId,
+      title: 'Hop dong doi chu',
+      amount: '5000000',
+      expectedClose: null,
+    });
+
+    const signalIdemKey = randomUUID();
+    const signalPayload = {
+      boardId: board4.id,
+      roadmapItemId: item4.id,
+      sourceType: 'crm.deal' as const,
+      sourceId: deal.id,
+    };
+    const created = await exec4<RoadmapSignalCreateResult>(
+      owner4.userId,
+      'projects.roadmap.signal.create',
+      signalPayload,
+      signalIdemKey,
+    );
+    expect(created.signal.accountLabel).toBe(nameA);
+
+    await exec4<Deal>(owner4.userId, 'crm.deal.update', {
+      dealId: deal.id,
+      version: deal.version,
+      partyId: partyBId,
+      title: deal.title,
+      amount: deal.amount,
+      expectedClose: deal.expectedClose,
+      ownerUserId: deal.ownerUserId,
+    });
+
+    const foundBefore = await rt.execute<{ matches: Array<{ column: string; rowId: string | null }> }>(
+      'kernel.personal_data.find',
+      { value: emailA },
+      { actor: asMfa(owner4.userId), orgId: org4.orgId },
+    );
+    expect(
+      foundBefore.matches.some(
+        (m) => m.column === 'ludy_projects.roadmap_signal.account_label' && m.rowId === created.signal.id,
+      ),
+    ).toBe(true);
+
+    await rt.execute(
+      'kernel.personal_data.erase',
+      { value: emailA },
+      { actor: asMfa(owner4.userId), orgId: org4.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const dbRow = await sqlAdmin<{ account_label: string | null; source_party_id: string | null }>(
+      `SELECT account_label, source_party_id FROM ludy_projects.roadmap_signal WHERE org_id = $1 AND id = $2`,
+      [org4.orgId, created.signal.id],
+    );
+    expect(dbRow.rows[0]?.account_label).toBeNull();
+    expect(dbRow.rows[0]?.source_party_id).toBeNull();
+
+    const idemRow = await sqlAdmin<{ response: { value?: { signal?: { accountLabel?: string | null } } } | null }>(
+      `SELECT response FROM ludy_kernel.idempotency_key WHERE org_id = $1 AND key = $2 AND command = 'projects.roadmap.signal.create'`,
+      [org4.orgId, signalIdemKey],
+    );
+    expect(idemRow.rows[0]?.response?.value?.signal?.accountLabel).toBeNull();
+
+    const replay = await exec4<RoadmapSignalCreateResult>(
+      owner4.userId,
+      'projects.roadmap.signal.create',
+      signalPayload,
+      signalIdemKey,
+    );
+    expect(replay.signal.id).toBe(created.signal.id);
+    expect(replay.signal.accountLabel).toBeNull();
   }, 60_000);
 });

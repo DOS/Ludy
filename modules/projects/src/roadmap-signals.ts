@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { sql } from 'kysely';
+import { z } from 'zod';
 import {
   auditValue,
   ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX,
@@ -50,6 +51,7 @@ export interface RoadmapAiSignalMatchSource {
   todayVn: string;
   aiStopped: boolean;
   aiBudgetSpent: boolean;
+  conversationAutoDraftOff: boolean;
   sourceType: RoadmapSignalSourceType;
   sourceId: string;
   sourceTitle: string;
@@ -85,7 +87,8 @@ function cleanText(raw: string | null | undefined, maxLen: number): string | nul
     .replace(/\p{Cf}/gu, '')
     .trim();
   if (cleaned.length === 0) return null;
-  const sliced = cleaned.length > maxLen ? cleaned.slice(0, maxLen).trim() : cleaned;
+  const chars = Array.from(cleaned);
+  const sliced = chars.length > maxLen ? chars.slice(0, maxLen).join('').trim() : cleaned;
   return sliced.length > 0 ? sliced : null;
 }
 
@@ -330,7 +333,10 @@ async function readRoadmapSignalSource(
       'Conversation not found',
     );
     const formatted = formatConversationTaskSource(conv);
-    const accountLabel = cleanText(conv.conversation.contact?.partyName ?? null, ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX);
+    const partyId = conv.conversation.contact?.partyId ?? null;
+    const rawPartyName = conv.conversation.contact?.partyName ?? null;
+    const accountLabel =
+      rawPartyName === ERASED_PARTY_NAME ? null : cleanText(rawPartyName, ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX);
     const sourceTitle = cleanText(formatted.sourceTitle, 200) ?? accountLabel ?? sourceId;
     const sourceExcerpt = cleanText(formatted.sourceBody, ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX) ?? sourceTitle;
     return {
@@ -338,7 +344,7 @@ async function readRoadmapSignalSource(
       sourceExcerpt,
       sourceIsRecorder: false,
       meetingDetail: null,
-      partyId: null,
+      partyId,
       accountLabel,
       dealValue: null,
       dealCurrency: null,
@@ -403,6 +409,7 @@ export const roadmapSignalCreate = defineCommand({
       'roadmap_item_id',
       'source_type',
       'source_id',
+      'source_party_id',
       'account_label',
       'quote_excerpt',
       'deal_value',
@@ -422,7 +429,7 @@ export const roadmapSignalCreate = defineCommand({
     // matching personalDataErase (party FOR UPDATE -> roadmap_item -> roadmap_signal) without TOCTOU (#4492).
     let hydratedAccountLabel = hydrated.accountLabel;
     let partyErased = false;
-    if (input.sourceType === 'crm.deal' && hydrated.partyId) {
+    if (hydrated.partyId) {
       const { rows: partyRows } = await sql<{ name: string }>`
         SELECT name FROM ludy_kernel.party
          WHERE org_id = ${ctx.orgId}::uuid AND id = ${hydrated.partyId}::uuid
@@ -433,7 +440,7 @@ export const roadmapSignalCreate = defineCommand({
         partyErased = currentName === ERASED_PARTY_NAME;
         hydratedAccountLabel = partyErased ? null : cleanText(currentName, ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX);
       }
-    } else if (input.sourceType === 'crm.deal' && hydrated.accountLabel === ERASED_PARTY_NAME) {
+    } else if (hydrated.accountLabel === ERASED_PARTY_NAME) {
       partyErased = true;
       hydratedAccountLabel = null;
     }
@@ -457,7 +464,7 @@ export const roadmapSignalCreate = defineCommand({
     }
 
     let accountLabel = cleanText(input.accountLabel, ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX);
-    if (input.sourceType === 'crm.deal') {
+    if (input.sourceType === 'crm.deal' || hydrated.partyId !== null) {
       if (partyErased || accountLabel === ERASED_PARTY_NAME) {
         accountLabel = null;
       } else if (input.accountLabel === undefined) {
@@ -482,6 +489,7 @@ export const roadmapSignalCreate = defineCommand({
         roadmap_item_id: input.roadmapItemId,
         source_type: input.sourceType,
         source_id: input.sourceId,
+        source_party_id: partyErased ? null : hydrated.partyId,
         account_label: accountLabel,
         quote_excerpt: quoteExcerpt,
         deal_value: dealPair.dealValue,
@@ -810,14 +818,48 @@ export const roadmapSignalRollup = defineQuery({
   },
 });
 
+const zRoadmapSignalMatchSourceInput = zRoadmapSignalMatchInput.extend({
+  aiReaderEnabled: z.boolean().optional(),
+});
+
 export const roadmapAiSignalMatchSource = defineQuery({
   name: 'projects.roadmap.ai_signal_match_source',
-  input: zRoadmapSignalMatchInput,
+  input: zRoadmapSignalMatchSourceInput,
   access: WRITERS,
   target: (input) => ({ type: 'projects.roadmap_board', id: input.boardId }),
   handler: async (ctx, input): Promise<RoadmapAiSignalMatchSource> => {
     const board = await loadBoardSummary(ctx.trx, ctx.orgId, input.boardId);
     const meta = await loadProjectsAiMeta(ctx.trx, ctx.orgId);
+
+    let conversationAutoDraftOff = false;
+    if (input.sourceType === 'kernel.conversation') {
+      const autoDraftRes = await ctxQueryFn(ctx)<{ autoDraft: boolean }>('kernel.conversation.auto_draft', {});
+      conversationAutoDraftOff = autoDraftRes.status === 'ok' ? !autoDraftRes.value.autoDraft : false;
+    }
+
+    if (input.aiReaderEnabled === false || meta.aiStopped || meta.aiBudgetSpent || conversationAutoDraftOff) {
+      return {
+        boardId: input.boardId,
+        boardTitle: board.title,
+        todayVn: meta.todayVn,
+        aiStopped: meta.aiStopped,
+        aiBudgetSpent: meta.aiBudgetSpent,
+        conversationAutoDraftOff,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        sourceTitle: '',
+        sourceExcerpt: '',
+        sourceIsRecorder: false,
+        meetingDetail: null,
+        accountLabel: null,
+        dealValue: null,
+        dealCurrency: null,
+        items: [],
+        inspectedCount: 0,
+        truncated: false,
+      };
+    }
+
     const hydrated = await readRoadmapSignalSource(ctx, input.sourceType, input.sourceId);
 
     const rows = await ctx.trx
@@ -840,6 +882,7 @@ export const roadmapAiSignalMatchSource = defineQuery({
       todayVn: meta.todayVn,
       aiStopped: meta.aiStopped,
       aiBudgetSpent: meta.aiBudgetSpent,
+      conversationAutoDraftOff,
       sourceType: input.sourceType,
       sourceId: input.sourceId,
       sourceTitle: hydrated.sourceTitle,
