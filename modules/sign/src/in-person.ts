@@ -13,7 +13,7 @@ import {
 import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
-import { assertCanAccessMeetingMinutesEnvelopeRow } from './meeting-visibility.ts';
+import { assertCanAccessMeetingMinutesEnvelopeRow, assertCanActOnMeetingMinutesEnvelope } from './meeting-visibility.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
   SIGNING_EVENT_WRITE,
@@ -50,6 +50,7 @@ export const signerStartInPerson = defineCommand({
     }
     assertCanAccessEnvelopeRow(ctx, row);
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, row);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
 
     if (row.status !== 'sent' && row.status !== 'in_progress') {
       throw new DomainError(

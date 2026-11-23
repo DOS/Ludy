@@ -246,11 +246,10 @@ export function SignEnvelopeDetailPage() {
   // The draft of a meeting-minutes envelope is read by every reader of the meeting but changed and sent only by its creator, an owner or an admin (#4530); the server refuses the others with 403.
   const canChangeDraft = envelope?.sourceKind !== 'meeting_minutes' || canManageLinksAndVoid;
   const canEditDraft = isDraft && canChangeDraft;
-  const canRemind = meQuery.data
-    ? Boolean(roleHere && roleHere !== 'viewer')
-    : orgQuery.data
-      ? canWriteSign
-      : false;
+  // Reminding the signers and starting an in-person session follow the same rule on a meeting-minutes envelope (#4530).
+  const canRemind =
+    canChangeDraft &&
+    (meQuery.data ? Boolean(roleHere && roleHere !== 'viewer') : orgQuery.data ? canWriteSign : false);
   const canCorrectRecipients = Boolean(
     envelope &&
       (envelope.status === 'sent' || envelope.status === 'in_progress') &&
@@ -1121,7 +1120,7 @@ export function SignEnvelopeDetailPage() {
             {...(canRemind ? { onRemindSigner: handleRemindSigner } : {})}
             {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
             onStartInPerson={
-              canWriteSign && (!meQuery.data || Boolean(roleHere && roleHere !== 'viewer'))
+              canChangeDraft && canWriteSign && (!meQuery.data || Boolean(roleHere && roleHere !== 'viewer'))
                 ? (signerId) => {
                     selectInPersonDialogSigner(signerId);
                   }

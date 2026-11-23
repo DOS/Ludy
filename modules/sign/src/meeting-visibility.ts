@@ -17,6 +17,20 @@ export interface MeetingEnvelopeVisibilityRow {
   readonly created_by: string;
 }
 
+// Who may act on a meeting-minutes envelope is narrower than who may read it (#4530): every reader of the meeting reads it, but only its creator, an owner or an admin edits its draft, sends it,
+// reminds its signers, or issues a signing link or an in-person signing session. Run it right after the visibility check (lockEnvelope, or the in-person command's own read), so a caller who cannot
+// read the envelope still gets the 404 and learns nothing of its existence; one who can read it but not act gets a 403. An hr_contract envelope needs no second check: only an owner, an admin or its
+// creator reads it at all (hr-visibility.ts).
+export function assertCanActOnMeetingMinutesEnvelope(
+  ctx: Pick<CommandContext, 'role'>,
+  row: { source_kind: string; created_by: string | null },
+  userId: string,
+): void {
+  if (row.source_kind !== 'meeting_minutes') return;
+  if (row.created_by === userId || ctx.role === 'owner' || ctx.role === 'admin') return;
+  throw new DomainError('SIGN_FORBIDDEN', 403, 'Only the envelope creator, owner, or admin can act on a meeting-minutes envelope');
+}
+
 export async function assertCanCreateMeetingMinutesEnvelope(
   ctx: Pick<CommandContext, 'trx' | 'orgId' | 'actor'> & Partial<Pick<CommandContext, 'installed'>>,
   sourceKind: SignSourceKind | string,

@@ -872,8 +872,15 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       activeProbeClient.release();
     }
 
-    // Permitted attendee CAN start an in-person session on an active meeting_minutes envelope, but can NOT issue or rotate a signing link (#4530): 403 for a reader who is not the creator, an owner or an
-    // admin; the recorder, who created the envelope, can.
+    // #4530: a permitted attendee who is not the creator, an owner or an admin can NOT start an in-person session (it mints a one-time signing token, the same power as create_link), remind the signers
+    // (it mails them) or issue or rotate a signing link: 403 SIGN_FORBIDDEN (the attendee reads the envelope, so not 404). The recorder, who created the envelope, can start the session.
+    // (This replaces the earlier "permitted attendee CAN start an in-person session" case.)
+    await expect(
+      runtime.execute('sign.signer.start_in_person', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    await expect(
+      runtime.execute('sign.envelope.remind', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
     const inPersonStarted = await runtime.execute<{
       hostUserId: string;
       token: string;
@@ -881,9 +888,9 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     }>(
       'sign.signer.start_in_person',
       { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-      { actor: asUser(attendeeId), orgId },
+      { actor: asUser(recorderId), orgId },
     );
-    expect(inPersonStarted.hostUserId).toBe(attendeeId);
+    expect(inPersonStarted.hostUserId).toBe(recorderId);
     expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
 
     await expect(
