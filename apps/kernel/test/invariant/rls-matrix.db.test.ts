@@ -134,6 +134,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_projects.project_triage_item',
+  'crove_projects.roadmap_signal',
   'crove_sign.api_key',
   'crove_sign.kyc_check',
   'crove_sign.playbook_check',
@@ -3596,6 +3598,27 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // Projects Triage Inbox Slice 2 (#4493, step 0 via #4491, ADR-0058): pre-task triage intake bound to an org-visible project (source_id omitted for 'manual').
+  'crove_projects.project_triage_item': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          source_type: 'manual',
+          status: 'pending',
+          priority: 'medium',
+          title: 'RLS matrix triage item',
+          description: 'RLS matrix triage description',
+          tainted: 'true',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
   // Projects Public Roadmap Slice 2 (#4400, step 0 via #4398, ADR-0057): draft changelog announcement tied to a board.
   'crove_projects.roadmap_announcement': {
     make: (o) => {
@@ -3645,6 +3668,33 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           otp_sha256: hex64(),
           expires_at: new Date(Date.now() + 600_000).toISOString(),
           attempts: 0,
+        },
+      };
+    },
+  },
+  // Projects Omnichannel Signals Slice 1 (#4492, step 0 via #4491, ADR-0058): internal customer demand signal linked to a board item.
+  'crove_projects.roadmap_signal': {
+    make: (o) => {
+      const board = projectsRoadmapBoardRow(o);
+      const item = projectsRoadmapItemRow(o, board.id);
+      return {
+        setup: [
+          { table: 'crove_projects.roadmap_board', values: board },
+          { table: 'crove_projects.roadmap_item', values: item },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          board_id: board.id,
+          roadmap_item_id: item.id,
+          source_type: 'crm.deal',
+          source_id: randomUUID(),
+          account_label: 'RLS matrix customer',
+          quote_excerpt: 'RLS matrix customer demand signal',
+          deal_value: '25000000.00',
+          deal_currency: 'VND',
+          tainted: 'true',
+          created_by: o.owner,
         },
       };
     },
