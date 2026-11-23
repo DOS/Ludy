@@ -63,8 +63,6 @@ const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() })
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const NUM = 'px-4 py-3 text-right tabular-nums';
-const PHONE_SELECT_TARGET = 'max-md:min-h-11 [&_select]:max-md:min-h-11';
-const PHONE_INPUT_TARGET = 'max-md:min-h-11';
 
 export interface TermsState {
   effectiveFrom: string;
@@ -601,7 +599,6 @@ function DepartmentManagerSelect({
       <div className="flex flex-wrap items-center gap-2">
         <NativeSelect
           id="hr-dept-edit-manager"
-          className={PHONE_SELECT_TARGET}
           value={department.managerUserId ?? ''}
           disabled={setManager.isPending}
           onChange={(e) => setManager.mutate(e.target.value || null)}
@@ -1904,7 +1901,6 @@ export function Detail({
               {active && linkableMembers.length > 0 ? (
                 <div className="mt-1 space-y-1">
                   <NativeSelect
-                    className={PHONE_SELECT_TARGET}
                     aria-label={t('linkedMember')}
                     value={e.linkedUserId ?? ''}
                     disabled={linkMember.isPending}
@@ -2292,7 +2288,6 @@ function LeaveApprovalQueue() {
           <p className="text-xs text-subtle-foreground">{t('leaveQueue.subtitle')}</p>
         </div>
         <NativeSelect
-          className={PHONE_SELECT_TARGET}
           aria-label={t('leaveQueue.filterLabel')}
           value={statusFilter}
           onChange={(ev) => setStatusFilter((ev.target.value || '') as HrLeaveRequestStatus | '')}
@@ -2348,7 +2343,7 @@ function LeaveApprovalQueue() {
                 {pending && (
                   <div className="flex flex-wrap items-center gap-2">
                     <Input
-                      className={`min-w-48 flex-1 ${PHONE_INPUT_TARGET}`}
+                      className="min-w-48 flex-1"
                       aria-label={t('leaveQueue.notePlaceholder')}
                       placeholder={t('leaveQueue.notePlaceholder')}
                       value={notes[r.id] ?? ''}

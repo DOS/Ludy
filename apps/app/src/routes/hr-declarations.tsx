@@ -398,7 +398,7 @@ export function HrDeclarationsContent({ orgSlug }: { orgSlug: string }) {
       )}
       {shown && (
         <article className="declaration-sheet" data-testid="hr-declaration" aria-label={shown.title}>
-          <h2 className="mb-1 text-lg font-semibold uppercase tracking-tight text-foreground" data-testid="hr-declaration-notice">
+          <h2 className="mb-1 text-lg font-semibold text-foreground" data-testid="hr-declaration-notice">
             {shown.notice}
           </h2>
           <p className="mb-1 text-base font-medium text-foreground">{shown.title}</p>
