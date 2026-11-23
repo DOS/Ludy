@@ -37,10 +37,13 @@ export const zExtensionAuthorize = z.strictObject({
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
   // The agenda scope rides with the meetings scope (B2): the token's own exchange is a meetings command, and the card exists to start a recording.
-  // At least one scope for the extension; Ludy Desktop (DESKTOP_CLIENT_ID) may ask for none, since its features are not built yet (#4515).
+  // At least one scope for the extension; Ludy Desktop (DESKTOP_CLIENT_ID) asks for none and may not ask for any, since its features are not built yet (#4515).
   scopes: z.array(zExtensionScope).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
   deviceName: z.string().trim().min(1).max(80),
-}).refine((input) => input.scopes.length >= 1 || input.extensionId === DESKTOP_CLIENT_ID, { path: ['scopes'], message: 'the extension needs a scope' });
+}).refine((input) => (input.extensionId === DESKTOP_CLIENT_ID ? input.scopes.length === 0 : input.scopes.length >= 1), {
+  path: ['scopes'],
+  message: 'the extension needs a scope, Ludy Desktop holds none',
+});
 
 // One connected device of the member in the org of the request. Never a hash.
 export const zExtensionToken = z.strictObject({

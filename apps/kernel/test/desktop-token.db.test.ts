@@ -259,6 +259,9 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     expect(noScope.status).toBe(422);
     expect((await authorize('worker', 'b'.repeat(32), ['meetings'])).status).toBe(403);
     expect((await authorize('viewer', DESKTOP_CLIENT_ID, [])).status).toBe(403);
+    // Least privilege: Ludy Desktop may not hold a scope either, until slice 3 needs one.
+    expect((await authorize('worker', DESKTOP_CLIENT_ID, ['meetings'])).status).toBe(422);
+    expect((await authorize('worker', DESKTOP_CLIENT_ID, ['notes'])).status).toBe(422);
     // The tables hold the same line when written straight (the HTTP schema is not the only guard): no scope is for a desktop token or a
     // desktop-bound code only.
     const bad = async (sqlText: string, params: unknown[]) => admin((c) => c.query(sqlText, params).then(() => 'inserted', () => 'refused'));
@@ -266,6 +269,9 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     const tokenSql = `INSERT INTO ludy_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by, client) VALUES ($1, $2, $3, 'x', ARRAY[]::text[], now(), now() + interval '1 day', $2, $4)`;
     expect(await bad(tokenSql, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'extension'])).toBe('refused');
     expect(await bad(tokenSql, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'tablet'])).toBe('refused');
+    const scoped = tokenSql.replace('ARRAY[]::text[]', "ARRAY['meetings']::text[]");
+    expect(await bad(scoped, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('refused');
+    expect(await bad(scoped, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'extension'])).toBe('inserted');
     expect(await bad(tokenSql, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('inserted');
   });
 

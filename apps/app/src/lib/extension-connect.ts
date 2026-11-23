@@ -70,16 +70,15 @@ export function parseConnectRequest(search: string, allowedIds: readonly string[
   return { client: 'extension', extensionId, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
 }
 
-// Ludy Desktop's request: the loopback redirect, and its scopes (none today: the shell has no feature yet) held to the same rules.
+// Ludy Desktop's request: the loopback redirect and no scope (the shell has no feature yet).
 function parseDesktopRequest(params: URLSearchParams, codeChallenge: string, redirect: string, state: string): ConnectRequest | null {
   const port = Number(DESKTOP_REDIRECT.exec(redirect)?.[1]);
   if (params.get('code_challenge_method') !== 'S256' || !CHALLENGE.test(codeChallenge) || !STATE.test(state)) return null;
   if (!Number.isInteger(port) || port < 1024 || port > 65535) return null;
-  const asked = (params.get('scope') ?? '').split(/[ ,]+/).filter(Boolean);
-  if (asked.length > EXTENSION_SCOPE_IDS.length || !asked.every(isScope)) return null;
-  if (asked.includes('agenda') && !asked.includes('meetings')) return null;
+  // Least privilege until slice 3 needs a feature: a desktop request that asks for any scope is not a request.
+  if ((params.get('scope') ?? '').split(/[ ,]+/).filter(Boolean).length > 0) return null;
   const deviceName = (params.get('device') ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
-  return { client: 'desktop', extensionId: DESKTOP_CLIENT_ID, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
+  return { client: 'desktop', extensionId: DESKTOP_CLIENT_ID, codeChallenge, redirect, state, scopes: [], deviceName };
 }
 
 // Where the window goes next: the extension's address with the one-time code, or with the refusal. The state is returned

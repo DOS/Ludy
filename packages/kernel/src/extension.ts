@@ -32,7 +32,10 @@ export const zExtensionCodeIssue = z
     // without it (the unbound 5-argument definer is gone, step 2 #2855). DESKTOP_CLIENT_ID is Ludy Desktop (#4515): its code may carry no scope.
     extensionId: zExtensionAuthorize.shape.extensionId,
   })
-  .refine((input) => input.scopes.length >= 1 || input.extensionId === DESKTOP_CLIENT_ID, { path: ['scopes'], message: 'the extension needs a scope' });
+  .refine((input) => (input.extensionId === DESKTOP_CLIENT_ID ? input.scopes.length === 0 : input.scopes.length >= 1), {
+    path: ['scopes'],
+    message: 'the extension needs a scope, Ludy Desktop holds none',
+  });
 
 // The errors the extension definers raise, as domain errors; anything else goes through the runtime's mapping.
 function extensionError(error: unknown): never {

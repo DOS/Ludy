@@ -9,9 +9,9 @@
 -- 1. ludy_kernel.extension_token.client ('extension' or 'desktop', default 'extension'). A desktop code is the one bound to the
 --    reserved id below (the id the HTTP edge gives a desktop exchange, which has no browser Origin); the exchange copies that to
 --    the token. Slice 3 (capture) reads the marker from ctx.actor.extension.client, never from what a request says.
--- 2. A desktop token may hold NO scope (its features are not built yet): the two scope CHECKs allow an empty list when the code is
---    bound to the desktop id or the token is a desktop one. An extension token still needs 1 to 8 known scopes.
--- 3. issue_extension_auth_code allows the empty list for the desktop id only.
+-- 2. A desktop token holds NO scope (its features are not built yet; least privilege until slice 3 needs one): the two scope CHECKs
+--    require an empty list when the code is bound to the desktop id or the token is a desktop one, and 1 to 8 known scopes otherwise.
+-- 3. issue_extension_auth_code allows the empty list for the desktop id only, and refuses any scope for it.
 -- 4. exchange_extension_auth_code (same signature and result) copies the marker and, for a desktop token, writes the audit row of
 --    the exchange itself (command kernel.extension.desktop.exchanged, as the member, naming the token and the code, ids only):
 --    the exchange has no member context for a runtime command, and a zero-scope token cannot run a scoped one.
@@ -42,7 +42,7 @@ BEGIN
     ALTER TABLE ludy_kernel.extension_token DROP CONSTRAINT IF EXISTS extension_token_scopes_check;
     ALTER TABLE ludy_kernel.extension_token ADD CONSTRAINT extension_token_scopes_check
       CHECK (pg_catalog.cardinality(scopes) <= 8 AND scopes <@ ARRAY['meetings', 'agenda', 'notes']::text[]
-             AND (pg_catalog.cardinality(scopes) >= 1 OR client = 'desktop'));
+             AND ((client = 'desktop' AND pg_catalog.cardinality(scopes) = 0) OR (client = 'extension' AND pg_catalog.cardinality(scopes) >= 1)));
   END IF;
   SELECT pg_catalog.pg_get_constraintdef(oid) INTO v_def FROM pg_catalog.pg_constraint
   WHERE conrelid = 'ludy_kernel.extension_auth_code'::pg_catalog.regclass AND conname = 'extension_auth_code_scopes_check';
@@ -50,7 +50,8 @@ BEGIN
     ALTER TABLE ludy_kernel.extension_auth_code DROP CONSTRAINT IF EXISTS extension_auth_code_scopes_check;
     ALTER TABLE ludy_kernel.extension_auth_code ADD CONSTRAINT extension_auth_code_scopes_check
       CHECK (pg_catalog.cardinality(scopes) <= 8 AND scopes <@ ARRAY['meetings', 'agenda', 'notes']::text[]
-             AND (pg_catalog.cardinality(scopes) >= 1 OR extension_id = 'abababababababababababababababab'));
+             AND ((extension_id = 'abababababababababababababababab' AND pg_catalog.cardinality(scopes) = 0)
+                  OR (extension_id IS DISTINCT FROM 'abababababababababababababababab' AND pg_catalog.cardinality(scopes) >= 1)));
   END IF;
 END $$;
 
@@ -86,6 +87,7 @@ BEGIN
      OR p_code_challenge IS NULL OR p_code_challenge !~ '^[A-Za-z0-9_-]{43}$'
      OR p_scopes IS NULL OR pg_catalog.cardinality(p_scopes) NOT BETWEEN 0 AND 8
      OR (pg_catalog.cardinality(p_scopes) = 0 AND p_extension_id IS DISTINCT FROM 'abababababababababababababababab')
+     OR (pg_catalog.cardinality(p_scopes) > 0 AND p_extension_id IS NOT DISTINCT FROM 'abababababababababababababababab')
      OR NOT (p_scopes <@ ARRAY['meetings', 'agenda', 'notes']::text[])
      OR ('agenda' = ANY (p_scopes) AND NOT ('meetings' = ANY (p_scopes)))
      OR v_device IS NULL OR pg_catalog.char_length(v_device) NOT BETWEEN 1 AND 80

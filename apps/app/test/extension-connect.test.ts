@@ -141,10 +141,8 @@ describe('Ludy Desktop sign-in (ADR-0055 slice 2, #4515)', () => {
       scopes: [],
       deviceName: 'Ludy Desktop, Windows',
     });
-    // Its features, when they exist, ride the same scope rules as the extension's.
-    expect(parseConnectRequest(desktop({ scope: 'meetings' }), [])?.scopes).toEqual(['meetings']);
-    expect(parseConnectRequest(desktop({ scope: 'agenda' }), [])).toBeNull();
-    expect(parseConnectRequest(desktop({ scope: 'crm' }), [])).toBeNull();
+    // Least privilege: it holds no scope until slice 3 needs one, so a request that asks for any is refused.
+    for (const scope of ['meetings', 'agenda', 'notes', 'meetings agenda', 'crm']) expect(parseConnectRequest(desktop({ scope }), []), scope).toBeNull();
   });
 
   it('refuses a redirect that is not exactly the loopback callback, and any other client', () => {
