@@ -287,6 +287,8 @@ import {
   SIGN_CA_RETRY_SAFETIES,
   SIGN_CA_SUBFILTERS,
   SIGN_OBLIGATION_STATUSES,
+  SIGN_PLAYBOOK_MODES,
+  SIGN_PLAYBOOK_SEVERITIES,
   type Database,
 } from '../src/schema.ts';
 
@@ -451,6 +453,8 @@ const UNIONS = unions({
   'ludy_sign.member_signature.signature_kind': SIGN_SIGNATURE_KINDS,
   'ludy_sign.org_stamp.stamp_kind': SIGN_ORG_STAMP_KINDS,
   'ludy_sign.org_stamp.status': SIGN_ORG_STAMP_STATUSES,
+  'ludy_sign.playbook_check.mode': SIGN_PLAYBOOK_MODES,
+  'ludy_sign.playbook_rule.severity': SIGN_PLAYBOOK_SEVERITIES,
   'ludy_kernel.activity.actor_origin': ACTOR_ORIGINS,
   'ludy_kernel.agent.max_risk': AGENT_RISKS,
   'ludy_kernel.agent.runtime': AGENT_RUNTIMES,

@@ -199,13 +199,17 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  // Vy's eSign field placement, risky clause review, and post-signature obligation extraction (#3351, #3821); null runs manual signing without AI.
+  // Vy's eSign field placement, risky clause review, obligation extraction, and playbook checks (#3351, #3821, #4442); null runs manual signing without AI.
   signAi?:
     | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
         Partial<
           Pick<
             SignAiReader,
-            'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations' | 'answerVaultQuestion'
+            'summarizeVersionDiff'
+            | 'proposeContractClauses'
+            | 'extractObligations'
+            | 'answerVaultQuestion'
+            | 'checkPlaybook'
           >
         >)
     | null;

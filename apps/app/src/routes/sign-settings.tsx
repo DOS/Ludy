@@ -15,6 +15,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { PlaybookRulesCard } from '../components/sign/playbook-rules-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { SignWebhooksSection } from '../components/sign/sign-webhooks-card.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -1147,6 +1148,7 @@ export function SignSettingsPage() {
   return (
     <div className="space-y-8">
       <SignMemberSignaturesAndStampsSection slug={slug} />
+      <PlaybookRulesCard slug={slug} role={orgQuery.data?.role} />
       {orgQuery.isPending || settingsQuery.isPending ? (
         <ListSkeleton />
       ) : settingsQuery.error ? (
